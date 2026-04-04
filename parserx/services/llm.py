@@ -1,7 +1,7 @@
 """Pluggable LLM/VLM service abstraction.
 
 Supports OpenAI-compatible API endpoints with two API styles:
-- Responses API (client.responses.create) — used by doc-refine's endpoint
+- Responses API (client.responses.create) — used by legacy pipeline's endpoint
 - Chat Completions API (client.chat.completions.create) — standard OpenAI
 
 Auto-detects which API to use, or can be configured explicitly.
@@ -52,7 +52,7 @@ class VLMService(Protocol):
 class OpenAICompatibleService:
     """LLM/VLM service supporting both Responses API and Chat Completions API.
 
-    Tries Responses API first (as used by doc-refine's endpoint).
+    Tries Responses API first (as used by legacy pipeline's endpoint).
     Falls back to Chat Completions API if Responses API returns 404.
     """
 
@@ -119,7 +119,7 @@ class OpenAICompatibleService:
             image_data_url, prompt, context, temperature, max_tokens
         )
 
-    # ── Responses API (doc-refine style) ────────────────────────────────
+    # ── Responses API (legacy pipeline style) ────────────────────────────────
 
     def _complete_responses(
         self, prompt: str, temperature: float, max_tokens: int

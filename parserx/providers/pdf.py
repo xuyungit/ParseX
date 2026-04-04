@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 class PDFProvider:
     """Extract text, tables, and images from PDF using PyMuPDF.
 
-    Unlike the old doc-refine approach (PyMuPDF4LLM → Markdown string),
+    Unlike the old legacy pipeline approach (PyMuPDF4LLM → Markdown string),
     this provider extracts character-level metadata (font name, size, bold)
     which enables rule-based heading detection in MetadataBuilder.
     """
@@ -57,15 +57,24 @@ class PDFProvider:
 
         # Extract text blocks with font metadata
         text_elements = self._extract_text_elements(fitz_page, page_number)
-        page.elements.extend(text_elements)
 
         # Extract tables
         table_elements = self._extract_tables(fitz_page, page_number)
-        page.elements.extend(table_elements)
+
+        # Remove text blocks that overlap with table regions to avoid
+        # duplicating table cell text as both prose and markdown table.
+        text_elements = self._remove_table_overlapping_text(
+            text_elements, table_elements
+        )
 
         # Extract images
         image_elements = self._extract_images(fitz_page, page_number)
-        page.elements.extend(image_elements)
+
+        # Merge all elements and sort by visual position (top-to-bottom,
+        # left-to-right) so mid-page tables/images stay in reading order.
+        all_elements = text_elements + table_elements + image_elements
+        all_elements.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
+        page.elements.extend(all_elements)
 
         # Classify page type
         page.page_type = self._classify_page(fitz_page, text_elements, image_elements)
@@ -246,3 +255,54 @@ class PDFProvider:
         if total_text_chars < 200 and image_coverage > 0.3:
             return PageType.MIXED
         return PageType.NATIVE
+
+    # ------------------------------------------------------------------
+    # Deduplication helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bbox_overlap_ratio(
+        inner: tuple[float, float, float, float],
+        outer: tuple[float, float, float, float],
+    ) -> float:
+        """Return fraction of *inner* area that overlaps with *outer*."""
+        x0 = max(inner[0], outer[0])
+        y0 = max(inner[1], outer[1])
+        x1 = min(inner[2], outer[2])
+        y1 = min(inner[3], outer[3])
+
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+
+        intersection = (x1 - x0) * (y1 - y0)
+        inner_area = (inner[2] - inner[0]) * (inner[3] - inner[1])
+        if inner_area <= 0:
+            return 0.0
+        return intersection / inner_area
+
+    def _remove_table_overlapping_text(
+        self,
+        text_elements: list[PageElement],
+        table_elements: list[PageElement],
+    ) -> list[PageElement]:
+        """Drop text blocks whose bbox is mostly inside a table region."""
+        if not table_elements:
+            return text_elements
+
+        _OVERLAP_THRESHOLD = 0.5
+        table_bboxes = [t.bbox for t in table_elements]
+        kept: list[PageElement] = []
+
+        for te in text_elements:
+            overlaps = any(
+                self._bbox_overlap_ratio(te.bbox, tb) >= _OVERLAP_THRESHOLD
+                for tb in table_bboxes
+            )
+            if not overlaps:
+                kept.append(te)
+
+        dropped = len(text_elements) - len(kept)
+        if dropped:
+            log.debug("Dropped %d text blocks overlapping with tables", dropped)
+
+        return kept

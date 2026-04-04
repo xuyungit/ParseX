@@ -3,7 +3,7 @@
 Uses geometric position + cross-page repetition to detect headers and footers.
 This is the deterministic approach (no LLM) that handles 90%+ of documents.
 
-Migrated and adapted from doc-refine remove_headers_footers.py Phase 1.
+Migrated and adapted from legacy pipeline remove_headers_footers.py Phase 1.
 The key insight: headers/footers appear at the same vertical position on
 most pages. We detect them by finding text elements in the top/bottom
 zones that repeat across >50% of pages.

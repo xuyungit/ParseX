@@ -1,7 +1,7 @@
 """Text cleaning processor.
 
 Handles CJK space removal, encoding fixes, and text normalization.
-Migrated from doc-refine: pdf_extract.py _fix_chinese_spaces (L49-57).
+Migrated from legacy pipeline: pdf_extract.py _fix_chinese_spaces (L49-57).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import re
 from parserx.config.schema import TextCleanConfig
 from parserx.models.elements import Document
 
-# ── CJK space fix (migrated from doc-refine pdf_extract.py L34-57) ──────
+# ── CJK space fix (migrated from legacy pipeline pdf_extract.py L34-57) ──────
 
 _CJK = (
     r"\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"

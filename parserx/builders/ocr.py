@@ -5,7 +5,7 @@ Key insight from LiteParse: don't OCR everything. Only OCR:
 2. Mixed pages (some native text, some image regions)
 3. Pages with vector-rendered text (native extraction blank but page has content)
 
-This reduces OCR calls by 60-70% compared to doc-refine's approach of
+This reduces OCR calls by 60-70% compared to legacy pipeline's approach of
 OCRing every extracted image.
 """
 
@@ -118,10 +118,12 @@ class OCRBuilder:
 
     def __init__(self, config: OCRBuilderConfig | None = None):
         self._config = config or OCRBuilderConfig()
-        self._ocr = create_ocr_service(self._config)
+        self._ocr = create_ocr_service(self._config)  # None when engine="none"
 
     def build(self, doc: Document, source_path: Path) -> Document:
         """Run selective OCR and add results to document."""
+        if self._ocr is None:
+            return doc
         if not self._config.selective and not self._config.force_full_page:
             return doc
 
