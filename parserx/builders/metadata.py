@@ -1,6 +1,6 @@
 """MetadataBuilder — extract document-level metadata using deterministic code.
 
-This replaces the 3-pass LLM chapter detection in doc-refine by analyzing
+This replaces the 3-pass LLM chapter detection in legacy pipeline by analyzing
 font statistics, page geometry, and numbering patterns directly from the
 character-level metadata already extracted by PDFProvider.
 
@@ -24,7 +24,7 @@ from parserx.models.elements import (
 )
 
 
-# ── Numbering detection (migrated from doc-refine chapter_outline_core.py L108-138) ──
+# ── Numbering detection (migrated from legacy pipeline chapter_outline_core.py L108-138) ──
 
 _NUMBERING_PATTERNS: list[tuple[str, str, str]] = [
     # (signal_name, regex, default_heading_level)
@@ -42,7 +42,7 @@ def detect_numbering_signal(text: str) -> tuple[str, str] | None:
     """Detect chapter/section numbering pattern in text.
 
     Returns (signal_name, heading_level) or None.
-    Migrated from doc-refine chapter_outline_core.py detect_numbering_signal.
+    Migrated from legacy pipeline chapter_outline_core.py detect_numbering_signal.
     """
     stripped = text.strip()
     # Remove markdown marks

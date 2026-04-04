@@ -1,13 +1,22 @@
 """Tests for the pipeline with real PDF files."""
 
+import os
 from pathlib import Path
 
 import pytest
 
+from parserx.config.schema import ParserXConfig
 from parserx.pipeline import Pipeline
 
-# Sample docs from the test corpus
-SAMPLE_DIR = Path("/Users/xuyun/IEC/doc_special/sample_docs")
+
+def _pipeline_no_ocr():
+    """Create a Pipeline with OCR disabled (no credentials needed)."""
+    cfg = ParserXConfig()
+    cfg.builders.ocr.engine = "none"
+    return Pipeline(cfg)
+
+# Sample docs — set PARSERX_SAMPLE_DIR env var to point to test PDFs
+SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))
 PDF_TEXT = SAMPLE_DIR / "pdf_text01.pdf"
 DEEPSEEK = SAMPLE_DIR / "deepseek.pdf"
 
@@ -32,7 +41,7 @@ def test_parse_deepseek_pdf():
 
 
 def test_parse_nonexistent():
-    pipeline = Pipeline()
+    pipeline = _pipeline_no_ocr()
     with pytest.raises(FileNotFoundError):
         pipeline.parse("/nonexistent/file.pdf")
 
@@ -40,6 +49,6 @@ def test_parse_nonexistent():
 def test_parse_unsupported_format(tmp_path: Path):
     fake = tmp_path / "test.xyz"
     fake.write_text("hello")
-    pipeline = Pipeline()
+    pipeline = _pipeline_no_ocr()
     with pytest.raises(ValueError, match="Unsupported format"):
         pipeline.parse(fake)

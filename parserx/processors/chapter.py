@@ -5,7 +5,7 @@ Two-stage approach:
 2. LLM fallback: only when rule-based confidence is low (sends heading candidates,
    not full text — one LLM call instead of three)
 
-Numbering detection regexes migrated from doc-refine chapter_outline_core.py.
+Numbering detection regexes migrated from legacy pipeline chapter_outline_core.py.
 """
 
 from __future__ import annotations

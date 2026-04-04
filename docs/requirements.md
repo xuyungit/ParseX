@@ -7,7 +7,7 @@
 企业文档（采购文件、技术规范、标准文件、合同等）包含丰富的结构化信息：正文、表格、图片、公式、章节层级。当前的文档解析工具存在明显的两极分化：
 
 - **简单提取**（pdfplumber、PyMuPDF 等）：速度快、成本低，但丢失表格结构、图片含义、章节层级
-- **高保真解析**（我们现有的 doc-refine skill）：质量较好，但每个文档需要 200+ 次 API 调用（OCR + VLM + LLM），成本高、速度慢、不可评估
+- **高保真解析**（我们现有的 legacy pipeline skill）：质量较好，但每个文档需要 200+ 次 API 调用（OCR + VLM + LLM），成本高、速度慢、不可评估
 
 我们需要一个在质量和成本之间取得更好平衡的文档解析工具。
 
@@ -36,9 +36,9 @@
 
 ## 2. 现状分析
 
-### 2.1 现有 doc-refine 技能架构
+### 2.1 现有 legacy pipeline 技能架构
 
-现有实现位于 `/Users/xuyun/IEC/skills/doc-refine/`，采用四阶段流水线架构：
+legacy pipeline 采用四阶段流水线架构：
 
 ```
 阶段 1: 提取（Extract）
@@ -69,7 +69,7 @@
 
 ### 2.2 从代码中发现的关键问题
 
-**凭据硬编码**：`config.py` 第 12-14 行硬编码了 API URL（`https://your-api-endpoint/v1`）、模型名（`gpt-5.4-mini`）和 API Key。`chapter_outline_core.py` 第 19-21 行重复了相同的硬编码。
+**凭据硬编码**：`config.py` 硬编码了 API URL、模型名和 API Key。`chapter_outline_core.py` 重复了相同的硬编码。
 
 **无差别 OCR**：每张提取的图片都调用 PaddleOCR，无论是照片、装饰元素还是实际含文字的图片。一个 200 页文档可能有 100+ 张图片，意味着 100+ 次 OCR API 调用。
 

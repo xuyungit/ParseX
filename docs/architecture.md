@@ -75,7 +75,7 @@ class DocumentMetadata(BaseModel):
 
 ### 2.1 确定性优先，AI 兜底
 
-**问题**：当前 doc-refine 对页眉页脚、章节检测、换行修复都调用 LLM，但这些问题的 80-90% 可用规则解决。
+**问题**：当前 legacy pipeline 对页眉页脚、章节检测、换行修复都调用 LLM，但这些问题的 80-90% 可用规则解决。
 
 **原则**：每个处理器采用两阶段设计——先用确定性代码处理能确定的部分，仅对剩余的模糊情况回退到 AI。
 
@@ -187,10 +187,10 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
      - 转为 Markdown 表格时展平合并单元格
   5. 图片提取：
      - Docling 自动提取嵌入图片到临时目录
-     - 需处理旋转元数据（参考 doc-refine fix_rotation.py）
+     - 需处理旋转元数据（参考 legacy pipeline fix_rotation.py）
   
   注意事项：
-  - Docling 在 doc-refine 中已验证有效，可参考 pipeline.py L739-770
+  - Docling 在 legacy pipeline 中已验证有效，可参考 pipeline.py L739-770
   - OOXML 有显式样式信息，标题检测是确定性的，ChapterProcessor 可跳过
   - 需在 pipeline.py `_extract()` 中注册 .docx 路由
 ```
@@ -233,7 +233,7 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
 3. 编号模式（NumberingPatterns）
    - 分析标题候选中的中文编号模式
    - 支持：第X章、X.Y.Z、一/二/三、(一)/(二)、1./2./ 等
-   - 可复用 doc-refine 中 chapter_outline_core.py 的编号检测正则
+   - 可复用 legacy pipeline 中 chapter_outline_core.py 的编号检测正则
    - 构建编号层级模型（哪些模式是一级、二级、三级）
 
 4. 逐页类型分类（PageTypes）
@@ -344,7 +344,7 @@ LLM 兜底（仅当规则置信度低时）：
   - 一次 LLM 调用（替代当前的三次）
   - LLM 输出：确认/修正标题层级
 
-从 doc-refine 可复用的代码：
+从 legacy pipeline 可复用的代码：
   - chapter_outline_core.py 中的编号检测正则
   - detect_numbering_signal / has_numbering_signal / guess_numbering_level
 ```
@@ -460,7 +460,7 @@ LLM 兜底（仅当规则置信度低时）：
 
 ```
 已实现：
-  1. CJK 空格修复（从 doc-refine _fix_chinese_spaces 迁移）
+  1. CJK 空格修复（从 legacy pipeline _fix_chinese_spaces 迁移）
   2. 编码修复（Windows-1252 C1 范围 → Unicode 映射）
   3. 控制字符清理
   4. 多余空白规范化
@@ -496,7 +496,7 @@ LLM 兜底（仅当规则置信度低时）：
   1. 按 ChapterProcessor 标记的章节边界切分
   2. 生成目录（标题 + 链接）
   3. 图片路径统一为相对路径
-  4. 可复用 doc-refine 的 chapter_output_packager.py 的成熟逻辑
+  4. 可复用 legacy pipeline 的 chapter_output_packager.py 的成熟逻辑
 ```
 
 #### CrossReferenceResolver — ❌ 待实现
@@ -1004,9 +1004,9 @@ ground_truth/
 | 测试 | pytest | 标准选择 |
 | 包管理 | uv | 团队规范 |
 
-## 附录 B: 从 doc-refine 可迁移的代码
+## 附录 B: 从 legacy pipeline 可迁移的代码
 
-来源目录：`/Users/xuyun/IEC/skills/doc-refine/scripts/`
+来源：legacy pipeline 内部代码库
 
 ### B.1 高优先级 — 已迁移
 
@@ -1043,7 +1043,7 @@ ground_truth/
 
 ## 附录 C: 测试文档清单
 
-来源目录：`/Users/xuyun/IEC/doc_special/sample_docs/`
+测试文档需自行准备，或使用 `python -m parserx.eval.benchmark` 下载公开评估集。
 
 | 文件 | 类型 | 测试场景 |
 |------|------|---------|
@@ -1076,7 +1076,7 @@ ground_truth/
 | 2026-04-04 | 表格结构识别优先用 PaddleOCR 能力 | 同上；复杂表格走 VLM 兜底 |
 | 2026-04-04 | 图片分类使用启发式规则 | Mac CPU 可运行，不引入分类模型 |
 | 2026-04-04 | VLM/LLM 使用现有 skill 端点 | 已验证可用；通过 OpenAI 兼容 API 抽象，支持替换 |
-| 2026-04-04 | 以 doc-refine skill 为起点 | 迁移验证过的代码，不从零开始 |
+| 2026-04-04 | 以 legacy pipeline skill 为起点 | 迁移验证过的代码，不从零开始 |
 | 2026-04-04 | 配置文件改为 YAML + 环境变量 | 替代硬编码，支持 A/B 测试 |
 
 ---
@@ -1132,8 +1132,9 @@ ground_truth/
 ### VLM 使用方式
 
 ```bash
+# Set credentials in .env or export directly:
 OPENAI_BASE_URL="https://your-api-endpoint/v1" \
-OPENAI_API_KEY="REDACTED_API_KEY" \
+OPENAI_API_KEY="your-api-key" \
 VLM_MODEL="gpt-5.4-mini" \
 uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -v
 ```
@@ -1173,7 +1174,7 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 - 页码 "- 3 -" → 已移除 ✓
 - 日期行 "2026 年3 月至" → 不被误判为标题 ✓
 - 公章图片 → VLM 描述："红色圆形印章...广西楼栋集团有限公司" ✓
-- 图片选择性：103 张图 → 83 装饰性跳过 → 5 次 VLM（vs doc-refine 206 次 API）✓
+- 图片选择性：103 张图 → 83 装饰性跳过 → 5 次 VLM（vs legacy pipeline 206 次 API）✓
 - 跨页表格合并：pdf_text01 中 5 组跨页表格成功合并 ✓
 - DOCX 样式 heading_level 直接映射，ChapterProcessor 自动跳过已有标题 ✓
 

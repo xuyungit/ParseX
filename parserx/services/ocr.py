@@ -52,7 +52,7 @@ class OCRResult:
 class PaddleOCRService:
     """PaddleOCR online sync API client.
 
-    Migrated from doc-refine pipeline.py _call_paddleocr_sync.
+    Migrated from legacy pipeline.py _call_paddleocr_sync.
     """
 
     def __init__(self, config: OCRBuilderConfig | None = None):
@@ -149,10 +149,16 @@ class PaddleOCRService:
         )
 
 
-def create_ocr_service(config: OCRBuilderConfig | None = None) -> PaddleOCRService:
+def create_ocr_service(
+    config: OCRBuilderConfig | None = None,
+) -> PaddleOCRService | None:
     """Factory: create OCR service from config.
 
+    Returns None when engine is "none" (useful for tests / no-OCR runs).
     Future: switch between PaddleOCR, RapidOCR, Tesseract, remote API
     based on config.engine.
     """
+    cfg = config or OCRBuilderConfig()
+    if cfg.engine == "none":
+        return None
     return PaddleOCRService(config)

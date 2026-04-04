@@ -1,5 +1,6 @@
 """Tests for ChapterAssembler."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -90,7 +91,7 @@ def test_no_split_when_disabled(tmp_path: Path):
 
 # ── Integration with real PDF ───────────────────────────────────────────
 
-SAMPLE_DIR = Path("/Users/xuyun/IEC/doc_special/sample_docs")
+SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))
 PDF_TEXT = SAMPLE_DIR / "pdf_text01.pdf"
 
 
