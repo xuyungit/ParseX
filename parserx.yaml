@@ -1,0 +1,78 @@
+# ParserX Default Configuration
+# Credentials are loaded from environment variables.
+
+providers:
+  pdf:
+    engine: pymupdf
+  docx:
+    engine: docling
+
+builders:
+  metadata:
+    heading_font_ratio: 1.2
+    header_zone_ratio: 0.08
+    footer_zone_ratio: 0.08
+    repetition_threshold: 0.5
+  layout:
+    enabled: true
+    model: paddleocr-online
+  ocr:
+    engine: paddleocr
+    lang: ch_sim+en
+    selective: true
+
+processors:
+  header_footer:
+    enabled: true
+    llm_fallback: true
+  chapter:
+    enabled: true
+    llm_fallback: true
+  table:
+    enabled: true
+    vlm_fallback: true
+    cross_page_merge: true
+  image:
+    enabled: true
+    classification: true
+    vlm_description: true
+    skip_decorative: true
+  formula:
+    enabled: false
+  line_unwrap:
+    enabled: true
+    llm_fallback: false
+  text_clean:
+    enabled: true
+    fix_cjk_spaces: true
+    fix_encoding: true
+  reading_order:
+    enabled: true
+    method: geometric
+
+services:
+  vlm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL}
+    model: ${VLM_MODEL:gpt-5.4-mini}
+    api_key: ${OPENAI_API_KEY}
+    max_concurrent: 6
+    timeout: 180
+    max_retries: 3
+  llm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL}
+    model: ${LLM_MODEL:gpt-5.4-mini}
+    api_key: ${OPENAI_API_KEY}
+
+verification:
+  hallucination_detection: true
+  completeness_check: true
+  structure_validation: true
+  hallucination_threshold: 0.3
+
+output:
+  format: markdown
+  chapter_split: true
+  image_dir: images
+  table_format: markdown
