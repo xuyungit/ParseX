@@ -1,0 +1,175 @@
+"""MetadataBuilder — extract document-level metadata using deterministic code.
+
+This replaces the 3-pass LLM chapter detection in doc-refine by analyzing
+font statistics, page geometry, and numbering patterns directly from the
+character-level metadata already extracted by PDFProvider.
+
+Key insight: PDFProvider gives us font name, size, bold for every text block.
+The most common font is body text; larger/bolder fonts are heading candidates.
+This is deterministic — no LLM needed for 70-80% of documents.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+
+from parserx.config.schema import MetadataBuilderConfig
+from parserx.models.elements import (
+    Document,
+    DocumentMetadata,
+    FontInfo,
+    FontStatistics,
+    NumberingPattern,
+)
+
+
+# ── Numbering detection (migrated from doc-refine chapter_outline_core.py L108-138) ──
+
+_NUMBERING_PATTERNS: list[tuple[str, str, str]] = [
+    # (signal_name, regex, default_heading_level)
+    ("chapter_cn", r"^第[一二三四五六七八九十百千万0-9]+[编章节部分]\b", "H1"),
+    ("section_cn", r"^[一二三四五六七八九十百千万]+[、.．)]", "H2"),
+    ("section_cn_paren", r"^[（(][一二三四五六七八九十百千万]+[）)]", "H2"),
+    ("section_arabic_nested", r"^\d+\.\d+(?:\.\d+)*[\s、.．)]", "H3"),
+    ("section_arabic_paren", r"^(?:[（(]\d+[）)]|\d+[）)])", "H3"),
+    ("section_arabic_spaced", r"^\d+\s+[\u4e00-\u9fffA-Za-z]", "H2"),
+    ("section_arabic_root", r"^\d+\.[\s]+", "H2"),
+]
+
+
+def detect_numbering_signal(text: str) -> tuple[str, str] | None:
+    """Detect chapter/section numbering pattern in text.
+
+    Returns (signal_name, heading_level) or None.
+    Migrated from doc-refine chapter_outline_core.py detect_numbering_signal.
+    """
+    stripped = text.strip()
+    # Remove markdown marks
+    stripped = re.sub(r"^\s{0,3}#{1,6}\s*", "", stripped)
+    stripped = stripped.replace("**", "").replace("*", "")
+
+    for signal, pattern, level in _NUMBERING_PATTERNS:
+        if re.match(pattern, stripped):
+            return signal, level
+    return None
+
+
+def _font_key(font: FontInfo) -> str:
+    """Create a hashable key for font comparison."""
+    return f"{font.name}_{font.size}_{font.bold}"
+
+
+class MetadataBuilder:
+    """Extract document-level metadata without LLM.
+
+    Analyzes:
+    1. Font statistics → body font vs heading candidates
+    2. Page geometry → header/footer zones
+    3. Numbering patterns → chapter numbering hierarchy
+    4. Page types → already set by PDFProvider
+    """
+
+    def __init__(self, config: MetadataBuilderConfig | None = None):
+        self._config = config or MetadataBuilderConfig()
+
+    def build(self, doc: Document) -> Document:
+        """Analyze document and populate DocumentMetadata."""
+        self._build_font_statistics(doc)
+        self._detect_heading_candidates(doc)
+        self._detect_numbering_patterns(doc)
+        self._build_page_types(doc)
+        return doc
+
+    def _build_font_statistics(self, doc: Document) -> None:
+        """Count font usage across all text elements to find body font."""
+        font_char_counts: Counter[str, int] = Counter()
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "text":
+                    continue
+                key = _font_key(elem.font)
+                font_char_counts[key] += len(elem.content)
+
+        if not font_char_counts:
+            return
+
+        doc.metadata.font_stats.font_counts = dict(font_char_counts)
+
+        # Most common font = body text
+        most_common_key = font_char_counts.most_common(1)[0][0]
+        # Parse back the font info from the key
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type == "text" and _font_key(elem.font) == most_common_key:
+                    doc.metadata.font_stats.body_font = elem.font.model_copy()
+                    return
+
+    def _detect_heading_candidates(self, doc: Document) -> None:
+        """Find fonts that are larger or bolder than body — these are heading candidates."""
+        body = doc.metadata.font_stats.body_font
+        if body.size == 0:
+            return
+
+        ratio = self._config.heading_font_ratio
+        seen_keys: set[str] = set()
+        candidates: list[FontInfo] = []
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "text":
+                    continue
+                key = _font_key(elem.font)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                is_heading = False
+                # Larger font size
+                if elem.font.size >= body.size * ratio:
+                    is_heading = True
+                # Same size but bold when body is not
+                elif elem.font.bold and not body.bold and elem.font.size >= body.size:
+                    is_heading = True
+
+                if is_heading:
+                    candidates.append(elem.font.model_copy())
+
+        # Sort by size descending — larger fonts = higher heading level
+        candidates.sort(key=lambda f: (-f.size, not f.bold))
+        doc.metadata.font_stats.heading_candidates = candidates
+
+    def _detect_numbering_patterns(self, doc: Document) -> None:
+        """Scan text elements for chapter/section numbering patterns."""
+        pattern_counts: Counter[str, int] = Counter()
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "text":
+                    continue
+                # Check first line of each text block
+                first_line = elem.content.split("\n")[0].strip()
+                result = detect_numbering_signal(first_line)
+                if result:
+                    signal, _ = result
+                    pattern_counts[signal] += 1
+
+        patterns: list[NumberingPattern] = []
+        for (signal, regex, level) in _NUMBERING_PATTERNS:
+            count = pattern_counts.get(signal, 0)
+            if count > 0:
+                patterns.append(NumberingPattern(
+                    signal=signal,
+                    level=level,
+                    count=count,
+                    regex=regex,
+                ))
+
+        doc.metadata.numbering_patterns = patterns
+
+    def _build_page_types(self, doc: Document) -> None:
+        """Populate page_types dict from per-page classification."""
+        doc.metadata.page_types = {
+            page.number: page.page_type for page in doc.pages
+        }

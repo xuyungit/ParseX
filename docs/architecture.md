@@ -1055,36 +1055,39 @@ ground_truth/
 
 ### 当前状态
 
-**阶段**：Phase 1 — 基础设施（已完成骨架）
+**阶段**：Phase 2 — 核心管道（进行中）
 
 **已完成**：
-- [x] 需求文档（`docs/requirements.md`）
-- [x] 架构设计文档（`docs/architecture.md`）
-- [x] 行业调研（LlamaParse、LiteParse、Docling、Marker、MinerU、Unstructured）
-- [x] 可迁移代码评估（附录 B）
-- [x] 测试文档清单（附录 C）
-- [x] 项目结构和 pyproject.toml
-- [x] 配置系统（YAML + 环境变量 + Pydantic 校验）— `parserx/config/schema.py`
-- [x] 核心数据模型（PageElement, Document, DocumentMetadata）— `parserx/models/elements.py`
-- [x] PDFProvider（PyMuPDF 字符级提取，含字体元数据）— `parserx/providers/pdf.py`
-- [x] TextCleanProcessor（CJK 空格修复，从 doc-refine 迁移）— `parserx/processors/text_clean.py`
-- [x] LLM/VLM 服务抽象（OpenAI-compatible，可插拔）— `parserx/services/llm.py`
-- [x] 基础 MarkdownRenderer — `parserx/assembly/markdown.py`
-- [x] Pipeline 编排框架 — `parserx/pipeline.py`
-- [x] CLI 入口 — `parserx/cli.py`
-- [x] 15 个测试全部通过
-- [x] 端到端验证：`parserx parse pdf_text01.pdf` 正常输出
+- [x] Phase 1 全部内容（项目骨架、配置、PDFProvider、TextClean、LLM 服务、Pipeline、CLI）
+- [x] MetadataBuilder — `parserx/builders/metadata.py`
+  - 字体统计（自动识别正文字体 vs 标题候选字体）
+  - 编号模式检测（7 种中文编号模式，从 doc-refine 迁移）
+  - 逐页类型分类汇总
+- [x] HeaderFooterProcessor — `parserx/processors/header_footer.py`
+  - 几何位置 + 跨页重复检测（不依赖 LLM）
+  - 页码检测和移除
+  - 数字归一化使 "Page 1"/"Page 2" 被视为同一模式
+- [x] ChapterProcessor — `parserx/processors/chapter.py`
+  - 双信号融合：字体分析 + 编号模式匹配
+  - 防误判：长文本/句末标点过滤
+  - 为每个标题设置 heading_level（1/2/3）
+- [x] Pipeline 集成：MetadataBuilder → HeaderFooter → Chapter → TextClean
+- [x] 36 个测试全部通过
+- [x] 端到端验证：pdf_text01.pdf 正确检测章节（第X章→H1）、移除 43 个页脚
+
+**已知问题（下一迭代修复）**：
+- 标题检测偏多（187 个），需要调优阈值或增加过滤规则
+- 目录页的标题行被误检为正文标题（需识别并跳过目录页）
 
 **进行中**：
-- [ ] Phase 2 核心管道
+- [ ] Phase 2 剩余：TableProcessor、OCRBuilder、ChapterAssembler
 
-**下一步（Phase 2 优先级排序）**：
-1. MetadataBuilder：字体统计 + 标题候选检测（利用 PDFProvider 已提取的字符级字体元数据）
-2. ChapterProcessor：基于 MetadataBuilder 的规则引擎（迁移 `detect_numbering_signal` 等正则）
-3. HeaderFooterProcessor：几何位置 + 跨页重复检测（迁移 `_phase1_detect`）
-4. 基础 TableProcessor：改进 PyMuPDF 表格提取，输出 Markdown 表格
-5. OCRBuilder：PaddleOCR 在线服务集成 + 选择性 OCR 逻辑
-6. ChapterAssembler：章节切分和目录生成
+**下一步（Phase 2 剩余项）**：
+1. 调优 ChapterProcessor（减少误检：过滤短行、目录行等）
+2. ChapterAssembler：章节切分 + 目录生成
+3. 基础 TableProcessor：改进表格提取质量
+4. OCRBuilder：PaddleOCR 在线服务集成 + 选择性 OCR
+5. ImageProcessor：启发式图片分类 + VLM 描述接入
 
 **阻塞项**：无
 
@@ -1092,43 +1095,64 @@ ground_truth/
 
 ```
 parserx/
-├── __init__.py              # 包入口，版本号
-├── cli.py                   # CLI: parserx parse
-├── pipeline.py              # 管道编排
+├── __init__.py
+├── cli.py                          # CLI: parserx parse
+├── pipeline.py                     # Provider → MetadataBuilder → Processors → Renderer
 ├── config/
 │   ├── __init__.py
-│   └── schema.py            # Pydantic 配置模型 + YAML 加载 + 环境变量解析
+│   └── schema.py                   # Pydantic 配置 + YAML + 环境变量
 ├── models/
 │   ├── __init__.py
-│   ├── elements.py          # PageElement, Page, Document, DocumentMetadata, FontInfo
-│   └── results.py           # ParseResult
+│   ├── elements.py                 # PageElement, Page, Document, FontInfo, DocumentMetadata
+│   └── results.py                  # ParseResult
 ├── providers/
 │   ├── __init__.py
-│   ├── base.py              # Provider 协议
-│   └── pdf.py               # PDFProvider (PyMuPDF 字符级提取)
+│   ├── base.py                     # Provider 协议
+│   └── pdf.py                      # PDFProvider (PyMuPDF 字符级)
+├── builders/
+│   ├── __init__.py
+│   └── metadata.py                 # MetadataBuilder（字体统计 + 编号检测）
 ├── processors/
 │   ├── __init__.py
-│   ├── base.py              # Processor 协议
-│   └── text_clean.py        # CJK 空格修复、编码修复（从 doc-refine 迁移）
+│   ├── base.py                     # Processor 协议
+│   ├── header_footer.py            # 几何位置 + 跨页重复检测
+│   ├── chapter.py                  # 字体 + 编号规则引擎
+│   └── text_clean.py               # CJK 空格 + 编码修复
 ├── services/
 │   ├── __init__.py
-│   └── llm.py               # OpenAI-compatible LLM/VLM 服务抽象
+│   └── llm.py                      # OpenAI-compatible LLM/VLM 抽象
 ├── assembly/
 │   ├── __init__.py
-│   └── markdown.py          # Markdown 渲染器
-├── builders/                # Phase 2: MetadataBuilder, LayoutBuilder, OCRBuilder
-├── verification/            # Phase 3: HallucinationDetector, etc.
-└── eval/                    # Phase 4: 评估框架
+│   └── markdown.py                 # Markdown 渲染器
+├── verification/                   # Phase 3
+└── eval/                           # Phase 4
 tests/
-├── test_config.py           # 4 tests
-├── test_text_clean.py       # 7 tests
-└── test_pipeline.py         # 4 tests (含真实 PDF 端到端测试)
-parserx.yaml                 # 默认配置文件
+├── test_config.py                  # 4 tests
+├── test_text_clean.py              # 7 tests
+├── test_pipeline.py                # 4 tests (含真实 PDF)
+├── test_metadata_builder.py        # 8 tests
+├── test_header_footer.py           # 6 tests
+└── test_chapter.py                 # 7 tests (含真实 PDF)
+parserx.yaml                       # 默认配置文件
 ```
+
+### 端到端验证结果（pdf_text01.pdf — 55 页采购文件）
+
+```
+Body font: SimSun 12.0pt, 9 heading candidate(s), 7 numbering pattern(s)
+HeaderFooter: 1 footer pattern → removed 43 elements
+Chapter: detected 187 headings (偏多，需调优)
+Output: 44077 characters
+```
+
+- "第一章" → `# 第一章` (H1) ✓
+- "一、项目概况" 类 → `## ...` (H2) ✓
+- 页码 "- 3 -" → 已移除 ✓
 
 ### 迭代历史
 
 | 迭代 | 日期 | 内容 | 提交 |
 |------|------|------|------|
-| #0 | 2026-04-04 | 需求文档 + 架构设计 + 调研 | 见下方 |
-| #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | 见下方 |
+| #0 | 2026-04-04 | 需求文档 + 架构设计 + 调研 | a1e7c43 |
+| #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | a1e7c43 |
+| #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | 见下方 |
