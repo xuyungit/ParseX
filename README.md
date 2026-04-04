@@ -1,163 +1,223 @@
 # ParserX
 
-高保真文档解析工具，将 PDF/DOCX 转换为结构化 Markdown，面向知识库、检索和分析场景。
+**High-fidelity document parsing for knowledge bases, RAG, and document analysis.**
 
-## 核心能力
+English | [中文](README_CN.md)
 
-- **PDF → Markdown**：字符级字体元数据提取，自动识别章节、页眉页脚、表格、图片
-- **章节检测**：字体分析 + 中文编号模式匹配（7 种模式），无需 LLM 即可覆盖 70-80% 场景
-- **页眉页脚移除**：几何位置 + 跨页重复检测，无 LLM 依赖
-- **图片智能处理**：启发式分类（装饰性/信息性/表格/文字/空白），仅对信息性图片调用 VLM 描述
-- **选择性 OCR**：仅对扫描页/混合页调用 OCR，原生文本页跳过
-- **VLM 图片描述**：并发调用，支持 Responses API 和 Chat Completions API 自动切换
-- **评估框架**：文本编辑距离、标题 P/R/F1、成本统计
-- **全链路可配置**：YAML 配置 + 环境变量，模型/服务/策略均可切换
+ParserX converts PDF and DOCX files into well-structured Markdown — preserving chapter hierarchy, tables, images, and formulas — while keeping API costs low through selective, rule-first processing.
 
-## 快速开始
+## The Problem
 
-### 安装
+Document parsing tools today fall into two camps:
+
+| Approach | Examples | Pros | Cons |
+|----------|----------|------|------|
+| **Simple extraction** | pdfplumber, PyMuPDF | Fast, cheap, no GPU | Loses table structure, chapter hierarchy, image meaning |
+| **Full AI parsing** | LLM-per-page pipelines | High quality | 200+ API calls per doc, slow, expensive, non-deterministic |
+
+ParserX takes a third path: **deterministic rules first, AI only where needed**. The pipeline analyzes font metadata, page geometry, and numbering patterns to handle 70–80% of structure detection without any LLM calls. AI (OCR, VLM) is invoked selectively — only for scanned pages, only for informational images — cutting API costs by 10–20x compared to brute-force approaches.
+
+## How It Compares
+
+| Feature | PyMuPDF | Marker | MinerU | Docling | **ParserX** |
+|---------|---------|--------|--------|---------|-------------|
+| Chapter/heading detection | - | Heuristic + LLM | Layout model | Layout model | **Font analysis + numbering patterns** (7 CJK/EN patterns, no LLM) |
+| Header/footer removal | - | - | Layout model | Layout model | **Geometric + cross-page repetition** (no LLM) |
+| Table extraction | Basic | Surya | GPU models | TableFormer | **PyMuPDF native + cross-page merge** |
+| OCR for scanned pages | - | Surya (GPU) | PaddlePaddle (GPU) | EasyOCR | **Selective OCR** (only scanned/mixed pages, pluggable backend) |
+| Image handling | - | - | - | SmolVLM | **Heuristic classification + selective VLM** (skips 80%+ decorative images) |
+| GPU required | No | Yes | Yes | Optional | **No** (uses remote API services) |
+| License | AGPL | GPL-3.0 | AGPL | MIT | **MIT** |
+
+### Key Differentiators
+
+- **No GPU required.** Runs on a laptop. OCR and VLM use remote API services (configurable).
+- **CJK-first design.** Chinese numbering patterns (第X章, 一/二/三, (一)(二)(三), etc.), CJK space normalization, and bilingual document support are first-class.
+- **Measurable quality.** Built-in evaluation framework with text edit distance, heading P/R/F1, table cell F1, and cost tracking. Includes public benchmark support via [OmniDocBench](https://huggingface.co/datasets/opendatalab/OmniDocBench).
+- **Minimal, auditable pipeline.** ~35 source files, no deep framework dependency. Each processing step is a standalone module you can read, test, and replace independently.
+
+## Processing Pipeline
+
+```
+                    ┌─────────────────────────────────────────────┐
+  PDF/DOCX ──────▶  │  Provider  │  Extract text, tables, images  │
+                    │            │  with character-level metadata  │
+                    └──────┬──────────────────────────────────────┘
+                           │
+                    ┌──────▼──────────────────────────────────────┐
+                    │  Builders  │  Font statistics, page types,   │
+                    │            │  selective OCR, image extraction │
+                    └──────┬──────────────────────────────────────┘
+                           │
+                    ┌──────▼──────────────────────────────────────┐
+                    │ Processors │  Header/footer → Chapter →      │
+                    │            │  Table → Image → TextClean      │
+                    └──────┬──────────────────────────────────────┘
+                           │
+                    ┌──────▼──────────────────────────────────────┐
+                    │  Assembly  │  Markdown rendering,            │
+                    │            │  chapter splitting              │
+                    └─────────────────────────────────────────────┘
+```
+
+**Provider** — Extracts raw content from PDF (PyMuPDF character-level) or DOCX (Docling OOXML). Every text span carries font name, size, and bold flag — this metadata drives downstream heading detection without LLM.
+
+**Builders** — Analyzes the extracted content:
+- *MetadataBuilder* computes font statistics (body font vs heading candidates) and detects 7 numbering patterns
+- *OCRBuilder* classifies each page as native/scanned/mixed, then OCRs only the pages that need it — with text deduplication to avoid double-extracting content on mixed pages
+- *ImageExtractor* pulls images from the document, skipping decorative ones
+
+**Processors** — Transforms the annotated document:
+- *HeaderFooterProcessor* removes repeated header/footer text using geometric zones + cross-page frequency
+- *ChapterProcessor* assigns heading levels from font size ratio + numbering signals
+- *TableProcessor* merges tables that span across page breaks
+- *ImageProcessor* classifies images (decorative/informational/chart) and calls VLM for descriptions — only for the images that carry real information
+- *TextCleanProcessor* fixes CJK spacing artifacts and encoding issues
+
+**Assembly** — Renders the processed document as Markdown, optionally splitting into chapter files.
+
+## Quick Start
 
 ```bash
-# 克隆项目
-git clone <repo_url>
+git clone https://github.com/your-org/ParserX.git
 cd ParserX
-
-# 安装依赖（使用 uv）
 uv sync
 ```
 
-### 基本用法
+### Basic Usage
 
 ```bash
-# 解析 PDF 到标准输出
+# Parse a PDF to stdout
 uv run parserx parse document.pdf
 
-# 输出到文件
+# Output to file
 uv run parserx parse document.pdf -o output.md
 
-# 章节切分模式（生成 final.md + index.md + chapters/）
+# Split into chapters
 uv run parserx parse document.pdf -o output_dir/ --split-chapters
 
-# 详细日志
-uv run parserx parse document.pdf -v
+# Use a config file
+uv run parserx parse document.pdf -c parserx.yaml -v
 ```
 
-### 启用 VLM 图片描述
+### Enable VLM Image Descriptions
 
-需要设置环境变量指向 OpenAI 兼容的 API 端点：
+Set environment variables (or use a `.env` file) for an OpenAI-compatible endpoint:
 
 ```bash
-OPENAI_BASE_URL="http://your-api-endpoint/openai" \
-OPENAI_API_KEY="your-api-key" \
-VLM_MODEL="gpt-5.4-mini" \
-uv run parserx parse document.pdf -o output_dir/ --split-chapters -c parserx.yaml -v
+OPENAI_BASE_URL="https://api.openai.com/v1" \
+OPENAI_API_KEY="your-key" \
+uv run parserx parse document.pdf -c parserx.yaml -v
 ```
 
-不设置环境变量时，VLM 步骤自动跳过，其余功能正常工作。
+Without these, VLM steps are skipped automatically — everything else works.
 
-### 评估
+### Enable OCR for Scanned Documents
 
 ```bash
-# 对 ground truth 目录批量评估
+PADDLE_OCR_ENDPOINT="your-paddleocr-endpoint" \
+PADDLE_OCR_TOKEN="your-token" \
+uv run parserx parse scanned.pdf -c parserx.yaml
+```
+
+Without OCR credentials, scanned pages are skipped. See `.env.example` for all available variables.
+
+## Evaluation
+
+ParserX includes a built-in evaluation framework:
+
+```bash
+# Evaluate against ground truth
 uv run parserx eval ground_truth/ -o report.md
 
-# Ground truth 目录结构：
-# ground_truth/
-#   doc_name/
-#     input.pdf       # 待解析文档
-#     expected.md     # 人工校正的期望输出
+# Download public benchmark (OmniDocBench subset)
+uv pip install 'parserx[bench]'
+uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
 ```
 
-## 配置
+Metrics: normalized edit distance, character F1, heading precision/recall/F1, table cell F1, processing cost.
 
-默认配置文件 `parserx.yaml`，主要配置项：
+## Configuration
+
+All settings in `parserx.yaml`, credentials via environment variables:
 
 ```yaml
-# AI 服务（凭据通过环境变量注入，不写入配置文件）
 services:
   vlm:
     endpoint: ${OPENAI_BASE_URL}
     model: ${VLM_MODEL:gpt-5.4-mini}
     api_key: ${OPENAI_API_KEY}
-    max_concurrent: 6        # VLM 并发数
 
-# 处理器开关
+builders:
+  ocr:
+    engine: paddleocr          # or "none" to disable
+    endpoint: ${PADDLE_OCR_ENDPOINT}
+    token: ${PADDLE_OCR_TOKEN}
+    selective: true             # only OCR scanned/mixed pages
+
 processors:
   header_footer:
-    enabled: true            # 页眉页脚移除
-  chapter:
-    enabled: true            # 章节检测
-  image:
     enabled: true
-    vlm_description: true    # VLM 图片描述
-    skip_decorative: true    # 跳过装饰性图片
-  formula:
-    enabled: false           # 公式检测（默认关闭）
+  chapter:
+    enabled: true
+  image:
+    vlm_description: true
+    skip_decorative: true
 ```
 
-完整配置参见 [parserx.yaml](parserx.yaml)，配置模型定义参见 `parserx/config/schema.py`。
+See [`parserx.yaml`](parserx.yaml) for the full default configuration.
 
-## 架构
+## Project Status
 
-```
-Provider → MetadataBuilder → [OCRBuilder] → Processors → Renderer
+ParserX is under active development. The core pipeline is functional and tested.
 
-Processors 执行顺序：
-  HeaderFooter → Chapter → Image(分类) → [ImageExtract] → [Image(VLM)] → TextClean
-```
+| Component | Status | Notes |
+|-----------|--------|-------|
+| PDF extraction (PyMuPDF) | ✅ Done | Character-level font metadata |
+| DOCX extraction (Docling) | ✅ Done | Style → heading level mapping |
+| Header/footer removal | ✅ Done | Geometric + cross-page repetition |
+| Chapter/heading detection | ✅ Done | Font ratio + 7 numbering patterns |
+| Table extraction + cross-page merge | ✅ Done | Column-count matching + header dedup |
+| Selective OCR | ✅ Done | Page classification + text dedup on mixed pages |
+| Image classification + VLM | ✅ Done | Heuristic + concurrent VLM calls |
+| Text cleaning (CJK) | ✅ Done | Space normalization + encoding fix |
+| Evaluation framework | ✅ Done | Edit distance, heading/table F1, OmniDocBench |
+| Line unwrap | 🚧 Planned | Cross-line sentence joining |
+| LLM fallback for chapters | 🚧 Planned | For documents where rules alone are insufficient |
+| Formula extraction | 🚧 Planned | LaTeX output, requires model integration |
+| Hallucination detection | 🚧 Planned | Cross-validate VLM output against native text |
+| Reading order | 🚧 Planned | Multi-column layout support |
 
-详见 [docs/architecture.md](docs/architecture.md)。
-
-## 开发
-
-### 运行测试
+## Development
 
 ```bash
+# Run tests
 uv run pytest tests/ -v
+
+# Run tests with real documents (set sample dir)
+PARSERX_SAMPLE_DIR=/path/to/test/docs uv run pytest tests/ -v
 ```
 
-### 项目结构
+### Project Structure
 
 ```
 parserx/
-├── config/          # YAML 配置 + Pydantic 校验
-├── models/          # 核心数据模型（PageElement, Document, FontInfo）
-├── providers/       # 文档格式提取（PDF, 未来: DOCX）
-├── builders/        # 分析层（MetadataBuilder, OCRBuilder, ImageExtractor）
-├── processors/      # 处理层（HeaderFooter, Chapter, Image, TextClean）
-├── services/        # AI 服务抽象（LLM/VLM, OCR）
-├── assembly/        # 组装层（MarkdownRenderer, ChapterAssembler）
-├── eval/            # 评估框架（metrics, runner）
-└── verification/    # 验证层（待实现）
+├── config/       # YAML config + Pydantic schema
+├── models/       # Core data models (PageElement, Document)
+├── providers/    # Format extractors (PDF, DOCX)
+├── builders/     # Analysis (metadata, OCR, image extraction)
+├── processors/   # Transforms (header/footer, chapter, table, image, text)
+├── services/     # AI service abstraction (LLM/VLM, OCR)
+├── assembly/     # Output (Markdown renderer, chapter splitter)
+├── eval/         # Evaluation framework + OmniDocBench benchmark
+└── verification/ # Output validation (planned)
 ```
 
-### 添加新的 Processor
+## Documentation
 
-1. 在 `parserx/processors/` 下创建新文件
-2. 实现 `process(self, doc: Document) -> Document` 方法
-3. 在 `parserx/config/schema.py` 的 `ProcessorsConfig` 中添加配置项
-4. 在 `parserx/pipeline.py` 的 `_build_processors()` 中按正确顺序注册
-5. 在 `tests/` 下添加对应的测试文件
+- [Architecture](docs/architecture.md) — Technical design, module details, implementation status
+- [Requirements](docs/requirements.md) — Background, pain points, industry survey, design goals
 
-### 添加新的 Provider
+## License
 
-1. 在 `parserx/providers/` 下创建新文件
-2. 实现 `extract(self, path: Path) -> Document` 方法，输出统一的 `Document` 模型
-3. 在 `parserx/pipeline.py` 的 `_extract()` 中注册文件扩展名路由
-
-### 设计原则
-
-- **确定性优先，AI 兜底**：能用规则/代码解决的不用 LLM
-- **选择性处理**：先分类再路由，不做无差别处理
-- **交叉验证**：VLM 输出与 OCR/原生提取对比（待实现）
-- **规则不过拟合**：只用普适性强的硬规则，不针对特定测试文档优化
-- **一切可度量**：内建评估框架，支持回归测试
-
-## 文档
-
-- [需求文档](docs/requirements.md)：背景、痛点、行业调研、设计目标
-- [架构设计](docs/architecture.md)：技术方案、模块设计、实施计划、当前状态
-
-## 当前状态
-
-项目处于 **Phase 3 阶段**（质量提升），核心管道可用。详见 [架构文档附录 E](docs/architecture.md#附录-e-实施状态追踪)。
+MIT
