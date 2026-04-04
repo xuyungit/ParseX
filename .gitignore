@@ -22,3 +22,7 @@ wheels/
 
 # Secrets (never commit)
 .env
+
+# Ground truth / eval data (may contain internal documents)
+ground_truth/
+ground_truth_public/

@@ -36,6 +36,19 @@ class HeadingMetrics:
 
 
 @dataclass
+class TableMetrics:
+    """Table extraction quality metrics."""
+
+    detected_count: int = 0
+    expected_count: int = 0
+    matched_count: int = 0  # Tables matched by column count
+    cell_precision: float = 0.0  # What fraction of output cells are correct
+    cell_recall: float = 0.0  # What fraction of expected cells were found
+    cell_f1: float = 0.0
+    column_accuracy: float = 0.0  # Fraction of tables with correct column count
+
+
+@dataclass
 class CostMetrics:
     """Processing cost metrics."""
 
@@ -55,6 +68,7 @@ class EvalResult:
     document_name: str = ""
     text: TextMetrics = field(default_factory=TextMetrics)
     headings: HeadingMetrics = field(default_factory=HeadingMetrics)
+    tables: TableMetrics = field(default_factory=TableMetrics)
     cost: CostMetrics = field(default_factory=CostMetrics)
 
 
@@ -220,4 +234,123 @@ def compute_heading_metrics(
         detected_count=len(detected),
         expected_count=len(expected),
         correct_count=correct,
+    )
+
+
+# ── Table metrics ──────────────────────────────────────────────────────
+
+
+def _extract_tables(markdown: str) -> list[list[list[str]]]:
+    """Extract tables from markdown as list of 2D grids.
+
+    Each table is a list of rows, each row a list of cell strings.
+    Skips the separator row (|---|---|).
+    """
+    tables: list[list[list[str]]] = []
+    current_table: list[list[str]] = []
+    in_table = False
+
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            # Skip separator rows
+            if re.match(r"^\|[\s\-:|]+(\|[\s\-:|]+)+\|$", stripped):
+                continue
+            cells = [c.strip() for c in stripped[1:-1].split("|")]
+            current_table.append(cells)
+            in_table = True
+        else:
+            if in_table and current_table:
+                tables.append(current_table)
+                current_table = []
+            in_table = False
+
+    if current_table:
+        tables.append(current_table)
+
+    return tables
+
+
+def _normalize_cell(text: str) -> str:
+    """Normalize cell text for comparison."""
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _table_cells_to_set(tables: list[list[list[str]]]) -> set[str]:
+    """Convert all table cells to a set of (table_idx, row, col, normalized_text) keys."""
+    cells = set()
+    for t_idx, table in enumerate(tables):
+        for r_idx, row in enumerate(table):
+            for c_idx, cell in enumerate(row):
+                norm = _normalize_cell(cell)
+                if norm:  # Skip empty cells
+                    cells.add(f"{t_idx}:{r_idx}:{c_idx}:{norm}")
+    return cells
+
+
+def compute_table_metrics(
+    output_md: str, expected_md: str,
+) -> TableMetrics:
+    """Compare extracted tables against ground truth tables.
+
+    Matches tables by order (first output table vs first expected table, etc.)
+    then computes cell-level precision/recall/F1.
+
+    Also checks column count accuracy as a structural metric.
+    """
+    detected_tables = _extract_tables(output_md)
+    expected_tables = _extract_tables(expected_md)
+
+    if not expected_tables and not detected_tables:
+        return TableMetrics()
+
+    if not expected_tables:
+        return TableMetrics(detected_count=len(detected_tables))
+
+    if not detected_tables:
+        return TableMetrics(expected_count=len(expected_tables))
+
+    # Match tables by order, compute per-matched-pair cell overlap
+    n_match = min(len(detected_tables), len(expected_tables))
+    col_correct = 0
+    total_out_cells = 0
+    total_exp_cells = 0
+    total_common = 0
+
+    for i in range(n_match):
+        det = detected_tables[i]
+        exp = expected_tables[i]
+
+        # Column count check
+        det_cols = max((len(r) for r in det), default=0)
+        exp_cols = max((len(r) for r in exp), default=0)
+        if det_cols == exp_cols:
+            col_correct += 1
+
+        # Cell-level comparison using normalized text multiset
+        from collections import Counter
+        det_cells = Counter(
+            _normalize_cell(c) for row in det for c in row if _normalize_cell(c)
+        )
+        exp_cells = Counter(
+            _normalize_cell(c) for row in exp for c in row if _normalize_cell(c)
+        )
+
+        common = sum((det_cells & exp_cells).values())
+        total_common += common
+        total_out_cells += sum(det_cells.values())
+        total_exp_cells += sum(exp_cells.values())
+
+    precision = total_common / max(total_out_cells, 1)
+    recall = total_common / max(total_exp_cells, 1)
+    f1 = 2 * precision * recall / max(precision + recall, 1e-10)
+
+    return TableMetrics(
+        detected_count=len(detected_tables),
+        expected_count=len(expected_tables),
+        matched_count=n_match,
+        cell_precision=round(precision, 4),
+        cell_recall=round(recall, 4),
+        cell_f1=round(f1, 4),
+        column_accuracy=round(col_correct / max(n_match, 1), 4),
     )

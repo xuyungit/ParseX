@@ -19,7 +19,9 @@ from parserx.processors.base import Processor
 from parserx.processors.chapter import ChapterProcessor
 from parserx.processors.header_footer import HeaderFooterProcessor
 from parserx.processors.image import ImageProcessor
+from parserx.processors.table import TableProcessor
 from parserx.processors.text_clean import TextCleanProcessor
+from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
 from parserx.services.llm import create_vlm_service
 
@@ -137,6 +139,8 @@ class Pipeline:
         suffix = path.suffix.lower()
         if suffix == ".pdf":
             return PDFProvider().extract(path)
+        if suffix == ".docx":
+            return DOCXProvider().extract(path)
         raise ValueError(f"Unsupported format: {suffix}")
 
     def _create_vlm_service(self):
@@ -162,6 +166,9 @@ class Pipeline:
 
         if self._config.processors.chapter.enabled:
             processors.append(ChapterProcessor(self._config.processors.chapter))
+
+        if self._config.processors.table.enabled:
+            processors.append(TableProcessor(self._config.processors.table))
 
         if self._config.processors.image.enabled:
             processors.append(ImageProcessor(

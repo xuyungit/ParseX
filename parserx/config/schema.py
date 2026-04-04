@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 
@@ -42,8 +43,9 @@ class LayoutBuilderConfig(BaseModel):
 class OCRBuilderConfig(BaseModel):
     engine: str = "paddleocr"
     lang: str = "ch_sim+en"
-    endpoint: str | None = None
-    token: str | None = None
+    endpoint: str = ""
+    token: str = ""
+    model: str = "PaddleOCR-VL-1.5"
     selective: bool = True
     force_full_page: bool = False
 
@@ -170,8 +172,12 @@ def _resolve_env_vars(value: Any) -> Any:
 def load_config(path: str | Path | None = None) -> ParserXConfig:
     """Load configuration from YAML file with environment variable resolution.
 
+    Loads .env file (if present) before resolving ${VAR} placeholders,
+    so credentials can be managed via .env for local development.
     If no path is given, returns default config.
     """
+    load_dotenv(override=False)
+
     if path is None:
         return ParserXConfig()
 

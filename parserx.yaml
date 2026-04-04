@@ -19,6 +19,9 @@ builders:
   ocr:
     engine: paddleocr
     lang: ch_sim+en
+    endpoint: ${PADDLE_OCR_ENDPOINT}
+    token: ${PADDLE_OCR_TOKEN}
+    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.5}
     selective: true
 
 processors:

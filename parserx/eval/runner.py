@@ -12,6 +12,7 @@ from parserx.eval.metrics import (
     CostMetrics,
     EvalResult,
     compute_heading_metrics,
+    compute_table_metrics,
     compute_text_metrics,
 )
 from parserx.pipeline import Pipeline
@@ -34,18 +35,20 @@ class EvalRunner:
         self._pipeline = Pipeline(self._config)
 
     def evaluate_single(
-        self, input_path: Path, expected_md_path: Path
+        self, input_path: Path, expected_md_path: Path, name: str = "",
     ) -> EvalResult:
         """Evaluate a single document against its ground truth."""
         expected_md = expected_md_path.read_text(encoding="utf-8")
 
-        # Run pipeline and measure time
+        # Single pipeline run — get Document, then render Markdown from it
         start = time.time()
-        output_md = self._pipeline.parse(input_path)
+        doc = self._pipeline.parse_to_document(input_path)
         elapsed = time.time() - start
 
-        # Get document stats
-        doc = self._pipeline.parse_to_document(input_path)
+        from parserx.assembly.markdown import MarkdownRenderer
+        renderer = MarkdownRenderer(self._config.output)
+        output_md = renderer.render(doc)
+
         images_total = len(doc.elements_by_type("image"))
         images_skipped = sum(
             1 for e in doc.elements_by_type("image")
@@ -55,11 +58,13 @@ class EvalRunner:
         # Compute metrics
         text_metrics = compute_text_metrics(output_md, expected_md)
         heading_metrics = compute_heading_metrics(output_md, expected_md)
+        table_metrics = compute_table_metrics(output_md, expected_md)
 
         return EvalResult(
-            document_name=input_path.name,
+            document_name=name or input_path.stem,
             text=text_metrics,
             headings=heading_metrics,
+            tables=table_metrics,
             cost=CostMetrics(
                 wall_time_seconds=round(elapsed, 2),
                 pages_processed=len(doc.pages),
@@ -94,11 +99,11 @@ class EvalRunner:
                 continue
 
             log.info("Evaluating: %s", doc_dir.name)
-            result = self.evaluate_single(input_path, expected_path)
+            result = self.evaluate_single(input_path, expected_path, name=doc_dir.name)
             results.append(result)
 
             log.info(
-                "  Text: edit_dist=%.3f, char_f1=%.3f | Headings: P=%.2f R=%.2f F1=%.2f (%d/%d) | Time: %.1fs",
+                "  Text: edit_dist=%.3f, char_f1=%.3f | Headings: P=%.2f R=%.2f F1=%.2f (%d/%d) | Tables: %d found, %.2f cell_f1 | Time: %.1fs",
                 result.text.edit_distance,
                 result.text.char_f1,
                 result.headings.precision,
@@ -106,6 +111,8 @@ class EvalRunner:
                 result.headings.f1,
                 result.headings.correct_count,
                 result.headings.expected_count,
+                result.tables.detected_count,
+                result.tables.cell_f1,
                 result.cost.wall_time_seconds,
             )
 
@@ -120,8 +127,8 @@ class EvalRunner:
         lines = ["# ParserX Evaluation Report", ""]
 
         # Summary table
-        lines.append("| Document | Edit Dist | Char F1 | Heading F1 | H P/R | Time |")
-        lines.append("|----------|-----------|---------|------------|-------|------|")
+        lines.append("| Document | Edit Dist | Char F1 | Heading F1 | H P/R | Table F1 | Time |")
+        lines.append("|----------|-----------|---------|------------|-------|----------|------|")
 
         for r in results:
             lines.append(
@@ -130,6 +137,7 @@ class EvalRunner:
                 f"| {r.text.char_f1:.3f} "
                 f"| {r.headings.f1:.3f} "
                 f"| {r.headings.precision:.2f}/{r.headings.recall:.2f} "
+                f"| {r.tables.cell_f1:.3f} "
                 f"| {r.cost.wall_time_seconds:.1f}s |"
             )
 
@@ -138,7 +146,11 @@ class EvalRunner:
             avg_ed = sum(r.text.edit_distance for r in results) / len(results)
             avg_cf1 = sum(r.text.char_f1 for r in results) / len(results)
             avg_hf1 = sum(r.headings.f1 for r in results) / len(results)
-            lines.append(f"| **Average** | **{avg_ed:.3f}** | **{avg_cf1:.3f}** | **{avg_hf1:.3f}** | | |")
+            avg_tf1 = sum(r.tables.cell_f1 for r in results) / len(results)
+            lines.append(
+                f"| **Average** | **{avg_ed:.3f}** | **{avg_cf1:.3f}** "
+                f"| **{avg_hf1:.3f}** | | **{avg_tf1:.3f}** | |"
+            )
 
         lines.append("")
         return "\n".join(lines)

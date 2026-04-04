@@ -165,7 +165,7 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
   4. 逐页分类：native / scanned / mixed（基于文本字符数 vs 图片覆盖率）
 ```
 
-#### DOCXProvider — ❌ 待实现
+#### DOCXProvider — ✅ 已实现 (`providers/docx.py`)
 
 ```
 输入：DOCX 文件路径
@@ -349,7 +349,7 @@ LLM 兜底（仅当规则置信度低时）：
   - detect_numbering_signal / has_numbering_signal / guess_numbering_level
 ```
 
-#### 3.3.3 TableProcessor — ⚠️ 部分实现
+#### 3.3.3 TableProcessor — ✅ 跨页合并已实现 (`processors/table.py`)
 
 ```
 当前状态：
@@ -1088,7 +1088,7 @@ ground_truth/
 
 ### 当前状态总览
 
-**阶段**：Phase 3（质量提升）进行中 | **测试**：67 passing | **提交**：7 次 | **源文件**：31 个
+**阶段**：Phase 3（质量提升）进行中 | **测试**：99 passing | **提交**：9 次 | **源文件**：35 个
 
 ### 模块实现状态
 
@@ -1097,7 +1097,7 @@ ground_truth/
 | 配置 | ParserXConfig | `config/schema.py` | ✅ | YAML + `${VAR:default}` 环境变量 + Pydantic |
 | 数据 | PageElement/Document | `models/elements.py` | ✅ | 含 FontInfo, PageType, DocumentMetadata |
 | 输入 | PDFProvider | `providers/pdf.py` | ✅ | PyMuPDF 字符级提取（字体元数据 + 表格 + 图片） |
-| 输入 | DOCXProvider | — | ❌ | 需 Docling 封装，详见 3.1 节设计 |
+| 输入 | DOCXProvider | `providers/docx.py` | ✅ | Docling OOXML 解析，样式→heading_level，表格→Markdown |
 | 分析 | MetadataBuilder | `builders/metadata.py` | ✅ | 字体统计 + 7 种编号模式 + 逐页类型 |
 | 分析 | OCRBuilder | `builders/ocr.py` | ✅ | 选择性 OCR（仅 scanned/mixed 页） |
 | 分析 | ImageExtractor | `builders/image_extract.py` | ✅ | 选择性图片提取（跳过装饰性） |
@@ -1106,7 +1106,7 @@ ground_truth/
 | 处理 | ChapterProcessor | `processors/chapter.py` | ✅ | 字体+编号规则，LLM fallback 未做 |
 | 处理 | ImageProcessor | `processors/image.py` | ✅ | 启发式分类 + 并发 VLM 描述 |
 | 处理 | TextCleanProcessor | `processors/text_clean.py` | ✅ | CJK 空格 + C1 编码 + 控制字符 |
-| 处理 | TableProcessor | — | ⚠️ | 基础表格在 PDFProvider 中，无独立 Processor |
+| 处理 | TableProcessor | `processors/table.py` | ✅ | 跨页表格合并（列数匹配 + 表头去重） |
 | 处理 | LineUnwrapProcessor | — | ❌ | 详见 3.3.6 节设计 |
 | 处理 | FormulaProcessor | — | ❌ | 低优先级，需本地 GPU |
 | 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
@@ -1118,7 +1118,8 @@ ground_truth/
 | 验证 | HallucinationDetector | — | ❌ | 详见 3.5 节设计 |
 | 验证 | CompletenessChecker | — | ❌ | 详见 3.5 节设计 |
 | 验证 | StructureValidator | — | ❌ | 详见 3.5 节设计 |
-| 评估 | Eval Framework | `eval/metrics.py` + `eval/runner.py` | ✅ | edit dist + heading P/R/F1 + cost |
+| 评估 | Eval Framework | `eval/metrics.py` + `eval/runner.py` | ✅ | edit dist + heading P/R/F1 + table cell F1 + cost |
+| 评估 | Ground Truth | `ground_truth/` | ✅ | 4 个文档基线（deepseek, text_table01, text_table_libreoffice, pdf_text01_tables） |
 | CLI | parse + eval | `cli.py` | ✅ | `parserx parse` + `parserx eval` |
 
 ### 设计原则（已验证）
@@ -1143,12 +1144,9 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 
 | 优先级 | 任务 | 涉及文件 | 设计详情 |
 |--------|------|---------|---------|
-| **P0** | DOCXProvider | `providers/docx.py` | 3.1 节有详细方案 |
-| **P0** | 跨页表格合并 (TableProcessor) | `processors/table.py` | 3.3.3 节有详细方案 |
-| **P0** | Ground truth 样本 + 基线评估 | `ground_truth/` | 5.5 节有格式说明 |
+| **P0** | LineUnwrapProcessor | `processors/line_unwrap.py` | 3.3.6 节有详细方案 |
+| **P0** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节"阶段 2" |
 | **P1** | HallucinationDetector | `verification/hallucination.py` | 3.5 节有详细方案 |
-| **P1** | LineUnwrapProcessor | `processors/line_unwrap.py` | 3.3.6 节有详细方案 |
-| **P1** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节"阶段 2" |
 | **P2** | CrossReferenceResolver | `assembly/crossref.py` | 3.4 节有设计 |
 | **P2** | CompletenessChecker | `verification/completeness.py` | 3.5 节有设计 |
 | **P2** | StructureValidator | `verification/structure.py` | 3.5 节有设计 |
@@ -1176,6 +1174,18 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 - 日期行 "2026 年3 月至" → 不被误判为标题 ✓
 - 公章图片 → VLM 描述："红色圆形印章...广西楼栋集团有限公司" ✓
 - 图片选择性：103 张图 → 83 装饰性跳过 → 5 次 VLM（vs doc-refine 206 次 API）✓
+- 跨页表格合并：pdf_text01 中 5 组跨页表格成功合并 ✓
+- DOCX 样式 heading_level 直接映射，ChapterProcessor 自动跳过已有标题 ✓
+
+**基线评估（4 个 ground truth 文档）**：
+
+| 文档 | Edit Dist | Char F1 | Heading F1 | Table F1 | 说明 |
+|------|-----------|---------|------------|----------|------|
+| text_table01 | 0.025 | 0.988 | 1.000 | — | 纯文本+标题，近乎完美 |
+| text_table_libreoffice | 0.197 | 0.890 | 0.800 | 1.000 | 表格完美；标题拆分导致精确率偏低 |
+| pdf_text01_tables | 0.438 | 0.720 | — | 0.660 | 跨页合并有效，但文本/表格重复提取 |
+| deepseek | 0.317 | 0.796 | — | — | ChatGPT 导出，含 UI 元素 |
+| **平均** | **0.244** | **0.848** | | | |
 
 ### 迭代历史
 
@@ -1188,4 +1198,6 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | #5 | 2026-04-04 | Phase 3a：ImageExtractor、VLM 描述流程 | 157b1d5 |
 | #6 | 2026-04-04 | Phase 3b：VLM 端到端验证、Responses API 自动切换 | ef2a87f |
 | #7 | 2026-04-04 | Phase 3c：并发 VLM、评估框架 | 851101d |
-| #8 | 2026-04-04 | 文档补齐：README、架构文档修正、实施状态重写 | 见下方 |
+| #8 | 2026-04-04 | 文档补齐：README、架构文档修正、实施状态重写 | 2b6a82c |
+| #9 | 2026-04-04 | Phase 3d：DOCXProvider、TableProcessor 跨页合并、Ground Truth 基线评估 | 待提交 |
+| #10 | 2026-04-04 | 评估打磨：修复双重解析、表格指标、4 个完整 GT、99 测试 | 见下方 |
