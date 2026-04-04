@@ -125,13 +125,23 @@ class DOCXProvider:
                 )
 
         if isinstance(item, PictureItem):
+            width = 0
+            height = 0
+            if item.image and item.image.size:
+                width = int(item.image.size.width)
+                height = int(item.image.size.height)
             return PageElement(
                 type="image",
                 content="",
                 bbox=bbox,
                 page_number=page_number,
                 source="native",
-                metadata={"docling_picture": True},
+                metadata={
+                    "docling_picture": True,
+                    "width": width,
+                    "height": height,
+                    "docling_self_ref": item.self_ref,
+                },
             )
 
         return None
