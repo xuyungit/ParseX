@@ -1117,14 +1117,29 @@ ground_truth/
   - VLM 只在配置了 endpoint+api_key 时启用
 - [x] 55 个测试全部通过
 
+- [x] VLM 端到端验证成功
+  - LLM 服务层支�� Responses API（doc-refine 端点）+ Chat Completions 自动切换
+  - text_pic01.pdf: 20 张信息性图片 → 5 张获得 VLM 描述，15 张被像素分析过滤为 blank
+  - 公章图片描述："红色圆形印章，中心五角星，外圈文字'广西楼栋集团有限公司'"——准确
+  - MarkdownRenderer 优化：多行描述正确处理
+- [x] 55 个测试全部通过
+
+**VLM 使用方式**：
+```bash
+OPENAI_BASE_URL="https://your-api-endpoint/v1" \
+OPENAI_API_KEY="..." \
+VLM_MODEL="gpt-5.4-mini" \
+parserx parse input.pdf -o output/ --split-chapters -c parserx.yaml -v
+```
+
 **进行中**：
-- [ ] Phase 3 剩余：LLM fallback、评估框架
+- [ ] Phase 3 剩余
 
 **下一步**：
-1. 用真实 VLM 服务端到端测试图片描述质量（需设置环境变量）
-2. LLM fallback：对低置信章节检测调用 LLM 精化
-3. 评估框架：基础 metrics
-4. 更多格式支持：DOCX Provider
+1. 并发 VLM 调用（当前串行，20 张图太慢）
+2. LLM fallback：低置信章节检测
+3. 评估框架
+4. DOCX Provider
 
 **阻塞项**：无
 
@@ -1216,4 +1231,5 @@ Output: 43577 characters, 13 chapter files + index.md
 | #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | da613bf |
 | #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 7d64044 |
 | #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 0f03db1 |
-| #5 | 2026-04-04 | Phase 3a：ImageExtractor（选择性提取）、VLM 描述流程、Pipeline 三步分离、55 tests | 见下方 |
+| #5 | 2026-04-04 | Phase 3a：ImageExtractor（选择性提取）、VLM 描述流程、Pipeline 三步分离、55 tests | 157b1d5 |
+| #6 | 2026-04-04 | Phase 3b：VLM 端到端验证（Responses API 自动切换）、MarkdownRenderer 多行描述、55 tests | 见下方 |

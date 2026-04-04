@@ -1,7 +1,10 @@
 """Pluggable LLM/VLM service abstraction.
 
-Supports any OpenAI-compatible API endpoint. Models and endpoints are
-configured via parserx.yaml or environment variables — never hardcoded.
+Supports OpenAI-compatible API endpoints with two API styles:
+- Responses API (client.responses.create) — used by doc-refine's endpoint
+- Chat Completions API (client.chat.completions.create) — standard OpenAI
+
+Auto-detects which API to use, or can be configured explicitly.
 """
 
 from __future__ import annotations
@@ -47,10 +50,10 @@ class VLMService(Protocol):
 
 
 class OpenAICompatibleService:
-    """LLM/VLM service using OpenAI-compatible API.
+    """LLM/VLM service supporting both Responses API and Chat Completions API.
 
-    Works with OpenAI, Anthropic (via proxy), local Ollama, vLLM,
-    or any server implementing the OpenAI chat completions API.
+    Tries Responses API first (as used by doc-refine's endpoint).
+    Falls back to Chat Completions API if Responses API returns 404.
     """
 
     def __init__(self, config: ServiceConfig):
@@ -62,6 +65,8 @@ class OpenAICompatibleService:
             max_retries=config.max_retries,
         )
         self._model = config.model
+        # None = auto-detect, "responses" or "chat"
+        self._api_style: str | None = None
 
     def complete(
         self,
@@ -71,7 +76,107 @@ class OpenAICompatibleService:
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> str:
-        """Text completion via chat API."""
+        """Text completion — tries Responses API then Chat Completions."""
+        full_prompt = f"{system}\n\n{user}" if system else user
+
+        if self._api_style != "chat":
+            try:
+                return self._complete_responses(full_prompt, temperature, max_tokens)
+            except Exception as exc:
+                if self._api_style is None and _is_not_found(exc):
+                    log.info("Responses API not available, falling back to Chat Completions")
+                    self._api_style = "chat"
+                else:
+                    raise
+
+        return self._complete_chat(system, user, temperature, max_tokens)
+
+    def describe_image(
+        self,
+        image_path: Path,
+        prompt: str,
+        *,
+        context: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> str:
+        """Image understanding — tries Responses API then Chat Completions."""
+        image_data_url = _encode_image_data_url(image_path)
+
+        if self._api_style != "chat":
+            try:
+                return self._describe_responses(
+                    image_data_url, prompt, context, temperature, max_tokens
+                )
+            except Exception as exc:
+                if self._api_style is None and _is_not_found(exc):
+                    log.info("Responses API not available, falling back to Chat Completions")
+                    self._api_style = "chat"
+                else:
+                    raise
+
+        return self._describe_chat(
+            image_data_url, prompt, context, temperature, max_tokens
+        )
+
+    # ── Responses API (doc-refine style) ────────────────────────────────
+
+    def _complete_responses(
+        self, prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        tokens: list[str] = []
+        with self._client.responses.create(
+            model=self._model,
+            input=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            stream=True,
+        ) as stream:
+            for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    tokens.append(event.delta)
+
+        text = "".join(tokens).strip()
+        if self._api_style is None:
+            self._api_style = "responses"
+        return _strip_code_fences(text)
+
+    def _describe_responses(
+        self,
+        image_data_url: str,
+        prompt: str,
+        context: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "input_text", "text": context})
+        content.append({"type": "input_text", "text": prompt})
+        content.append({"type": "input_image", "image_url": image_data_url})
+
+        tokens: list[str] = []
+        with self._client.responses.create(
+            model=self._model,
+            input=[{"role": "user", "content": content}],
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            stream=True,
+        ) as stream:
+            for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    tokens.append(event.delta)
+
+        text = "".join(tokens).strip()
+        if self._api_style is None:
+            self._api_style = "responses"
+        return _strip_code_fences(text)
+
+    # ── Chat Completions API (standard OpenAI) ──────────────────────────
+
+    def _complete_chat(
+        self, system: str, user: str, temperature: float, max_tokens: int
+    ) -> str:
         messages: list[dict[str, Any]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -83,28 +188,25 @@ class OpenAICompatibleService:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        if self._api_style is None:
+            self._api_style = "chat"
         return response.choices[0].message.content or ""
 
-    def describe_image(
+    def _describe_chat(
         self,
-        image_path: Path,
+        image_data_url: str,
         prompt: str,
-        *,
-        context: str = "",
-        temperature: float = 0.1,
-        max_tokens: int = 8192,
+        context: str,
+        temperature: float,
+        max_tokens: int,
     ) -> str:
-        """Image understanding via vision API."""
-        image_data = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-        mime_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
-
         content: list[dict[str, Any]] = []
         if context:
             content.append({"type": "text", "text": context})
         content.append({"type": "text", "text": prompt})
         content.append({
             "type": "image_url",
-            "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+            "image_url": {"url": image_data_url},
         })
 
         response = self._client.chat.completions.create(
@@ -113,7 +215,35 @@ class OpenAICompatibleService:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        if self._api_style is None:
+            self._api_style = "chat"
         return response.choices[0].message.content or ""
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _encode_image_data_url(image_path: Path) -> str:
+    """Encode image as data URL for API consumption."""
+    mime_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
+    data = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    return f"data:{mime_type};base64,{data}"
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove markdown code fences from LLM response."""
+    if text.startswith("```"):
+        first_nl = text.find("\n")
+        text = text[first_nl + 1:] if first_nl >= 0 else ""
+        if text.endswith("```"):
+            text = text[:-3]
+    return text.strip()
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """Check if exception is a 404 Not Found error."""
+    exc_str = str(exc)
+    return "404" in exc_str or "Not Found" in exc_str
 
 
 def create_llm_service(config: ServiceConfig) -> OpenAICompatibleService:

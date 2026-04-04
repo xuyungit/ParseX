@@ -63,15 +63,32 @@ class MarkdownRenderer:
         return element.content
 
     def _render_image(self, element: PageElement) -> str:
-        """Render image with description as alt text."""
+        """Render image with description.
+
+        If description is short (single line), use as alt text in ![alt](path).
+        If description is multi-line, render as image link + blockquote description.
+        """
         description = element.metadata.get("description", "")
         image_path = element.metadata.get("saved_path", "")
+        skipped = element.metadata.get("skipped", False)
 
+        if skipped:
+            return ""
+
+        # Normalize description for embedding
+        desc_oneline = description.replace("\n", " ").strip() if description else ""
+
+        if image_path and description:
+            # Short description → alt text; long → separate block
+            if len(desc_oneline) <= 120:
+                return f"![{desc_oneline}]({image_path})"
+            else:
+                return f"![]({image_path})\n\n> {desc_oneline}"
         if image_path:
-            return f"![{description}]({image_path})"
+            return f"![]({image_path})"
         if description:
-            return f"> [图片] {description}"
-        return "> [图片]"
+            return f"> [图片] {desc_oneline}"
+        return ""
 
     def _render_formula(self, element: PageElement) -> str:
         """Render formula as LaTeX."""
