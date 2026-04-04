@@ -12,11 +12,17 @@ dependencies = [
     "pillow>=10.0",
     "numpy>=1.26",
     "requests>=2.33.1",
+    "docling>=2.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
 docx = ["docling>=2.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+bench = [
+    "datasets>=3.0",
+    "huggingface-hub>=0.25",
+]
 
 [project.scripts]
 parserx = "parserx.cli:main"

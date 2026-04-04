@@ -55,15 +55,17 @@ class PaddleOCRService:
     Migrated from doc-refine pipeline.py _call_paddleocr_sync.
     """
 
-    DEFAULT_SYNC_URL = "REDACTED_OCR_ENDPOINT"
-    DEFAULT_TOKEN = "REDACTED_TOKEN"
-    DEFAULT_MODEL = "PaddleOCR-VL-1.5"
-
     def __init__(self, config: OCRBuilderConfig | None = None):
         cfg = config or OCRBuilderConfig()
-        self._url = cfg.endpoint or self.DEFAULT_SYNC_URL
-        self._token = cfg.token or self.DEFAULT_TOKEN
-        self._model = self.DEFAULT_MODEL
+        if not cfg.endpoint or not cfg.token:
+            raise ValueError(
+                "PaddleOCR requires 'endpoint' and 'token'. "
+                "Set PADDLE_OCR_ENDPOINT / PADDLE_OCR_TOKEN in environment "
+                "or provide them in parserx.yaml under builders.ocr."
+            )
+        self._url = cfg.endpoint
+        self._token = cfg.token
+        self._model = cfg.model
         self._max_retries = 3
         self._timeout = 600
 

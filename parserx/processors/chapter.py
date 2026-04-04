@@ -161,6 +161,11 @@ class ChapterProcessor:
                 if elem.type != "text":
                     continue
 
+                # Skip elements with heading_level already set (e.g. from DOCX styles)
+                if elem.metadata.get("heading_level"):
+                    detected_count += 1
+                    continue
+
                 level = self._detect_heading(
                     elem, heading_candidates, body_font, numbering_patterns
                 )
