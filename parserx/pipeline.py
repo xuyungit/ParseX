@@ -126,8 +126,8 @@ class Pipeline:
                     vlm_processor = ImageProcessor(
                         config=self._config.processors.image,
                         vlm_service=self._vlm_service,
+                        max_concurrent=self._config.services.vlm.max_concurrent,
                     )
-                    log.info("Running VLM image descriptions")
                     doc = vlm_processor.process(doc)
 
         return doc

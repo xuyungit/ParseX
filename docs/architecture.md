@@ -1132,14 +1132,25 @@ VLM_MODEL="gpt-5.4-mini" \
 parserx parse input.pdf -o output/ --split-chapters -c parserx.yaml -v
 ```
 
+- [x] 并发 VLM 调用 — ImageProcessor 用 ThreadPoolExecutor 批量执行
+  - 可配置并发数（services.vlm.max_concurrent，默认 6）
+  - 先收集所�� VLM 任务，再并发执行
+- [x] 评估框架 — `parserx/eval/`
+  - 文本指标：归一化编辑距离、字符级 P/R/F1
+  - 标题指标：精确率/召回率/F1（模糊匹配，��略空白和标点）
+  - 成本指标：耗时、API 调用数、图片统计
+  - CLI: `parserx eval <ground_truth_dir> [-o report.md]`
+  - Ground truth 格式：`doc_name/input.pdf` + `doc_name/expected.md`
+- [x] 67 个测试全部通过
+
 **进行中**：
 - [ ] Phase 3 剩余
 
 **下一步**：
-1. 并发 VLM 调用（当前串行，20 张图太慢）
+1. 创建 ground truth 样本（用当前输出人工校正作为基线）
 2. LLM fallback：低置信章节检测
-3. 评估框架
-4. DOCX Provider
+3. DOCX Provider
+4. 跨页表格合并
 
 **阻塞项**：无
 
@@ -1181,8 +1192,11 @@ parserx/
 │   ├── __init__.py
 │   ├── chapter.py                  # ChapterAssembler（H1 切分 + index.md）
 │   └── markdown.py                 # Markdown 渲染器
-├── verification/                   # Phase 3
-└── eval/                           # Phase 4
+├── verification/                   # Phase 3（待实现）
+└── eval/
+    ├── __init__.py
+    ├── metrics.py                  # 编辑距离、字符 P/R/F1、标题 P/R/F1
+    └── runner.py                   # 评估运行器 + 报告生成
 tests/
 ├── test_config.py                  # 4 tests
 ├── test_text_clean.py              # 7 tests
@@ -1192,7 +1206,8 @@ tests/
 ├── test_chapter.py                 # 7 tests (含真实 PDF)
 ├── test_chapter_assembler.py       # 5 tests (含真实 PDF 章节切分)
 ├── test_image_processor.py         # 9 tests
-└── test_ocr_builder.py             # 5 tests
+├── test_ocr_builder.py             # 5 tests
+└── test_eval.py                    # 12 tests
 parserx.yaml                       # 默认配置文件
 ```
 
@@ -1232,4 +1247,5 @@ Output: 43577 characters, 13 chapter files + index.md
 | #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 7d64044 |
 | #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 0f03db1 |
 | #5 | 2026-04-04 | Phase 3a：ImageExtractor（选择性提取）、VLM 描述流程、Pipeline 三步分离、55 tests | 157b1d5 |
-| #6 | 2026-04-04 | Phase 3b：VLM 端到端验证（Responses API 自动切换）、MarkdownRenderer 多行描述、55 tests | 见下方 |
+| #6 | 2026-04-04 | Phase 3b：VLM 端到端验证（Responses API 自动切换）、MarkdownRenderer 多行描述、55 tests | ef2a87f |
+| #7 | 2026-04-04 | Phase 3c：并发 VLM、评估框架（text/heading/cost metrics + CLI）、67 tests | 见下方 |

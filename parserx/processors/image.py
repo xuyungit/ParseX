@@ -1,22 +1,13 @@
 """Image processor — classify images and generate VLM descriptions.
 
 Strategy: classify first, process selectively.
-
-Classification (heuristic, no model needed):
-- decorative: small icons, thin lines, near-blank images → skip
-- informational: diagrams, charts, meaningful photos → VLM description
-- table_image: detected as table region → route to table pipeline
-- text_image: detected as text region → OCR only
-
-Only informational images get VLM descriptions. This is ParserX's
-key differentiator vs open-source tools that just extract images
-without understanding them.
+VLM calls are batched and executed concurrently via ThreadPoolExecutor.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -88,7 +79,7 @@ def classify_image_file(image_path: Path) -> str:
     return ImageClassification.INFORMATIONAL
 
 
-# ── VLM prompt (adapted from doc-refine openai_image_reads.py) ──────────
+# ── VLM prompt ──────────────────────────────────────────────────────────
 
 VLM_SYSTEM_PROMPT = """\
 你是一个文档图片解读助手。请根据图片内容生成准确的中文描述。
@@ -103,51 +94,45 @@ VLM_SYSTEM_PROMPT = """\
 
 
 def _build_vlm_prompt(elem: PageElement, context_before: str = "") -> str:
-    """Build VLM prompt with surrounding text context."""
     parts = ["请描述这张图片的内容。"]
-
     if context_before:
         parts.append(f"\n图片前文上下文（仅供参考，不是图片内容）：\n{context_before[:500]}")
-
     return "\n".join(parts)
 
 
 def _get_context_before(elem: PageElement, page_elements: list[PageElement]) -> str:
-    """Get text elements before this image on the same page for context."""
     context_lines = []
     for e in page_elements:
         if e is elem:
             break
         if e.type == "text" and e.content.strip():
             context_lines.append(e.content.strip())
-
-    # Last 3 text blocks before image
     return "\n".join(context_lines[-3:])
 
 
 class ImageProcessor:
     """Classify images and optionally generate VLM descriptions.
 
-    Flow:
-    1. Classify each image (heuristic)
-    2. Skip decorative/blank
-    3. For informational images with saved files: call VLM if service provided
-    4. Store classification and description in element.metadata
+    VLM calls are collected and executed concurrently for speed.
+    Concurrency level is controlled by config (services.vlm.max_concurrent).
     """
 
     def __init__(
         self,
         config: ImageProcessorConfig | None = None,
         vlm_service: OpenAICompatibleService | None = None,
+        max_concurrent: int = 6,
     ):
         self._config = config or ImageProcessorConfig()
         self._vlm = vlm_service
+        self._max_concurrent = max_concurrent
 
     def process(self, doc: Document) -> Document:
         if not self._config.enabled:
             return doc
 
         stats = {"decorative": 0, "informational": 0, "table": 0, "text": 0, "blank": 0, "vlm_called": 0}
+        vlm_tasks: list[tuple[PageElement, list[PageElement], Path]] = []
 
         for page in doc.pages:
             for elem in page.elements:
@@ -176,26 +161,26 @@ class ImageProcessor:
                     stats["informational"] += 1
                     elem.metadata["needs_vlm"] = True
 
-                # Step 2: VLM description for informational images
+                # Step 2: Collect VLM tasks
                 if (self._vlm
                         and self._config.vlm_description
                         and elem.metadata.get("needs_vlm")
                         and elem.metadata.get("saved_abs_path")):
                     saved_path = Path(elem.metadata["saved_abs_path"])
                     if saved_path.exists():
-                        # Double-check with pixel analysis
                         file_class = classify_image_file(saved_path)
                         if file_class == ImageClassification.BLANK:
                             elem.metadata["image_class"] = ImageClassification.BLANK
                             elem.metadata["skipped"] = True
                             elem.metadata["description"] = ""
                             stats["blank"] += 1
-                            continue
+                        else:
+                            vlm_tasks.append((elem, page.elements, saved_path))
 
-                        description = self._describe_image(elem, page.elements, saved_path)
-                        if description:
-                            elem.metadata["description"] = description
-                            stats["vlm_called"] += 1
+        # Step 3: Execute VLM calls concurrently
+        if vlm_tasks:
+            log.info("Running %d VLM calls (max %d concurrent)", len(vlm_tasks), self._max_concurrent)
+            stats["vlm_called"] = self._run_vlm_concurrent(vlm_tasks)
 
         log.info(
             "Images: %d informational, %d decorative, %d table, %d text, %d blank, %d VLM calls",
@@ -205,22 +190,35 @@ class ImageProcessor:
         )
         return doc
 
-    def _describe_image(
-        self, elem: PageElement, page_elements: list[PageElement], image_path: Path
-    ) -> str:
-        """Call VLM to describe an image with context."""
-        context = _get_context_before(elem, page_elements)
-        prompt = _build_vlm_prompt(elem, context)
+    def _run_vlm_concurrent(
+        self, tasks: list[tuple[PageElement, list[PageElement], Path]]
+    ) -> int:
+        """Run VLM descriptions concurrently. Returns number of successful calls."""
+        success_count = 0
 
-        try:
-            result = self._vlm.describe_image(
-                image_path,
-                prompt,
-                context=VLM_SYSTEM_PROMPT,
-                temperature=0.1,
-                max_tokens=4096,
-            )
-            return result.strip()
-        except Exception as exc:
-            log.warning("VLM failed for %s: %s", image_path.name, exc)
-            return ""
+        def _describe(task: tuple[PageElement, list[PageElement], Path]) -> tuple[PageElement, str]:
+            elem, page_elements, image_path = task
+            context = _get_context_before(elem, page_elements)
+            prompt = _build_vlm_prompt(elem, context)
+            try:
+                result = self._vlm.describe_image(
+                    image_path,
+                    prompt,
+                    context=VLM_SYSTEM_PROMPT,
+                    temperature=0.1,
+                    max_tokens=4096,
+                )
+                return elem, result.strip()
+            except Exception as exc:
+                log.warning("VLM failed for %s: %s", image_path.name, exc)
+                return elem, ""
+
+        with ThreadPoolExecutor(max_workers=self._max_concurrent) as executor:
+            futures = {executor.submit(_describe, task): task for task in tasks}
+            for future in as_completed(futures):
+                elem, description = future.result()
+                if description:
+                    elem.metadata["description"] = description
+                    success_count += 1
+
+        return success_count
