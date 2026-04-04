@@ -10,6 +10,7 @@ from pathlib import Path
 
 from parserx.assembly.chapter import ChapterAssembler
 from parserx.assembly.markdown import MarkdownRenderer
+from parserx.builders.image_extract import ImageExtractor
 from parserx.builders.metadata import MetadataBuilder
 from parserx.builders.ocr import OCRBuilder
 from parserx.config.schema import ParserXConfig
@@ -20,6 +21,7 @@ from parserx.processors.header_footer import HeaderFooterProcessor
 from parserx.processors.image import ImageProcessor
 from parserx.processors.text_clean import TextCleanProcessor
 from parserx.providers.pdf import PDFProvider
+from parserx.services.llm import create_vlm_service
 
 log = logging.getLogger(__name__)
 
@@ -29,14 +31,19 @@ class Pipeline:
 
     Full flow:
       Provider → MetadataBuilder → [OCRBuilder] →
-      HeaderFooter → Chapter → Image → TextClean →
+      HeaderFooter → Chapter → [ImageExtract] → Image(+VLM) → TextClean →
       Renderer
     """
 
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config or ParserXConfig()
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
-        self._ocr_builder = OCRBuilder(self._config.builders.ocr) if self._config.builders.ocr.engine != "none" else None
+        self._ocr_builder = (
+            OCRBuilder(self._config.builders.ocr)
+            if self._config.builders.ocr.engine != "none" else None
+        )
+        self._image_extractor = ImageExtractor()
+        self._vlm_service = self._create_vlm_service()
         self._processors: list[Processor] = self._build_processors()
         self._renderer = MarkdownRenderer(self._config.output)
 
@@ -46,7 +53,7 @@ class Pipeline:
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
 
-        doc = self._run_pipeline(path)
+        doc = self._run_pipeline(path, output_dir=None)
 
         log.info("Rendering Markdown")
         markdown = self._renderer.render(doc)
@@ -55,18 +62,23 @@ class Pipeline:
 
     def parse_to_dir(self, path: str | Path, output_dir: str | Path) -> Path:
         """Parse a document and write chapter files + index to output_dir."""
-        doc = self.parse_to_document(path)
+        path = Path(path)
+        output_dir = Path(output_dir)
+        if not path.exists():
+            raise FileNotFoundError(f"Document not found: {path}")
+
+        doc = self._run_pipeline(path, output_dir=output_dir)
         assembler = ChapterAssembler(self._config.output)
-        return assembler.assemble(doc, Path(output_dir))
+        return assembler.assemble(doc, output_dir)
 
     def parse_to_document(self, path: str | Path) -> Document:
         """Parse and return the Document model (for programmatic use)."""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
-        return self._run_pipeline(path)
+        return self._run_pipeline(path, output_dir=None)
 
-    def _run_pipeline(self, path: Path) -> Document:
+    def _run_pipeline(self, path: Path, output_dir: Path | None) -> Document:
         """Execute the full pipeline: extract → build → process."""
         # Step 1: Extract
         log.info("Extracting: %s", path.name)
@@ -86,7 +98,7 @@ class Pipeline:
                 len(doc.metadata.numbering_patterns),
             )
 
-        # Step 3: OCR (only for pages that need it)
+        # Step 3: OCR (selective)
         if self._ocr_builder and path.suffix.lower() == ".pdf":
             scanned_pages = sum(
                 1 for p in doc.pages if p.page_type.value in ("scanned", "mixed")
@@ -97,11 +109,26 @@ class Pipeline:
             else:
                 log.info("OCR: all pages native, skipping")
 
-        # Step 4: Processors
+        # Step 4: Run processors
         for processor in self._processors:
             name = type(processor).__name__
             log.info("Processing: %s", name)
             doc = processor.process(doc)
+
+            # After ImageProcessor classifies: extract non-skipped images to disk,
+            # then run VLM descriptions on the extracted files
+            if isinstance(processor, ImageProcessor) and output_dir and path.suffix.lower() == ".pdf":
+                log.info("Extracting images to %s", output_dir / "images")
+                doc = self._image_extractor.extract(doc, path, output_dir)
+
+                # Now that images are on disk, run VLM for needs_vlm images
+                if self._vlm_service and self._config.processors.image.vlm_description:
+                    vlm_processor = ImageProcessor(
+                        config=self._config.processors.image,
+                        vlm_service=self._vlm_service,
+                    )
+                    log.info("Running VLM image descriptions")
+                    doc = vlm_processor.process(doc)
 
         return doc
 
@@ -112,10 +139,18 @@ class Pipeline:
             return PDFProvider().extract(path)
         raise ValueError(f"Unsupported format: {suffix}")
 
+    def _create_vlm_service(self):
+        """Create VLM service if configured with endpoint and key."""
+        cfg = self._config.services.vlm
+        if cfg.endpoint and cfg.api_key:
+            log.info("VLM service configured: %s / %s", cfg.endpoint, cfg.model)
+            return create_vlm_service(cfg)
+        return None
+
     def _build_processors(self) -> list[Processor]:
         """Build the processor chain based on config.
 
-        Order: HeaderFooter → Chapter → Image → TextClean.
+        Order: HeaderFooter → Chapter → Image(+VLM) → TextClean.
         """
         processors: list[Processor] = []
 
@@ -129,7 +164,10 @@ class Pipeline:
             processors.append(ChapterProcessor(self._config.processors.chapter))
 
         if self._config.processors.image.enabled:
-            processors.append(ImageProcessor(self._config.processors.image))
+            processors.append(ImageProcessor(
+                config=self._config.processors.image,
+                vlm_service=self._vlm_service,
+            ))
 
         if self._config.processors.text_clean.enabled:
             processors.append(TextCleanProcessor(self._config.processors.text_clean))

@@ -1103,13 +1103,27 @@ ground_truth/
 - [x] 55 个测试全部通过
 - [x] 多文档验证通过（5 个不同类型 PDF）
 
+- [x] ImageExtractor — `parserx/builders/image_extract.py`
+  - 从 PDF 提取图片到文件系统（PyMuPDF xref）
+  - 只提取非装饰性图片（分类后再提取）
+  - text_pic01.pdf 验证：103 张图提取 20 张，跳过 83 张装饰性
+- [x] VLM 图片描述流程 — ImageProcessor 增强
+  - 分类 → 提取图片到磁盘 → VLM 描述（三步分离）
+  - VLM prompt 从 doc-refine 迁移并简化
+  - 上下文注入：图片前文作为参考
+  - 空白图二次检查（像素分析）
+- [x] Pipeline 流程优化
+  - ImageProcessor(分类) → ImageExtractor(提取) → ImageProcessor(VLM)
+  - VLM 只在配置了 endpoint+api_key 时启用
+- [x] 55 个测试全部通过
+
 **进行中**：
-- [ ] Phase 3：VLM 图片描述接入、LLM fallback
+- [ ] Phase 3 剩余：LLM fallback、评估框架
 
 **下一步**：
-1. VLM 图片描述：对 needs_vlm=True 的图片调用 VLM 服务，保存到图片和提取图片到文件系统
+1. 用真实 VLM 服务端到端测试图片描述质量（需设置环境变量）
 2. LLM fallback：对低置信章节检测调用 LLM 精化
-3. 评估框架：基础 metrics（文本编辑距离）
+3. 评估框架：基础 metrics
 4. 更多格式支持：DOCX Provider
 
 **阻塞项**：无
@@ -1135,7 +1149,8 @@ parserx/
 ├── builders/
 │   ├── __init__.py
 │   ├── metadata.py                 # MetadataBuilder（字体统计 + 编号检测）
-│   └── ocr.py                      # OCRBuilder（选择性 OCR）
+│   ├── ocr.py                      # OCRBuilder（选择性 OCR）
+│   └── image_extract.py            # ImageExtractor（选择性图片提取到磁盘）
 ├── processors/
 │   ├── __init__.py
 │   ├── base.py                     # Processor 协议
@@ -1200,4 +1215,5 @@ Output: 43577 characters, 13 chapter files + index.md
 | #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | a1e7c43 |
 | #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | da613bf |
 | #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 7d64044 |
-| #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 见下方 |
+| #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 0f03db1 |
+| #5 | 2026-04-04 | Phase 3a：ImageExtractor（选择性提取）、VLM 描述流程、Pipeline 三步分离、55 tests | 见下方 |
