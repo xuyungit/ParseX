@@ -149,57 +149,68 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
 
 ### 3.1 输入层（Providers）
 
-每个 Provider 负责从特定格式提取原始内容，输出统一的 `list[PageElement]`。
+每个 Provider 负责从特定格式提取原始内容，输出统一的 `Document` 模型。
 
-#### PDFProvider
+#### PDFProvider — ✅ 已实现 (`providers/pdf.py`)
 
 ```
 输入：PDF 文件路径
-输出：list[PageElement]
+输出：Document（含 Page/PageElement，每个元素带 FontInfo）
 
-实现：
+已实现：
   1. PyMuPDF page.get_text("dict") 提取字符级信息
-     - 每个字符的字体名、字号、粗体/斜体标志、位置坐标
-     - 这比当前使用 PyMuPDF4LLM 仅获取 Markdown 输出信息量更大
-  2. PyMuPDF page.find_tables() 提取原生表格
-  3. PyMuPDF page.get_images() 提取光栅图
-  4. 检测矢量渲染文字：提取文本为空但页面有渲染内容 → 标记为需 OCR
-  5. 逐页分类：native / scanned / mixed（基于文本提取产出 vs 页面面积比）
+     - 每个文本块的字体名、字号、粗体/斜体标志、位置坐标
+  2. PyMuPDF page.find_tables() 提取原生表格 → Markdown 表格格式
+  3. PyMuPDF page.get_image_info(xrefs=True) 提取图片引用（含 xref）
+  4. 逐页分类：native / scanned / mixed（基于文本字符数 vs 图片覆盖率）
 ```
 
-**关键改进**：字符级元数据（字体、字号、位置）直接支撑 MetadataBuilder 的规则化分析，替代当前 3 次 LLM 的章节检测。
-
-#### DOCXProvider
+#### DOCXProvider — ❌ 待实现
 
 ```
 输入：DOCX 文件路径
-输出：list[PageElement]
+输出：Document
 
-实现：
-  1. Docling 原生 OOXML 解析（已验证有效）
-  2. 提取样式信息：标题级别、粗体、字号来自 OOXML 样式定义
-  3. 表格：保留结构（包括合并单元格）
-  4. 嵌入图片：提取并处理旋转元数据
+实现方案：
+  1. 使用 Docling 库进行 OOXML 原生解析
+     - 安装：`uv add docling`（已在 pyproject.toml 的 optional deps 中）
+     - API：`DocumentConverter().convert(path)` → `DoclingDocument`
+  2. 映射 DoclingDocument → ParserX Document 模型：
+     - DoclingDocument.texts → PageElement(type="text")
+     - DoclingDocument.tables → PageElement(type="table")
+     - DoclingDocument.pictures → PageElement(type="image")
+  3. DOCX 样式信息映射：
+     - OOXML heading styles (Heading 1/2/3) → 直接设置 heading_level
+     - OOXML bold/font-size → FontInfo（用于 MetadataBuilder）
+  4. 表格结构保留：
+     - DoclingDocument 的表格包含行列结构和合并单元格信息
+     - 转为 Markdown 表格时展平合并单元格
+  5. 图片提取：
+     - Docling 自动提取嵌入图片到临时目录
+     - 需处理旋转元数据（参考 doc-refine fix_rotation.py）
+  
+  注意事项：
+  - Docling 在 doc-refine 中已验证有效，可参考 pipeline.py L739-770
+  - OOXML 有显式样式信息，标题检测是确定性的，ChapterProcessor 可跳过
+  - 需在 pipeline.py `_extract()` 中注册 .docx 路由
 ```
 
-**优势**：OOXML 有显式的样式信息，标题检测是确定性的，无需 LLM。
-
-#### ImageProvider
+#### ImageProvider — ❌ 待实现（低优先级）
 
 ```
 输入：图片文件路径（PNG, JPG, TIFF）
-输出：list[PageElement]（单页文档）
+输出：Document（单页，单个 image 元素）
 
-实现：将图片包装为单页文档，统一走后续管道。
+实现：将图片包装为单页文档，统一走后续管道（OCR + VLM）。
 ```
 
 ### 3.2 分析层（Builders）
 
 分析层负责从原始元素中提取结构化的分析信息，为处理层提供决策依据。
 
-#### MetadataBuilder
+#### MetadataBuilder — ✅ 已实现 (`builders/metadata.py`)
 
-**核心创新**：用确定性代码提取文档级元数据，替代当前 LLM 密集的章节检测和页眉页脚处理。
+用确定性代码提取文档级元数据，替代 LLM 密集的章节检测和页眉页脚处理。
 
 ```
 输入：list[PageElement]
@@ -230,27 +241,29 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
    - 基于该页文本提取产出 vs 页面面积的比值
 ```
 
-#### LayoutBuilder
+#### LayoutBuilder — ❌ 待实现（当前由 PaddleOCR 布局分析 + 启发式替代）
 
 ```
-输入：list[PageElement] + 页面图片
+输入：Document + 页面图片
 输出：每个 PageElement 增加 layout_type 标注
 
-实现：
-  - 使用布局检测模型（可配置）：
-    - Docling Heron/Egret（MIT 许可，推荐默认）
-    - 其他可选：YOLOX 等
+当前状态：
+  - 图片分类已由 ImageProcessor 用启发式规则实现（不依赖布局模型）
+  - 表格区域已由 PDFProvider 的 find_tables() 标记
+  - 页眉页脚区域已由 HeaderFooterProcessor 的几何分析检测
+
+待实现方案（当需要处理复杂布局时）：
+  - 使用 PaddleOCR 在线服务的布局分析能力（useLayoutDetection=True）
+  - 或集成 Docling Heron（需本地 GPU）
   - 识别区域类型：text, table, figure, header, footer, formula, code
-  - 对于结构清晰的原生文档（DOCX、有明确样式的 PDF），
-    布局模型可以是可选的——MetadataBuilder 的分析已足够
-  - 布局模型主要服务于扫描件和复杂布局的 PDF
+  - 主要服务于扫描件和复杂多栏布局的 PDF
 ```
 
-#### OCRBuilder（选择性 OCR）
+#### OCRBuilder — ✅ 已实现 (`builders/ocr.py` + `services/ocr.py`)
 
 ```
-输入：list[PageElement] + DocumentMetadata
-输出：更新后的 PageElement（补充 OCR 文本）
+输入：Document + 源文件路径
+输出：Document（scanned/mixed 页面补充 OCR 文本元素）
 
 选择逻辑（逐区域决策）：
   - 原生文本完好 → 跳过 OCR
@@ -291,7 +304,7 @@ class Processor(Protocol):
         ...
 ```
 
-#### 3.3.1 HeaderFooterProcessor
+#### 3.3.1 HeaderFooterProcessor — ✅ 已实现 (`processors/header_footer.py`)
 
 ```
 策略：确定性优先
@@ -308,7 +321,7 @@ LLM 兜底（仅当规则置信度低时）：
   - 发送可疑区域到 LLM 做分类判断
 ```
 
-#### 3.3.2 ChapterProcessor
+#### 3.3.2 ChapterProcessor — ✅ 已实现 (`processors/chapter.py`)
 
 ```
 策略：两阶段，确定性 + LLM 兜底
@@ -336,42 +349,44 @@ LLM 兜底（仅当规则置信度低时）：
   - detect_numbering_signal / has_numbering_signal / guess_numbering_level
 ```
 
-#### 3.3.3 TableProcessor
+#### 3.3.3 TableProcessor — ⚠️ 部分实现
 
 ```
-策略：分层处理
+当前状态：
+  - PDF 原生表格提取已在 PDFProvider 中实现（PyMuPDF find_tables() → Markdown）
+  - 但没有独立的 TableProcessor 类
 
-阶段 1（布局识别）：
-  - LayoutBuilder 已标记 table 区域
-  - 对 PDF 原生表格（PyMuPDF find_tables()），直接提取结构
+待实现（独立 Processor）：
 
-阶段 2（结构模型）：
-  - 对非原生表格（图片中的表格、扫描表格）：
-  - 使用表格结构模型（TableFormer 或类似）提取行列结构
-  - 可配置模型选择
+  文件：processors/table.py
 
-阶段 3（复杂表格 VLM 兜底）：
-  - 当结构模型置信度低或检测到复杂特征（无线表格、深层嵌套）时
-  - 调用 VLM 进行表格理解
-  - 交叉验证：VLM 输出的行列数 vs 结构模型输出的行列数
-  - 偏差大则标记为低置信
+  阶段 1（已有）：PDFProvider.find_tables() 已提取原生表格为 Markdown 格式
 
-阶段 4（跨页表格合并）：
-  检测条件：
-    a. 页面 N 底部有表格 + 页面 N+1 顶部有表格
-    b. 列数一致
-    c. 列宽分布相似
-    d. 页面 N+1 顶部表格无表头（或表头与页面 N 的表头一致）
-  合并策略：
-    - 表头保留页面 N 的版本
-    - 数据行直接拼接
+  阶段 2（跨页表格合并）— 高优先级：
+    检测条件：
+      a. 页面 N 底部有 table 元素 + 页面 N+1 顶部有 table 元素
+      b. 列数一致（比较 Markdown 表格的 | 分隔符数量）
+      c. 页面 N+1 顶部表格无表头行（或表头与 N 的一致）
+    合并策略：
+      - 保留页面 N 的表头
+      - 拼接页面 N+1 的数据行（去掉重复表头和分隔行）
+    实现参考：
+      - 解析 Markdown 表格为行列结构
+      - 比较列数和表头文字
+      - 拼接后重新生成 Markdown 表格
+
+  阶段 3（复杂表格 VLM 兜底）— 中优先级：
+    - 当 PyMuPDF find_tables() 提取失败或质量差时
+    - 将表格区域截图发送给 VLM
+    - 交叉验证：VLM 行列数 vs 原生提取行列数
+    - 需要先实现 LayoutBuilder 来标记 table 区域
 
 输出格式：Markdown 表格
-  - 简单表格 → 标准 Markdown 表格
-  - 含合并单元格 → 展平处理（合并内容标注在第一个单元格）
+  - 简单表格 → 标准 Markdown 表格（已实现）
+  - 含合并单元格 → 展平处理（待实现）
 ```
 
-#### 3.3.4 ImageProcessor
+#### 3.3.4 ImageProcessor — ✅ 已实现 (`processors/image.py`)
 
 ```
 策略：分类 → 分流
@@ -403,63 +418,71 @@ LLM 兜底（仅当规则置信度低时）：
 预期效果：企业文档中 30-50% 图片为装饰性，可跳过 VLM 调用。
 ```
 
-#### 3.3.5 FormulaProcessor
+#### 3.3.5 FormulaProcessor — ❌ 待实现（低优先级）
 
 ```
 策略：模型检测 + 专业识别
-
-  1. LayoutBuilder 已标记 formula 区域
-  2. 使用公式识别模型（UniMERNet 或类似）将图片转为 LaTeX
-  3. 行内公式 → $...$
-  4. 独立公式 → $$...$$
-  5. 该处理器默认关闭（opt-in），因为非所有文档包含公式
-
-可配置项：
-  - formula.enabled: true/false
-  - formula.model: unimernet / pp-formulanet
+  - 默认关闭（config: formula.enabled: false）
+  - 需要 LayoutBuilder 先标记 formula 区域
+  - 使用公式识别模型（UniMERNet 或类似）将图片转为 LaTeX
+  - 行内公式 → $...$，独立公式 → $$...$$
+  - 依赖本地 GPU 或远程推理服务，当前阶段不实现
 ```
 
-#### 3.3.6 LineUnwrapProcessor
+#### 3.3.6 LineUnwrapProcessor — ❌ 待实现
 
 ```
+文件：processors/line_unwrap.py
+
 策略：规则优先
 
-规则判断（覆盖 95%+ 场景）：
-  - 行尾有句末标点（。！？!?.;；:：）→ 不合并
-  - 行尾无句末标点 且 下一行非空行：
-    - 中文：当前行长度与正文行平均长度相近 → 合并
-    - 英文：下一行首字母小写 → 合并
-  - 行尾是连字符(-) 且 下一行首字母小写 → 合并去连字符
+实现方案：
+  遍历 Document 中所有 text 元素，检查内部的硬换行：
 
-LLM 兜底：仅当配置开启且规则无法判断时。
-默认关闭 LLM 兜底（大多数场景规则足够）。
+  规则判断（覆盖 95%+ 场景）：
+    - 行尾有句末标点（。！？!?.;；）→ 不合并，是正常段落结束
+    - 行尾无句末标点 且 下一行非空行：
+      - 中文：当前行长度与正文行平均长度相近（±20%）→ 合并
+      - 英文：下一行首字母小写 → 合并
+    - 行尾是连字符(-) 且 下一行首字母小写 → 合并去连字符
+
+  正文行平均长度：从 MetadataBuilder 的 font_stats 推算
+    - 页面宽度 / 正文字号 ≈ 每行字符数上限
+    - 或统计所有正文行的长度中位数
+
+  LLM 兜底：默认关闭。仅当 line_unwrap.llm_fallback=true 时启用。
+
+  注意：中文文本的换行问题与英文不同——中文没有 word-break，
+  但 PDF 提取时可能在不合理的位置断行（如句子中间）。
 ```
 
-#### 3.3.7 TextCleanProcessor
+#### 3.3.7 TextCleanProcessor — ✅ 已实现 (`processors/text_clean.py`)
 
 ```
-策略：纯确定性
-
-  1. CJK 空格修复（复用 pdf_extract.py 的 _fix_chinese_spaces）
-  2. 编码修复（Windows-1252 C1 范围映射，参考 LiteParse）
-  3. 连字符分解（fi, fl, ff → 独立字符）
+已实现：
+  1. CJK 空格修复（从 doc-refine _fix_chinese_spaces 迁移）
+  2. 编码修复（Windows-1252 C1 范围 → Unicode 映射）
+  3. 控制字符清理
   4. 多余空白规范化
-  5. 控制字符清理
 ```
 
-#### 3.3.8 ReadingOrderProcessor
+#### 3.3.8 ReadingOrderProcessor — ❌ 待实现（低优先级）
 
 ```
-策略：视文档复杂度而定
+文件：processors/reading_order.py
 
-  - 单列文档（大多数中文文档）：自然从上到下
-  - 多列文档：几何启发式（列检测 + 列内从上到下）
-  - 复杂布局：可选使用阅读顺序模型（Docling 提供）
+大多数中文文档是单列布局，自然从上到下的阅读顺序即可。
+仅当处理多栏 PDF（报纸、杂志）时才需要。
+
+实现方案（简单版）：
+  - 同一页面内的元素已按 bbox.y0 排序（PDFProvider 提取顺序）
+  - 检测多栏：同一 y 位置有多个不重叠的 text 元素 → 多栏
+  - 多栏时按列分组，列内按 y 排序，列间按 x 排序
 ```
 
 ### 3.4 组装层（Assembly）
 
-#### ChapterAssembler
+#### ChapterAssembler — ✅ 已实现 (`assembly/chapter.py`)
 
 ```
 输入：ProcessedDocument（含章节标记）
@@ -476,9 +499,11 @@ LLM 兜底：仅当配置开启且规则无法判断时。
   4. 可复用 doc-refine 的 chapter_output_packager.py 的成熟逻辑
 ```
 
-#### CrossReferenceResolver
+#### CrossReferenceResolver — ❌ 待实现
 
 ```
+文件：assembly/crossref.py
+
 功能：
   1. 图片-图注关联
      - 检测 "图 X" / "Figure X" / "图表 X" 模式
@@ -490,7 +515,7 @@ LLM 兜底：仅当配置开启且规则无法判断时。
      - 检测 "表 X" / "Table X" 模式
 ```
 
-#### MarkdownRenderer
+#### MarkdownRenderer — ✅ 已实现 (`assembly/markdown.py`)
 
 ```
 输入：ProcessedDocument
@@ -511,41 +536,52 @@ LLM 兜底：仅当配置开启且规则无法判断时。
 
 ### 3.5 验证层（Verification）
 
-#### HallucinationDetector
+#### HallucinationDetector — ❌ 待实现
 
 ```
+文件：verification/hallucination.py
+
 检测对象：VLM 输出的文字内容
 
-方法：
-  1. 将 VLM 提取的文字与 OCR/原生提取的文字做对比
-  2. 计算编辑距离（normalized edit distance）
-  3. 偏差 > 阈值（如 0.3）→ 标记为 low_confidence
-  4. 同时保留两个版本（VLM 版本 + OCR 版本）
-  5. 在输出中以注释形式标注
+实现方案：
+  1. 对每个有 VLM 描述的图片元素：
+     a. 如果同一区域有 OCR 结果（source="ocr"），提取 OCR 文字
+     b. 如果有原生提取文字，提取原生文字
+  2. 计算 VLM 描述中的文字内容与 OCR/原生文字的编辑距离
+  3. 偏差 > 阈值（config: hallucination_threshold=0.3）→ 标记为 low_confidence
+  4. 在 element.metadata["vlm_confidence"] 中存储置信度
+  5. 在 element.metadata["vlm_vs_ocr_distance"] 中存储编辑距离
 
-对表格的特殊处理：
-  - 比对 VLM 表格的行数/列数 vs 结构模型的行数/列数
-  - 比对单元格文本与 OCR 文本
+  对表格的特殊处理：
+  - 比对 VLM 表格的行数/列数 vs 原生提取的行数/列数
+  - 行列数不一致 → low_confidence
+
+  可复用已有代码：
+  - eval/metrics.py 的 compute_edit_distance()
 ```
 
-#### CompletenessChecker
+#### CompletenessChecker — ❌ 待实现
 
 ```
-检查项：
-  1. 页数匹配：输出涉及的页面数 == 源文档页数
-  2. 文本体量：输出文本量在源文档提取量的合理范围内（±20%）
-  3. 图片引用：所有提取的信息性图片在输出中被引用
-  4. 表格计数：检测到的表格数量与输出中的表格数量一致
+文件：verification/completeness.py
+
+检查项（返回 warnings 列表）：
+  1. 页数匹配：output 涉及的页面数 == doc.metadata.page_count
+  2. 文本体量：output 字符数在 PDFProvider 提取总量的 ±20% 范围内
+  3. 图片引用：所有 needs_vlm=True 且未 skipped 的图片在 output 中有引用
+  4. 表格计数：doc 中 type="table" 的元素数 == output 中 Markdown 表格数
 ```
 
-#### StructureValidator
+#### StructureValidator — ❌ 待实现
 
 ```
-检查项：
-  1. 标题层级有效：无跳级（H1 后直接 H3）
-  2. 无孤儿子节：无 H3 缺少父 H2
-  3. 标题非空：所有标题元素有实际内容
-  4. 章节文件完整：每个章节文件包含其声明的内容
+文件：verification/structure.py
+
+检查项（返回 warnings 列表）：
+  1. 标题层级有效：无跳级（H1 后直接 H3，中间无 H2）
+  2. 无孤儿子节：无 H3 出现在任何 H2 之前
+  3. 标题非空：所有 heading_level > 0 的元素有非空 content
+  4. 章节文件完整：如果做了 chapter_split，验证每个章节文件非空
 ```
 
 ---
@@ -972,32 +1008,29 @@ ground_truth/
 
 来源目录：`/Users/xuyun/IEC/skills/doc-refine/scripts/`
 
-### B.1 高优先级（直接复用）
+### B.1 高优先级 — 已迁移
 
-| 来源文件 | 函数/行号 | 用途 | 目标模块 | 迁移难度 |
-|---------|----------|------|---------|---------|
-| `chapter_outline_core.py` | `detect_numbering_signal()` L109-123 | 7 种中文编号模式检测正则 | ChapterProcessor | Easy |
-| `chapter_outline_core.py` | `has_numbering_signal()` L126-130 | 编号存在性检查 | ChapterProcessor | Easy |
-| `chapter_outline_core.py` | `guess_numbering_level()` L133-139 | 推断标题层级 | ChapterProcessor | Easy |
-| `chapter_outline_core.py` | `normalize_text()` L91-97 | 文本规范化（比较用） | 通用工具 | Easy |
-| `chapter_outline_core.py` | `detect_document_profile()` L248-267 | 文档类型分类 | MetadataBuilder | Easy |
-| `pdf_extract.py` | `_fix_chinese_spaces()` L49-57 | 去除 CJK 字符间多余空格 | TextCleanProcessor | Easy |
-| `pdf_extract.py` | `_is_blank_image()` L145-151 | 空白图片检测 | ImageProcessor | Easy |
-| `pdf_extract.py` | `_is_trivial_raster_fragment()` L162-177 | 装饰性碎片过滤 | ImageProcessor | Easy |
-| `remove_headers_footers.py` | `_phase1_detect()` L136-166 | 频率法页眉页脚检测（无需 LLM） | HeaderFooterProcessor | Medium |
-| `remove_headers_footers.py` | `_split_pages()` L72-89 | 按页面标记分割 Markdown | 通用工具 | Easy |
-| `remove_headers_footers.py` | `_get_edge_lines()` L92-102 | 提取页面顶部/底部行 | HeaderFooterProcessor | Easy |
+| 来源文件 | 函数 | 迁移到 | 状态 |
+|---------|------|--------|------|
+| `chapter_outline_core.py` | `detect_numbering_signal()` L109-123 | `builders/metadata.py` | ✅ 已迁移 |
+| `chapter_outline_core.py` | `guess_numbering_level()` L133-139 | `builders/metadata.py` | ✅ 已迁移 |
+| `pdf_extract.py` | `_fix_chinese_spaces()` L49-57 | `processors/text_clean.py` | ✅ 已迁移 |
+| `pdf_extract.py` | `_is_blank_image()` L145-151 | `processors/image.py` (`classify_image_file`) | ✅ 已迁移 |
+| `pdf_extract.py` | `_is_trivial_raster_fragment()` L162-177 | `processors/image.py` (`classify_image_element`) | ✅ 已迁移 |
+| `openai_image_reads.py` | `_encode_image()` L49-54 | `services/llm.py` (`_encode_image_data_url`) | ✅ 已迁移 |
+| `openai_image_reads.py` | `_build_prompt()` L85-150 | `processors/image.py` (`_build_vlm_prompt`) | ✅ 已迁移（简化版） |
+| `openai_image_reads.py` | 流式 Responses API 调用 | `services/llm.py` (`_describe_responses`) | ✅ 已迁移 |
 
-### B.2 中优先级（需适配）
+### B.2 未迁移（待后续实现使用）
 
-| 来源文件 | 函数/行号 | 用途 | 目标模块 | 迁移难度 |
-|---------|----------|------|---------|---------|
-| `openai_image_reads.py` | `_encode_image()` L49-54 | Base64 编码图片 | VLM 服务 | Easy |
-| `openai_image_reads.py` | `_build_prompt()` L85-150 | VLM 图片解读 prompt | ImageProcessor | Medium（需重写内容） |
-| `openai_image_reads.py` | `_call_openai_for_task()` L153-190 | 流式 VLM 调用模式 | VLM 服务 | Medium |
-| `image_tasks.py` | `_extract_context_windows()` L96-118 | 图片上下文提取 | ImageProcessor | Medium |
-| `remove_headers_footers.py` | `_validate_regex()` L317-344 | 正则安全校验 | HeaderFooterProcessor | Medium |
-| `chapter_outline_core.py` | `apply_outline_to_markdown()` L284-381 | 大纲应用到 Markdown | ChapterAssembler | Hard |
+| 来源文件 | 函数 | 用途 | 对应待实现模块 |
+|---------|------|------|--------------|
+| `remove_headers_footers.py` | `_validate_regex()` L317-344 | 正则安全校验 | HeaderFooter LLM fallback |
+| `remove_headers_footers.py` | `_ai_classify()` L225+ | AI 分类页眉页脚 | HeaderFooter LLM fallback |
+| `chapter_outline_core.py` | `apply_outline_to_markdown()` L284-381 | 大纲应用到 Markdown | LLM fallback 章节重建 |
+| `chapter_outline_core.py` | `is_metadata_field()` L141-155 | 元数据字段检测 | 封面/元数据页识别 |
+| `image_tasks.py` | `_extract_context_windows()` L96-118 | 图片上下文提取 | 已部分迁移到 `_get_context_before` |
+| `pipeline.py` | `_call_paddleocr_async()` L223+ | 异步批量 OCR | OCRBuilder 异步模式 |
 
 ### B.3 仅参考（不直接迁移）
 
@@ -1050,202 +1083,109 @@ ground_truth/
 
 ## 附录 E: 实施状态追踪
 
-> 本节在每次迭代后更新，记录当前实现进度和下一步计划。
-> 新 session 应先阅读本节获取上下文。
+> **新 session 入口**：先读本节，获取当前状态、已实现清单和下一步优先级。
+> 每次迭代后更新本节。
 
-### 当前状态
+### 当前状态总览
 
-**阶段**：Phase 2 — 核心管道（进行中）
+**阶段**：Phase 3（质量提升）进行中 | **测试**：67 passing | **提交**：7 次 | **源文件**：31 个
 
-**已完成**：
-- [x] Phase 1 全部内容（项目骨架、配置、PDFProvider、TextClean、LLM 服务、Pipeline、CLI）
-- [x] MetadataBuilder — `parserx/builders/metadata.py`
-  - 字体统计（自动识别正文字体 vs 标题候选字体）
-  - 编号模式检测（7 种中文编号模式，从 doc-refine 迁移）
-  - 逐页类型分类汇总
-- [x] HeaderFooterProcessor — `parserx/processors/header_footer.py`
-  - 几何位置 + 跨页重复检测（不依赖 LLM）
-  - 页码检测和移除
-  - 数字归一化使 "Page 1"/"Page 2" 被视为同一模式
-- [x] ChapterProcessor — `parserx/processors/chapter.py`
-  - 双信号融合：字体分析 + 编号模式匹配
-  - 防误判：长文本/句末标点过滤
-  - 为每个标题设置 heading_level（1/2/3）
-- [x] Pipeline 集成：MetadataBuilder → HeaderFooter → Chapter → TextClean
-- [x] 36 个测试全部通过
-- [x] 端到端验证：pdf_text01.pdf 正确检测章节（第X章→H1）、移除 43 个页脚
+### 模块实现状态
 
-- [x] ChapterProcessor 调优 — 从 187 个标题降至 57 个
-  - 日期排除、TOC 排除（通用规则，非过拟合）
-  - 弱编号信号（阿拉伯数字+空格）仅在有字体信号时才接受
-  - 设计原则：规则只做高置信判断，模糊情况留给 LLM fallback
-- [x] ChapterAssembler — `parserx/assembly/chapter.py`
-  - 按 H1 边界切分为章节文件
-  - 生成 index.md 目录（含 H2/H3 缩进）
-  - CLI 支持 `--split-chapters` 目录输出
-- [x] 41 个测试全部通过
-- [x] 端到端验证：pdf_text01.pdf → 13 个章节文件 + index.md
+| 层 | 模块 | 文件 | 状态 | 说明 |
+|----|------|------|------|------|
+| 配置 | ParserXConfig | `config/schema.py` | ✅ | YAML + `${VAR:default}` 环境变量 + Pydantic |
+| 数据 | PageElement/Document | `models/elements.py` | ✅ | 含 FontInfo, PageType, DocumentMetadata |
+| 输入 | PDFProvider | `providers/pdf.py` | ✅ | PyMuPDF 字符级提取（字体元数据 + 表格 + 图片） |
+| 输入 | DOCXProvider | — | ❌ | 需 Docling 封装，详见 3.1 节设计 |
+| 分析 | MetadataBuilder | `builders/metadata.py` | ✅ | 字体统计 + 7 种编号模式 + 逐页类型 |
+| 分析 | OCRBuilder | `builders/ocr.py` | ✅ | 选择性 OCR（仅 scanned/mixed 页） |
+| 分析 | ImageExtractor | `builders/image_extract.py` | ✅ | 选择性图片提取（跳过装饰性） |
+| 分析 | LayoutBuilder | — | ❌ | 当前由启发式 + PaddleOCR 替代 |
+| 处理 | HeaderFooterProcessor | `processors/header_footer.py` | ✅ | 几何 + 跨页重复，无 LLM |
+| 处理 | ChapterProcessor | `processors/chapter.py` | ✅ | 字体+编号规则，LLM fallback 未做 |
+| 处理 | ImageProcessor | `processors/image.py` | ✅ | 启发式分类 + 并发 VLM 描述 |
+| 处理 | TextCleanProcessor | `processors/text_clean.py` | ✅ | CJK 空格 + C1 编码 + 控制字符 |
+| 处理 | TableProcessor | — | ⚠️ | 基础表格在 PDFProvider 中，无独立 Processor |
+| 处理 | LineUnwrapProcessor | — | ❌ | 详见 3.3.6 节设计 |
+| 处理 | FormulaProcessor | — | ❌ | 低优先级，需本地 GPU |
+| 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
+| 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
+| 组装 | ChapterAssembler | `assembly/chapter.py` | ✅ | H1 切分 + index.md |
+| 组装 | CrossReferenceResolver | — | ❌ | 图文关联、脚注关联 |
+| 服务 | LLM/VLM Service | `services/llm.py` | ✅ | Responses API + Chat Completions 自动切换 |
+| 服务 | OCR Service | `services/ocr.py` | ✅ | PaddleOCR 在线 API |
+| 验证 | HallucinationDetector | — | ❌ | 详见 3.5 节设计 |
+| 验证 | CompletenessChecker | — | ❌ | 详见 3.5 节设计 |
+| 验证 | StructureValidator | — | ❌ | 详见 3.5 节设计 |
+| 评估 | Eval Framework | `eval/metrics.py` + `eval/runner.py` | ✅ | edit dist + heading P/R/F1 + cost |
+| CLI | parse + eval | `cli.py` | ✅ | `parserx parse` + `parserx eval` |
 
-**设计原则记录**：
-- 规则引擎只用普适性强的硬规则（日期/TOC/纯数字排除），不针对测试文档做特定优化
-- 弱信号（如阿拉伯数字编号）需要字体信号配合才接受，避免正文误判
-- 未来 LLM fallback 处理规则无法覆盖的模糊情况
+### 设计原则（已验证）
 
-- [x] OCRBuilder — `parserx/builders/ocr.py` + `parserx/services/ocr.py`
-  - PaddleOCR 在线同步 API 客户端（从 doc-refine 迁移协议）
-  - 选择性 OCR：仅对 scanned/mixed/sparse-text 页面调用
-  - 可插拔引擎接口（PaddleOCR、RapidOCR、Tesseract、远程 API）
-- [x] ImageProcessor — `parserx/processors/image.py`
-  - 启发式图片分类：decorative/informational/table/text/blank
-  - 装饰性图片跳过 VLM，信息性图片标记 needs_vlm
-  - text_pic01.pdf 验证：103 张图中 83 张装饰性被跳过（80%）
-- [x] Pipeline 集成 OCRBuilder + ImageProcessor
-- [x] 55 个测试全部通过
-- [x] 多文档验证通过（5 个不同类型 PDF）
+1. **确定性优先，AI 兜底**：页眉页脚和章节检测均无 LLM，覆盖 70-80% 场景
+2. **选择性处理**：图片分类 80% 为装饰性被跳过；OCR 仅对非原生页调用
+3. **规则不过拟合**：只用普适性强的硬规则（日期/TOC 排除），不针对测试文档优化
+4. **弱信号需强信号配合**：阿拉伯数字编号仅在有字体信号时才接受为标题
 
-- [x] ImageExtractor — `parserx/builders/image_extract.py`
-  - 从 PDF 提取图片到文件系统（PyMuPDF xref）
-  - 只提取非装饰性图片（分类后再提取）
-  - text_pic01.pdf 验证：103 张图提取 20 张，跳过 83 张装饰性
-- [x] VLM 图片描述流程 — ImageProcessor 增强
-  - 分类 → 提取图片到磁盘 → VLM 描述（三步分离）
-  - VLM prompt 从 doc-refine 迁移并简化
-  - 上下文注入：图片前文作为参考
-  - 空白图二次检查（像素分析）
-- [x] Pipeline 流程优化
-  - ImageProcessor(分类) → ImageExtractor(提取) → ImageProcessor(VLM)
-  - VLM 只在配置了 endpoint+api_key 时启用
-- [x] 55 个测试全部通过
+### VLM 使用方式
 
-- [x] VLM 端到端验证成功
-  - LLM 服务层支�� Responses API（doc-refine 端点）+ Chat Completions 自动切换
-  - text_pic01.pdf: 20 张信息性图片 → 5 张获得 VLM 描述，15 张被像素分析过滤为 blank
-  - 公章图片描述："红色圆形印章，中心五角星，外圈文字'广西楼栋集团有限公司'"——准确
-  - MarkdownRenderer 优化：多行描述正确处理
-- [x] 55 个测试全部通过
-
-**VLM 使用方式**：
 ```bash
 OPENAI_BASE_URL="https://your-api-endpoint/v1" \
-OPENAI_API_KEY="..." \
+OPENAI_API_KEY="REDACTED_API_KEY" \
 VLM_MODEL="gpt-5.4-mini" \
-parserx parse input.pdf -o output/ --split-chapters -c parserx.yaml -v
+uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -v
 ```
 
-- [x] 并发 VLM 调用 — ImageProcessor 用 ThreadPoolExecutor 批量执行
-  - 可配置并发数（services.vlm.max_concurrent，默认 6）
-  - 先收集所�� VLM 任务，再并发执行
-- [x] 评估框架 — `parserx/eval/`
-  - 文本指标：归一化编辑距离、字符级 P/R/F1
-  - 标题指标：精确率/召回率/F1（模糊匹配，��略空白和标点）
-  - 成本指标：耗时、API 调用数、图片统计
-  - CLI: `parserx eval <ground_truth_dir> [-o report.md]`
-  - Ground truth 格式：`doc_name/input.pdf` + `doc_name/expected.md`
-- [x] 67 个测试全部通过
+不设置环境变量时 VLM 步骤自动跳过。
 
-**进行中**：
-- [ ] Phase 3 剩余
+### 下一步优先级
 
-**下一步**：
-1. 创建 ground truth 样本（用当前输出人工校正作为基线）
-2. LLM fallback：低置信章节检测
-3. DOCX Provider
-4. 跨页表格合并
+| 优先级 | 任务 | 涉及文件 | 设计详情 |
+|--------|------|---------|---------|
+| **P0** | DOCXProvider | `providers/docx.py` | 3.1 节有详细方案 |
+| **P0** | 跨页表格合并 (TableProcessor) | `processors/table.py` | 3.3.3 节有详细方案 |
+| **P0** | Ground truth 样本 + 基线评估 | `ground_truth/` | 5.5 节有格式说明 |
+| **P1** | HallucinationDetector | `verification/hallucination.py` | 3.5 节有详细方案 |
+| **P1** | LineUnwrapProcessor | `processors/line_unwrap.py` | 3.3.6 节有详细方案 |
+| **P1** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节"阶段 2" |
+| **P2** | CrossReferenceResolver | `assembly/crossref.py` | 3.4 节有设计 |
+| **P2** | CompletenessChecker | `verification/completeness.py` | 3.5 节有设计 |
+| **P2** | StructureValidator | `verification/structure.py` | 3.5 节有设计 |
+| **P2** | A/B 对比工具 | `eval/compare.py` | 5.3 节有设计 |
+| **P3** | FormulaProcessor | `processors/formula.py` | 需本地 GPU |
+| **P3** | LayoutBuilder | `builders/layout.py` | 需本地 GPU 或远程服务 |
+| **P3** | ReadingOrderProcessor | `processors/reading_order.py` | 大部分文档单列 |
 
-**阻塞项**：无
+### 验证数据
 
-### 已实现的项目结构
+**多文档测试（5 个 PDF）**：
 
-```
-parserx/
-├── __init__.py
-├── cli.py                          # CLI: parserx parse
-├── pipeline.py                     # Provider → MetadataBuilder → Processors → Renderer
-├── config/
-│   ├── __init__.py
-│   └── schema.py                   # Pydantic 配置 + YAML + 环境变量
-├── models/
-│   ├── __init__.py
-│   ├── elements.py                 # PageElement, Page, Document, FontInfo, DocumentMetadata
-│   └── results.py                  # ParseResult
-├── providers/
-│   ├── __init__.py
-│   ├── base.py                     # Provider 协议
-│   └── pdf.py                      # PDFProvider (PyMuPDF 字符级)
-├── builders/
-│   ├── __init__.py
-│   ├── metadata.py                 # MetadataBuilder（字体统计 + 编号检测）
-│   ├── ocr.py                      # OCRBuilder（选择性 OCR）
-│   └── image_extract.py            # ImageExtractor（选择性图片提取到磁盘）
-├── processors/
-│   ├── __init__.py
-│   ├── base.py                     # Processor 协议
-│   ├── header_footer.py            # 几何位置 + 跨页重复检测
-│   ├── chapter.py                  # 字体 + 编号规则引擎
-│   ├── image.py                    # 启发式图片分类 + VLM 标记
-│   └── text_clean.py               # CJK 空格 + 编码修复
-├── services/
-│   ├── __init__.py
-│   ├── llm.py                      # OpenAI-compatible LLM/VLM 抽象
-│   └── ocr.py                      # PaddleOCR 在线 API 客户端
-├── assembly/
-│   ├── __init__.py
-│   ├── chapter.py                  # ChapterAssembler（H1 切分 + index.md）
-│   └── markdown.py                 # Markdown 渲染器
-├── verification/                   # Phase 3（待实现）
-└── eval/
-    ├── __init__.py
-    ├── metrics.py                  # 编辑距离、字符 P/R/F1、标题 P/R/F1
-    └── runner.py                   # 评估运行器 + 报告生成
-tests/
-├── test_config.py                  # 4 tests
-├── test_text_clean.py              # 7 tests
-├── test_pipeline.py                # 4 tests (含真实 PDF)
-├── test_metadata_builder.py        # 8 tests
-├── test_header_footer.py           # 6 tests
-├── test_chapter.py                 # 7 tests (含真实 PDF)
-├── test_chapter_assembler.py       # 5 tests (含真实 PDF 章节切分)
-├── test_image_processor.py         # 9 tests
-├── test_ocr_builder.py             # 5 tests
-└── test_eval.py                    # 12 tests
-parserx.yaml                       # 默认配置文件
-```
+| 文档 | 页数 | 正文字体 | 标题数 | 图片（信息/装饰） | VLM 调用 |
+|------|------|---------|--------|-----------------|---------|
+| pdf_text01.pdf（采购文件） | 55 | SimSun 12pt | 57 | 0/0 | 0 |
+| real_doc01.pdf（企业文档） | 56 | SimSun 12pt | 53 | 0/0 | 0 |
+| text_pic01.pdf（图文混排） | 36 | MicrosoftYaHei 13.9pt | 46 | 20/83 | 5 |
+| deepseek.pdf（英文技术） | 1 | PingFang 16pt | 0 | 4/8 | 0 |
+| text_table_libreoffice.pdf | 3 | HiraginoSans 16pt | 3 | 0/0 | 0 |
 
-### 多文档验证结果（迭代 #4）
-
-| 文档 | 页数 | 正文字体 | 标题数 | 图片（信息/装饰） |
-|------|------|---------|--------|-----------------|
-| pdf_text01.pdf（采购文件） | 55 | SimSun 12pt | 57 | 0/0 |
-| real_doc01.pdf（企业文档） | 56 | SimSun 12pt | 53 | 0/0 |
-| text_pic01.pdf（图文混排） | 36 | MicrosoftYaHei 13.9pt | 46 | 20/83 |
-| deepseek.pdf（英文技术） | 1 | PingFang 16pt | 0 | 4/8 |
-| text_table_libreoffice.pdf | 3 | HiraginoSans 16pt | 3 | 0/0 |
-
-### 端到端验证结果（pdf_text01.pdf — 55 页采购文件）
-
-```
-Body font: SimSun 12.0pt, 9 heading candidate(s), 7 numbering pattern(s)
-HeaderFooter: 1 footer pattern → removed 43 elements
-Chapter: detected 57 headings (调优后，从 187 降至 57)
-Output: 43577 characters, 13 chapter files + index.md
-```
-
+**关键质量验证**：
 - "第一章" → `# 第一章` (H1) ✓
-- "一、项目概况" 类 → `## ...` (H2) ✓
-- "（一）、响应文件的编制要求" → `## ...` (H2) ✓
+- "一、项目概况" → `## ...` (H2) ✓
 - 页码 "- 3 -" → 已移除 ✓
-- 日期行 "2026 年3 月至" → 不再被误判 ✓
-- 正文断行 "4 座、大桥..." → 不再被误判 ✓
+- 日期行 "2026 年3 月至" → 不被误判为标题 ✓
+- 公章图片 → VLM 描述："红色圆形印章...广西楼栋集团有限公司" ✓
+- 图片选择性：103 张图 → 83 装饰性跳过 → 5 次 VLM（vs doc-refine 206 次 API）✓
 
 ### 迭代历史
 
 | 迭代 | 日期 | 内容 | 提交 |
 |------|------|------|------|
-| #0 | 2026-04-04 | 需求文档 + 架构设计 + 调研 | a1e7c43 |
-| #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | a1e7c43 |
-| #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | da613bf |
-| #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 7d64044 |
-| #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 0f03db1 |
-| #5 | 2026-04-04 | Phase 3a：ImageExtractor（选择性提取）、VLM 描述流程、Pipeline 三步分离、55 tests | 157b1d5 |
-| #6 | 2026-04-04 | Phase 3b：VLM 端到端验证（Responses API 自动切换）、MarkdownRenderer 多行描述、55 tests | ef2a87f |
-| #7 | 2026-04-04 | Phase 3c：并发 VLM、评估框架（text/heading/cost metrics + CLI）、67 tests | 见下方 |
+| #0-1 | 2026-04-04 | Phase 1：项目骨架、配置、PDFProvider、TextClean、Pipeline、CLI | a1e7c43 |
+| #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooter、ChapterProcessor | da613bf |
+| #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler | 7d64044 |
+| #4 | 2026-04-04 | Phase 2c：OCRBuilder、ImageProcessor、多文档验证 | 0f03db1 |
+| #5 | 2026-04-04 | Phase 3a：ImageExtractor、VLM 描述流程 | 157b1d5 |
+| #6 | 2026-04-04 | Phase 3b：VLM 端到端验证、Responses API 自动切换 | ef2a87f |
+| #7 | 2026-04-04 | Phase 3c：并发 VLM、评估框架 | 851101d |
+| #8 | 2026-04-04 | 文档补齐：README、架构文档修正、实施状态重写 | 见下方 |
