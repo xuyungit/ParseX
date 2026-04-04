@@ -1,0 +1,102 @@
+"""Tests for HeaderFooterProcessor."""
+
+from parserx.models.elements import Document, FontInfo, Page, PageElement
+from parserx.processors.header_footer import (
+    HeaderFooterProcessor,
+    _is_page_number,
+    _normalize_for_comparison,
+)
+
+
+def _text_elem(content: str, y0: float, y1: float, page: int = 1) -> PageElement:
+    return PageElement(
+        type="text",
+        content=content,
+        bbox=(50, y0, 500, y1),
+        page_number=page,
+        font=FontInfo(name="SimSun", size=10.0),
+    )
+
+
+def _make_doc_with_headers(page_count: int = 5) -> Document:
+    """Create a document where each page has a repeated header and footer."""
+    pages = []
+    for i in range(1, page_count + 1):
+        elements = [
+            _text_elem("公司机密文件", 10, 25, i),           # Header (top zone)
+            _text_elem(f"正文内容第{i}页" * 10, 100, 700, i),  # Body
+            _text_elem(f"- {i} -", 770, 785, i),              # Page number (footer)
+        ]
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    return Document(pages=pages)
+
+
+def test_is_page_number():
+    assert _is_page_number("3") is True
+    assert _is_page_number("- 3 -") is True
+    assert _is_page_number("第 5 页") is True
+    assert _is_page_number("iv") is True
+    assert _is_page_number("这不是页码") is False
+
+
+def test_normalize_for_comparison():
+    # Numbers become placeholders
+    assert _normalize_for_comparison("Page 1") == _normalize_for_comparison("Page 2")
+    assert _normalize_for_comparison("第 3 页") == _normalize_for_comparison("第 7 页")
+
+
+def test_remove_repeated_headers():
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    for page in result.pages:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        # Header "公司机密文件" should be removed
+        assert "公司机密文件" not in texts
+        # Body should remain
+        assert any("正文内容" in t for t in texts)
+
+
+def test_remove_page_numbers():
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    for page in result.pages:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        # Page numbers should be removed
+        assert not any("- " in t and t.strip().replace("-", "").strip().isdigit() for t in texts)
+
+
+def test_skip_with_few_pages():
+    """Should not remove anything with < 2 pages (can't detect repetition)."""
+    doc = Document(pages=[
+        Page(number=1, width=595, height=842, elements=[
+            _text_elem("Header", 10, 25),
+            _text_elem("Body text", 100, 700),
+        ])
+    ])
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+    assert len(result.pages[0].elements) == 2  # Nothing removed
+
+
+def test_preserve_non_repeated():
+    """Truly different content in edge zones should be preserved."""
+    unique_titles = ["项目概况", "技术要求", "评审方法", "合同条款", "附件清单"]
+    pages = []
+    for i in range(5):
+        elements = [
+            _text_elem(unique_titles[i], 10, 25, i + 1),  # Truly different each page
+            _text_elem("正文" * 20, 100, 700, i + 1),
+        ]
+        pages.append(Page(number=i + 1, width=595, height=842, elements=elements))
+    doc = Document(pages=pages)
+
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # Non-repeated headers should be preserved
+    for page in result.pages:
+        assert len(page.elements) == 2
