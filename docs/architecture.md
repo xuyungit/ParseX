@@ -1091,13 +1091,26 @@ ground_truth/
 - 弱信号（如阿拉伯数字编号）需要字体信号配合才接受，避免正文误判
 - 未来 LLM fallback 处理规则无法覆盖的模糊情况
 
+- [x] OCRBuilder — `parserx/builders/ocr.py` + `parserx/services/ocr.py`
+  - PaddleOCR 在线同步 API 客户端（从 doc-refine 迁移协议）
+  - 选择性 OCR：仅对 scanned/mixed/sparse-text 页面调用
+  - 可插拔引擎接口（PaddleOCR、RapidOCR、Tesseract、远程 API）
+- [x] ImageProcessor — `parserx/processors/image.py`
+  - 启发式图片分类：decorative/informational/table/text/blank
+  - 装饰性图片跳过 VLM，信息性图片标记 needs_vlm
+  - text_pic01.pdf 验证：103 张图中 83 张装饰性被跳过（80%）
+- [x] Pipeline 集成 OCRBuilder + ImageProcessor
+- [x] 55 个测试全部通过
+- [x] 多文档验证通过（5 个不同类型 PDF）
+
 **进行中**：
-- [ ] Phase 2 剩余：OCRBuilder、ImageProcessor
+- [ ] Phase 3：VLM 图片描述接入、LLM fallback
 
 **下一步**：
-1. OCRBuilder：PaddleOCR 在线服务集成 + 选择性 OCR 逻辑
-2. ImageProcessor：启发式图片分类 + VLM 描述接入
-3. 用更多测试文档验证通用性（deepseek.pdf、real_doc01.pdf 等）
+1. VLM 图片描述：对 needs_vlm=True 的图片调用 VLM 服务，保存到图片和提取图片到文件系统
+2. LLM fallback：对低置信章节检测调用 LLM 精化
+3. 评估框架：基础 metrics（文本编辑距离）
+4. 更多格式支持：DOCX Provider
 
 **阻塞项**：无
 
@@ -1121,16 +1134,19 @@ parserx/
 │   └── pdf.py                      # PDFProvider (PyMuPDF 字符级)
 ├── builders/
 │   ├── __init__.py
-│   └── metadata.py                 # MetadataBuilder（字体统计 + 编号检测）
+│   ├── metadata.py                 # MetadataBuilder（字体统计 + 编号检测）
+│   └── ocr.py                      # OCRBuilder（选择性 OCR）
 ├── processors/
 │   ├── __init__.py
 │   ├── base.py                     # Processor 协议
 │   ├── header_footer.py            # 几何位置 + 跨页重复检测
 │   ├── chapter.py                  # 字体 + 编号规则引擎
+│   ├── image.py                    # 启发式图片分类 + VLM 标记
 │   └── text_clean.py               # CJK 空格 + 编码修复
 ├── services/
 │   ├── __init__.py
-│   └── llm.py                      # OpenAI-compatible LLM/VLM 抽象
+│   ├── llm.py                      # OpenAI-compatible LLM/VLM 抽象
+│   └── ocr.py                      # PaddleOCR 在线 API 客户端
 ├── assembly/
 │   ├── __init__.py
 │   ├── chapter.py                  # ChapterAssembler（H1 切分 + index.md）
@@ -1144,9 +1160,21 @@ tests/
 ├── test_metadata_builder.py        # 8 tests
 ├── test_header_footer.py           # 6 tests
 ├── test_chapter.py                 # 7 tests (含真实 PDF)
-└── test_chapter_assembler.py       # 5 tests (含真实 PDF 章节切分)
+├── test_chapter_assembler.py       # 5 tests (含真实 PDF 章节切分)
+├── test_image_processor.py         # 9 tests
+└── test_ocr_builder.py             # 5 tests
 parserx.yaml                       # 默认配置文件
 ```
+
+### 多文档验证结果（迭代 #4）
+
+| 文档 | 页数 | 正文字体 | 标题数 | 图片（信息/装饰） |
+|------|------|---------|--------|-----------------|
+| pdf_text01.pdf（采购文件） | 55 | SimSun 12pt | 57 | 0/0 |
+| real_doc01.pdf（企业文档） | 56 | SimSun 12pt | 53 | 0/0 |
+| text_pic01.pdf（图文混排） | 36 | MicrosoftYaHei 13.9pt | 46 | 20/83 |
+| deepseek.pdf（英文技术） | 1 | PingFang 16pt | 0 | 4/8 |
+| text_table_libreoffice.pdf | 3 | HiraginoSans 16pt | 3 | 0/0 |
 
 ### 端到端验证结果（pdf_text01.pdf — 55 页采购文件）
 
@@ -1171,4 +1199,5 @@ Output: 43577 characters, 13 chapter files + index.md
 | #0 | 2026-04-04 | 需求文档 + 架构设计 + 调研 | a1e7c43 |
 | #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | a1e7c43 |
 | #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | da613bf |
-| #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 见下方 |
+| #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 7d64044 |
+| #4 | 2026-04-04 | Phase 2c：OCRBuilder（选择性OCR）、ImageProcessor（启发式分类）、多文档验证、55 tests | 见下方 |
