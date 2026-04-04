@@ -1075,19 +1075,29 @@ ground_truth/
 - [x] 36 个测试全部通过
 - [x] 端到端验证：pdf_text01.pdf 正确检测章节（第X章→H1）、移除 43 个页脚
 
-**已知问题（下一迭代修复）**：
-- 标题检测偏多（187 个），需要调优阈值或增加过滤规则
-- 目录页的标题行被误检为正文标题（需识别并跳过目录页）
+- [x] ChapterProcessor 调优 — 从 187 个标题降至 57 个
+  - 日期排除、TOC 排除（通用规则，非过拟合）
+  - 弱编号信号（阿拉伯数字+空格）仅在有字体信号时才接受
+  - 设计原则：规则只做高置信判断，模糊情况留给 LLM fallback
+- [x] ChapterAssembler — `parserx/assembly/chapter.py`
+  - 按 H1 边界切分为章节文件
+  - 生成 index.md 目录（含 H2/H3 缩进）
+  - CLI 支持 `--split-chapters` 目录输出
+- [x] 41 个测试全部通过
+- [x] 端到端验证：pdf_text01.pdf → 13 个章节文件 + index.md
+
+**设计原则记录**：
+- 规则引擎只用普适性强的硬规则（日期/TOC/纯数字排除），不针对测试文档做特定优化
+- 弱信号（如阿拉伯数字编号）需要字体信号配合才接受，避免正文误判
+- 未来 LLM fallback 处理规则无法覆盖的模糊情况
 
 **进行中**：
-- [ ] Phase 2 剩余：TableProcessor、OCRBuilder、ChapterAssembler
+- [ ] Phase 2 剩余：OCRBuilder、ImageProcessor
 
-**下一步（Phase 2 剩余项）**：
-1. 调优 ChapterProcessor（减少误检：过滤短行、目录行等）
-2. ChapterAssembler：章节切分 + 目录生成
-3. 基础 TableProcessor：改进表格提取质量
-4. OCRBuilder：PaddleOCR 在线服务集成 + 选择性 OCR
-5. ImageProcessor：启发式图片分类 + VLM 描述接入
+**下一步**：
+1. OCRBuilder：PaddleOCR 在线服务集成 + 选择性 OCR 逻辑
+2. ImageProcessor：启发式图片分类 + VLM 描述接入
+3. 用更多测试文档验证通用性（deepseek.pdf、real_doc01.pdf 等）
 
 **阻塞项**：无
 
@@ -1123,6 +1133,7 @@ parserx/
 │   └── llm.py                      # OpenAI-compatible LLM/VLM 抽象
 ├── assembly/
 │   ├── __init__.py
+│   ├── chapter.py                  # ChapterAssembler（H1 切分 + index.md）
 │   └── markdown.py                 # Markdown 渲染器
 ├── verification/                   # Phase 3
 └── eval/                           # Phase 4
@@ -1132,7 +1143,8 @@ tests/
 ├── test_pipeline.py                # 4 tests (含真实 PDF)
 ├── test_metadata_builder.py        # 8 tests
 ├── test_header_footer.py           # 6 tests
-└── test_chapter.py                 # 7 tests (含真实 PDF)
+├── test_chapter.py                 # 7 tests (含真实 PDF)
+└── test_chapter_assembler.py       # 5 tests (含真实 PDF 章节切分)
 parserx.yaml                       # 默认配置文件
 ```
 
@@ -1141,13 +1153,16 @@ parserx.yaml                       # 默认配置文件
 ```
 Body font: SimSun 12.0pt, 9 heading candidate(s), 7 numbering pattern(s)
 HeaderFooter: 1 footer pattern → removed 43 elements
-Chapter: detected 187 headings (偏多，需调优)
-Output: 44077 characters
+Chapter: detected 57 headings (调优后，从 187 降至 57)
+Output: 43577 characters, 13 chapter files + index.md
 ```
 
 - "第一章" → `# 第一章` (H1) ✓
 - "一、项目概况" 类 → `## ...` (H2) ✓
+- "（一）、响应文件的编制要求" → `## ...` (H2) ✓
 - 页码 "- 3 -" → 已移除 ✓
+- 日期行 "2026 年3 月至" → 不再被误判 ✓
+- 正文断行 "4 座、大桥..." → 不再被误判 ✓
 
 ### 迭代历史
 
@@ -1155,4 +1170,5 @@ Output: 44077 characters
 |------|------|------|------|
 | #0 | 2026-04-04 | 需求文档 + 架构设计 + 调研 | a1e7c43 |
 | #1 | 2026-04-04 | Phase 1 骨架：配置、数据模型、PDFProvider、TextClean、Pipeline、CLI、15 tests | a1e7c43 |
-| #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | 见下方 |
+| #2 | 2026-04-04 | Phase 2a：MetadataBuilder、HeaderFooterProcessor、ChapterProcessor、36 tests | da613bf |
+| #3 | 2026-04-04 | Phase 2b：ChapterProcessor 调优（187→57）、ChapterAssembler（章节切分+目录）、41 tests | 见下方 |

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from parserx.assembly.chapter import ChapterAssembler
 from parserx.assembly.markdown import MarkdownRenderer
 from parserx.builders.metadata import MetadataBuilder
 from parserx.config.schema import ParserXConfig
@@ -73,6 +74,15 @@ class Pipeline:
 
         log.info("Done: %d characters output", len(markdown))
         return markdown
+
+    def parse_to_dir(self, path: str | Path, output_dir: str | Path) -> Path:
+        """Parse a document and write chapter files + index to output_dir.
+
+        Returns the path to final.md.
+        """
+        doc = self.parse_to_document(path)
+        assembler = ChapterAssembler(self._config.output)
+        return assembler.assemble(doc, Path(output_dir))
 
     def parse_to_document(self, path: str | Path) -> Document:
         """Parse and return the Document model (for programmatic use)."""
