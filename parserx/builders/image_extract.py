@@ -1,7 +1,7 @@
-"""Image extractor — save images from PDF to disk.
+"""Image extractor — save images from documents to disk.
 
-Extracts embedded images from the PDF using PyMuPDF xref,
-saves them to an output directory, and updates element metadata
+Supports PDF (via PyMuPDF xref) and DOCX (via Docling PictureItem).
+Saves images to an output directory and updates element metadata
 with the saved file path.
 
 Only extracts images that are not marked as skipped (decorative/blank).
@@ -54,6 +54,64 @@ class ImageExtractor:
 
         fitz_doc.close()
         log.info("Extracted %d images, skipped %d", extracted_count, skipped_count)
+        return doc
+
+    def extract_docx(self, doc: Document, source_path: Path, output_dir: Path) -> Document:
+        """Extract images from DOCX via Docling and save them.
+
+        Uses Docling's PictureItem.get_image() to obtain PIL images.
+        """
+        from docling.document_converter import DocumentConverter
+
+        images_dir = output_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        converter = DocumentConverter()
+        result = converter.convert(str(source_path))
+        docling_doc = result.document
+
+        extracted_count = 0
+        skipped_count = 0
+        img_counter = 0
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "image":
+                    continue
+                if elem.metadata.get("skipped"):
+                    skipped_count += 1
+                    continue
+
+                self_ref = elem.metadata.get("docling_self_ref")
+                if not self_ref:
+                    continue
+
+                # Look up the PictureItem in the Docling document
+                try:
+                    picture_item = docling_doc.get_ref(self_ref)
+                    pil_image = picture_item.get_image(docling_doc)
+                except Exception:
+                    pil_image = None
+
+                if pil_image is None:
+                    continue
+
+                img_counter += 1
+                filename = f"p{page.number}_img{img_counter}.png"
+                output_path = images_dir / filename
+                pil_image.save(output_path, format="PNG")
+
+                elem.metadata["saved_path"] = f"images/{filename}"
+                elem.metadata["saved_abs_path"] = str(output_path)
+
+                # Update dimensions from actual image if not already set
+                if not elem.metadata.get("width"):
+                    elem.metadata["width"] = pil_image.width
+                    elem.metadata["height"] = pil_image.height
+
+                extracted_count += 1
+
+        log.info("Extracted %d DOCX images, skipped %d", extracted_count, skipped_count)
         return doc
 
     def _extract_image(

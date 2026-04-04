@@ -119,9 +119,13 @@ class Pipeline:
 
             # After ImageProcessor classifies: extract non-skipped images to disk,
             # then run VLM descriptions on the extracted files
-            if isinstance(processor, ImageProcessor) and output_dir and path.suffix.lower() == ".pdf":
+            if isinstance(processor, ImageProcessor) and output_dir:
+                suffix = path.suffix.lower()
                 log.info("Extracting images to %s", output_dir / "images")
-                doc = self._image_extractor.extract(doc, path, output_dir)
+                if suffix == ".pdf":
+                    doc = self._image_extractor.extract(doc, path, output_dir)
+                elif suffix == ".docx":
+                    doc = self._image_extractor.extract_docx(doc, path, output_dir)
 
                 # Now that images are on disk, run VLM for needs_vlm images
                 if self._vlm_service and self._config.processors.image.vlm_description:
