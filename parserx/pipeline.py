@@ -27,7 +27,7 @@ from parserx.processors.table import TableProcessor
 from parserx.processors.text_clean import TextCleanProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
-from parserx.services.llm import create_vlm_service
+from parserx.services.llm import create_llm_service, create_vlm_service
 from parserx.verification import (
     CompletenessChecker,
     HallucinationDetector,
@@ -54,6 +54,7 @@ class Pipeline:
             if self._config.builders.ocr.engine != "none" else None
         )
         self._image_extractor = ImageExtractor()
+        self._llm_service = self._create_llm_service()
         self._vlm_service = self._create_vlm_service()
         self._processors: list[Processor] = self._build_processors()
         self._crossref_resolver = CrossReferenceResolver()
@@ -208,6 +209,14 @@ class Pipeline:
             return create_vlm_service(cfg)
         return None
 
+    def _create_llm_service(self):
+        """Create LLM service if configured with endpoint and key."""
+        cfg = self._config.services.llm
+        if cfg.endpoint and cfg.api_key:
+            log.info("LLM service configured: %s / %s", cfg.endpoint, cfg.model)
+            return create_llm_service(cfg)
+        return None
+
     def _verify_all(
         self,
         doc: Document,
@@ -274,7 +283,10 @@ class Pipeline:
             ))
 
         if self._config.processors.chapter.enabled:
-            processors.append(ChapterProcessor(self._config.processors.chapter))
+            processors.append(ChapterProcessor(
+                self._config.processors.chapter,
+                llm_service=self._llm_service,
+            ))
 
         if self._config.processors.table.enabled:
             processors.append(TableProcessor(self._config.processors.table))

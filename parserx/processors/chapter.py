@@ -10,14 +10,30 @@ Numbering detection regexes migrated from legacy pipeline chapter_outline_core.p
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 
 from parserx.builders.metadata import detect_numbering_signal
 from parserx.config.schema import ProcessorToggle
 from parserx.models.elements import Document, FontInfo, PageElement
+from parserx.services.llm import LLMService
 
 log = logging.getLogger(__name__)
+
+_FALLBACK_SYSTEM_PROMPT = """\
+你是一个文档结构分析助手。你的任务是判断候选文本是否为标题，并给出标题层级。
+
+返回 JSON 数组，每项格式如下：
+{"idx": 1, "level": 2}
+
+规则：
+- level 只能是 0, 1, 2, 3
+- 0 表示不是标题
+- 只根据候选文本本身、字体信息和局部上下文判断
+- 不要输出任何额外解释，不要输出 Markdown"""
+
+_FALLBACK_MAX_CANDIDATES = 40
 
 # ── False positive filters ──────────────────────────────────────────────
 
@@ -136,6 +152,25 @@ def _looks_like_body_text(text: str) -> bool:
     return False
 
 
+def _truncate_text(text: str, limit: int = 120) -> str:
+    compact = " ".join(part.strip() for part in text.splitlines() if part.strip())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def _safe_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 class ChapterProcessor:
     """Detect chapter/section headings and assign heading levels.
 
@@ -143,8 +178,13 @@ class ChapterProcessor:
     The MarkdownRenderer uses this to output # / ## / ### prefixes.
     """
 
-    def __init__(self, config: ProcessorToggle | None = None):
+    def __init__(
+        self,
+        config: ProcessorToggle | None = None,
+        llm_service: LLMService | None = None,
+    ):
         self._config = config or ProcessorToggle()
+        self._llm = llm_service
 
     def process(self, doc: Document) -> Document:
         if not self._config.enabled:
@@ -155,9 +195,10 @@ class ChapterProcessor:
         numbering_patterns = doc.metadata.numbering_patterns
 
         detected_count = 0
+        fallback_candidates: list[dict] = []
 
         for page in doc.pages:
-            for elem in page.elements:
+            for elem_idx, elem in enumerate(page.elements):
                 if elem.type != "text":
                     continue
 
@@ -172,8 +213,25 @@ class ChapterProcessor:
                 if level is not None:
                     elem.metadata["heading_level"] = level
                     detected_count += 1
+                    continue
 
-        log.info("Detected %d headings", detected_count)
+                candidate = self._build_fallback_candidate(
+                    page.elements,
+                    elem_idx,
+                    elem,
+                    heading_candidates,
+                )
+                if candidate is not None:
+                    fallback_candidates.append(candidate)
+
+        fallback_hits = self._apply_llm_fallback(doc, fallback_candidates)
+        detected_count += fallback_hits
+
+        log.info(
+            "Detected %d headings (%d via fallback)",
+            detected_count,
+            fallback_hits,
+        )
         return doc
 
     def _detect_heading(
@@ -239,3 +297,152 @@ class ChapterProcessor:
                 return font_level
 
         return None
+
+    def _build_fallback_candidate(
+        self,
+        page_elements: list[PageElement],
+        elem_idx: int,
+        elem: PageElement,
+        heading_candidates: list[FontInfo],
+    ) -> dict | None:
+        if not self._config.llm_fallback or self._llm is None:
+            return None
+
+        first_line = elem.content.split("\n")[0].strip()
+        if not first_line or _is_false_positive(first_line):
+            return None
+        if len(first_line) > 120:
+            return None
+
+        font_level = _heading_level_from_font(elem.font, heading_candidates)
+        numbering = detect_numbering_signal(first_line)
+        numbering_level = _heading_level_from_numbering(first_line)
+
+        if font_level is None and numbering_level is None:
+            return None
+
+        signal_strength = 0
+        if font_level is not None:
+            signal_strength += 1
+        if numbering_level is not None:
+            signal_strength += 1
+
+        if signal_strength >= 2:
+            return None
+
+        prev_text = self._neighbor_text(page_elements, elem_idx, direction=-1)
+        next_text = self._neighbor_text(page_elements, elem_idx, direction=1)
+
+        return {
+            "element": elem,
+            "page": elem.page_number,
+            "text": first_line,
+            "font_size": elem.font.size,
+            "font_bold": elem.font.bold,
+            "font_level_hint": font_level or 0,
+            "numbering_signal": numbering[0] if numbering else "",
+            "numbering_level_hint": numbering_level or 0,
+            "prev_text": prev_text,
+            "next_text": next_text,
+        }
+
+    def _neighbor_text(
+        self,
+        elements: list[PageElement],
+        start_idx: int,
+        *,
+        direction: int,
+    ) -> str:
+        idx = start_idx + direction
+        while 0 <= idx < len(elements):
+            elem = elements[idx]
+            if elem.type == "text" and elem.content.strip():
+                return _truncate_text(elem.content, 80)
+            idx += direction
+        return ""
+
+    def _apply_llm_fallback(
+        self,
+        doc: Document,
+        candidates: list[dict],
+    ) -> int:
+        if not self._config.llm_fallback or self._llm is None or not candidates:
+            return 0
+
+        accepted = 0
+        for batch in self._iter_candidate_batches(candidates, _FALLBACK_MAX_CANDIDATES):
+            predictions = self._classify_candidates(batch, doc)
+            for prediction in predictions:
+                idx = _safe_int(prediction.get("idx"))
+                level = _safe_int(prediction.get("level"))
+                if idx is None or level is None or level not in {0, 1, 2, 3}:
+                    continue
+                if idx < 1 or idx > len(batch):
+                    continue
+
+                elem = batch[idx - 1]["element"]
+                if level == 0 or elem.metadata.get("heading_level"):
+                    continue
+
+                elem.metadata["heading_level"] = level
+                elem.metadata["llm_fallback_used"] = True
+                elem.metadata["llm_heading_confirmed"] = True
+                accepted += 1
+
+        return accepted
+
+    def _iter_candidate_batches(
+        self,
+        candidates: list[dict],
+        batch_size: int,
+    ):
+        for start in range(0, len(candidates), batch_size):
+            yield candidates[start: start + batch_size]
+
+    def _classify_candidates(
+        self,
+        batch: list[dict],
+        doc: Document,
+    ) -> list[dict]:
+        body_font = doc.metadata.font_stats.body_font
+        prompt_lines = [
+            f"正文参考字体: name={body_font.name or 'unknown'}, size={body_font.size}, bold={body_font.bold}",
+            "请判断下面候选是否为标题，并给出层级。优先保持层级连续：大的章节标题更可能是 H1，次级小标题更可能是 H2/H3。",
+            "候选列表：",
+        ]
+
+        for idx, candidate in enumerate(batch, 1):
+            prompt_lines.extend([
+                f"{idx}. text={json.dumps(candidate['text'], ensure_ascii=False)}",
+                "   "
+                f"page={candidate['page']}, font_size={candidate['font_size']}, "
+                f"bold={candidate['font_bold']}, font_level_hint={candidate['font_level_hint']}, "
+                f"numbering_signal={candidate['numbering_signal'] or '-'}, "
+                f"numbering_level_hint={candidate['numbering_level_hint']}",
+                f"   prev={json.dumps(candidate['prev_text'], ensure_ascii=False)}",
+                f"   next={json.dumps(candidate['next_text'], ensure_ascii=False)}",
+            ])
+
+        prompt_lines.append('仅返回 JSON 数组，例如: [{"idx":1,"level":2},{"idx":2,"level":0}]')
+        user_prompt = "\n".join(prompt_lines)
+
+        try:
+            response = self._llm.complete(
+                _FALLBACK_SYSTEM_PROMPT,
+                user_prompt,
+                temperature=0.0,
+                max_tokens=2048,
+            )
+        except Exception as exc:
+            log.warning("Chapter LLM fallback failed: %s", exc)
+            return []
+
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError:
+            log.warning("Chapter LLM fallback returned non-JSON response")
+            return []
+
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+        return []
