@@ -5,6 +5,7 @@ from parserx.processors.table import (
     TableProcessor,
     _build_md_table,
     _headers_match,
+    _is_degenerate_table_artifact,
     _parse_md_table,
 )
 
@@ -46,6 +47,12 @@ TABLE_PAGE2_NO_HEADER = """\
 |---|---|---|
 | Dave | 28 | SF |"""
 
+DEGENERATE_UI_TABLE = """\
+| 附加 搜索 推理 Voic |  |
+|---|---|
+| 附加 搜索 推理 Voic |  |
+|  |  |"""
+
 
 def test_parse_md_table():
     header, sep, rows = _parse_md_table(TABLE_PAGE1)
@@ -59,6 +66,12 @@ def test_build_md_table():
     assert "| A | B |" in md
     assert "|---|---|" in md
     assert "| 1 | 2 |" in md
+
+
+def test_detect_degenerate_ui_table_artifact():
+    elem = _make_table(DEGENERATE_UI_TABLE, 1, 100.0, 200.0)
+
+    assert _is_degenerate_table_artifact(elem) is True
 
 
 def test_headers_match():
@@ -140,8 +153,36 @@ def test_three_page_merge():
     result = processor.process(doc)
 
     # After merge: page 1 has merged t1+t2, page 2 empty, t2(merged) at bottom merges with t3
-    # Actually: first pass merges t1+t2 (removes t2 from page 2), then tries page 2→3 but page 2 has no table
     assert len(result.pages[1].elements) == 0
     merged = result.pages[0].elements[0]
     assert "1" in merged.content
     assert "3" in merged.content
+    assert "5" in merged.content
+
+
+def test_cross_page_merge_can_bridge_page_number_only_page():
+    t1 = _make_table("| A | B |\n|---|---|\n| 1 | 2 |", 1, 700.0, 842.0)
+    page_number = PageElement(
+        type="text",
+        content="2",
+        bbox=(250.0, 800.0, 260.0, 820.0),
+        page_number=2,
+    )
+    t3 = _make_table("| A | B |\n|---|---|\n| 3 | 4 |", 3, 0.0, 100.0)
+
+    doc = _make_doc([[t1], [page_number], [t3]])
+    result = TableProcessor().process(doc)
+
+    merged = result.pages[0].elements[0]
+    assert "1" in merged.content
+    assert "3" in merged.content
+    assert merged.metadata["merged_from_pages"] == [1, 3]
+
+
+def test_suppress_degenerate_table_artifact():
+    table = _make_table(DEGENERATE_UI_TABLE, 1, 100.0, 200.0)
+    doc = _make_doc([[table]])
+
+    result = TableProcessor().process(doc)
+
+    assert result.pages[0].elements == []

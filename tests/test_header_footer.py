@@ -69,6 +69,23 @@ def test_remove_page_numbers():
         assert not any("- " in t and t.strip().replace("-", "").strip().isdigit() for t in texts)
 
 
+def test_remove_bottom_edge_page_numbers_slightly_above_footer_zone():
+    pages = []
+    for i in range(1, 4):
+        elements = [
+            _text_elem("正文" * 20, 100, 400, i),
+            _text_elem(str(i), 520, 536, i),
+        ]
+        pages.append(Page(number=i, width=595, height=595, elements=elements))
+    doc = Document(pages=pages)
+
+    result = HeaderFooterProcessor().process(doc)
+
+    for page in result.pages:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        assert not any(text.strip().isdigit() for text in texts)
+
+
 def test_skip_with_few_pages():
     """Should not remove anything with < 2 pages (can't detect repetition)."""
     doc = Document(pages=[

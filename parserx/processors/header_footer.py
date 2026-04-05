@@ -54,6 +54,22 @@ def _normalize_for_comparison(text: str) -> str:
     return text
 
 
+def _is_bottom_edge_text(elem: PageElement, page: Page, count: int = _INSPECT_COUNT) -> bool:
+    """Check whether *elem* is one of the bottom-most text-like elements on the page."""
+    text_elements = [
+        candidate for candidate in page.elements
+        if candidate.type in ("text", "header", "footer")
+    ]
+    if not text_elements:
+        return False
+    ordered = sorted(
+        text_elements,
+        key=lambda candidate: ((candidate.bbox[1] + candidate.bbox[3]) / 2, candidate.bbox[3]),
+        reverse=True,
+    )
+    return elem in ordered[:count]
+
+
 class HeaderFooterProcessor:
     """Remove headers, footers, and page numbers.
 
@@ -109,13 +125,13 @@ class HeaderFooterProcessor:
         repeated_bottom = {text for text, count in bottom_counter.items() if count >= min_count}
 
         if not repeated_top and not repeated_bottom:
-            log.debug("No repeated header/footer patterns found")
-            return doc
+            log.debug("No repeated header/footer patterns found; checking standalone page numbers only")
 
-        log.info(
-            "Detected %d header pattern(s), %d footer pattern(s)",
-            len(repeated_top), len(repeated_bottom),
-        )
+        if repeated_top or repeated_bottom:
+            log.info(
+                "Detected %d header pattern(s), %d footer pattern(s)",
+                len(repeated_top), len(repeated_bottom),
+            )
 
         # Step 3: Remove matching elements
         removed_count = 0
@@ -187,6 +203,12 @@ class HeaderFooterProcessor:
 
         # Also remove standalone page numbers in footer zone
         if elem_y_center > footer_y and _is_page_number(elem.content):
+            return True
+
+        # PDFs often place page numbers slightly above the configured footer zone.
+        # If a standalone page number is one of the bottom-most text elements,
+        # treat it as footer noise even when geometry is imperfect.
+        if _is_page_number(elem.content) and _is_bottom_edge_text(elem, page):
             return True
 
         return False
