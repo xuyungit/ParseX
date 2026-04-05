@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 
 from parserx.eval.metrics import EvalResult
+from parserx.eval.reporting import ReportMetadata, append_metadata_section
 from parserx.eval.warnings import summarize_warning_types, warning_label
 
 log = logging.getLogger(__name__)
@@ -57,6 +58,8 @@ def format_compare_report(
     *,
     label_a: str = "A",
     label_b: str = "B",
+    metadata_a: ReportMetadata | None = None,
+    metadata_b: ReportMetadata | None = None,
 ) -> str:
     """Render a compact A/B comparison report."""
     if not rows:
@@ -87,6 +90,10 @@ def format_compare_report(
         "",
         f"Comparing **{label_a}** vs **{label_b}** on {len(rows)} document(s).",
         "",
+    ]
+    append_metadata_section(lines, title=f"{label_a} Metadata", metadata=metadata_a)
+    append_metadata_section(lines, title=f"{label_b} Metadata", metadata=metadata_b)
+    lines.extend([
         "## Summary",
         "",
         "| Metric | "
@@ -104,7 +111,7 @@ def format_compare_report(
         f"- Char F1 improved on {improved_char} doc(s), regressed on {regressed_char}.",
         f"- Warning count dropped on {reduced_warn} doc(s), increased on {increased_warn}.",
         "",
-    ]
+    ])
 
     warnings_a = [warning for row in rows for warning in row.result_a.warnings]
     warnings_b = [warning for row in rows for warning in row.result_b.warnings]

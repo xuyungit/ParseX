@@ -5,6 +5,20 @@ from __future__ import annotations
 from parserx.config.schema import OutputConfig
 from parserx.models.elements import Document, PageElement
 
+_OCR_OVERLAP_REFERENCE_TEXT = "Text content preserved in OCR body text."
+
+
+def get_image_reference_text(element: PageElement) -> str:
+    """Return the text that should appear in rendered image references."""
+    description = str(element.metadata.get("description", "")).replace("\n", " ").strip()
+    if (
+        description
+        and element.metadata.get("description_source") == "ocr_overlap_evidence"
+        and element.metadata.get("text_heavy_image")
+    ):
+        return _OCR_OVERLAP_REFERENCE_TEXT
+    return description
+
 
 class MarkdownRenderer:
     """Render a processed Document as Markdown text."""
@@ -80,18 +94,23 @@ class MarkdownRenderer:
 
         # Normalize description for embedding
         desc_oneline = description.replace("\n", " ").strip() if description else ""
+        reference_text = get_image_reference_text(element)
         body = ""
 
         if image_path and description:
+            # OCR-overlap text-heavy images already have the body text rendered
+            # elsewhere; keep the image reference compact to avoid duplication.
+            if reference_text and reference_text != desc_oneline:
+                body = f"![{reference_text}]({image_path})"
             # Short description → alt text; long → separate block
-            if len(desc_oneline) <= 120:
+            elif len(desc_oneline) <= 120:
                 body = f"![{desc_oneline}]({image_path})"
             else:
                 body = f"![]({image_path})\n\n> {desc_oneline}"
         elif image_path:
             body = f"![]({image_path})"
         elif description:
-            body = f"> [图片] {desc_oneline}"
+            body = f"> [图片] {reference_text or desc_oneline}"
 
         if not body:
             return ""

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from parserx.config.schema import ConfigLoadResult, apply_overrides, load_config_with_result
+from parserx.eval.reporting import build_config_report_metadata
 from parserx.pipeline import Pipeline
 
 
@@ -115,14 +116,14 @@ def _cmd_parse(args: argparse.Namespace) -> None:
 def _cmd_eval(args: argparse.Namespace) -> None:
     from parserx.eval.runner import EvalRunner
 
-    config = _load_cli_config(args.config, args.overrides, label="Eval")
+    config, metadata = _load_cli_config(args.config, args.overrides, label="Eval")
     runner = EvalRunner(config)
     include_docs = _resolve_include_docs(
         getattr(args, "include_docs", None),
         getattr(args, "include_list", None),
     )
     results = runner.evaluate_dir(args.ground_truth, include_docs=include_docs)
-    report = EvalRunner.format_report(results)
+    report = EvalRunner.format_report(results, metadata=metadata)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -136,8 +137,8 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     from parserx.eval.compare import compare_results, format_compare_report
     from parserx.eval.runner import EvalRunner
 
-    config_a = _load_cli_config(args.config_a, args.overrides_a, label=f"Compare {args.label_a}")
-    config_b = _load_cli_config(args.config_b, args.overrides_b, label=f"Compare {args.label_b}")
+    config_a, metadata_a = _load_cli_config(args.config_a, args.overrides_a, label=f"Compare {args.label_a}")
+    config_b, metadata_b = _load_cli_config(args.config_b, args.overrides_b, label=f"Compare {args.label_b}")
     include_docs = _resolve_include_docs(
         getattr(args, "include_docs", None),
         getattr(args, "include_list", None),
@@ -150,6 +151,8 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         rows,
         label_a=args.label_a,
         label_b=args.label_b,
+        metadata_a=metadata_a,
+        metadata_b=metadata_b,
     )
 
     if args.output:
@@ -168,7 +171,13 @@ def _load_cli_config(
 ):
     loaded = load_config_with_result(path)
     _log_config_resolution(label, loaded)
-    return apply_overrides(loaded.config, overrides)
+    config = apply_overrides(loaded.config, overrides)
+    metadata = build_config_report_metadata(
+        config,
+        loaded=loaded,
+        overrides=overrides,
+    )
+    return config, metadata
 
 
 def _log_config_resolution(label: str, loaded: ConfigLoadResult) -> None:

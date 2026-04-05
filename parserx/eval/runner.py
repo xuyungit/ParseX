@@ -14,6 +14,7 @@ from parserx.eval.metrics import (
     compute_table_metrics,
     compute_text_metrics,
 )
+from parserx.eval.reporting import ReportMetadata, append_metadata_section
 from parserx.pipeline import Pipeline
 from parserx.eval.warnings import summarize_warning_types, warning_label
 
@@ -135,12 +136,17 @@ class EvalRunner:
         return result
 
     @staticmethod
-    def format_report(results: list[EvalResult]) -> str:
+    def format_report(
+        results: list[EvalResult],
+        *,
+        metadata: ReportMetadata | None = None,
+    ) -> str:
         """Format evaluation results as a human-readable report."""
         if not results:
             return "No results."
 
         lines = ["# ParserX Evaluation Report", ""]
+        append_metadata_section(lines, title="Run Metadata", metadata=metadata)
         total_docs = len(results)
         total_warnings = sum(r.cost.warning_count for r in results)
         total_ocr = sum(r.cost.ocr_calls for r in results)
