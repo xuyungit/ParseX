@@ -431,7 +431,8 @@ class ChapterProcessor:
         text = elem.content.split("\n")[0].strip()
         if not text:
             return False
-        if detect_numbering_signal(text):
+        numbering = detect_numbering_signal(text)
+        if numbering and numbering[0] != "section_arabic_spaced":
             return True
         if ":" in text or "：" in text:
             return True
