@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from parserx.assembly.markdown import get_image_reference_text
 from parserx.models.elements import Document, PageElement
 from parserx.text_utils import normalize_for_comparison
 
@@ -107,7 +108,7 @@ class CompletenessChecker:
                 continue
 
             saved_path = str(elem.metadata.get("saved_path", "")).strip()
-            description = str(elem.metadata.get("description", "")).replace("\n", " ").strip()
+            description = get_image_reference_text(elem)
             referenced = False
 
             if saved_path and saved_path in markdown:

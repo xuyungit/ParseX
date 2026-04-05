@@ -16,6 +16,7 @@ from parserx.eval.metrics import (
     compute_table_metrics,
     compute_text_metrics,
 )
+from parserx.eval.reporting import build_config_report_metadata
 from parserx.eval.warnings import categorize_warning, summarize_warning_types
 
 
@@ -303,6 +304,13 @@ def test_apply_overrides_supports_dotted_paths():
 
 
 def test_format_report_includes_warning_and_api_sections():
+    config = apply_overrides(
+        ParserXConfig(),
+        [
+            "services.vlm.model=demo-vlm",
+            "services.llm.model=demo-llm",
+        ],
+    )
     results = [
         EvalResult(
             document_name="doc-a",
@@ -318,8 +326,18 @@ def test_format_report_includes_warning_and_api_sections():
         ),
     ]
 
-    report = EvalRunner.format_report(results)
+    report = EvalRunner.format_report(
+        results,
+        metadata=build_config_report_metadata(
+            config,
+            overrides=["services.vlm.model=demo-vlm", "services.llm.model=demo-llm"],
+        ),
+    )
 
+    assert "Run Metadata" in report
+    assert "VLM service" in report
+    assert "model=demo-vlm" in report
+    assert "Overrides" in report
     assert "Total warnings: 3" in report
     assert "API calls (OCR/VLM/LLM): 1/0/2" in report
     assert "LLM fallback hits: 4" in report
@@ -433,9 +451,19 @@ def test_format_compare_report_shows_deltas():
         "Page 1: image output missing rendered reference.",
     ]
 
-    report = format_compare_report(rows, label_a="base", label_b="exp")
+    report = format_compare_report(
+        rows,
+        label_a="base",
+        label_b="exp",
+        metadata_a=[("VLM service", "provider=openai | model=base-vlm")],
+        metadata_b=[("VLM service", "provider=openai | model=exp-vlm")],
+    )
 
     assert "Comparing **base** vs **exp**" in report
+    assert "base Metadata" in report
+    assert "exp Metadata" in report
+    assert "model=base-vlm" in report
+    assert "model=exp-vlm" in report
     assert "| Char F1 | 0.800 | 0.900 | +0.100 | higher |" in report
     assert "Warning Type Delta" in report
     assert "| Number mismatch | 1 | 0 | -1 |" in report

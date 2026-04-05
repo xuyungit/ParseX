@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from parserx.assembly.markdown import MarkdownRenderer
 from parserx.models.elements import Document, Page, PageElement
 from parserx.verification import (
     CompletenessChecker,
@@ -84,6 +85,29 @@ def test_completeness_checker_stays_quiet_when_output_matches():
     )
     warnings = CompletenessChecker().check(doc, markdown)
 
+    assert warnings == []
+
+
+def test_completeness_checker_compacts_ocr_overlap_image_reference():
+    long_text = "采购金额与项目范围说明" * 50
+    image = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "needs_vlm": True,
+            "description": long_text,
+            "description_source": "ocr_overlap_evidence",
+            "text_heavy_image": True,
+        },
+    )
+    text = PageElement(type="text", page_number=1, content=long_text)
+    doc = Document(pages=[Page(number=1, elements=[text, image])])
+
+    markdown = MarkdownRenderer().render(doc)
+    warnings = CompletenessChecker().check(doc, markdown)
+
+    assert "Text content preserved in OCR body text." in markdown
+    assert markdown.count(long_text) == 1
     assert warnings == []
 
 
