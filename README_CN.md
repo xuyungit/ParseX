@@ -122,6 +122,18 @@ uv run parserx parse scanned.pdf -c parserx.yaml
 
 未配置 OCR 凭据时，扫描页将被跳过。所有可用环境变量参见 `.env.example`。
 
+### 真实端到端测试
+
+ParserX 现在包含一组 live E2E pytest 测试，会读取 `.env` 中的真实凭据并实际调用
+在线 OCR、LLM、VLM 服务：
+
+```bash
+uv run pytest tests/test_live_e2e.py -q
+```
+
+如果 `.env` 中已经配置好相关凭据，执行 `uv run pytest tests/ -q`
+时也会自动把这组 live 测试一起跑掉。
+
 ## 评估
 
 ParserX 内建评估框架：
@@ -136,6 +148,12 @@ uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
 ```
 
 评估指标：归一化编辑距离、字符 F1、标题精确率/召回率/F1、表格单元格 F1、处理成本。
+
+调优 VLM 时，可以直接用 `parserx compare` 做提示词或模型对比，例如：
+- `--set-a processors.image.vlm_prompt_style=strict_bilingual`
+- `--set-b processors.image.vlm_prompt_style=strict_en`
+- `--set-a services.vlm.model=model-a`
+- `--set-b services.vlm.model=model-b`
 
 ## 配置
 

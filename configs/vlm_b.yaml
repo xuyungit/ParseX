@@ -1,0 +1,7 @@
+extends: ../parserx.yaml
+
+services:
+  vlm:
+    endpoint: ${OPENAI_BASE_URL_B}
+    api_key: ${OPENAI_API_KEY_B}
+    model: ${VLM_MODEL_B}

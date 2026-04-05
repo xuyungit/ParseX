@@ -49,10 +49,7 @@ class Pipeline:
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config or ParserXConfig()
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
-        self._ocr_builder = (
-            OCRBuilder(self._config.builders.ocr)
-            if self._config.builders.ocr.engine != "none" else None
-        )
+        self._ocr_builder = self._create_ocr_builder()
         self._image_extractor = ImageExtractor()
         self._llm_service = self._create_llm_service()
         self._vlm_service = self._create_vlm_service()
@@ -76,11 +73,24 @@ class Pipeline:
         doc = self._run_pipeline(path, output_dir=None)
         markdown = self._renderer.render(doc)
         self._verify_all(doc, markdown)
+        images_total = len(doc.elements_by_type("image"))
+        images_skipped = sum(
+            1 for e in doc.elements_by_type("image")
+            if e.metadata.get("skipped")
+        )
+        llm_fallback_hits = sum(
+            1
+            for elem in doc.all_elements
+            if elem.metadata.get("llm_fallback_used")
+        )
         result = ParseResult(
             markdown=markdown,
             page_count=len(doc.pages),
             element_count=len(doc.all_elements),
             api_calls=self._collect_api_calls(doc),
+            images_total=images_total,
+            images_skipped=images_skipped,
+            llm_fallback_hits=llm_fallback_hits,
             warnings=list(doc.metadata.verification_warnings),
         )
         return result
@@ -209,6 +219,15 @@ class Pipeline:
             return create_vlm_service(cfg)
         return None
 
+    def _create_ocr_builder(self) -> OCRBuilder | None:
+        cfg = self._config.builders.ocr
+        if cfg.engine == "none":
+            return None
+        if not cfg.endpoint or not cfg.token:
+            log.info("OCR service not configured; selective OCR disabled")
+            return None
+        return OCRBuilder(cfg)
+
     def _create_llm_service(self):
         """Create LLM service if configured with endpoint and key."""
         cfg = self._config.services.llm
@@ -263,6 +282,7 @@ class Pipeline:
             for elem in doc.all_elements
             if elem.metadata.get("llm_fallback_used")
         )
+        llm_calls = doc.metadata.processing_stats.get("llm_calls", llm_calls)
         return {
             "ocr": len(ocr_pages),
             "vlm": vlm_images,

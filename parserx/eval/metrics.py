@@ -57,6 +57,8 @@ class CostMetrics:
     ocr_calls: int = 0
     vlm_calls: int = 0
     llm_calls: int = 0
+    warning_count: int = 0
+    llm_fallback_hits: int = 0
     pages_processed: int = 0
     images_total: int = 0
     images_skipped: int = 0
@@ -71,6 +73,7 @@ class EvalResult:
     headings: HeadingMetrics = field(default_factory=HeadingMetrics)
     tables: TableMetrics = field(default_factory=TableMetrics)
     cost: CostMetrics = field(default_factory=CostMetrics)
+    warnings: list[str] = field(default_factory=list)
 
 
 # ── Edit distance ───────────────────────────────────────────────────────

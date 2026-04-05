@@ -1,7 +1,20 @@
 """Tests for ImageProcessor."""
 
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+from parserx.config.schema import ImageProcessorConfig
 from parserx.models.elements import Document, Page, PageElement
-from parserx.processors.image import ImageClassification, ImageProcessor, classify_image_element
+from parserx.processors.image import (
+    ImageClassification,
+    ImageProcessor,
+    _build_route_hint,
+    _build_vlm_system_prompt,
+    _detect_prompt_language,
+    _extract_json_object,
+    classify_image_element,
+)
 
 
 def _img_elem(width: int, height: int) -> PageElement:
@@ -79,3 +92,180 @@ def test_informational_needs_vlm():
 
     elem = doc.all_elements[0]
     assert elem.metadata.get("needs_vlm") is True
+
+
+class FakeVLMService:
+    def __init__(self, responses: list[str]):
+        self._responses = list(responses)
+        self.calls: list[tuple[Path, str, str]] = []
+
+    def describe_image(
+        self,
+        image_path: Path,
+        prompt: str,
+        *,
+        context: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> str:
+        self.calls.append((image_path, prompt, context))
+        if not self._responses:
+            return ""
+        return self._responses.pop(0)
+
+
+def _write_test_image(path: Path) -> Path:
+    image = Image.new("RGB", (320, 240), color="white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((40, 40, 280, 180), outline="black", width=4)
+    draw.line((40, 180, 280, 40), fill="black", width=3)
+    image.save(path, format="PNG")
+    return path
+
+
+def test_vlm_json_output_prefers_summary_for_informational(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "diagram.png")
+    elem = _img_elem(400, 300)
+    elem.metadata["saved_abs_path"] = str(image_path)
+    doc = Document(pages=[Page(number=1, elements=[elem])])
+    vlm = FakeVLMService([
+        '{"image_type":"diagram","summary":"A flow diagram with two connected boxes.","visible_text":"Input\\nOutput","markdown":""}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True,
+        vlm_response_format="json",
+        vlm_prompt_style="strict_bilingual",
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == "A flow diagram with two connected boxes."
+    assert elem.metadata["vlm_image_type"] == "diagram"
+    assert len(vlm.calls) == 1
+
+
+def test_vlm_json_prefers_visible_text_when_overlap_evidence_is_text_heavy(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "text-heavy.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+    ocr_text = PageElement(
+        type="text",
+        page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="项目名称\n采购金额 100 万元\n联系人 张三",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"diagram","summary":"A procurement notice card with key facts.","visible_text":"项目名称\\n采购金额 100 万元\\n联系人 张三","markdown":""}'
+    ])
+    config = ImageProcessorConfig(vlm_description=True, vlm_response_format="json")
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == "项目名称\n采购金额 100 万元\n联系人 张三"
+    assert elem.metadata["description_source"] == "vlm_visible_text"
+    assert elem.metadata["vlm_summary_suppressed"] is True
+    assert elem.metadata["text_heavy_image"] is True
+
+
+def test_vlm_json_falls_back_to_overlap_evidence_on_number_mismatch(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "number-mismatch.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+    ocr_text = PageElement(
+        type="text",
+        page_number=1,
+        bbox=(20.0, 20.0, 380.0, 280.0),
+        content="采购金额为 100 万元。",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"diagram","summary":"采购金额为 999 万元。","visible_text":"","markdown":""}'
+    ])
+    config = ImageProcessorConfig(vlm_description=True, vlm_response_format="json")
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == "采购金额为 100 万元。"
+    assert elem.metadata["description_source"] == "ocr_overlap_evidence"
+    assert elem.metadata["vlm_number_mismatch"] is True
+    assert elem.metadata["vlm_summary_suppressed"] is True
+
+
+def test_vlm_json_output_prefers_markdown_table(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "table.png")
+    elem = _img_elem(400, 300)
+    elem.metadata["saved_abs_path"] = str(image_path)
+    elem.layout_type = "table"
+    doc = Document(pages=[Page(number=1, elements=[elem])])
+    vlm = FakeVLMService([
+        '{"image_type":"table","summary":"Table content","visible_text":"A B","markdown":"| A | B |\\n| --- | --- |\\n| 1 | 2 |"}'
+    ])
+    config = ImageProcessorConfig(vlm_description=True, vlm_response_format="json")
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"].startswith("| A | B |")
+
+
+def test_vlm_retries_when_output_is_not_json(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "retry.png")
+    elem = _img_elem(400, 300)
+    elem.metadata["saved_abs_path"] = str(image_path)
+    doc = Document(pages=[Page(number=1, elements=[elem])])
+    vlm = FakeVLMService([
+        "not-json",
+        '{"image_type":"diagram","summary":"Recovered structured description.","visible_text":"","markdown":""}',
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True,
+        vlm_response_format="json",
+        vlm_retry_attempts=1,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == "Recovered structured description."
+    assert elem.metadata["vlm_retry_used"] is True
+    assert len(vlm.calls) == 2
+
+
+def test_extract_json_object_avoids_greedy_brace_capture():
+    raw = 'prefix {"summary":"first"} middle {"summary":"second"} suffix'
+
+    parsed = _extract_json_object(raw)
+
+    assert parsed == {"summary": "first"}
+
+
+def test_detect_prompt_language_prefers_chinese_when_context_is_cjk_heavy():
+    detected = _detect_prompt_language("采购金额", "项目名称\n联系人\n采购金额 100 万元")
+
+    assert detected == "zh"
+
+
+def test_build_vlm_system_prompt_auto_selects_english_policy():
+    prompt = _build_vlm_system_prompt(
+        "strict_auto",
+        preferred_language="en",
+    )
+
+    assert "Only describe content that is clearly visible" in prompt
+    assert "If the image is text-heavy, prioritize exact transcription" in prompt
+
+
+def test_build_route_hint_prefers_text_heavy_mode():
+    elem = _img_elem(400, 300)
+    elem.metadata["image_class"] = ImageClassification.INFORMATIONAL
+
+    route_hint = _build_route_hint(
+        elem=elem,
+        evidence={"text": "Project Name\nBudget 100 USD\nOwner Alice", "table_text": "", "best_overlap": 0.7},
+        visible_text_hint="Project Name\nBudget 100 USD\nOwner Alice",
+    )
+
+    assert route_hint.startswith("text-heavy:")

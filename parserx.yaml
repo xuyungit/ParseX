@@ -40,6 +40,10 @@ processors:
     classification: true
     vlm_description: true
     skip_decorative: true
+    vlm_prompt_style: strict_auto
+    vlm_response_format: json
+    vlm_retry_attempts: 1
+    vlm_max_description_chars: 1200
   formula:
     enabled: false
   line_unwrap:

@@ -122,6 +122,18 @@ uv run parserx parse scanned.pdf -c parserx.yaml
 
 Without OCR credentials, scanned pages are skipped. See `.env.example` for all available variables.
 
+### Real End-to-End Test
+
+ParserX also includes a live E2E pytest suite that uses `.env` credentials to
+call the real online OCR, LLM, and VLM services:
+
+```bash
+uv run pytest tests/test_live_e2e.py -q
+```
+
+If `.env` contains the required service credentials, `uv run pytest tests/ -q`
+will include these live tests automatically.
+
 ## Evaluation
 
 ParserX includes a built-in evaluation framework:
@@ -130,15 +142,29 @@ ParserX includes a built-in evaluation framework:
 # Evaluate against ground truth
 uv run parserx eval ground_truth/ -o report.md
 
+# Quick A/B compare for a feature toggle
+uv run parserx compare ground_truth_public \
+  --label-a no-fallback \
+  --label-b fallback \
+  --set-a processors.chapter.llm_fallback=false \
+  --set-b processors.chapter.llm_fallback=true
+
 # Download public benchmark (OmniDocBench subset)
 uv pip install 'parserx[bench]'
 uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
 ```
 
-Metrics: normalized edit distance, character F1, heading precision/recall/F1, table cell F1, processing cost.
+Metrics: normalized edit distance, character F1, heading precision/recall/F1, table cell F1, warning count, API calls, and processing cost.
+
+For VLM tuning, you can use `parserx compare` with config overrides such as:
+- `--set-a processors.image.vlm_prompt_style=strict_bilingual`
+- `--set-b processors.image.vlm_prompt_style=strict_en`
+- `--set-a services.vlm.model=model-a`
+- `--set-b services.vlm.model=model-b`
 
 Recommended evaluation strategy:
-- `ground_truth_public/` lives in-repo for reproducible open benchmarks
+- `ground_truth_public/` includes a tiny checked-in smoke subset for fast regression runs
+- larger public benchmarks can be added to the same folder layout
 - private ground truth stays outside the repo but uses the same folder layout
 - both should be run during local iteration for parser changes
 

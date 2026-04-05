@@ -1,0 +1,8 @@
+# Stable warning-heavy public slice for OCR/VLM iteration.
+# Use with:
+#   uv run parserx eval ground_truth_public --include-list ground_truth_public/subsets/warning_heavy.txt
+#   uv run parserx compare ground_truth_public --include-list ground_truth_public/subsets/warning_heavy.txt ...
+
+omnidoc_book_zh_text_02
+omnidoc_academic_literature_en_text_01
+omnidoc_research_report_zh_table_01

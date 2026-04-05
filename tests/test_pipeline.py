@@ -46,6 +46,10 @@ def test_parse_nonexistent():
         pipeline.parse("/nonexistent/file.pdf")
 
 
+def test_pipeline_init_without_ocr_credentials():
+    Pipeline(ParserXConfig())
+
+
 def test_parse_runs_image_extraction_without_output_dir(tmp_path: Path, monkeypatch):
     """parse() and parse_to_document() must still extract images + run VLM
     even though no output_dir is provided (using a temp dir internally)."""
@@ -162,3 +166,40 @@ def test_parse_result_counts_llm_fallback_calls(tmp_path: Path, monkeypatch):
     result = pipeline.parse_result(dummy)
 
     assert result.api_calls["llm"] == 1
+
+
+def test_parse_result_separates_llm_api_calls_from_fallback_hits(tmp_path: Path, monkeypatch):
+    from parserx.models.elements import Document, DocumentMetadata, Page, PageElement
+
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="项目概况",
+                        metadata={"heading_level": 2, "llm_fallback_used": True},
+                    ),
+                    PageElement(
+                        type="text",
+                        content="适用范围",
+                        metadata={"heading_level": 3, "llm_fallback_used": True},
+                    ),
+                ],
+            )
+        ],
+        metadata=DocumentMetadata(processing_stats={"llm_calls": 1}),
+    )
+
+    pipeline = _pipeline_no_ocr()
+    monkeypatch.setattr(pipeline, "_extract", lambda path: doc)
+    monkeypatch.setattr(pipeline, "_extract_and_describe_images", lambda d, source, images_dir: d)
+
+    dummy = tmp_path / "dummy.pdf"
+    dummy.write_bytes(b"%PDF-1.4 fake")
+
+    result = pipeline.parse_result(dummy)
+
+    assert result.api_calls["llm"] == 1
+    assert result.llm_fallback_hits == 2

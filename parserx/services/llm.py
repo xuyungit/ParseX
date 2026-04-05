@@ -66,7 +66,7 @@ class OpenAICompatibleService:
         )
         self._model = config.model
         # None = auto-detect, "responses" or "chat"
-        self._api_style: str | None = None
+        self._api_style: str | None = None if config.api_style == "auto" else config.api_style
 
     def complete(
         self,
@@ -131,6 +131,7 @@ class OpenAICompatibleService:
             temperature=temperature,
             max_output_tokens=max_tokens,
             stream=True,
+            **self._extra_request_kwargs(),
         ) as stream:
             for event in stream:
                 if getattr(event, "type", "") == "response.output_text.delta":
@@ -162,6 +163,7 @@ class OpenAICompatibleService:
             temperature=temperature,
             max_output_tokens=max_tokens,
             stream=True,
+            **self._extra_request_kwargs(),
         ) as stream:
             for event in stream:
                 if getattr(event, "type", "") == "response.output_text.delta":
@@ -187,6 +189,7 @@ class OpenAICompatibleService:
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            **self._extra_request_kwargs(),
         )
         if self._api_style is None:
             self._api_style = "chat"
@@ -214,10 +217,16 @@ class OpenAICompatibleService:
             messages=[{"role": "user", "content": content}],
             temperature=temperature,
             max_tokens=max_tokens,
+            **self._extra_request_kwargs(),
         )
         if self._api_style is None:
             self._api_style = "chat"
         return response.choices[0].message.content or ""
+
+    def _extra_request_kwargs(self) -> dict[str, Any]:
+        if not self._config.extra_body:
+            return {}
+        return {"extra_body": dict(self._config.extra_body)}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

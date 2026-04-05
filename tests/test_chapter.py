@@ -146,6 +146,25 @@ def test_llm_fallback_confirms_weak_numbering_candidate():
     assert target.metadata["heading_level"] == 2
     assert target.metadata["llm_fallback_used"] is True
     assert len(llm.calls) == 1
+    assert doc.metadata.processing_stats["llm_calls"] == 1
+
+
+def test_llm_fallback_tracks_api_calls_separately_from_hits():
+    doc = _build_doc([
+        _text_elem("这是正文内容" * 20, 10.0),
+        _text_elem("1. 项目概况", 10.0, bold=False),
+        _text_elem("1.1 适用范围", 10.0, bold=False),
+        _text_elem("这是后续正文内容" * 20, 10.0),
+    ])
+    llm = FakeLLMService('[{"idx": 1, "level": 2}, {"idx": 2, "level": 3}]')
+
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    headings = [e for e in doc.all_elements if e.metadata.get("llm_fallback_used")]
+    assert len(headings) == 2
+    assert len(llm.calls) == 1
+    assert doc.metadata.processing_stats["llm_calls"] == 1
 
 
 def test_llm_fallback_ignores_invalid_json():
@@ -161,6 +180,7 @@ def test_llm_fallback_ignores_invalid_json():
     target = doc.pages[0].elements[1]
     assert "heading_level" not in target.metadata
     assert len(llm.calls) == 1
+    assert doc.metadata.processing_stats["llm_calls"] == 1
 
 
 # ── Integration test with real PDF ──────────────────────────────────────
