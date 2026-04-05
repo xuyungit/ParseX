@@ -429,28 +429,34 @@ LLM 兜底（仅当规则置信度低时）：
   - 依赖本地 GPU 或远程推理服务，当前阶段不实现
 ```
 
-#### 3.3.6 LineUnwrapProcessor — ❌ 待实现
+#### 3.3.6 LineUnwrapProcessor — ✅ 已实现 (`processors/line_unwrap.py`)
 
 ```
 文件：processors/line_unwrap.py
 
-策略：规则优先
+策略：规则优先（三层递进架构）
 
-实现方案：
+当前实现（Tier 1 — 规则 + 启发式）：
   遍历 Document 中所有 text 元素，检查内部的硬换行：
 
-  规则判断（覆盖 95%+ 场景）：
+  规则判断（覆盖 80-90% 场景）：
     - 行尾有句末标点（。！？!?.;；）→ 不合并，是正常段落结束
     - 行尾无句末标点 且 下一行非空行：
       - 中文：当前行长度与正文行平均长度相近（±20%）→ 合并
       - 英文：下一行首字母小写 → 合并
     - 行尾是连字符(-) 且 下一行首字母小写 → 合并去连字符
+    - 列表项检测：常见 bullet/编号模式 → 不合并
+    - heading 元素跳过：不处理标题类元素
 
-  正文行平均长度：从 MetadataBuilder 的 font_stats 推算
-    - 页面宽度 / 正文字号 ≈ 每行字符数上限
-    - 或统计所有正文行的长度中位数
+  正文行平均长度：统计全文正文字体行的长度中位数
 
-  LLM 兜底：默认关闭。仅当 line_unwrap.llm_fallback=true 时启用。
+  待增强（仍属 Tier 1）：
+    - 缩进变化检测：保留行首空白，缩进不同 → 不合并
+    - 连续短行检测：多行均远短于均值 → 可能是列表，不合并
+
+演进方向（见 3.3.9 节"结构角色识别"设计）：
+  - Tier 2：文档内自归纳，prefix shape mining → 自动发现列表/标题族
+  - Tier 3：LLM 兜底（config: line_unwrap.llm_fallback=true，默认关闭）
 
   注意：中文文本的换行问题与英文不同——中文没有 word-break，
   但 PDF 提取时可能在不合理的位置断行（如句子中间）。
@@ -478,6 +484,81 @@ LLM 兜底（仅当规则置信度低时）：
   - 同一页面内的元素已按 bbox.y0 排序（PDFProvider 提取顺序）
   - 检测多栏：同一 y 位置有多个不重叠的 text 元素 → 多栏
   - 多栏时按列分组，列内按 y 排序，列间按 x 排序
+```
+
+#### 3.3.9 结构角色识别 — 设计讨论（跨 ChapterProcessor / LineUnwrapProcessor）
+
+```
+核心思路：
+  不是"列出所有标题/列表格式"，而是"识别文档里哪些行在扮演结构角色"。
+  从"枚举规则"切换到"文档内自归纳"，对格式漂移更稳健。
+
+  该方案影响 ChapterProcessor（标题检测）和 LineUnwrapProcessor（列表项检测），
+  可作为两者共享的结构分析基础设施。
+
+方案设计（四步）：
+
+  Step 1 — Prefix Shape 归一化
+    把每行拆成 prefix + body，将前缀归一成 token shape：
+      第<CN_NUM><KW>    →  第一章、第三节、第二条 ...
+      <CN_NUM>、        →  一、二、三 ...
+      （<CN_NUM>）      →  （一）（二）...
+      <ARABIC>.<ARABIC> →  1.1、2.3 ...
+      <ARABIC>)         →  1)、2) ...
+      <ROMAN>.          →  I.、II. ...
+      <BULLET>          →  •、-、* ...
+    其中 <KW> 是一组很小的通用词：章/节/条/款/项/部分。
+    不需要穷举所有可能文本，只需做形状抽象。
+
+  Step 2 — 文档内重复前缀族挖掘
+    同类 shape 在全文反复出现，且满足以下条件时，认定为结构标记族：
+      - 位置分布规律（例如均匀分布在文档中）
+      - 字体一致（name/size/bold 相同）
+      - 缩进一致
+      - 后续文本长度分布相似
+    这比手工列规则更泛化——新样式也会被自动聚成一类。
+
+  Step 3 — 多信号打分
+    不问"它是不是匹配某个模式"，而问"它像不像标题/列表项"：
+      - 前缀 shape 是否重复出现
+      - 是否形成连续序列（一、二、三 / 1.1、1.2、1.3）
+      - 字体是否更大/更粗
+      - 缩进是否稳定
+      - 是否短句（远短于正文平均行长）
+      - 前后空白是否异常大
+      - 下一行是否像正文（小写/CJK 续行）
+      - 同层兄弟是否风格一致
+
+  Step 4 — 全局最优化
+    逐行独立判断最容易误伤。更好的做法是全篇一起看，给每行标签：
+      body / heading_h1 / heading_h2 / list_item_l1 / list_item_l2
+    加一致性约束：
+      - H1 后面更可能跟 H2/正文，不太可能直接跳到 H4
+      - 一、二、三 应该成组出现
+      - 第一条、第二条 应该有序
+      - 列表项的缩进和前缀风格应相近
+    可先用简单 DP/beam search 实现，不一定需要复杂模型。
+
+与现有系统的整合：
+  - 保留少量"强规则"做高精度锚点
+    像 第X章、第一条、（一） 等高频公文模式仍然保留，
+    但它们只是锚点，不是全部系统。
+
+  - ChapterProcessor 改造路径：
+    1. 先做 prefix shape mining（Step 1-2）
+    2. 再做 global scoring（Step 3-4）
+    3. 低置信候选交给 LLM fallback（已有 config 支持）
+
+  - LineUnwrapProcessor 受益：
+    结构角色识别的结果可直接用于换行判断——
+    已标记为 heading/list_item 的行不参与合并。
+
+LLM 的定位：
+  不是让 LLM 替代规则，而是分层协作：
+    1. 轻量规则做候选提取（高召回）
+    2. LLM 判断候选的类型（heading / list_item / body / metadata），
+       利用上下文、层级关系、语义连贯性
+    3. 全局一致性修正（层级不跳级、同类列表成组出现）
 ```
 
 ### 3.4 组装层（Assembly）
@@ -986,6 +1067,45 @@ ground_truth/
 
 **验收标准**：能稳定处理多样化文档语料，有完整的 CLI 接口和文档，性能满足生产需求。
 
+### 7.1 当前阶段优化版执行顺序（基于现状重排）
+
+> 本小节用于校准原始 Phase 规划与当前真实进度之间的差异。
+> Phase 1/2 的主体能力已基本完成，当前重点是“补闭环、补护栏、再做语义化增强”。
+
+#### 当前判断
+
+- 端到端原型已经可运行：`parse`、`parse_to_dir`、`eval` 主链路可用。
+- 当前缺的不是“能不能跑”，而是“验证层、自检能力、困难场景 fallback”。
+- 3.3.9 的“结构角色识别 / 语义化章节识别”是高价值优化主线，但**不是当前硬阻塞点**。
+- 在验证层未补齐前，直接大改 `ChapterProcessor` 风险偏高，退化后不易定位。
+
+#### 推荐执行顺序
+
+1. 先补验证层最小闭环
+   - `verification/structure.py`
+   - `verification/completeness.py`
+   - `verification/hallucination.py`
+
+2. 再做章节识别的语义化增强
+   - `processors/chapter.py` 的 LLM fallback
+   - 按 3.3.9 的“结构角色识别”思路推进
+
+3. 然后补组装层的关联能力
+   - `assembly/crossref.py`
+
+4. 最后做优化工具和低优先级增强
+   - `eval/compare.py`
+   - `builders/layout.py`
+   - `processors/reading_order.py`
+   - `processors/formula.py`
+
+#### 重排理由
+
+- 验证层是后续大改章节/列表识别的安全网。
+- `ChapterProcessor` 的语义化增强收益很高，但应在可度量、可校验的前提下进行。
+- `CrossReferenceResolver` 对最终可读性和消费体验有价值，但不阻塞当前主链路。
+- `LayoutBuilder` / `ReadingOrderProcessor` / `FormulaProcessor` 仍属于增强项，而非当前原型闭环的缺口。
+
 ---
 
 ## 附录 A: 技术栈选择
@@ -1078,6 +1198,8 @@ ground_truth/
 | 2026-04-04 | VLM/LLM 使用现有 skill 端点 | 已验证可用；通过 OpenAI 兼容 API 抽象，支持替换 |
 | 2026-04-04 | 以 legacy pipeline skill 为起点 | 迁移验证过的代码，不从零开始 |
 | 2026-04-04 | 配置文件改为 YAML + 环境变量 | 替代硬编码，支持 A/B 测试 |
+| 2026-04-05 | 结构角色识别（3.3.9）定为高价值优化分支，而非当前硬阻塞 | 当前主链路已可运行，先补验证层护栏，再做 ChapterProcessor 语义化升级更稳妥 |
+| 2026-04-05 | ChapterProcessor 长期方向调整为“候选召回 + LLM 语义判别 + 全局一致性修正” | 单靠枚举 regex 很难覆盖真实文档的格式漂移，应更充分利用大模型的语言理解与适应性 |
 
 ---
 
@@ -1088,7 +1210,42 @@ ground_truth/
 
 ### 当前状态总览
 
-**阶段**：Phase 3（质量提升）进行中 | **测试**：99 passing | **提交**：9 次 | **源文件**：35 个
+**阶段**：Phase 3（质量提升）进行中 | **测试**：122 passing, 4 skipped | **提交**：9 次 | **源文件**：39 个
+
+### 原型闭环判断
+
+- 当前 ParserX 已具备可运行的 E2E prototype：PDF/DOCX → 处理链 → Markdown / chapter split / eval。
+- 当前缺口主要在验证护栏、语义化 fallback、图文关联，而不是主链路缺失。
+- 因此下一轮工作的重点应从“补主链路”切换为“补闭环 + 提高鲁棒性”。
+
+### 当前工作区状态（供新 session 接力）
+
+- 当前工作区有未提交改动，下一次新会话不要误回滚：
+  - `docs/architecture.md`
+  - `parserx/builders/ocr.py`
+  - `parserx/eval/__init__.py`
+  - `parserx/models/elements.py`
+  - `parserx/pipeline.py`
+  - `parserx/processors/__init__.py`
+  - `parserx/services/ocr.py`
+  - `parserx/verification/__init__.py`
+  - `parserx/verification/completeness.py`
+  - `parserx/verification/hallucination.py`
+  - `parserx/verification/structure.py`
+  - `tests/test_pipeline.py`
+  - `tests/test_verification.py`
+  - `parserx/processors/line_unwrap.py`
+  - `tests/test_line_unwrap.py`
+- 这批改动对应 Phase 3e + 3f：
+  - `LineUnwrapProcessor` 已接入主链路
+  - 已补中文列表保护
+  - 已补相关测试
+  - 已补验证层最小闭环：`StructureValidator` / `CompletenessChecker` / `HallucinationDetector`
+  - `Pipeline` 已新增 `parse_result()`，会返回 warning 与基础 API 调用统计
+  - OCR bbox 已透传到 `PageElement`，供图片描述交叉校验使用
+- 当前本地测试基线：
+  - `uv run pytest -q`
+  - 结果：`122 passed, 4 skipped`
 
 ### 模块实现状态
 
@@ -1107,7 +1264,7 @@ ground_truth/
 | 处理 | ImageProcessor | `processors/image.py` | ✅ | 启发式分类 + 并发 VLM 描述 |
 | 处理 | TextCleanProcessor | `processors/text_clean.py` | ✅ | CJK 空格 + C1 编码 + 控制字符 |
 | 处理 | TableProcessor | `processors/table.py` | ✅ | 跨页表格合并（列数匹配 + 表头去重） |
-| 处理 | LineUnwrapProcessor | — | ❌ | 详见 3.3.6 节设计 |
+| 处理 | LineUnwrapProcessor | `processors/line_unwrap.py` | ✅ | 规则化换行修复，中文/英文续行 + 连字符合并 |
 | 处理 | FormulaProcessor | — | ❌ | 低优先级，需本地 GPU |
 | 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
 | 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
@@ -1115,9 +1272,9 @@ ground_truth/
 | 组装 | CrossReferenceResolver | — | ❌ | 图文关联、脚注关联 |
 | 服务 | LLM/VLM Service | `services/llm.py` | ✅ | Responses API + Chat Completions 自动切换 |
 | 服务 | OCR Service | `services/ocr.py` | ✅ | PaddleOCR 在线 API |
-| 验证 | HallucinationDetector | — | ❌ | 详见 3.5 节设计 |
-| 验证 | CompletenessChecker | — | ❌ | 详见 3.5 节设计 |
-| 验证 | StructureValidator | — | ❌ | 详见 3.5 节设计 |
+| 验证 | HallucinationDetector | `verification/hallucination.py` | ✅ | VLM 描述 vs OCR/native 交叉校验，支持数字不一致告警 |
+| 验证 | CompletenessChecker | `verification/completeness.py` | ✅ | 页码、文本体量、图片引用、表格计数完整性检查 |
+| 验证 | StructureValidator | `verification/structure.py` | ✅ | 标题跳级/孤儿子节/空标题/章节文件完整性检查 |
 | 评估 | Eval Framework | `eval/metrics.py` + `eval/runner.py` | ✅ | edit dist + heading P/R/F1 + table cell F1 + cost |
 | 评估 | Ground Truth | `ground_truth/` | ✅ | 4 个文档基线（deepseek, text_table01, text_table_libreoffice, pdf_text01_tables） |
 | CLI | parse + eval | `cli.py` | ✅ | `parserx parse` + `parserx eval` |
@@ -1141,20 +1298,26 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 
 不设置环境变量时 VLM 步骤自动跳过。
 
-### 下一步优先级
+### 下一步优先级（优化版）
 
 | 优先级 | 任务 | 涉及文件 | 设计详情 |
 |--------|------|---------|---------|
-| **P0** | LineUnwrapProcessor | `processors/line_unwrap.py` | 3.3.6 节有详细方案 |
-| **P0** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节"阶段 2" |
-| **P1** | HallucinationDetector | `verification/hallucination.py` | 3.5 节有详细方案 |
-| **P2** | CrossReferenceResolver | `assembly/crossref.py` | 3.4 节有设计 |
-| **P2** | CompletenessChecker | `verification/completeness.py` | 3.5 节有设计 |
-| **P2** | StructureValidator | `verification/structure.py` | 3.5 节有设计 |
+| **P0** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节“阶段 2”；现在验证层已就位，可以开始做语义化兜底 |
+| **P1** | CrossReferenceResolver | `assembly/crossref.py` | 3.4 节有设计，提升图文关联和消费体验 |
+| **P1** | ParseResult/CLI warning 展示增强 | `models/results.py` + `cli.py` | 当前 `parse_result()` 已有基础结果对象，可继续暴露/格式化 warning |
 | **P2** | A/B 对比工具 | `eval/compare.py` | 5.3 节有设计 |
+| **P2** | StructureRoleAnalyzer（新建议模块） | `builders/structure_roles.py` 或 `processors/structure_roles.py` | 对应 3.3.9；作为 Chapter/LineUnwrap 共享基础设施 |
 | **P3** | FormulaProcessor | `processors/formula.py` | 需本地 GPU |
 | **P3** | LayoutBuilder | `builders/layout.py` | 需本地 GPU 或远程服务 |
 | **P3** | ReadingOrderProcessor | `processors/reading_order.py` | 大部分文档单列 |
+
+### 下一次新会话建议开场动作
+
+1. 先运行 `git status --short`，确认是否基于当前未提交工作继续。
+2. 再运行 `uv run pytest -q`，确认本地基线仍是 `122 passed, 4 skipped`。
+3. 直接阅读本节的“当前工作区状态”“下一步优先级（优化版）”以及 3.3.9 节。
+4. 如果进入实现，优先从 `processors/chapter.py` 的 LLM fallback 或 `assembly/crossref.py` 开始。
+5. 当前验证层已经补齐最小闭环，后续改章节识别时要保持 warning 与测试基线同步更新。
 
 ### 验证数据
 
@@ -1202,3 +1365,6 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | #8 | 2026-04-04 | 文档补齐：README、架构文档修正、实施状态重写 | 2b6a82c |
 | #9 | 2026-04-04 | Phase 3d：DOCXProvider、TableProcessor 跨页合并、Ground Truth 基线评估 | 待提交 |
 | #10 | 2026-04-04 | 评估打磨：修复双重解析、表格指标、4 个完整 GT、99 测试 | 见下方 |
+| #11 | 2026-04-05 | Phase 3e：LineUnwrapProcessor 接入主链路，补中文列表保护；该轮结束时全量测试 109 passed / 4 skipped | 待提交 |
+| #12 | 2026-04-05 | Phase 3f：补验证层最小闭环、接入 `parse_result()`、补 OCR bbox 透传；该轮结束时全量测试 113 passed / 4 skipped | 待提交 |
+| #13 | 2026-04-05 | Review 收口：解耦 verification/eval 依赖、统一验证入口、补负向测试与 OCR bbox 分支测试，当前全量测试 122 passed / 4 skipped | 待提交 |

@@ -281,6 +281,7 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="table",
                     content=content,
+                    bbox=block.bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",
@@ -294,6 +295,7 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="text",
                     content=block.text,
+                    bbox=block.bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",
@@ -305,6 +307,7 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="text",
                     content=block.text,
+                    bbox=block.bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",

@@ -12,6 +12,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -127,6 +128,7 @@ class PaddleOCRService:
                 label = block_data.get("block_label", "")
                 content = block_data.get("block_content", "")
                 order = block_data.get("block_order", 0)
+                bbox = _extract_bbox(block_data)
 
                 if label == "table":
                     has_tables = True
@@ -134,6 +136,7 @@ class PaddleOCRService:
                 blocks.append(OCRBlock(
                     text=content,
                     label=label,
+                    bbox=bbox,
                     order=order,
                 ))
 
@@ -162,3 +165,48 @@ def create_ocr_service(
     if cfg.engine == "none":
         return None
     return PaddleOCRService(config)
+
+
+def _extract_bbox(block_data: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Best-effort extraction of a rectangular bbox from OCR block payloads."""
+    raw = (
+        block_data.get("bbox")
+        or block_data.get("block_bbox")
+        or block_data.get("block_region")
+        or block_data.get("coordinate")
+    )
+    if raw is None:
+        return (0.0, 0.0, 0.0, 0.0)
+
+    if isinstance(raw, dict):
+        values = (
+            raw.get("x0", raw.get("left", 0.0)),
+            raw.get("y0", raw.get("top", 0.0)),
+            raw.get("x1", raw.get("right", 0.0)),
+            raw.get("y1", raw.get("bottom", 0.0)),
+        )
+        return (
+            float(values[0] or 0.0),
+            float(values[1] or 0.0),
+            float(values[2] or 0.0),
+            float(values[3] or 0.0),
+        )
+
+    if not isinstance(raw, (list, tuple)):
+        return (0.0, 0.0, 0.0, 0.0)
+
+    if len(raw) == 4 and all(isinstance(v, (int, float)) for v in raw):
+        x0, y0, x1, y1 = raw
+        return (float(x0), float(y0), float(x1), float(y1))
+
+    if raw and all(isinstance(pt, (list, tuple)) and len(pt) >= 2 for pt in raw):
+        xs = [float(pt[0]) for pt in raw]
+        ys = [float(pt[1]) for pt in raw]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    if len(raw) >= 8 and all(isinstance(v, (int, float)) for v in raw):
+        xs = [float(v) for v in raw[0::2]]
+        ys = [float(v) for v in raw[1::2]]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    return (0.0, 0.0, 0.0, 0.0)

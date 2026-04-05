@@ -16,15 +16,22 @@ from parserx.builders.metadata import MetadataBuilder
 from parserx.builders.ocr import OCRBuilder
 from parserx.config.schema import ParserXConfig
 from parserx.models.elements import Document
+from parserx.models.results import ParseResult
 from parserx.processors.base import Processor
 from parserx.processors.chapter import ChapterProcessor
 from parserx.processors.header_footer import HeaderFooterProcessor
 from parserx.processors.image import ImageProcessor
+from parserx.processors.line_unwrap import LineUnwrapProcessor
 from parserx.processors.table import TableProcessor
 from parserx.processors.text_clean import TextCleanProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
 from parserx.services.llm import create_vlm_service
+from parserx.verification import (
+    CompletenessChecker,
+    HallucinationDetector,
+    StructureValidator,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,19 +56,31 @@ class Pipeline:
         self._vlm_service = self._create_vlm_service()
         self._processors: list[Processor] = self._build_processors()
         self._renderer = MarkdownRenderer(self._config.output)
+        self._structure_validator = StructureValidator()
+        self._completeness_checker = CompletenessChecker()
+        self._hallucination_detector = HallucinationDetector(self._config.verification)
 
     def parse(self, path: str | Path) -> str:
         """Parse a document and return Markdown output."""
+        return self.parse_result(path).markdown
+
+    def parse_result(self, path: str | Path) -> ParseResult:
+        """Parse a document and return Markdown plus quality warnings."""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
 
         doc = self._run_pipeline(path, output_dir=None)
-
-        log.info("Rendering Markdown")
         markdown = self._renderer.render(doc)
-        log.info("Done: %d characters output", len(markdown))
-        return markdown
+        self._verify_all(doc, markdown)
+        result = ParseResult(
+            markdown=markdown,
+            page_count=len(doc.pages),
+            element_count=len(doc.all_elements),
+            api_calls=self._collect_api_calls(doc),
+            warnings=list(doc.metadata.verification_warnings),
+        )
+        return result
 
     def parse_to_dir(self, path: str | Path, output_dir: str | Path) -> Path:
         """Parse a document and write chapter files + index to output_dir."""
@@ -72,14 +91,21 @@ class Pipeline:
 
         doc = self._run_pipeline(path, output_dir=output_dir)
         assembler = ChapterAssembler(self._config.output)
-        return assembler.assemble(doc, output_dir)
+        final_path = assembler.assemble(doc, output_dir)
+
+        markdown = self._renderer.render(doc)
+        self._verify_all(doc, markdown, chapter_dir=output_dir)
+
+        return final_path
 
     def parse_to_document(self, path: str | Path) -> Document:
         """Parse and return the Document model (for programmatic use)."""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
-        return self._run_pipeline(path, output_dir=None)
+        doc = self._run_pipeline(path, output_dir=None)
+        self._verify_all(doc)
+        return doc
 
     def _run_pipeline(self, path: Path, output_dir: Path | None) -> Document:
         """Execute the full pipeline: extract → build → process."""
@@ -177,10 +203,62 @@ class Pipeline:
             return create_vlm_service(cfg)
         return None
 
+    def _verify_all(
+        self,
+        doc: Document,
+        markdown: str | None = None,
+        chapter_dir: Path | None = None,
+    ) -> None:
+        if markdown is not None:
+            log.info("Rendered Markdown (%d characters)", len(markdown))
+
+        warnings: list[str] = []
+
+        if self._config.verification.hallucination_detection:
+            warnings.extend(self._hallucination_detector.detect(doc))
+
+        if self._config.verification.structure_validation:
+            warnings.extend(self._structure_validator.validate(doc, chapter_dir=chapter_dir))
+
+        if markdown is not None and self._config.verification.completeness_check:
+            warnings.extend(self._completeness_checker.check(doc, markdown))
+
+        self._store_warnings(doc, warnings)
+        self._log_warnings(warnings)
+
+    def _store_warnings(self, doc: Document, warnings: list[str]) -> None:
+        for warning in warnings:
+            if warning not in doc.metadata.verification_warnings:
+                doc.metadata.verification_warnings.append(warning)
+
+    def _log_warnings(self, warnings: list[str]) -> None:
+        for warning in warnings:
+            log.warning("Verification: %s", warning)
+
+    def _collect_api_calls(self, doc: Document) -> dict[str, int]:
+        ocr_pages = {
+            elem.page_number for elem in doc.all_elements if elem.source == "ocr"
+        }
+        vlm_images = sum(
+            1
+            for elem in doc.elements_by_type("image")
+            if elem.metadata.get("description")
+        )
+        llm_calls = sum(
+            1
+            for elem in doc.all_elements
+            if elem.metadata.get("llm_fallback_used")
+        )
+        return {
+            "ocr": len(ocr_pages),
+            "vlm": vlm_images,
+            "llm": llm_calls,
+        }
+
     def _build_processors(self) -> list[Processor]:
         """Build the processor chain based on config.
 
-        Order: HeaderFooter → Chapter → Image(+VLM) → TextClean.
+        Order: HeaderFooter → Chapter → Table → Image(+VLM) → LineUnwrap → TextClean.
         """
         processors: list[Processor] = []
 
@@ -201,6 +279,9 @@ class Pipeline:
                 config=self._config.processors.image,
                 vlm_service=self._vlm_service,
             ))
+
+        if self._config.processors.line_unwrap.enabled:
+            processors.append(LineUnwrapProcessor(self._config.processors.line_unwrap))
 
         if self._config.processors.text_clean.enabled:
             processors.append(TextCleanProcessor(self._config.processors.text_clean))
