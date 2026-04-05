@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-05
+Updated: 2026-04-06
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
@@ -269,3 +269,64 @@ If we want the highest-signal next step, do this:
 
 That path is more likely to move quality than spending another round only on
 prompt wording.
+
+## Newly Clarified Product Requirements
+
+The latest iteration discussion clarified several constraints that future work
+must preserve:
+
+- Noise suppression must optimize for `information value`, not for narrow UI-
+  specific heuristics.
+- Image handling is a core product differentiator: valuable images should be
+  converted into searchable textual evidence plus concise semantic description.
+- For image-heavy or screenshot-like content, the first question is not
+  "is this UI?" but "does this region carry standalone information useful to
+  document understanding?"
+- Ambiguous content should prefer extract-first / preserve-first handling over
+  delete-first handling.
+- Public `warning-heavy` results are no longer enough on their own; internal
+  evaluation sets should continue to drive generalized fixes and catch blind
+  spots that public slices miss.
+
+## Next Diagnostic / Optimization Tracks
+
+### 13. Add information-value scoring for low-value block suppression
+
+Tasks:
+- introduce a generic `informational_value_score` for text/image blocks
+- combine content density, continuity with neighboring body text, edge-band
+  location, repetition, symmetry, and decorative/icon evidence
+- use it to suppress low-value shell/chrome/noise without hard-coding for one
+  app or export format
+
+Why:
+- this is the generic version of the current `deepseek` residual-noise problem
+- it should generalize to navigation bars, readers, watermarks, sidebars, and
+  app-export chrome
+
+### 14. Preserve informative screenshot / image content as searchable evidence
+
+Tasks:
+- define a clearer output contract for informative images:
+  `visible_text` / `chart labels` / `markdown table evidence` / concise summary
+- ensure screenshot-like images keep their informative region text, numbers,
+  labels, and relations when those are useful for retrieval
+- avoid collapsing informative screenshots into generic "UI screenshot" prose
+
+Why:
+- ParserX's differentiator is not just text extraction but multimodal
+  information preservation
+
+### 15. Use internal evaluation sets as first-class optimization drivers
+
+Tasks:
+- keep running the internal repo set alongside the public warning-heavy subset
+- record per-document residual error themes, not just aggregate metrics
+- expand diagnosis around:
+  - `text_table_libreoffice` heading/title splitting
+  - `deepseek` residual shell/chrome text
+- require proposed fixes to show no regression on both public and internal sets
+
+Why:
+- internal samples currently expose more realistic generalization gaps than the
+  small public subset alone

@@ -20,7 +20,8 @@ class Processor(Protocol):
     5. FormulaProcessor - detect and convert formulas
     6. LineUnwrapProcessor - fix visual line breaks
     7. TextCleanProcessor - clean text artifacts
-    8. ReadingOrderProcessor - determine reading order
+    8. ContentValueProcessor - suppress low-information shell/chrome while preserving evidence
+    9. ReadingOrderProcessor - determine reading order
     """
 
     def process(self, doc: Document) -> Document:

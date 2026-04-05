@@ -97,6 +97,14 @@ class TextCleanConfig(BaseModel):
     fix_encoding: bool = True
 
 
+class ContentValueConfig(ProcessorToggle):
+    llm_fallback: bool = False
+    suppress_low_value: bool = True
+    low_value_threshold: float = 0.25
+    gray_zone_margin: float = 0.1
+    max_llm_candidates: int = 12
+
+
 class ReadingOrderConfig(BaseModel):
     enabled: bool = True
     method: str = "geometric"
@@ -110,6 +118,7 @@ class ProcessorsConfig(BaseModel):
     formula: FormulaProcessorConfig = Field(default_factory=FormulaProcessorConfig)
     line_unwrap: LineUnwrapConfig = Field(default_factory=LineUnwrapConfig)
     text_clean: TextCleanConfig = Field(default_factory=TextCleanConfig)
+    content_value: ContentValueConfig = Field(default_factory=ContentValueConfig)
     reading_order: ReadingOrderConfig = Field(default_factory=ReadingOrderConfig)
 
 

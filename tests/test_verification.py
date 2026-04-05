@@ -111,6 +111,21 @@ def test_completeness_checker_compacts_ocr_overlap_image_reference():
     assert warnings == []
 
 
+def test_completeness_checker_ignores_non_renderable_images():
+    image = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "needs_vlm": True,
+        },
+    )
+    doc = Document(pages=[Page(number=1, elements=[image])])
+
+    warnings = CompletenessChecker().check(doc, "")
+
+    assert warnings == []
+
+
 def test_hallucination_detector_marks_low_confidence_image():
     image = PageElement(
         type="image",
