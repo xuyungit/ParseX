@@ -131,7 +131,9 @@ def _extract_headings(markdown: str) -> list[tuple[int, str]]:
 def _normalize_heading(text: str) -> str:
     """Normalize heading text for fuzzy matching."""
     text = re.sub(r"\s+", "", text)
+    text = text.replace("—", "-").replace("–", "-").replace("－", "-")
     text = text.replace("：", ":").replace("，", ",")
+    text = re.sub(r"^[—–\-一]{2,}", "--", text)
     return text.lower()
 
 

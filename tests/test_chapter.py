@@ -183,6 +183,88 @@ def test_llm_fallback_ignores_invalid_json():
     assert doc.metadata.processing_stats["llm_calls"] == 1
 
 
+def test_normalize_ocr_title_subtitle_pair_demotes_doc_title_h1():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="金诚信（603979）：矿服业务强增长，资源业务扩成长",
+                        source="ocr",
+                        layout_type="doc_title",
+                        metadata={"heading_level": 1},
+                    ),
+                    PageElement(
+                        type="text",
+                        content="——金诚信（603979）2022年报点评",
+                        source="ocr",
+                        layout_type="paragraph_title",
+                        metadata={"heading_level": 2},
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ChapterProcessor().process(doc)
+
+    assert doc.pages[0].elements[0].metadata["heading_level"] == 2
+    assert doc.pages[0].elements[0].metadata["ocr_heading_level_adjusted"] == "title_subtitle_pair"
+
+
+def test_sidebar_short_ocr_label_is_suppressed_as_heading():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                width=2000,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="交易数据",
+                        source="ocr",
+                        layout_type="paragraph_title",
+                        bbox=(1500, 100, 1700, 160),
+                        metadata={"heading_level": 2},
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ChapterProcessor().process(doc)
+
+    assert "heading_level" not in doc.pages[0].elements[0].metadata
+    assert doc.pages[0].elements[0].metadata["ocr_heading_suppressed"] == "sidebar_short_label"
+
+
+def test_sidebar_colon_label_is_promoted_to_heading():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                width=2000,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="未来3-6个月重大事项提示：",
+                        source="ocr",
+                        layout_type="text",
+                        bbox=(1500, 100, 1850, 160),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ChapterProcessor().process(doc)
+
+    assert doc.pages[0].elements[0].metadata["heading_level"] == 2
+    assert doc.pages[0].elements[0].metadata["ocr_heading_inferred"] == "sidebar_colon_label"
+
+
 # ── Integration test with real PDF ──────────────────────────────────────
 
 SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))

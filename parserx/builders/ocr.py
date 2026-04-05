@@ -33,11 +33,38 @@ _HEADING_LABELS = {"doc_title", "paragraph_title", "title"}
 
 # PaddleOCR layout labels to skip (noise in output)
 _SKIP_LABELS = {"header", "footer", "number", "header_image", "aside_text"}
+_SENTENCE_ENDING_RE = re.compile(r"[。！？!?.;；]$")
+_ASCII_CHEMISTRY_RE = re.compile(r"^[A-Za-z0-9,\-\[\]()]+$")
 
 
 def _normalize_dedup(text: str) -> str:
     """Collapse whitespace and strip for dedup comparison."""
     return re.sub(r"\s+", "", text)
+
+
+def _looks_like_ocr_heading(text: str, label: str) -> bool:
+    """Best-effort filter for OCR layout labels that over-predict headings."""
+    first_line = text.splitlines()[0].strip()
+    if not first_line:
+        return False
+    if len(first_line) > 120:
+        return False
+    if _SENTENCE_ENDING_RE.search(first_line):
+        return False
+
+    compact = re.sub(r"\s+", "", first_line)
+    punctuation_hits = sum(compact.count(ch) for ch in ",-[]()")
+    if (
+        label == "paragraph_title"
+        and len(compact) >= 24
+        and " " not in first_line
+        and any(ch.isdigit() for ch in compact)
+        and punctuation_hits >= 6
+        and _ASCII_CHEMISTRY_RE.fullmatch(compact)
+    ):
+        return False
+
+    return True
 
 
 def _char_overlap_ratio(ocr_text: str, native_bag: Counter) -> float:
@@ -291,7 +318,8 @@ class OCRBuilder:
             elif label in _HEADING_LABELS:
                 # Map to heading — doc_title → H1, paragraph_title → H2
                 level = 1 if label == "doc_title" else 2
-                metadata["heading_level"] = level
+                if _looks_like_ocr_heading(block.text, label):
+                    metadata["heading_level"] = level
                 elements.append(PageElement(
                     type="text",
                     content=block.text,
