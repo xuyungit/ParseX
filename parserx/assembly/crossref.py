@@ -8,18 +8,33 @@ from dataclasses import dataclass
 from parserx.models.elements import Document, Page, PageElement
 
 _NUM_TOKEN = r"[A-Za-z0-9零〇一二三四五六七八九十百千万两IVXivx\-\.\(\)]+"
-_FIGURE_RE = re.compile(
-    rf"^\s*(?P<label>图表|图|Figure|Fig\.?)\s*(?P<number>{_NUM_TOKEN})?\s*"
-    r"(?:[:：.\-]\s*|\s+)?(?P<title>.+?)\s*$",
+_FIGURE_LABEL_RE = r"图表|图|Figure|Fig(?:\.)?"
+_TABLE_LABEL_RE = r"表|Table"
+_NUMBERED_CAPTION_TEMPLATE = (
+    r"^\s*(?P<label>{label})\s*(?P<number>{num})\s*"
+    r"(?:[:：.\-]\s*|\s+)(?P<title>.+?)\s*$"
+)
+_SEPARATED_CAPTION_TEMPLATE = (
+    r"^\s*(?P<label>{label})\s*(?P<separator>[:：.\-])\s*(?P<title>.+?)\s*$"
+)
+_NUMBERED_FIGURE_RE = re.compile(
+    _NUMBERED_CAPTION_TEMPLATE.format(label=_FIGURE_LABEL_RE, num=_NUM_TOKEN),
     re.IGNORECASE,
 )
-_TABLE_RE = re.compile(
-    rf"^\s*(?P<label>表|Table)\s*(?P<number>{_NUM_TOKEN})?\s*"
-    r"(?:[:：.\-]\s*|\s+)?(?P<title>.+?)\s*$",
+_SEPARATED_FIGURE_RE = re.compile(
+    _SEPARATED_CAPTION_TEMPLATE.format(label=_FIGURE_LABEL_RE),
+    re.IGNORECASE,
+)
+_NUMBERED_TABLE_RE = re.compile(
+    _NUMBERED_CAPTION_TEMPLATE.format(label=_TABLE_LABEL_RE, num=_NUM_TOKEN),
+    re.IGNORECASE,
+)
+_SEPARATED_TABLE_RE = re.compile(
+    _SEPARATED_CAPTION_TEMPLATE.format(label=_TABLE_LABEL_RE),
     re.IGNORECASE,
 )
 
-_FIGURE_LABELS = {"图", "图表", "figure", "fig."}
+_FIGURE_LABELS = {"图", "图表", "figure", "fig", "fig."}
 _TABLE_LABELS = {"表", "table"}
 _CAPTION_MAX_LEN = 160
 _FIGURE_MAX_GAP = 140.0
@@ -105,23 +120,48 @@ class CrossReferenceResolver:
         return candidates
 
     def _classify_caption(self, text: str) -> str | None:
-        match = _FIGURE_RE.match(text)
-        if match:
-            label = match.group("label").lower()
-            if label in _FIGURE_LABELS and self._looks_like_caption(match.group("number"), match.group("title")):
-                return "figure"
-
-        match = _TABLE_RE.match(text)
-        if match:
-            label = match.group("label").lower()
-            if label in _TABLE_LABELS and self._looks_like_caption(match.group("number"), match.group("title")):
-                return "table"
+        if self._match_caption(text, _NUMBERED_FIGURE_RE, _FIGURE_LABELS):
+            return "figure"
+        if self._match_caption(text, _SEPARATED_FIGURE_RE, _FIGURE_LABELS):
+            return "figure"
+        if self._match_caption(text, _NUMBERED_TABLE_RE, _TABLE_LABELS):
+            return "table"
+        if self._match_caption(text, _SEPARATED_TABLE_RE, _TABLE_LABELS):
+            return "table"
 
         return None
 
-    def _looks_like_caption(self, number: str | None, title: str | None) -> bool:
+    def _match_caption(
+        self,
+        text: str,
+        pattern: re.Pattern[str],
+        valid_labels: set[str],
+    ) -> bool:
+        match = pattern.match(text)
+        if not match:
+            return False
+
+        label = match.group("label").lower()
+        if label not in valid_labels:
+            return False
+
+        return self._looks_like_caption(
+            match.groupdict().get("number"),
+            match.groupdict().get("title"),
+            separator=match.groupdict().get("separator"),
+        )
+
+    def _looks_like_caption(
+        self,
+        number: str | None,
+        title: str | None,
+        *,
+        separator: str | None = None,
+    ) -> bool:
         if number:
             return True
+        if separator is None:
+            return False
         if not title:
             return False
         compact = title.strip()

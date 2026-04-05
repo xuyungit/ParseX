@@ -103,7 +103,7 @@ class MarkdownRenderer:
         """Render table with an optional caption line above it."""
         caption = str(element.metadata.get("caption", "")).strip()
         if caption:
-            return f"{caption}\n\n{element.content}"
+            return f"**{caption}**\n\n{element.content}"
         return element.content
 
     def _render_formula(self, element: PageElement) -> str:

@@ -336,13 +336,16 @@ LLM 兜底（仅当规则置信度低时）：
   3. 验证层级一致性（无跳级、无孤儿子节）
   4. 输出置信度分数
 
-阶段 2（LLM 精化，仅当阶段 1 置信度 < 0.7）：
-  - 不发送全文，而是发送：
-    a. 标题候选列表（行号 + 文字 + 字体信息）
-    b. 每个候选的上下文（前后 2-3 行）
-    c. MetadataBuilder 检测到的编号模式
-  - 一次 LLM 调用（替代当前的三次）
-  - LLM 输出：确认/修正标题层级
+阶段 2（LLM 精化，已实现最小可用版）：
+  - 仅收集“规则未确认、但仍有章节信号”的低置信候选
+    a. 有字体信号但规则未接受
+    b. 有编号信号但属于弱模式（如阿拉伯数字）且缺少强字体支撑
+  - 不发送全文，而是批量发送：
+    a. 候选文本
+    b. 字体信息
+    c. 前后相邻文本
+  - 单批次调用 LLM，返回 `idx -> level(0/1/2/3)` 的 JSON 结果
+  - 命中的元素会标记 `llm_fallback_used=True`，供 ParseResult/API 调用统计复用
 
 从 legacy pipeline 可复用的代码：
   - chapter_outline_core.py 中的编号检测正则
@@ -1209,6 +1212,8 @@ ground_truth/
 | 2026-04-04 | 配置文件改为 YAML + 环境变量 | 替代硬编码，支持 A/B 测试 |
 | 2026-04-05 | 结构角色识别（3.3.9）定为高价值优化分支，而非当前硬阻塞 | 当前主链路已可运行，先补验证层护栏，再做 ChapterProcessor 语义化升级更稳妥 |
 | 2026-04-05 | ChapterProcessor 长期方向调整为“候选召回 + LLM 语义判别 + 全局一致性修正” | 单靠枚举 regex 很难覆盖真实文档的格式漂移，应更充分利用大模型的语言理解与适应性 |
+| 2026-04-05 | 评测集采用“公开 + 私有”双轨策略 | 公开集用于可复现回归，私有集用于验证真实业务文档表现 |
+| 2026-04-05 | 下一阶段优先级从“加新模块”切换到“评测闭环 + 报告可见性” | 主链路已跑通，当前更需要稳定基线和 A/B 对比能力 |
 
 ---
 
@@ -1219,7 +1224,7 @@ ground_truth/
 
 ### 当前状态总览
 
-**阶段**：Phase 3（质量提升）进行中 | **测试**：122 passing, 4 skipped | **提交**：9 次 | **源文件**：39 个
+**阶段**：Phase 3（质量提升）进行中 | **测试**：132 passing, 4 skipped
 
 ### 原型闭环判断
 
@@ -1227,35 +1232,20 @@ ground_truth/
 - 当前缺口主要在验证护栏、语义化 fallback、图文关联，而不是主链路缺失。
 - 因此下一轮工作的重点应从“补主链路”切换为“补闭环 + 提高鲁棒性”。
 
-### 当前工作区状态（供新 session 接力）
+### 当前工作区理解（供新 session 接力）
 
-- 当前工作区有未提交改动，下一次新会话不要误回滚：
-  - `docs/architecture.md`
-  - `parserx/builders/ocr.py`
-  - `parserx/eval/__init__.py`
-  - `parserx/models/elements.py`
-  - `parserx/pipeline.py`
-  - `parserx/processors/__init__.py`
-  - `parserx/services/ocr.py`
-  - `parserx/verification/__init__.py`
-  - `parserx/verification/completeness.py`
-  - `parserx/verification/hallucination.py`
-  - `parserx/verification/structure.py`
-  - `tests/test_pipeline.py`
-  - `tests/test_verification.py`
-  - `parserx/processors/line_unwrap.py`
-  - `tests/test_line_unwrap.py`
-- 这批改动对应 Phase 3e + 3f：
-  - `LineUnwrapProcessor` 已接入主链路
-  - 已补中文列表保护
-  - 已补相关测试
-  - 已补验证层最小闭环：`StructureValidator` / `CompletenessChecker` / `HallucinationDetector`
-  - 已补 `CrossReferenceResolver`，图注/表题会在渲染阶段关联到图片与表格
-  - `Pipeline` 已新增 `parse_result()`，会返回 warning 与基础 API 调用统计
-  - OCR bbox 已透传到 `PageElement`，供图片描述交叉校验使用
+- 主链路已经具备：解析、章节切分、验证告警、评估框架。
+- `ChapterProcessor` 已进入“两阶段”状态：
+  - 阶段 1：规则检测
+  - 阶段 2：低置信候选批量 LLM fallback
+- `CrossReferenceResolver` 基础版已可用：
+  - 图注/表题识别
+  - 渲染去重
+  - review 中提出的误匹配边界已补测试
 - 当前本地测试基线：
   - `uv run pytest -q`
-  - 结果：`125 passed, 4 skipped`
+  - 结果：`132 passed, 4 skipped`
+- 当前最大的工程缺口不是再补一个模块，而是把评测集和对比流程真正用起来。
 
 ### 模块实现状态
 
@@ -1270,7 +1260,7 @@ ground_truth/
 | 分析 | ImageExtractor | `builders/image_extract.py` | ✅ | 选择性图片提取（跳过装饰性） |
 | 分析 | LayoutBuilder | — | ❌ | 当前由启发式 + PaddleOCR 替代 |
 | 处理 | HeaderFooterProcessor | `processors/header_footer.py` | ✅ | 几何 + 跨页重复，无 LLM |
-| 处理 | ChapterProcessor | `processors/chapter.py` | ✅ | 字体+编号规则，LLM fallback 未做 |
+| 处理 | ChapterProcessor | `processors/chapter.py` | ✅ | 字体+编号规则 + 低置信候选批量 LLM fallback |
 | 处理 | ImageProcessor | `processors/image.py` | ✅ | 启发式分类 + 并发 VLM 描述 |
 | 处理 | TextCleanProcessor | `processors/text_clean.py` | ✅ | CJK 空格 + C1 编码 + 控制字符 |
 | 处理 | TableProcessor | `processors/table.py` | ✅ | 跨页表格合并（列数匹配 + 表头去重） |
@@ -1279,14 +1269,14 @@ ground_truth/
 | 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
 | 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
 | 组装 | ChapterAssembler | `assembly/chapter.py` | ✅ | H1 切分 + index.md |
-| 组装 | CrossReferenceResolver | `assembly/crossref.py` | ✅ | 图注/表题关联并接入 Markdown 渲染；脚注关联仍待扩展 |
+| 组装 | CrossReferenceResolver | `assembly/crossref.py` | ✅ | 图注/表题关联并接入 Markdown 渲染；已补误匹配防护与边界测试；脚注关联仍待扩展 |
 | 服务 | LLM/VLM Service | `services/llm.py` | ✅ | Responses API + Chat Completions 自动切换 |
 | 服务 | OCR Service | `services/ocr.py` | ✅ | PaddleOCR 在线 API |
 | 验证 | HallucinationDetector | `verification/hallucination.py` | ✅ | VLM 描述 vs OCR/native 交叉校验，支持数字不一致告警 |
 | 验证 | CompletenessChecker | `verification/completeness.py` | ✅ | 页码、文本体量、图片引用、表格计数完整性检查 |
 | 验证 | StructureValidator | `verification/structure.py` | ✅ | 标题跳级/孤儿子节/空标题/章节文件完整性检查 |
 | 评估 | Eval Framework | `eval/metrics.py` + `eval/runner.py` | ✅ | edit dist + heading P/R/F1 + table cell F1 + cost |
-| 评估 | Ground Truth | `ground_truth/` | ✅ | 4 个文档基线（deepseek, text_table01, text_table_libreoffice, pdf_text01_tables） |
+| 评估 | Ground Truth Strategy | `docs/evaluation.md` | ✅ | 已明确公开/私有双轨策略；仓库内公开评测集仍待补充 |
 | CLI | parse + eval | `cli.py` | ✅ | `parserx parse` + `parserx eval` |
 
 ### 设计原则（已验证）
@@ -1312,22 +1302,40 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 
 | 优先级 | 任务 | 涉及文件 | 设计详情 |
 |--------|------|---------|---------|
-| **P0** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节“阶段 2”；现在验证层已就位，可以开始做语义化兜底 |
-| **P1** | ParseResult/CLI warning 展示增强 | `models/results.py` + `cli.py` | 当前 `parse_result()` 已有基础结果对象，可继续暴露/格式化 warning |
+| **P0** | 建立公开评测集首批样本 | `ground_truth_public/` + `docs/evaluation.md` | 先提交一小批可开源样本，形成可复现基线 |
+| **P0** | ParseResult/CLI warning 展示增强 | `models/results.py` + `cli.py` | 让 warnings、api_calls、fallback 命中情况更可见 |
+| **P1** | A/B 对比工具 | `eval/compare.py` | 支持 `llm_fallback=false/true` 的配置对比 |
+| **P1** | ChapterProcessor fallback 精化 | `processors/chapter.py` | 在有评测基线后再加强 prompt、批次策略和全局层级一致性修正 |
 | **P2** | CrossReferenceResolver 扩展 | `assembly/crossref.py` | 继续补脚注/引用关联与跨页 caption 关联 |
-| **P2** | A/B 对比工具 | `eval/compare.py` | 5.3 节有设计 |
 | **P2** | StructureRoleAnalyzer（新建议模块） | `builders/structure_roles.py` 或 `processors/structure_roles.py` | 对应 3.3.9；作为 Chapter/LineUnwrap 共享基础设施 |
 | **P3** | FormulaProcessor | `processors/formula.py` | 需本地 GPU |
 | **P3** | LayoutBuilder | `builders/layout.py` | 需本地 GPU 或远程服务 |
 | **P3** | ReadingOrderProcessor | `processors/reading_order.py` | 大部分文档单列 |
 
+### 评测策略结论
+
+- 仓库内评测：
+  - 使用 `ground_truth_public/`
+  - 目标是可复现、可分享、适合回归
+- 仓库外评测：
+  - 使用本地私有 ground truth
+  - 目标是覆盖真实业务文档
+- 每次非平凡解析改动后，都应同时跑：
+  - `uv run pytest -q`
+  - `uv run parserx eval ground_truth_public`
+  - `uv run parserx eval "$PARSERX_PRIVATE_GT_DIR"`
+- 章节/LLM 类改动，除了质量指标，还应看：
+  - warnings 数量
+  - `api_calls.llm`
+  - wall time
+
 ### 下一次新会话建议开场动作
 
 1. 先运行 `git status --short`，确认是否基于当前未提交工作继续。
-2. 再运行 `uv run pytest -q`，确认本地基线仍是 `125 passed, 4 skipped`。
-3. 直接阅读本节的“当前工作区状态”“下一步优先级（优化版）”以及 3.3.9 节。
-4. 如果进入实现，优先从 `processors/chapter.py` 的 LLM fallback 或 `assembly/crossref.py` 的脚注/跨页关联扩展开始。
-5. 当前验证层已经补齐最小闭环，后续改章节识别时要保持 warning 与测试基线同步更新。
+2. 再运行 `uv run pytest -q`，确认本地基线仍是 `132 passed, 4 skipped`。
+3. 阅读本节、[evaluation.md](./evaluation.md) 和 3.3.9 节。
+4. 如果进入实现，优先从公开评测集、CLI warning 展示或 `eval/compare.py` 开始。
+5. 改 ChapterProcessor / CrossReferenceResolver 时，不只看测试是否通过，也要同步看公开集和私有集评测结果。
 
 ### 验证数据
 
@@ -1351,7 +1359,7 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 - 跨页表格合并：pdf_text01 中 5 组跨页表格成功合并 ✓
 - DOCX 样式 heading_level 直接映射，ChapterProcessor 自动跳过已有标题 ✓
 
-**基线评估（4 个 ground truth 文档）**：
+**历史本地评测记录（非仓库内固定公开基线）**：
 
 | 文档 | Edit Dist | Char F1 | Heading F1 | Table F1 | 说明 |
 |------|-----------|---------|------------|----------|------|
@@ -1360,6 +1368,10 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | pdf_text01_tables | 0.438 | 0.720 | — | 0.660 | 跨页合并有效，但文本/表格重复提取 |
 | deepseek | 0.317 | 0.796 | — | — | ChatGPT 导出，含 UI 元素 |
 | **平均** | **0.244** | **0.848** | | | |
+
+说明：
+- 这组数字来自此前的本地 ground truth 评测记录，不代表仓库内当前已提交的公开基线。
+- 后续应以 `ground_truth_public/` + 私有评测目录的双轨策略来维护新的稳定基线。
 
 ### 迭代历史
 

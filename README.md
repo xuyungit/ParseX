@@ -69,12 +69,12 @@ ParserX takes a third path: **deterministic rules first, AI only where needed**.
 
 **Processors** — Transforms the annotated document:
 - *HeaderFooterProcessor* removes repeated header/footer text using geometric zones + cross-page frequency
-- *ChapterProcessor* assigns heading levels from font size ratio + numbering signals
+- *ChapterProcessor* assigns heading levels from font size ratio + numbering signals, then batch-confirms low-confidence candidates with one LLM fallback call
 - *TableProcessor* merges tables that span across page breaks
 - *ImageProcessor* classifies images (decorative/informational/chart) and calls VLM for descriptions — only for the images that carry real information
 - *TextCleanProcessor* fixes CJK spacing artifacts and encoding issues
 
-**Assembly** — Renders the processed document as Markdown, optionally splitting into chapter files.
+**Assembly** — Renders the processed document as Markdown, optionally splitting into chapter files. Figure/table captions are associated before rendering.
 
 ## Quick Start
 
@@ -137,6 +137,13 @@ uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
 
 Metrics: normalized edit distance, character F1, heading precision/recall/F1, table cell F1, processing cost.
 
+Recommended evaluation strategy:
+- `ground_truth_public/` lives in-repo for reproducible open benchmarks
+- private ground truth stays outside the repo but uses the same folder layout
+- both should be run during local iteration for parser changes
+
+See [Evaluation Guide](docs/evaluation.md) for the public/private benchmark workflow.
+
 ## Configuration
 
 All settings in `parserx.yaml`, credentials via environment variables:
@@ -176,16 +183,16 @@ ParserX is under active development. The core pipeline is functional and tested.
 | PDF extraction (PyMuPDF) | ✅ Done | Character-level font metadata |
 | DOCX extraction (Docling) | ✅ Done | Style → heading level mapping |
 | Header/footer removal | ✅ Done | Geometric + cross-page repetition |
-| Chapter/heading detection | ✅ Done | Font ratio + 7 numbering patterns |
+| Chapter/heading detection | ✅ Done | Font ratio + 7 numbering patterns + batch LLM fallback |
 | Table extraction + cross-page merge | ✅ Done | Column-count matching + header dedup |
 | Selective OCR | ✅ Done | Page classification + text dedup on mixed pages |
 | Image classification + VLM | ✅ Done | Heuristic + concurrent VLM calls |
 | Text cleaning (CJK) | ✅ Done | Space normalization + encoding fix |
-| Evaluation framework | ✅ Done | Edit distance, heading/table F1, OmniDocBench |
+| Evaluation framework | ✅ Done | Edit distance, heading/table F1, OmniDocBench support |
 | Line unwrap | 🚧 Planned | Cross-line sentence joining |
-| LLM fallback for chapters | 🚧 Planned | For documents where rules alone are insufficient |
+| LLM fallback for chapters | ✅ Done | Batch confirmation for low-confidence heading candidates |
 | Formula extraction | 🚧 Planned | LaTeX output, requires model integration |
-| Hallucination detection | 🚧 Planned | Cross-validate VLM output against native text |
+| Hallucination detection | ✅ Done | Cross-validate VLM output against OCR/native text |
 | Reading order | 🚧 Planned | Multi-column layout support |
 
 ## Development
@@ -210,12 +217,13 @@ parserx/
 ├── services/     # AI service abstraction (LLM/VLM, OCR)
 ├── assembly/     # Output (Markdown renderer, chapter splitter)
 ├── eval/         # Evaluation framework + OmniDocBench benchmark
-└── verification/ # Output validation (planned)
+└── verification/ # Output validation and quality warnings
 ```
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) — Technical design, module details, implementation status
+- [Evaluation Guide](docs/evaluation.md) — Public/private benchmark strategy and iteration workflow
 - [Requirements](docs/requirements.md) — Background, pain points, industry survey, design goals
 
 ## License

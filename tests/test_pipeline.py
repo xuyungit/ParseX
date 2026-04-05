@@ -131,3 +131,34 @@ def test_parse_result_collects_verification_warnings(tmp_path: Path, monkeypatch
     assert result.page_count == 1
     assert result.element_count == 2
     assert any("jump from H1 to H3" in warning for warning in result.warnings)
+
+
+def test_parse_result_counts_llm_fallback_calls(tmp_path: Path, monkeypatch):
+    from parserx.models.elements import Document, Page, PageElement
+
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="项目概况",
+                        metadata={"heading_level": 2, "llm_fallback_used": True},
+                    ),
+                    PageElement(type="text", content="正文内容"),
+                ],
+            )
+        ]
+    )
+
+    pipeline = _pipeline_no_ocr()
+    monkeypatch.setattr(pipeline, "_extract", lambda path: doc)
+    monkeypatch.setattr(pipeline, "_extract_and_describe_images", lambda d, source, images_dir: d)
+
+    dummy = tmp_path / "dummy.pdf"
+    dummy.write_bytes(b"%PDF-1.4 fake")
+
+    result = pipeline.parse_result(dummy)
+
+    assert result.api_calls["llm"] == 1

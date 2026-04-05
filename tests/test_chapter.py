@@ -10,6 +10,23 @@ from parserx.models.elements import Document, FontInfo, Page, PageElement
 from parserx.processors.chapter import ChapterProcessor
 
 
+class FakeLLMService:
+    def __init__(self, response: str):
+        self.response = response
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        self.calls.append((system, user))
+        return self.response
+
+
 def _text_elem(content: str, font_size: float = 10.0, bold: bool = False) -> PageElement:
     return PageElement(
         type="text",
@@ -112,6 +129,38 @@ def test_disabled():
 
     headings = [e for e in doc.all_elements if e.metadata.get("heading_level")]
     assert len(headings) == 0
+
+
+def test_llm_fallback_confirms_weak_numbering_candidate():
+    doc = _build_doc([
+        _text_elem("这是正文内容" * 20, 10.0),
+        _text_elem("1. 项目概况", 10.0, bold=False),
+        _text_elem("这是后续正文内容" * 20, 10.0),
+    ])
+    llm = FakeLLMService('[{"idx": 1, "level": 2}]')
+
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert target.metadata["heading_level"] == 2
+    assert target.metadata["llm_fallback_used"] is True
+    assert len(llm.calls) == 1
+
+
+def test_llm_fallback_ignores_invalid_json():
+    doc = _build_doc([
+        _text_elem("这是正文内容" * 20, 10.0),
+        _text_elem("1. 项目概况", 10.0, bold=False),
+    ])
+    llm = FakeLLMService("not-json")
+
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert "heading_level" not in target.metadata
+    assert len(llm.calls) == 1
 
 
 # ── Integration test with real PDF ──────────────────────────────────────
