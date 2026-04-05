@@ -240,6 +240,32 @@ def test_sidebar_short_ocr_label_is_suppressed_as_heading():
     assert doc.pages[0].elements[0].metadata["ocr_heading_suppressed"] == "sidebar_short_label"
 
 
+def test_sidebar_numeric_label_with_weak_spaced_numbering_is_suppressed():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                width=1000,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="52 周股价走势图",
+                        source="ocr",
+                        layout_type="paragraph_title",
+                        bbox=(700, 100, 920, 150),
+                        metadata={"heading_level": 2},
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ChapterProcessor().process(doc)
+
+    assert "heading_level" not in doc.pages[0].elements[0].metadata
+    assert doc.pages[0].elements[0].metadata["ocr_heading_suppressed"] == "sidebar_short_label"
+
+
 def test_sidebar_colon_label_is_promoted_to_heading():
     doc = Document(
         pages=[
