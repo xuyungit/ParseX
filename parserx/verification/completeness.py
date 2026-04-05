@@ -16,6 +16,8 @@ _BLOCKQUOTE_RE = re.compile(r"^\s*>\s?", re.MULTILINE)
 
 
 def _is_renderable(element: PageElement) -> bool:
+    if element.metadata.get("skip_render"):
+        return False
     if element.type in {"header", "footer"}:
         return False
     if element.type == "image":
@@ -104,6 +106,8 @@ class CompletenessChecker:
         warnings: list[str] = []
 
         for elem in doc.elements_by_type("image"):
+            if not _is_renderable(elem):
+                continue
             if elem.metadata.get("skipped") or not elem.metadata.get("needs_vlm"):
                 continue
 

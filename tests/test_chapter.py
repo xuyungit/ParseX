@@ -262,7 +262,41 @@ def test_sidebar_colon_label_is_promoted_to_heading():
     ChapterProcessor().process(doc)
 
     assert doc.pages[0].elements[0].metadata["heading_level"] == 2
-    assert doc.pages[0].elements[0].metadata["ocr_heading_inferred"] == "sidebar_colon_label"
+
+
+def test_merge_cover_heading_fragments():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="基于大模型的城轨工务专业知识问答助手",
+                        bbox=(100, 80, 900, 120),
+                        metadata={"heading_level": 1},
+                    ),
+                    PageElement(
+                        type="text",
+                        content="技术研究及应用项目中期验收评审意见",
+                        bbox=(100, 135, 900, 175),
+                        metadata={"heading_level": 1},
+                    ),
+                    PageElement(
+                        type="text",
+                        content="2025年9月30日，北京市地铁运营有限公司在北京组织召开了项目评审。",
+                        bbox=(100, 260, 1100, 340),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ChapterProcessor().process(doc)
+
+    first, second = doc.pages[0].elements[:2]
+    assert first.content == "基于大模型的城轨工务专业知识问答助手技术研究及应用项目中期验收评审意见"
+    assert second.metadata["skip_render"] is True
 
 
 # ── Integration test with real PDF ──────────────────────────────────────

@@ -250,6 +250,7 @@ class ChapterProcessor:
         fallback_hits = self._apply_llm_fallback(doc, fallback_candidates)
         detected_count += fallback_hits
         self._normalize_ocr_title_subtitle_pair(doc)
+        self._merge_cover_heading_fragments(doc)
 
         log.info(
             "Detected %d headings (%d via fallback)",
@@ -350,6 +351,75 @@ class ChapterProcessor:
         ):
             first.metadata["heading_level"] = 2
             first.metadata["ocr_heading_level_adjusted"] = "title_subtitle_pair"
+
+    def _merge_cover_heading_fragments(self, doc: Document) -> None:
+        """Merge adjacent first-page heading fragments before the first body block.
+
+        Some cover/title pages split one long title across multiple centered
+        heading lines with identical hierarchy. These are usually not separate
+        sections, and merging them improves downstream heading fidelity without
+        relying on document-specific patterns.
+        """
+        if not doc.pages:
+            return
+
+        page = doc.pages[0]
+        body_seen = False
+        for idx, elem in enumerate(page.elements):
+            if elem.type != "text" or elem.metadata.get("skip_render"):
+                continue
+            if not elem.metadata.get("heading_level"):
+                if _looks_like_body_text(elem.content):
+                    body_seen = True
+                continue
+            if body_seen:
+                break
+
+            next_idx = idx + 1
+            while next_idx < len(page.elements):
+                next_elem = page.elements[next_idx]
+                if next_elem.type != "text" or next_elem.metadata.get("skip_render"):
+                    next_idx += 1
+                    continue
+                if not next_elem.metadata.get("heading_level"):
+                    break
+                if not self._should_merge_heading_fragments(elem, next_elem):
+                    break
+                elem.content = f"{elem.content.strip()}{next_elem.content.strip()}"
+                next_elem.metadata["skip_render"] = True
+                next_elem.metadata["heading_fragment_merged_into"] = idx
+                elem.metadata["heading_fragments_merged"] = (
+                    int(elem.metadata.get("heading_fragments_merged", 0)) + 1
+                )
+                next_idx += 1
+
+    def _should_merge_heading_fragments(
+        self,
+        first: PageElement,
+        second: PageElement,
+    ) -> bool:
+        if first.metadata.get("heading_level") != second.metadata.get("heading_level"):
+            return False
+        if first.metadata.get("heading_level") != 1:
+            return False
+
+        first_text = first.content.strip()
+        second_text = second.content.strip()
+        if not first_text or not second_text:
+            return False
+        if detect_numbering_signal(first_text) or detect_numbering_signal(second_text):
+            return False
+        if _looks_like_body_text(first_text) or _looks_like_body_text(second_text):
+            return False
+        if len(first_text) > 40 or len(second_text) > 40:
+            return False
+
+        gap = second.bbox[1] - first.bbox[3]
+        if gap > max((first.bbox[3] - first.bbox[1]) * 3, 80):
+            return False
+        if first.bbox[0] > second.bbox[2] or second.bbox[0] > first.bbox[2]:
+            return False
+        return True
 
     def _keep_existing_ocr_heading(self, page_width: float, elem: PageElement) -> bool:
         """Suppress OCR sidebar labels that are visually prominent but not structural headings."""

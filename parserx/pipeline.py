@@ -20,6 +20,7 @@ from parserx.models.elements import Document
 from parserx.models.results import ParseResult
 from parserx.processors.base import Processor
 from parserx.processors.chapter import ChapterProcessor
+from parserx.processors.content_value import ContentValueProcessor
 from parserx.processors.header_footer import HeaderFooterProcessor
 from parserx.processors.image import ImageProcessor
 from parserx.processors.line_unwrap import LineUnwrapProcessor
@@ -293,7 +294,8 @@ class Pipeline:
     def _build_processors(self) -> list[Processor]:
         """Build the processor chain based on config.
 
-        Order: HeaderFooter → Chapter → Table → Image(+VLM) → LineUnwrap → TextClean.
+        Order: HeaderFooter → Chapter → Table → Image(+VLM) → LineUnwrap → TextClean
+        → ContentValue.
         """
         processors: list[Processor] = []
 
@@ -323,5 +325,11 @@ class Pipeline:
 
         if self._config.processors.text_clean.enabled:
             processors.append(TextCleanProcessor(self._config.processors.text_clean))
+
+        if self._config.processors.content_value.enabled:
+            processors.append(ContentValueProcessor(
+                self._config.processors.content_value,
+                llm_service=self._llm_service,
+            ))
 
         return processors
