@@ -84,6 +84,7 @@ class DocumentMetadata(BaseModel):
     page_types: dict[int, PageType] = Field(default_factory=dict)
     source_format: str = ""  # "pdf", "docx", "image"
     source_path: str = ""
+    verification_warnings: list[str] = Field(default_factory=list)
 
 
 class Document(BaseModel):
