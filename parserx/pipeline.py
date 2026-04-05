@@ -276,6 +276,7 @@ class Pipeline:
             1
             for elem in doc.elements_by_type("image")
             if elem.metadata.get("description")
+            and not elem.metadata.get("vlm_skipped_due_to_large_text_overlap")
         )
         llm_calls = sum(
             1

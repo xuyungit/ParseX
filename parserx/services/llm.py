@@ -46,6 +46,9 @@ class VLMService(Protocol):
         context: str = "",
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        structured_output_mode: str = "off",
+        json_schema: dict[str, Any] | None = None,
+        json_schema_name: str = "parserx_image_description",
     ) -> str: ...
 
 
@@ -99,24 +102,61 @@ class OpenAICompatibleService:
         context: str = "",
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        structured_output_mode: str = "off",
+        json_schema: dict[str, Any] | None = None,
+        json_schema_name: str = "parserx_image_description",
     ) -> str:
-        """Image understanding — tries Responses API then Chat Completions."""
+        """Image understanding with optional structured-output constraints."""
         image_data_url = _encode_image_data_url(image_path)
-
-        if self._api_style != "chat":
+        for mode in _structured_output_modes(structured_output_mode, has_schema=bool(json_schema)):
             try:
-                return self._describe_responses(
-                    image_data_url, prompt, context, temperature, max_tokens
+                if self._api_style != "chat":
+                    try:
+                        return self._describe_responses(
+                            image_data_url,
+                            prompt,
+                            context,
+                            temperature,
+                            max_tokens,
+                            structured_output_mode=mode,
+                            json_schema=json_schema,
+                            json_schema_name=json_schema_name,
+                        )
+                    except Exception as exc:
+                        if self._api_style is None and _is_not_found(exc):
+                            log.info("Responses API not available, falling back to Chat Completions")
+                            self._api_style = "chat"
+                        elif mode != "off" and _is_structured_output_unsupported(exc):
+                            log.info("Responses structured output mode %s unsupported; retrying with a weaker constraint", mode)
+                            continue
+                        else:
+                            raise
+
+                return self._describe_chat(
+                    image_data_url,
+                    prompt,
+                    context,
+                    temperature,
+                    max_tokens,
+                    structured_output_mode=mode,
+                    json_schema=json_schema,
+                    json_schema_name=json_schema_name,
                 )
             except Exception as exc:
-                if self._api_style is None and _is_not_found(exc):
-                    log.info("Responses API not available, falling back to Chat Completions")
-                    self._api_style = "chat"
-                else:
-                    raise
+                if mode != "off" and _is_structured_output_unsupported(exc):
+                    log.info("Chat structured output mode %s unsupported; retrying with a weaker constraint", mode)
+                    continue
+                raise
 
         return self._describe_chat(
-            image_data_url, prompt, context, temperature, max_tokens
+            image_data_url,
+            prompt,
+            context,
+            temperature,
+            max_tokens,
+            structured_output_mode="off",
+            json_schema=None,
+            json_schema_name=json_schema_name,
         )
 
     # ── Responses API (legacy pipeline style) ────────────────────────────────
@@ -149,6 +189,10 @@ class OpenAICompatibleService:
         context: str,
         temperature: float,
         max_tokens: int,
+        *,
+        structured_output_mode: str,
+        json_schema: dict[str, Any] | None,
+        json_schema_name: str,
     ) -> str:
         content: list[dict[str, Any]] = []
         if context:
@@ -163,6 +207,12 @@ class OpenAICompatibleService:
             temperature=temperature,
             max_output_tokens=max_tokens,
             stream=True,
+            **_structured_output_kwargs(
+                api_style="responses",
+                mode=structured_output_mode,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+            ),
             **self._extra_request_kwargs(),
         ) as stream:
             for event in stream:
@@ -202,6 +252,10 @@ class OpenAICompatibleService:
         context: str,
         temperature: float,
         max_tokens: int,
+        *,
+        structured_output_mode: str,
+        json_schema: dict[str, Any] | None,
+        json_schema_name: str,
     ) -> str:
         content: list[dict[str, Any]] = []
         if context:
@@ -217,6 +271,12 @@ class OpenAICompatibleService:
             messages=[{"role": "user", "content": content}],
             temperature=temperature,
             max_tokens=max_tokens,
+            **_structured_output_kwargs(
+                api_style="chat",
+                mode=structured_output_mode,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+            ),
             **self._extra_request_kwargs(),
         )
         if self._api_style is None:
@@ -253,6 +313,77 @@ def _is_not_found(exc: Exception) -> bool:
     """Check if exception is a 404 Not Found error."""
     exc_str = str(exc)
     return "404" in exc_str or "Not Found" in exc_str
+
+
+def _structured_output_modes(requested_mode: str, *, has_schema: bool) -> tuple[str, ...]:
+    """Return a strongest-to-weakest structured-output fallback chain."""
+    if requested_mode == "json_schema" and has_schema:
+        return ("json_schema", "json_object", "off")
+    if requested_mode == "json_object":
+        return ("json_object", "off")
+    return ("off",)
+
+
+def _structured_output_kwargs(
+    *,
+    api_style: str,
+    mode: str,
+    json_schema: dict[str, Any] | None,
+    json_schema_name: str,
+) -> dict[str, Any]:
+    """Build API-native structured-output parameters for OpenAI-compatible backends."""
+    if mode == "off":
+        return {}
+
+    if api_style == "responses":
+        if mode == "json_schema" and json_schema:
+            return {
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": json_schema_name,
+                        "schema": json_schema,
+                        "strict": True,
+                    }
+                }
+            }
+        if mode == "json_object":
+            return {"text": {"format": {"type": "json_object"}}}
+        return {}
+
+    if mode == "json_schema" and json_schema:
+        return {
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": json_schema_name,
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            }
+        }
+    if mode == "json_object":
+        return {"response_format": {"type": "json_object"}}
+    return {}
+
+
+def _is_structured_output_unsupported(exc: Exception) -> bool:
+    """Best-effort detection for providers that reject structured-output params."""
+    message = str(exc).lower()
+    indicators = (
+        "response_format",
+        "json_schema",
+        "json_object",
+        "text.format",
+        "structured output",
+        "structured outputs",
+        "unsupported",
+        "not support",
+        "unknown parameter",
+        "invalid parameter",
+        "extra inputs are not permitted",
+    )
+    return any(indicator in message for indicator in indicators)
 
 
 def create_llm_service(config: ServiceConfig) -> OpenAICompatibleService:

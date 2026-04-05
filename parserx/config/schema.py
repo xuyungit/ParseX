@@ -73,8 +73,12 @@ class ImageProcessorConfig(ProcessorToggle):
     skip_decorative: bool = True
     vlm_prompt_style: str = "strict_auto"
     vlm_response_format: str = "json"
+    vlm_structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
     vlm_retry_attempts: int = 1
+    vlm_max_tokens: int = 8192
     vlm_max_description_chars: int = 1200
+    vlm_skip_large_text_overlap_chars: int = 1200
+    vlm_debug_raw_preview_chars: int = 1200
 
 
 class FormulaProcessorConfig(BaseModel):

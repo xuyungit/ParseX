@@ -11,6 +11,9 @@ def test_default_config():
     assert config.processors.text_clean.enabled is True
     assert config.processors.formula.enabled is False
     assert config.processors.image.vlm_prompt_style == "strict_auto"
+    assert config.processors.image.vlm_structured_output_mode == "json_schema"
+    assert config.processors.image.vlm_max_tokens == 8192
+    assert config.processors.image.vlm_skip_large_text_overlap_chars == 1200
     assert config.services.vlm.api_style == "auto"
     assert config.services.vlm.extra_body == {}
 

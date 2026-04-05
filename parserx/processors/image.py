@@ -102,6 +102,22 @@ _VLM_RESPONSE_SCHEMA = {
     "markdown": "markdown table or other markdown when appropriate",
 }
 
+_VLM_JSON_SCHEMA_NAME = "parserx_image_description"
+_VLM_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["image_type", "summary", "visible_text", "markdown"],
+    "properties": {
+        "image_type": {
+            "type": "string",
+            "enum": ["table", "text", "diagram", "chart", "photo", "other"],
+        },
+        "summary": {"type": "string"},
+        "visible_text": {"type": "string"},
+        "markdown": {"type": "string"},
+    },
+}
+
 _STRICT_ZH_SYSTEM_PROMPT = """\
 你是一个严谨的文档图片解读助手。你必须只依据图片中肉眼可见的内容作答，不能补全、推测或改写数字。
 
@@ -152,6 +168,7 @@ Output policy:
 - If the image is text-heavy, prioritize exact transcription in visible_text and keep summary empty unless a very short structural note is necessary
 - If the image is a table, put the table in markdown and avoid repeating the same cells in summary
 - If OCR/native reference text is provided and the same text is visible in the image, keep wording and all numbers aligned with that visible evidence
+- If OCR/native overlap already contains a long body of text, do not dump the entire body into visible_text just to be safe; keep the JSON short and valid
 - Prefer omission over guesswork; do not "improve" wording or normalize identifiers
 """
 
@@ -343,6 +360,12 @@ def _normalized_len(text: str) -> int:
     return len(normalize_for_comparison(text))
 
 
+def _is_strong_overlap(best_overlap: float, evidence_text: str) -> bool:
+    return best_overlap >= 0.5 or (
+        best_overlap >= 0.3 and _normalized_len(evidence_text) >= 24
+    )
+
+
 def _looks_text_heavy(
     *,
     image_class: str,
@@ -428,9 +451,7 @@ def _select_vlm_description(
     evidence_text = str(evidence.get("text", "")).strip()
     evidence_table = str(evidence.get("table_text", "")).strip()
     best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
-    strong_overlap = best_overlap >= 0.5 or (
-        best_overlap >= 0.3 and _normalized_len(evidence_text) >= 24
-    )
+    strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
     image_class = str(elem.metadata.get("image_class", ""))
     text_heavy = _looks_text_heavy(
@@ -509,6 +530,43 @@ def _select_vlm_description(
     return "", updates
 
 
+def _skip_vlm_for_large_text_overlap(
+    *,
+    elem: PageElement,
+    evidence: dict[str, object],
+    max_chars: int,
+    overlap_char_threshold: int,
+) -> tuple[str, dict[str, object]] | None:
+    if overlap_char_threshold <= 0:
+        return None
+
+    evidence_text = str(evidence.get("text", "")).strip()
+    evidence_table = str(evidence.get("table_text", "")).strip()
+    if not evidence_text or evidence_table:
+        return None
+
+    best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
+    image_class = str(elem.metadata.get("image_class", ""))
+    text_heavy = _looks_text_heavy(
+        image_class=image_class,
+        visible_text="",
+        evidence_text=evidence_text,
+    )
+    if not text_heavy or not _is_strong_overlap(best_overlap, evidence_text):
+        return None
+    if _normalized_len(evidence_text) < overlap_char_threshold:
+        return None
+
+    updates: dict[str, object] = {
+        "description_source": "ocr_overlap_evidence",
+        "text_heavy_image": True,
+        "vlm_skipped_due_to_large_text_overlap": True,
+        "vlm_overlap_ratio": round(best_overlap, 4),
+        "vlm_overlap_evidence": _truncate_description(evidence_text, max_chars),
+    }
+    return _truncate_description(evidence_text, max_chars), updates
+
+
 def _build_route_hint(
     *,
     elem: PageElement,
@@ -532,7 +590,8 @@ def _build_route_hint(
     ):
         return (
             "text-heavy: prioritize exact visible_text transcription; summary should stay empty unless "
-            "a single short note is needed to describe layout or purpose."
+            "a single short note is needed to describe layout or purpose. If OCR/native overlap already "
+            "contains long body text, keep JSON compact instead of copying the full passage."
         )
 
     return (
@@ -548,13 +607,27 @@ def _normalize_vlm_output(
     page_elements: list[PageElement],
     response_format: str,
     max_chars: int,
+    debug_raw_preview_chars: int,
 ) -> tuple[str, bool, dict[str, object]]:
     if response_format != "json":
         return _truncate_description(raw, max_chars), True, {}
 
     payload = _extract_json_object(raw)
     if payload is None:
-        return "", False, {}
+        updates = {
+            "vlm_unstructured_output": True,
+            "vlm_raw_excerpt": _truncate_description(raw, debug_raw_preview_chars),
+        }
+        evidence = _collect_overlapping_evidence(elem, page_elements)
+        evidence_text = str(evidence.get("text", "")).strip()
+        best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
+        if evidence_text and _is_strong_overlap(best_overlap, evidence_text):
+            updates["vlm_unstructured_reason"] = "truncated_json" if _looks_like_truncated_json(raw) else "invalid_json"
+            updates["description_source"] = "ocr_overlap_evidence"
+            updates["vlm_overlap_ratio"] = round(best_overlap, 4)
+            updates["vlm_overlap_evidence"] = _truncate_description(evidence_text, max_chars)
+            return _truncate_description(evidence_text, max_chars), True, updates
+        return "", False, updates
 
     summary = str(payload.get("summary", "")).strip()
     visible_text = str(payload.get("visible_text", "")).strip()
@@ -582,6 +655,11 @@ def _normalize_vlm_output(
             return _truncate_description(evidence_text, max_chars), True, updates
 
     return description, True, updates
+
+
+def _looks_like_truncated_json(raw: str) -> bool:
+    stripped = raw.strip()
+    return stripped.startswith("{") and not stripped.endswith("}")
 
 
 def _get_context_before(elem: PageElement, page_elements: list[PageElement]) -> str:
@@ -677,19 +755,31 @@ class ImageProcessor:
     def _run_vlm_concurrent(
         self, tasks: list[tuple[PageElement, list[PageElement], Path]]
     ) -> int:
-        """Run VLM descriptions concurrently. Returns number of successful calls."""
-        success_count = 0
+        """Run VLM descriptions concurrently. Returns actual API call count."""
+        api_call_count = 0
 
-        def _describe(task: tuple[PageElement, list[PageElement], Path]) -> tuple[PageElement, str]:
+        def _describe(task: tuple[PageElement, list[PageElement], Path]) -> tuple[PageElement, str, int]:
             elem, page_elements, image_path = task
             context = _get_context_before(elem, page_elements)
             evidence = _collect_overlapping_evidence(elem, page_elements)
+            skipped = _skip_vlm_for_large_text_overlap(
+                elem=elem,
+                evidence=evidence,
+                max_chars=self._config.vlm_max_description_chars,
+                overlap_char_threshold=self._config.vlm_skip_large_text_overlap_chars,
+            )
+            if skipped is not None:
+                description, metadata_updates = skipped
+                elem.metadata.update(metadata_updates)
+                return elem, description, 0
+
             attempts = max(self._config.vlm_retry_attempts, 0) + 1
             preferred_language = _detect_prompt_language(
                 context,
                 str(evidence.get("text", "")),
             )
             route_hint = _build_route_hint(elem=elem, evidence=evidence)
+            calls_made = 0
 
             for attempt in range(attempts):
                 prompt = _build_vlm_prompt(
@@ -705,12 +795,16 @@ class ImageProcessor:
                     retry=attempt > 0,
                 )
                 try:
+                    calls_made += 1
                     result = self._vlm.describe_image(
                         image_path,
                         prompt,
                         context=system_prompt,
                         temperature=0.0,
-                        max_tokens=4096,
+                        max_tokens=self._config.vlm_max_tokens,
+                        structured_output_mode=self._config.vlm_structured_output_mode,
+                        json_schema=_VLM_JSON_SCHEMA if self._config.vlm_response_format == "json" else None,
+                        json_schema_name=_VLM_JSON_SCHEMA_NAME,
                     )
                 except Exception as exc:
                     log.warning("VLM failed for %s (attempt %d/%d): %s", image_path.name, attempt + 1, attempts, exc)
@@ -722,23 +816,35 @@ class ImageProcessor:
                     page_elements=page_elements,
                     response_format=self._config.vlm_response_format,
                     max_chars=self._config.vlm_max_description_chars,
+                    debug_raw_preview_chars=self._config.vlm_debug_raw_preview_chars,
                 )
-                if normalized:
+                if metadata_updates:
                     elem.metadata.update(metadata_updates)
+                if normalized:
                     if attempt > 0:
                         elem.metadata["vlm_retry_used"] = True
-                    return elem, normalized
+                    return elem, normalized, calls_made
                 if not ok:
-                    log.warning("VLM returned unstructured output for %s (attempt %d/%d)", image_path.name, attempt + 1, attempts)
+                    excerpt = elem.metadata.get("vlm_raw_excerpt", "")
+                    if excerpt:
+                        log.warning(
+                            "VLM returned unstructured output for %s (attempt %d/%d): %s",
+                            image_path.name,
+                            attempt + 1,
+                            attempts,
+                            excerpt,
+                        )
+                    else:
+                        log.warning("VLM returned unstructured output for %s (attempt %d/%d)", image_path.name, attempt + 1, attempts)
 
-            return elem, ""
+            return elem, "", calls_made
 
         with ThreadPoolExecutor(max_workers=self._max_concurrent) as executor:
             futures = {executor.submit(_describe, task): task for task in tasks}
             for future in as_completed(futures):
-                elem, description = future.result()
+                elem, description, calls_made = future.result()
                 if description:
                     elem.metadata["description"] = description
-                    success_count += 1
+                api_call_count += calls_made
 
-        return success_count
+        return api_call_count
