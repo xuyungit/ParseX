@@ -164,6 +164,24 @@ def test_heading_metrics_level_mismatch():
     assert m.precision < 1.0
 
 
+def test_heading_metrics_normalizes_report_subtitle_dash_prefix():
+    output = "## ——金诚信（603979）2022年报点评"
+    expected = "## 一一金诚信（603979）2022年报点评"
+
+    m = compute_heading_metrics(output, expected)
+
+    assert m.f1 == 1.0
+
+
+def test_heading_metrics_normalizes_dash_variants_inside_heading_text():
+    output = "## 未来 3–6 个月重大事项提示："
+    expected = "## 未来3-6个月重大事项提示："
+
+    m = compute_heading_metrics(output, expected)
+
+    assert m.f1 == 1.0
+
+
 def test_heading_metrics_both_empty():
     m = compute_heading_metrics("no headings", "also no headings")
     assert m.expected_count == 0

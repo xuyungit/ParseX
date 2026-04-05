@@ -53,6 +53,8 @@ _METADATA_FIELD_RE = re.compile(
 
 # Pure number (page number, code, etc.)
 _PURE_NUMBER_RE = re.compile(r"^\d+$")
+_SUBTITLE_PREFIX_RE = re.compile(r"^[—–\-一]{2,}")
+_HEADING_COLON_END_RE = re.compile(r"[：:]$")
 
 
 def _is_false_positive(text: str) -> bool:
@@ -177,6 +179,12 @@ def _bump_processing_stat(doc: Document, key: str, amount: int = 1) -> None:
     )
 
 
+def _is_right_sidebar(page_width: float, elem: PageElement) -> bool:
+    if page_width <= 0:
+        return False
+    return elem.bbox[0] >= page_width * 0.6
+
+
 class ChapterProcessor:
     """Detect chapter/section headings and assign heading levels.
 
@@ -210,6 +218,15 @@ class ChapterProcessor:
 
                 # Skip elements with heading_level already set (e.g. from DOCX styles)
                 if elem.metadata.get("heading_level"):
+                    if not self._keep_existing_ocr_heading(page.width, elem):
+                        continue
+                    detected_count += 1
+                    continue
+
+                inferred_level = self._infer_sidebar_heading_level(page.width, elem)
+                if inferred_level is not None:
+                    elem.metadata["heading_level"] = inferred_level
+                    elem.metadata["ocr_heading_inferred"] = "sidebar_colon_label"
                     detected_count += 1
                     continue
 
@@ -232,6 +249,7 @@ class ChapterProcessor:
 
         fallback_hits = self._apply_llm_fallback(doc, fallback_candidates)
         detected_count += fallback_hits
+        self._normalize_ocr_title_subtitle_pair(doc)
 
         log.info(
             "Detected %d headings (%d via fallback)",
@@ -303,6 +321,71 @@ class ChapterProcessor:
                 return font_level
 
         return None
+
+    def _normalize_ocr_title_subtitle_pair(self, doc: Document) -> None:
+        """Demote OCR doc-title H1 when it is actually a peer title next to a subtitle.
+
+        Some report covers are labeled by OCR as:
+        - `doc_title` -> H1
+        - immediately followed `paragraph_title` -> H2
+
+        In practice these are often a same-level title/subtitle pair rather than
+        a real document hierarchy. When the second line starts with a repeated
+        dash-like prefix, demote the leading OCR H1 to H2 to better match
+        downstream heading expectations.
+        """
+        headings = [elem for elem in doc.all_elements if elem.metadata.get("heading_level")]
+        if len(headings) < 2:
+            return
+
+        first, second = headings[0], headings[1]
+        if (
+            first.metadata.get("heading_level") == 1
+            and first.source == "ocr"
+            and first.layout_type == "doc_title"
+            and second.metadata.get("heading_level") == 2
+            and second.source == "ocr"
+            and second.layout_type == "paragraph_title"
+            and _SUBTITLE_PREFIX_RE.match(second.content.strip())
+        ):
+            first.metadata["heading_level"] = 2
+            first.metadata["ocr_heading_level_adjusted"] = "title_subtitle_pair"
+
+    def _keep_existing_ocr_heading(self, page_width: float, elem: PageElement) -> bool:
+        """Suppress OCR sidebar labels that are visually prominent but not structural headings."""
+        if elem.source != "ocr" or elem.layout_type != "paragraph_title":
+            return True
+        if not _is_right_sidebar(page_width, elem):
+            return True
+
+        text = elem.content.split("\n")[0].strip()
+        if not text:
+            return False
+        if detect_numbering_signal(text):
+            return True
+        if ":" in text or "：" in text:
+            return True
+        if len(text) <= 24:
+            elem.metadata.pop("heading_level", None)
+            elem.metadata["ocr_heading_suppressed"] = "sidebar_short_label"
+            return False
+        return True
+
+    def _infer_sidebar_heading_level(self, page_width: float, elem: PageElement) -> int | None:
+        """Promote short right-sidebar labels that look like real section headings."""
+        if elem.source != "ocr" or elem.layout_type not in {None, "text"}:
+            return None
+        if not _is_right_sidebar(page_width, elem):
+            return None
+
+        text = elem.content.split("\n")[0].strip()
+        if not text or len(text) > 40:
+            return None
+        if not _HEADING_COLON_END_RE.search(text):
+            return None
+        if _looks_like_body_text(text) or _is_false_positive(text):
+            return None
+        return 2
 
     def _build_fallback_candidate(
         self,

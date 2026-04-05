@@ -207,6 +207,24 @@ def test_structure_validator_stays_quiet_for_valid_hierarchy():
     assert warnings == []
 
 
+def test_structure_validator_allows_document_starting_at_h2():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                elements=[
+                    PageElement(type="text", content="7.3.6 定量杀菌检验", metadata={"heading_level": 2}),
+                    PageElement(type="text", content="7.4 乙型肝炎表面抗原破坏试验", metadata={"heading_level": 2}),
+                ],
+            )
+        ]
+    )
+
+    warnings = StructureValidator().validate(doc)
+
+    assert warnings == []
+
+
 def test_count_rendered_tables_counts_distinct_blocks():
     markdown = (
         "正文\n\n"

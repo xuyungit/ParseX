@@ -3,6 +3,7 @@
 from parserx.builders.ocr import OCRBuilder
 from parserx.config.schema import OCRBuilderConfig
 from parserx.models.elements import Document, Page, PageElement, PageType
+from parserx.services.ocr import OCRBlock, OCRResult
 
 
 def test_skip_native_pages():
@@ -55,3 +56,39 @@ def test_skip_rich_native():
         elements=[PageElement(type="text", content="Normal text content " * 10)],
     )
     assert not builder._should_ocr_page(page)
+
+
+def test_result_to_elements_keeps_normal_paragraph_title_as_heading():
+    builder = _make_builder()
+    result = OCRResult(
+        blocks=[
+            OCRBlock(
+                text="7.4 乙型肝炎表面抗原破坏试验",
+                label="paragraph_title",
+                bbox=(0, 0, 100, 20),
+            )
+        ]
+    )
+
+    elements = builder._result_to_elements(result, page_number=1)
+
+    assert len(elements) == 1
+    assert elements[0].metadata["heading_level"] == 2
+
+
+def test_result_to_elements_filters_chemical_name_false_heading():
+    builder = _make_builder()
+    result = OCRResult(
+        blocks=[
+            OCRBlock(
+                text="1,3,5-Tris[(5-isopropyl-3-methoxycarbonyl-1-azulenyl)ethynyl]benzene",
+                label="paragraph_title",
+                bbox=(0, 0, 100, 20),
+            )
+        ]
+    )
+
+    elements = builder._result_to_elements(result, page_number=1)
+
+    assert len(elements) == 1
+    assert "heading_level" not in elements[0].metadata

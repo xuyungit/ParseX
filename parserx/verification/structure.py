@@ -24,6 +24,7 @@ class StructureValidator:
         warnings: list[str] = []
         active_levels: dict[int, str] = {}
         previous_level = 0
+        root_level: int | None = None
 
         for page in doc.pages:
             for elem in page.elements:
@@ -43,7 +44,14 @@ class StructureValidator:
                         f"Page {page.number}: heading level jump from H{previous_level} to H{level} ({title})."
                     )
 
-                if level > 1 and (level - 1) not in active_levels:
+                if root_level is None:
+                    root_level = level
+
+                if (
+                    level > 1
+                    and level != root_level
+                    and (level - 1) not in active_levels
+                ):
                     warnings.append(
                         f"Page {page.number}: orphan H{level} heading without H{level - 1} parent ({title})."
                     )
