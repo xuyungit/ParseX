@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -70,6 +71,10 @@ class ImageProcessorConfig(ProcessorToggle):
     classification: bool = True
     vlm_description: bool = True
     skip_decorative: bool = True
+    vlm_prompt_style: str = "strict_auto"
+    vlm_response_format: str = "json"
+    vlm_retry_attempts: int = 1
+    vlm_max_description_chars: int = 1200
 
 
 class FormulaProcessorConfig(BaseModel):
@@ -111,6 +116,8 @@ class ServiceConfig(BaseModel):
     endpoint: str = ""
     model: str = ""
     api_key: str = ""
+    api_style: Literal["auto", "responses", "chat"] = "auto"
+    extra_body: dict[str, Any] = Field(default_factory=dict)
     max_concurrent: int = 6
     timeout: int = 180
     max_retries: int = 3
@@ -152,6 +159,18 @@ class ParserXConfig(BaseModel):
 # ── Loader ──────────────────────────────────────────────────────────────
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::([^}]*))?\}")
+_DEFAULT_CONFIG_FILENAME = "parserx.yaml"
+_EXTENDS_KEY = "extends"
+
+
+@dataclass(frozen=True)
+class ConfigLoadResult:
+    """Structured config-load result for CLI visibility and debugging."""
+
+    config: ParserXConfig
+    resolved_path: Path | None
+    source: str
+    requested_path: Path | None = None
 
 
 def _resolve_env_vars(value: Any) -> Any:
@@ -169,7 +188,58 @@ def _resolve_env_vars(value: Any) -> Any:
     return value
 
 
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_raw_config(path: Path, seen: set[Path]) -> dict[str, Any]:
+    resolved_path = path.resolve()
+    if resolved_path in seen:
+        raise ValueError(f"Config extends cycle detected at {resolved_path}")
+
+    seen = set(seen)
+    seen.add(resolved_path)
+
+    with open(path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"Config file must contain a YAML mapping: {path}")
+
+    extends = raw.pop(_EXTENDS_KEY, None)
+    if extends is None:
+        return raw
+
+    extend_paths = extends if isinstance(extends, list) else [extends]
+    merged: dict[str, Any] = {}
+
+    for extend_value in extend_paths:
+        base_path = Path(extend_value)
+        if not base_path.is_absolute():
+            base_path = (path.parent / base_path).resolve()
+        if not base_path.exists():
+            raise FileNotFoundError(f"Extended config not found: {base_path}")
+        merged = _deep_merge_dicts(merged, _load_raw_config(base_path, seen))
+
+    return _deep_merge_dicts(merged, raw)
+
+
 def load_config(path: str | Path | None = None) -> ParserXConfig:
+    """Backward-compatible wrapper for config-only callers."""
+    return load_config_with_result(path).config
+
+
+def load_config_with_result(path: str | Path | None = None) -> ConfigLoadResult:
     """Load configuration from YAML file with environment variable resolution.
 
     Loads .env file (if present) before resolving ${VAR} placeholders,
@@ -178,15 +248,67 @@ def load_config(path: str | Path | None = None) -> ParserXConfig:
     """
     load_dotenv(override=False)
 
+    requested_path = Path(path) if path is not None else None
     if path is None:
-        return ParserXConfig()
+        default_path = Path.cwd() / _DEFAULT_CONFIG_FILENAME
+        if not default_path.exists():
+            return ConfigLoadResult(
+                config=ParserXConfig(),
+                resolved_path=None,
+                source="defaults",
+            )
+        path = default_path
 
     path = Path(path)
     if not path.exists():
-        return ParserXConfig()
+        return ConfigLoadResult(
+            config=ParserXConfig(),
+            resolved_path=path,
+            source="missing",
+            requested_path=requested_path,
+        )
 
-    with open(path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-
+    raw = _load_raw_config(path, seen=set())
     resolved = _resolve_env_vars(raw)
-    return ParserXConfig.model_validate(resolved)
+    return ConfigLoadResult(
+        config=ParserXConfig.model_validate(resolved),
+        resolved_path=path,
+        source="project" if requested_path is None else "explicit",
+        requested_path=requested_path,
+    )
+
+
+def apply_overrides(
+    config: ParserXConfig,
+    overrides: list[str] | None = None,
+) -> ParserXConfig:
+    """Apply dotted-path overrides like ``processors.chapter.llm_fallback=false``."""
+    if not overrides:
+        return config
+
+    data = config.model_dump()
+    for override in overrides:
+        if "=" not in override:
+            raise ValueError(
+                f"Invalid override '{override}'. Expected dotted.path=value."
+            )
+
+        dotted_path, raw_value = override.split("=", 1)
+        parts = [part.strip() for part in dotted_path.split(".") if part.strip()]
+        if not parts:
+            raise ValueError(f"Invalid override path '{dotted_path}'.")
+
+        current: dict[str, Any] = data
+        for part in parts[:-1]:
+            next_value = current.get(part)
+            if not isinstance(next_value, dict):
+                raise ValueError(f"Unknown config path '{dotted_path}'.")
+            current = next_value
+
+        leaf = parts[-1]
+        if leaf not in current:
+            raise ValueError(f"Unknown config path '{dotted_path}'.")
+
+        current[leaf] = yaml.safe_load(raw_value)
+
+    return ParserXConfig.model_validate(data)

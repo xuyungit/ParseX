@@ -171,6 +171,12 @@ def _safe_int(value: object) -> int | None:
     return None
 
 
+def _bump_processing_stat(doc: Document, key: str, amount: int = 1) -> None:
+    doc.metadata.processing_stats[key] = (
+        doc.metadata.processing_stats.get(key, 0) + amount
+    )
+
+
 class ChapterProcessor:
     """Detect chapter/section headings and assign heading levels.
 
@@ -371,7 +377,9 @@ class ChapterProcessor:
 
         accepted = 0
         for batch in self._iter_candidate_batches(candidates, _FALLBACK_MAX_CANDIDATES):
-            predictions = self._classify_candidates(batch, doc)
+            predictions, attempted = self._classify_candidates(batch, doc)
+            if attempted:
+                _bump_processing_stat(doc, "llm_calls")
             for prediction in predictions:
                 idx = _safe_int(prediction.get("idx"))
                 level = _safe_int(prediction.get("level"))
@@ -403,7 +411,8 @@ class ChapterProcessor:
         self,
         batch: list[dict],
         doc: Document,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], bool]:
+        attempted = False
         body_font = doc.metadata.font_stats.body_font
         prompt_lines = [
             f"正文参考字体: name={body_font.name or 'unknown'}, size={body_font.size}, bold={body_font.bold}",
@@ -427,6 +436,7 @@ class ChapterProcessor:
         user_prompt = "\n".join(prompt_lines)
 
         try:
+            attempted = True
             response = self._llm.complete(
                 _FALLBACK_SYSTEM_PROMPT,
                 user_prompt,
@@ -435,14 +445,14 @@ class ChapterProcessor:
             )
         except Exception as exc:
             log.warning("Chapter LLM fallback failed: %s", exc)
-            return []
+            return [], True
 
         try:
             parsed = json.loads(response)
         except json.JSONDecodeError:
             log.warning("Chapter LLM fallback returned non-JSON response")
-            return []
+            return [], attempted
 
         if isinstance(parsed, list):
-            return [item for item in parsed if isinstance(item, dict)]
-        return []
+            return [item for item in parsed if isinstance(item, dict)], attempted
+        return [], attempted

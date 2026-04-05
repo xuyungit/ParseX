@@ -1,0 +1,8 @@
+{
+  "source": "synthetic_public_smoke",
+  "description": "Single-page native PDF with deterministic heading detection and table extraction.",
+  "notes": [
+    "No OCR or model calls required.",
+    "Used as a fast in-repo regression sample."
+  ]
+}

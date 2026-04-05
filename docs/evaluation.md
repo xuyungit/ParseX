@@ -69,6 +69,9 @@ ParserX already computes:
 - heading precision / recall / F1
 - table cell F1
 - wall time
+- warning count
+- API calls (`ocr` / `vlm` / `llm`)
+- per-document `llm_fallback_hits`
 
 For model-assisted features, we should also track:
 - warning count
@@ -87,6 +90,17 @@ uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
 uv run parserx eval ground_truth_public -o reports/public_eval.md
 ```
 
+For a fast in-repo smoke run, a tiny checked-in sample set also lives in
+`ground_truth_public/`.
+
+For OCR/VLM iteration, use the checked-in warning-heavy slice:
+
+```bash
+uv run parserx eval ground_truth_public \
+  --include-list ground_truth_public/subsets/warning_heavy.txt \
+  -o reports/public_eval_warning_heavy.md
+```
+
 ### Private benchmark run
 
 ```bash
@@ -100,6 +114,19 @@ After each non-trivial parsing change:
 1. Run unit/integration tests
 ```bash
 uv run pytest tests/ -q
+```
+
+When `.env` contains live OCR/LLM/VLM credentials, that command also runs the
+real end-to-end suite in `tests/test_live_e2e.py`. Those tests make actual
+network calls and cover:
+- scanned PDF -> online OCR
+- informational image -> VLM description
+- weak heading candidate -> LLM fallback
+
+To run only the live suite:
+
+```bash
+uv run pytest tests/test_live_e2e.py -q
 ```
 
 2. Run public evaluation
@@ -119,6 +146,83 @@ uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 - API calls
 - wall time
 
+For ParserX, parser changes should not be treated as fully validated until:
+- the offline regression suite passes
+- the live E2E suite passes with services configured in `.env`
+
+### A/B compare workflow
+
+```bash
+uv run parserx compare ground_truth_public \
+  --label-a no-fallback \
+  --label-b fallback \
+  --set-a processors.chapter.llm_fallback=false \
+  --set-b processors.chapter.llm_fallback=true
+```
+
+`parserx eval` and `parserx compare` both support repeatable
+`--set dotted.path=value` overrides, which is useful for quick feature
+toggle experiments without creating extra YAML files.
+
+Useful VLM ablations:
+
+```bash
+# Prompt style compare
+uv run parserx compare ground_truth_public/some_doc \
+  --config-a parserx.yaml \
+  --config-b parserx.yaml \
+  --label-a auto-json \
+  --label-b en-json \
+  --set-a processors.image.vlm_prompt_style=strict_auto \
+  --set-a processors.image.vlm_response_format=json \
+  --set-b processors.image.vlm_prompt_style=strict_en \
+  --set-b processors.image.vlm_response_format=json
+
+# Model compare
+uv run parserx compare ground_truth_public/some_doc \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_model_b.yaml \
+  --label-a model-a \
+  --label-b model-b \
+  --set-a services.vlm.model=your-model-a
+```
+
+For alternate models, prefer a tiny overlay config instead of copying the full
+main config. ParserX now supports `extends` in YAML:
+
+```yaml
+# configs/vlm_model_b.yaml
+extends: ../parserx.yaml
+
+services:
+  vlm:
+    endpoint: ${OTHER_OPENAI_BASE_URL:${OPENAI_BASE_URL}}
+    api_key: ${OTHER_OPENAI_API_KEY:${OPENAI_API_KEY}}
+    model: your-model-b
+```
+
+Then compare with:
+
+```bash
+uv run parserx compare ground_truth_public \
+  --include-list ground_truth_public/subsets/warning_heavy.txt \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_model_b.yaml \
+  --label-a current-model \
+  --label-b alt-model
+```
+
+The same A/B runs can be narrowed to the stable warning-heavy slice:
+
+```bash
+uv run parserx compare ground_truth_public \
+  --include-list ground_truth_public/subsets/warning_heavy.txt \
+  --label-a baseline \
+  --label-b experiment \
+  --set-a processors.image.vlm_prompt_style=strict_auto \
+  --set-b processors.image.vlm_prompt_style=strict_en
+```
+
 ## Current Gap
 
 The codebase already has:
@@ -127,9 +231,8 @@ The codebase already has:
 - `parserx.eval.benchmark`
 
 What is still missing operationally:
-- a checked-in `ground_truth_public/` subset
 - a documented private dataset path convention in daily use
-- an A/B compare command for config or feature toggles
+- richer public datasets beyond the initial smoke subset
 
 ## Immediate Next Steps
 

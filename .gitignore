@@ -12,6 +12,7 @@ wheels/
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 
 # OS
@@ -23,6 +24,16 @@ wheels/
 # Secrets (never commit)
 .env
 
+# Local experiment outputs
+reports/
+
 # Ground truth / eval data (may contain internal documents)
 ground_truth/
-ground_truth_public/
+ground_truth_public/*
+!ground_truth_public/README.md
+!ground_truth_public/basic_report/
+!ground_truth_public/basic_report/**
+!ground_truth_public/header_footer_cleanup/
+!ground_truth_public/header_footer_cleanup/**
+!ground_truth_public/subsets/
+!ground_truth_public/subsets/**

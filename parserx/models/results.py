@@ -12,4 +12,7 @@ class ParseResult(BaseModel):
     page_count: int = 0
     element_count: int = 0
     api_calls: dict[str, int] = Field(default_factory=dict)  # {"ocr": 5, "vlm": 3, "llm": 1}
+    images_total: int = 0
+    images_skipped: int = 0
+    llm_fallback_hits: int = 0
     warnings: list[str] = Field(default_factory=list)

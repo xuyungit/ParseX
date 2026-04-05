@@ -1,0 +1,10 @@
+extends: ../parserx.yaml
+
+services:
+  vlm:
+    endpoint: ${OPENAI_BASE_URL_C}
+    api_key: ${OPENAI_API_KEY_C}
+    model: ${VLM_MODEL_C}
+    api_style: responses
+    extra_body:
+      enable_thinking: false

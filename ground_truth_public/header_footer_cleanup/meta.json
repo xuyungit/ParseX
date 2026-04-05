@@ -1,0 +1,8 @@
+{
+  "source": "synthetic_public_smoke",
+  "description": "Two-page PDF with repeated header and footer elements that should be removed.",
+  "notes": [
+    "Exercises geometric header/footer filtering.",
+    "No OCR or model calls required."
+  ]
+}
