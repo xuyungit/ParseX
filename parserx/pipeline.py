@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from parserx.assembly.chapter import ChapterAssembler
+from parserx.assembly.crossref import CrossReferenceResolver
 from parserx.assembly.markdown import MarkdownRenderer
 from parserx.builders.image_extract import ImageExtractor
 from parserx.builders.metadata import MetadataBuilder
@@ -55,6 +56,7 @@ class Pipeline:
         self._image_extractor = ImageExtractor()
         self._vlm_service = self._create_vlm_service()
         self._processors: list[Processor] = self._build_processors()
+        self._crossref_resolver = CrossReferenceResolver()
         self._renderer = MarkdownRenderer(self._config.output)
         self._structure_validator = StructureValidator()
         self._completeness_checker = CompletenessChecker()
@@ -163,6 +165,9 @@ class Pipeline:
                             if elem.type == "image":
                                 elem.metadata.pop("saved_path", None)
                                 elem.metadata.pop("saved_abs_path", None)
+
+        log.info("Resolving figure/table captions")
+        doc = self._crossref_resolver.resolve(doc)
 
         return doc
 

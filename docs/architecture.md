@@ -580,7 +580,7 @@ LLM 的定位：
   4. 可复用 legacy pipeline 的 chapter_output_packager.py 的成熟逻辑
 ```
 
-#### CrossReferenceResolver — ❌ 待实现
+#### CrossReferenceResolver — ✅ 已实现 (`assembly/crossref.py`)
 
 ```
 文件：assembly/crossref.py
@@ -589,11 +589,20 @@ LLM 的定位：
   1. 图片-图注关联
      - 检测 "图 X" / "Figure X" / "图表 X" 模式
      - 将图注文本关联到最近的图片元素
-  2. 脚注-引用关联
-     - 检测上标数字/符号
-     - 关联到页脚的脚注文本
-  3. 表格-表题关联
+  2. 表格-表题关联
      - 检测 "表 X" / "Table X" 模式
+     - 将表题文本关联到最近的表格元素
+
+当前实现范围：
+  - 已支持同页内图片/表格 caption 识别与最近元素关联
+  - 已在 MarkdownRenderer 中消费：
+    - 图片 caption 渲染为图片下方说明
+    - 表格 caption 渲染在表格上方
+  - 被识别为 caption 的原始 text 元素会跳过重复渲染
+
+后续增强：
+  - 脚注-引用关联
+  - 跨页图注/表题关联
 ```
 
 #### MarkdownRenderer — ✅ 已实现 (`assembly/markdown.py`)
@@ -617,7 +626,7 @@ LLM 的定位：
 
 ### 3.5 验证层（Verification）
 
-#### HallucinationDetector — ❌ 待实现
+#### HallucinationDetector — ✅ 已实现 (`verification/hallucination.py`)
 
 ```
 文件：verification/hallucination.py
@@ -641,7 +650,7 @@ LLM 的定位：
   - eval/metrics.py 的 compute_edit_distance()
 ```
 
-#### CompletenessChecker — ❌ 待实现
+#### CompletenessChecker — ✅ 已实现 (`verification/completeness.py`)
 
 ```
 文件：verification/completeness.py
@@ -653,7 +662,7 @@ LLM 的定位：
   4. 表格计数：doc 中 type="table" 的元素数 == output 中 Markdown 表格数
 ```
 
-#### StructureValidator — ❌ 待实现
+#### StructureValidator — ✅ 已实现 (`verification/structure.py`)
 
 ```
 文件：verification/structure.py
@@ -1241,11 +1250,12 @@ ground_truth/
   - 已补中文列表保护
   - 已补相关测试
   - 已补验证层最小闭环：`StructureValidator` / `CompletenessChecker` / `HallucinationDetector`
+  - 已补 `CrossReferenceResolver`，图注/表题会在渲染阶段关联到图片与表格
   - `Pipeline` 已新增 `parse_result()`，会返回 warning 与基础 API 调用统计
   - OCR bbox 已透传到 `PageElement`，供图片描述交叉校验使用
 - 当前本地测试基线：
   - `uv run pytest -q`
-  - 结果：`122 passed, 4 skipped`
+  - 结果：`125 passed, 4 skipped`
 
 ### 模块实现状态
 
@@ -1269,7 +1279,7 @@ ground_truth/
 | 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
 | 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
 | 组装 | ChapterAssembler | `assembly/chapter.py` | ✅ | H1 切分 + index.md |
-| 组装 | CrossReferenceResolver | — | ❌ | 图文关联、脚注关联 |
+| 组装 | CrossReferenceResolver | `assembly/crossref.py` | ✅ | 图注/表题关联并接入 Markdown 渲染；脚注关联仍待扩展 |
 | 服务 | LLM/VLM Service | `services/llm.py` | ✅ | Responses API + Chat Completions 自动切换 |
 | 服务 | OCR Service | `services/ocr.py` | ✅ | PaddleOCR 在线 API |
 | 验证 | HallucinationDetector | `verification/hallucination.py` | ✅ | VLM 描述 vs OCR/native 交叉校验，支持数字不一致告警 |
@@ -1303,8 +1313,8 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | 优先级 | 任务 | 涉及文件 | 设计详情 |
 |--------|------|---------|---------|
 | **P0** | ChapterProcessor LLM fallback | `processors/chapter.py` | 3.3.2 节“阶段 2”；现在验证层已就位，可以开始做语义化兜底 |
-| **P1** | CrossReferenceResolver | `assembly/crossref.py` | 3.4 节有设计，提升图文关联和消费体验 |
 | **P1** | ParseResult/CLI warning 展示增强 | `models/results.py` + `cli.py` | 当前 `parse_result()` 已有基础结果对象，可继续暴露/格式化 warning |
+| **P2** | CrossReferenceResolver 扩展 | `assembly/crossref.py` | 继续补脚注/引用关联与跨页 caption 关联 |
 | **P2** | A/B 对比工具 | `eval/compare.py` | 5.3 节有设计 |
 | **P2** | StructureRoleAnalyzer（新建议模块） | `builders/structure_roles.py` 或 `processors/structure_roles.py` | 对应 3.3.9；作为 Chapter/LineUnwrap 共享基础设施 |
 | **P3** | FormulaProcessor | `processors/formula.py` | 需本地 GPU |
@@ -1314,9 +1324,9 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 ### 下一次新会话建议开场动作
 
 1. 先运行 `git status --short`，确认是否基于当前未提交工作继续。
-2. 再运行 `uv run pytest -q`，确认本地基线仍是 `122 passed, 4 skipped`。
+2. 再运行 `uv run pytest -q`，确认本地基线仍是 `125 passed, 4 skipped`。
 3. 直接阅读本节的“当前工作区状态”“下一步优先级（优化版）”以及 3.3.9 节。
-4. 如果进入实现，优先从 `processors/chapter.py` 的 LLM fallback 或 `assembly/crossref.py` 开始。
+4. 如果进入实现，优先从 `processors/chapter.py` 的 LLM fallback 或 `assembly/crossref.py` 的脚注/跨页关联扩展开始。
 5. 当前验证层已经补齐最小闭环，后续改章节识别时要保持 warning 与测试基线同步更新。
 
 ### 验证数据

@@ -41,10 +41,12 @@ class MarkdownRenderer:
 
     def _render_element(self, element: PageElement) -> str:
         """Render a single element to Markdown."""
+        if element.metadata.get("skip_render"):
+            return ""
         if element.type == "text":
             return self._render_text(element)
         if element.type == "table":
-            return element.content  # Already Markdown table from provider
+            return self._render_table(element)
         if element.type == "image":
             return self._render_image(element)
         if element.type == "formula":
@@ -70,6 +72,7 @@ class MarkdownRenderer:
         """
         description = element.metadata.get("description", "")
         image_path = element.metadata.get("saved_path", "")
+        caption = str(element.metadata.get("caption", "")).strip()
         skipped = element.metadata.get("skipped", False)
 
         if skipped:
@@ -77,18 +80,31 @@ class MarkdownRenderer:
 
         # Normalize description for embedding
         desc_oneline = description.replace("\n", " ").strip() if description else ""
+        body = ""
 
         if image_path and description:
             # Short description → alt text; long → separate block
             if len(desc_oneline) <= 120:
-                return f"![{desc_oneline}]({image_path})"
+                body = f"![{desc_oneline}]({image_path})"
             else:
-                return f"![]({image_path})\n\n> {desc_oneline}"
-        if image_path:
-            return f"![]({image_path})"
-        if description:
-            return f"> [图片] {desc_oneline}"
-        return ""
+                body = f"![]({image_path})\n\n> {desc_oneline}"
+        elif image_path:
+            body = f"![]({image_path})"
+        elif description:
+            body = f"> [图片] {desc_oneline}"
+
+        if not body:
+            return ""
+        if caption:
+            return f"{body}\n\n*{caption}*"
+        return body
+
+    def _render_table(self, element: PageElement) -> str:
+        """Render table with an optional caption line above it."""
+        caption = str(element.metadata.get("caption", "")).strip()
+        if caption:
+            return f"{caption}\n\n{element.content}"
+        return element.content
 
     def _render_formula(self, element: PageElement) -> str:
         """Render formula as LaTeX."""
