@@ -42,11 +42,21 @@ def test_edit_distance_ignores_markup():
     assert dist < 0.1  # Very close after normalization
 
 
-def test_edit_distance_long_text_truncation():
-    """Very long texts get truncated to 10000 chars, should still work."""
+def test_edit_distance_long_text_identical():
+    """Long identical texts should still produce 0.0."""
     a = "x" * 20000
     b = "x" * 20000
     assert compute_edit_distance(a, b) == 0.0
+
+
+def test_edit_distance_long_text_suffix_regression():
+    """A different suffix beyond 10k chars must NOT be silently ignored."""
+    shared = "x" * 10000
+    a = shared + "a" * 2000
+    b = shared + "b" * 2000
+    dist = compute_edit_distance(a, b)
+    # The 2k suffix is completely different — distance should be noticeable
+    assert dist > 0.1
 
 
 # ── Text metrics ────────────────────────────────────────────────────────
@@ -132,6 +142,17 @@ def test_heading_metrics_fuzzy_match():
     expected = "## 一、基本原则"
     m = compute_heading_metrics(output, expected)
     assert m.f1 == 1.0
+
+
+def test_heading_metrics_level_mismatch():
+    """### Section vs ## Section should NOT count as a correct match."""
+    output = "# Title\n### Section 1"
+    expected = "# Title\n## Section 1"
+    m = compute_heading_metrics(output, expected)
+    # "Title" matches (both H1), but "Section 1" is H3 vs H2 — mismatch
+    assert m.correct_count == 1
+    assert m.recall < 1.0
+    assert m.precision < 1.0
 
 
 def test_heading_metrics_both_empty():

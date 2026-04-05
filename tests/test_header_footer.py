@@ -82,6 +82,46 @@ def test_skip_with_few_pages():
     assert len(result.pages[0].elements) == 2  # Nothing removed
 
 
+def test_threshold_boundary_not_removed():
+    """Text on exactly 50% of pages should NOT be removed (requires >50%)."""
+    pages = []
+    for i in range(1, 11):  # 10 pages
+        elements = [_text_elem("正文" * 20, 100, 700, i)]
+        # Put header on first 5 pages only (exactly 50%)
+        if i <= 5:
+            elements.insert(0, _text_elem("半数页眉", 10, 25, i))
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    doc = Document(pages=pages)
+
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # 50% is not >50%, so the header must be preserved
+    for page in result.pages[:5]:
+        texts = [e.content for e in page.elements]
+        assert "半数页眉" in texts
+
+
+def test_threshold_boundary_removed():
+    """Text on >50% of pages SHOULD be removed."""
+    pages = []
+    for i in range(1, 11):  # 10 pages
+        elements = [_text_elem("正文" * 20, 100, 700, i)]
+        # Put header on first 6 pages (60%)
+        if i <= 6:
+            elements.insert(0, _text_elem("多数页眉", 10, 25, i))
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    doc = Document(pages=pages)
+
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # 60% > 50%, so the header should be removed
+    for page in result.pages[:6]:
+        texts = [e.content for e in page.elements]
+        assert "多数页眉" not in texts
+
+
 def test_preserve_non_repeated():
     """Truly different content in edge zones should be preserved."""
     unique_titles = ["项目概况", "技术要求", "评审方法", "合同条款", "附件清单"]

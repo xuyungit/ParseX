@@ -38,7 +38,15 @@ class ImageClassification:
 
 
 def classify_image_element(elem: PageElement) -> str:
-    """Classify an image element using heuristic rules."""
+    """Classify an image element using heuristic rules.
+
+    The ``layout_type`` branches (TABLE_IMAGE / TEXT_IMAGE) depend on an
+    upstream provider or builder populating :pyattr:`PageElement.layout_type`
+    on image elements.  As of now **no provider/builder does this** — the
+    planned LayoutBuilder is not yet implemented — so these branches are
+    effectively dormant.  They are kept for forward-compatibility; when the
+    LayoutBuilder lands, images will automatically route through them.
+    """
     width = elem.metadata.get("width", 0)
     height = elem.metadata.get("height", 0)
 
@@ -59,10 +67,13 @@ def classify_image_element(elem: PageElement) -> str:
     if width < MIN_DIMENSION or height < MIN_DIMENSION:
         return ImageClassification.DECORATIVE
 
+    # NOTE: layout_type routing — currently dormant (see docstring).
     layout = elem.layout_type
     if layout == "table":
+        log.debug("Image classified as TABLE_IMAGE via layout_type")
         return ImageClassification.TABLE_IMAGE
     if layout == "text":
+        log.debug("Image classified as TEXT_IMAGE via layout_type")
         return ImageClassification.TEXT_IMAGE
 
     return ImageClassification.INFORMATIONAL
