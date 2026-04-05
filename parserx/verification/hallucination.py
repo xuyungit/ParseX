@@ -67,6 +67,9 @@ class HallucinationDetector:
                 description = str(image.metadata.get("description", "")).strip()
                 if not description:
                     continue
+                if image.metadata.get("vlm_skipped_due_to_large_text_overlap"):
+                    image.metadata["low_confidence"] = False
+                    continue
 
                 evidence = self._collect_evidence(image, page.elements)
                 if not evidence:

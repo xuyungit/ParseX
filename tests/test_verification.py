@@ -138,6 +138,32 @@ def test_hallucination_detector_stays_quiet_when_evidence_matches():
     assert image.metadata["low_confidence"] is False
 
 
+def test_hallucination_detector_ignores_ocr_overlap_descriptions_skipped_from_vlm():
+    image = PageElement(
+        type="image",
+        page_number=1,
+        bbox=(0.0, 0.0, 100.0, 100.0),
+        metadata={
+            "description": "采购金额为 100 万元。",
+            "description_source": "ocr_overlap_evidence",
+            "vlm_skipped_due_to_large_text_overlap": True,
+        },
+    )
+    ocr_text = PageElement(
+        type="text",
+        page_number=1,
+        bbox=(5.0, 5.0, 95.0, 95.0),
+        content="采购金额为 100 万元。",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[image, ocr_text])])
+
+    warnings = HallucinationDetector().detect(doc)
+
+    assert warnings == []
+    assert image.metadata["low_confidence"] is False
+
+
 def test_structure_validator_stays_quiet_for_valid_hierarchy():
     doc = Document(
         pages=[

@@ -13,6 +13,7 @@ from parserx.processors.image import (
     _build_vlm_system_prompt,
     _detect_prompt_language,
     _extract_json_object,
+    _looks_like_truncated_json,
     classify_image_element,
 )
 
@@ -107,6 +108,9 @@ class FakeVLMService:
         context: str = "",
         temperature: float = 0.1,
         max_tokens: int = 8192,
+        structured_output_mode: str = "off",
+        json_schema: dict | None = None,
+        json_schema_name: str = "parserx_image_description",
     ) -> str:
         self.calls.append((image_path, prompt, context))
         if not self._responses:
@@ -234,12 +238,78 @@ def test_vlm_retries_when_output_is_not_json(tmp_path: Path):
     assert len(vlm.calls) == 2
 
 
+def test_vlm_skips_long_text_overlap_before_call(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "skip-long-text.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+    long_text = "科研结果 " * 400
+    ocr_text = PageElement(
+        type="text",
+        page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content=long_text,
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([])
+    config = ImageProcessorConfig(
+        vlm_description=True,
+        vlm_response_format="json",
+        vlm_skip_large_text_overlap_chars=200,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == long_text[:1199].rstrip() + "…"
+    assert elem.metadata["description_source"] == "ocr_overlap_evidence"
+    assert elem.metadata["vlm_skipped_due_to_large_text_overlap"] is True
+    assert len(vlm.calls) == 0
+
+
+def test_vlm_truncated_json_falls_back_to_overlap_evidence(tmp_path: Path):
+    image_path = _write_test_image(tmp_path / "truncated-json.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+    ocr_text = PageElement(
+        type="text",
+        page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="项目名称\n采购金额 100 万元\n联系人 张三",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"text","summary":"","visible_text":"项目名称\\n采购金额 100 万元\\n联系人 张三"'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True,
+        vlm_response_format="json",
+        vlm_retry_attempts=0,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    assert elem.metadata["description"] == "项目名称\n采购金额 100 万元\n联系人 张三"
+    assert elem.metadata["description_source"] == "ocr_overlap_evidence"
+    assert elem.metadata["vlm_unstructured_output"] is True
+    assert elem.metadata["vlm_unstructured_reason"] == "truncated_json"
+    assert "项目名称" in elem.metadata["vlm_raw_excerpt"]
+
+
 def test_extract_json_object_avoids_greedy_brace_capture():
     raw = 'prefix {"summary":"first"} middle {"summary":"second"} suffix'
 
     parsed = _extract_json_object(raw)
 
     assert parsed == {"summary": "first"}
+
+
+def test_looks_like_truncated_json_detects_missing_closing_brace():
+    raw = '{"image_type":"text","summary":"","visible_text":"abc"'
+
+    assert _looks_like_truncated_json(raw) is True
 
 
 def test_detect_prompt_language_prefers_chinese_when_context_is_cjk_heavy():

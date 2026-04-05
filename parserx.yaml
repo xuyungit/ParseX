@@ -42,8 +42,12 @@ processors:
     skip_decorative: true
     vlm_prompt_style: strict_auto
     vlm_response_format: json
+    vlm_structured_output_mode: json_schema
     vlm_retry_attempts: 1
+    vlm_max_tokens: 8192
     vlm_max_description_chars: 1200
+    vlm_skip_large_text_overlap_chars: 1200
+    vlm_debug_raw_preview_chars: 1200
   formula:
     enabled: false
   line_unwrap:

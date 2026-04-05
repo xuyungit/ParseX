@@ -132,3 +132,71 @@ def test_describe_image_forwards_extra_body_to_chat(monkeypatch, tmp_path: Path)
 
     assert result == "chat answer"
     assert client.chat.completions.calls[0]["extra_body"] == {"enable_thinking": False}
+
+
+def test_describe_image_forwards_json_schema_to_chat(monkeypatch, tmp_path: Path):
+    service, client = _make_service(monkeypatch, api_style="chat")
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+        b"\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+        b"\x0b\xe7\x02\x9d"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["summary"],
+        "properties": {"summary": {"type": "string"}},
+    }
+    service.describe_image(
+        image_path,
+        "Describe image",
+        structured_output_mode="json_schema",
+        json_schema=schema,
+        json_schema_name="demo_schema",
+    )
+
+    response_format = client.chat.completions.calls[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "demo_schema"
+    assert response_format["json_schema"]["schema"] == schema
+    assert response_format["json_schema"]["strict"] is True
+
+
+def test_describe_image_forwards_json_schema_to_responses(monkeypatch, tmp_path: Path):
+    service, client = _make_service(monkeypatch, api_style="responses")
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+        b"\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01"
+        b"\x0b\xe7\x02\x9d"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["summary"],
+        "properties": {"summary": {"type": "string"}},
+    }
+    service.describe_image(
+        image_path,
+        "Describe image",
+        structured_output_mode="json_schema",
+        json_schema=schema,
+        json_schema_name="demo_schema",
+    )
+
+    text_config = client.responses.calls[0]["text"]
+    assert text_config["format"]["type"] == "json_schema"
+    assert text_config["format"]["name"] == "demo_schema"
+    assert text_config["format"]["schema"] == schema
+    assert text_config["format"]["strict"] is True

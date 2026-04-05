@@ -38,6 +38,12 @@ The following review concerns were valid when raised, but are already handled:
 - non-greedy / brace-aware VLM JSON extraction
 - compare warnings for non-overlapping document sets
 - metadata pollution across failed VLM retries
+- explicit CLI config-path reporting and fallback warnings
+- stable warning-heavy public subset and warning-type eval summaries
+- VLM evidence-first routing for text-heavy images
+- model / backend A/B support with config overlays
+- provider-specific VLM request knobs (`api_style`, `extra_body`)
+- VLM structured-output constraints with OCR fallback for truncated JSON
 
 These should not be treated as open next-step items anymore.
 
@@ -105,6 +111,15 @@ Tasks:
 - add a VLM post-filter for numeric consistency
 - suppress overly long summaries when `markdown` or `visible_text` already exists
 
+Status:
+- largely completed in the current iteration
+- repeated benchmark no longer shows `image missing reference` instability
+- long-text images now route through OCR overlap evidence instead of brittle VLM transcription
+
+Remaining follow-up:
+- reduce residual `number mismatch` on the DashScope/Qwen path
+- verify whether `text volume drift` is still VLM-related or now mostly OCR/cleanup-side
+
 Why:
 - this is the biggest quality warning source in the current baseline
 
@@ -133,6 +148,10 @@ Tasks:
 - run on the public warning-heavy subset first
 - record warning count, char F1, edit distance, and latency
 
+Status:
+- completed for three configs on the warning-heavy subset
+- repeated benchmark after the structured-output fix is now stable enough to trust
+
 Suggested slices:
 - `omnidoc_book_zh_text_02`
 - `omnidoc_academic_literature_en_text_01`
@@ -157,6 +176,11 @@ Tasks:
 - classify image pages into text-heavy vs diagram-heavy before VLM summarization
 - on text-heavy images, prefer OCR transcript + minimal summary
 - on diagram-heavy images, prefer summary + small visible text supplement
+
+Status:
+- partially completed
+- text-heavy + strong-overlap images now skip VLM and use OCR overlap evidence directly
+- diagram-heavy routing can still be refined
 
 Why:
 - image types need different output policies, not just different prompts
@@ -229,14 +253,19 @@ Why:
 
 ## Suggested Next Iteration
 
+Latest repeated benchmark conclusion:
+
+- `unstructured output` is no longer the dominant instability
+- `qwen-dashscope` currently leads on text quality, but still carries `number mismatch`
+- all three configs are now dominated by `orphan heading` and residual `text volume drift`
+
 If we want the highest-signal next step, do this:
 
-1. Build a small warning-heavy eval slice.
-2. Run VLM model A/B on that slice.
-3. Compare prompt styles only as a secondary ablation, not the main bet.
-4. Add OCR-first routing for text-heavy images.
-5. Re-run the same slice plus the current public benchmark.
-6. Only after that, decide whether to invest the next round in chapter fallback refinement.
+1. Triage `orphan heading` by document and determine whether it is a chapter-fallback issue, a heading detector issue, or a verification threshold issue.
+2. Break down `text volume drift` into OCR loss vs cleanup loss vs layout loss on the warning-heavy subset.
+3. Add one more VLM numeric-consistency pass for models that still emit `number mismatch`.
+4. Record resolved OCR/VLM/LLM metadata in eval report headers so repeated runs are easier to audit.
+5. After that, re-evaluate whether `ChapterProcessor` fallback refinement should become the next primary quality project.
 
 That path is more likely to move quality than spending another round only on
 prompt wording.
