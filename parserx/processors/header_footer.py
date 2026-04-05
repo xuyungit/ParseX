@@ -104,7 +104,7 @@ class HeaderFooterProcessor:
                 bottom_counter[text] += 1
 
         # Step 2: Find repeated patterns
-        min_count = max(2, int(page_count * threshold))
+        min_count = max(2, int(page_count * threshold) + 1)
         repeated_top = {text for text, count in top_counter.items() if count >= min_count}
         repeated_bottom = {text for text, count in bottom_counter.items() if count >= min_count}
 

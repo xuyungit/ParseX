@@ -6,6 +6,7 @@ Coordinates the flow: Provider → Builders → Processors → Renderer.
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 
 from parserx.assembly.chapter import ChapterAssembler
@@ -117,25 +118,46 @@ class Pipeline:
             log.info("Processing: %s", name)
             doc = processor.process(doc)
 
-            # After ImageProcessor classifies: extract non-skipped images to disk,
-            # then run VLM descriptions on the extracted files
-            if isinstance(processor, ImageProcessor) and output_dir:
-                suffix = path.suffix.lower()
-                log.info("Extracting images to %s", output_dir / "images")
-                if suffix == ".pdf":
-                    doc = self._image_extractor.extract(doc, path, output_dir)
-                elif suffix == ".docx":
-                    doc = self._image_extractor.extract_docx(doc, path, output_dir)
+            # After ImageProcessor classifies: extract images to disk and
+            # run VLM descriptions.  When output_dir is None we still need
+            # to extract + describe so that parse()/parse_to_document()
+            # produce the same content as parse_to_dir(); we just use a
+            # temporary directory and strip the disk paths afterwards.
+            if isinstance(processor, ImageProcessor):
+                if output_dir:
+                    doc = self._extract_and_describe_images(doc, path, output_dir)
+                else:
+                    with tempfile.TemporaryDirectory() as tmp:
+                        doc = self._extract_and_describe_images(
+                            doc, path, Path(tmp),
+                        )
+                        # Temp dir is about to vanish — strip paths that
+                        # would be meaningless to the caller.
+                        for elem in doc.all_elements:
+                            if elem.type == "image":
+                                elem.metadata.pop("saved_path", None)
+                                elem.metadata.pop("saved_abs_path", None)
 
-                # Now that images are on disk, run VLM for needs_vlm images
-                if self._vlm_service and self._config.processors.image.vlm_description:
-                    vlm_processor = ImageProcessor(
-                        config=self._config.processors.image,
-                        vlm_service=self._vlm_service,
-                        max_concurrent=self._config.services.vlm.max_concurrent,
-                    )
-                    doc = vlm_processor.process(doc)
+        return doc
 
+    def _extract_and_describe_images(
+        self, doc: Document, source: Path, images_dir: Path,
+    ) -> Document:
+        """Extract non-skipped images to *images_dir* and run VLM if configured."""
+        suffix = source.suffix.lower()
+        log.info("Extracting images to %s", images_dir / "images")
+        if suffix == ".pdf":
+            doc = self._image_extractor.extract(doc, source, images_dir)
+        elif suffix == ".docx":
+            doc = self._image_extractor.extract_docx(doc, source, images_dir)
+
+        if self._vlm_service and self._config.processors.image.vlm_description:
+            vlm_processor = ImageProcessor(
+                config=self._config.processors.image,
+                vlm_service=self._vlm_service,
+                max_concurrent=self._config.services.vlm.max_concurrent,
+            )
+            doc = vlm_processor.process(doc)
         return doc
 
     def _extract(self, path: Path) -> Document:

@@ -75,6 +75,37 @@ class EvalResult:
 # ── Edit distance ───────────────────────────────────────────────────────
 
 
+_CHUNK_SIZE = 5000  # Max chars per Levenshtein call (keeps O(n²) tractable)
+
+
+def _chunked_edit_distance(a: str, b: str) -> float:
+    """Split *a* and *b* into aligned chunks and average their distances.
+
+    Both strings are divided into the same number of chunks (proportional
+    to their lengths), so the tail of a longer document is always compared
+    rather than silently dropped.
+    """
+    n_chunks = max(
+        (max(len(a), len(b)) + _CHUNK_SIZE - 1) // _CHUNK_SIZE,
+        1,
+    )
+    a_step = max(len(a) // n_chunks, 1)
+    b_step = max(len(b) // n_chunks, 1)
+
+    total_dist = 0
+    total_max = 0
+    for i in range(n_chunks):
+        a_chunk = a[i * a_step : (i + 1) * a_step] if i < n_chunks - 1 else a[i * a_step :]
+        b_chunk = b[i * b_step : (i + 1) * b_step] if i < n_chunks - 1 else b[i * b_step :]
+        if not a_chunk and not b_chunk:
+            continue
+        d = _levenshtein(a_chunk, b_chunk)
+        total_dist += d
+        total_max += max(len(a_chunk), len(b_chunk))
+
+    return total_dist / max(total_max, 1)
+
+
 def _levenshtein(s1: str, s2: str) -> int:
     """Compute Levenshtein edit distance between two strings."""
     if len(s1) < len(s2):
@@ -102,6 +133,12 @@ def compute_edit_distance(output: str, expected: str) -> float:
 
     Returns 0.0 for identical, 1.0 for completely different.
     Uses character-level comparison after whitespace normalization.
+
+    For texts exceeding ``_CHUNK_SIZE`` characters, the strings are split
+    into equal-length chunks and the per-chunk normalized distances are
+    averaged.  This avoids the O(n²) cost of a single Levenshtein call on
+    very long strings while still capturing regressions in **every** part
+    of the document (not just the first 10 000 characters).
     """
     # Normalize whitespace for fair comparison
     out_norm = _normalize_for_comparison(output)
@@ -112,15 +149,14 @@ def compute_edit_distance(output: str, expected: str) -> float:
     if not exp_norm or not out_norm:
         return 1.0
 
-    # For very long texts, sample to keep computation reasonable
-    max_len = 10000
-    if len(out_norm) > max_len or len(exp_norm) > max_len:
-        out_norm = out_norm[:max_len]
-        exp_norm = exp_norm[:max_len]
+    # Short texts — compute directly
+    if len(out_norm) <= _CHUNK_SIZE and len(exp_norm) <= _CHUNK_SIZE:
+        distance = _levenshtein(out_norm, exp_norm)
+        return distance / max(len(out_norm), len(exp_norm))
 
-    distance = _levenshtein(out_norm, exp_norm)
-    max_possible = max(len(out_norm), len(exp_norm))
-    return distance / max_possible
+    # Long texts — chunked comparison to keep cost manageable
+    # while still covering the entire document.
+    return _chunked_edit_distance(out_norm, exp_norm)
 
 
 def _normalize_for_comparison(text: str) -> str:
@@ -196,7 +232,10 @@ def compute_heading_metrics(
     """Compare detected headings against ground truth headings.
 
     Uses fuzzy matching: headings are considered correct if their
-    normalized text matches (ignoring whitespace and punctuation).
+    normalized text matches (ignoring whitespace and punctuation)
+    **and** their heading level is identical.  This ensures that a
+    ``### Section`` is not silently accepted where ``## Section`` was
+    expected — level mismatches indicate structural regressions.
     """
     detected = _extract_headings(output_md)
     expected = _extract_headings(expected_md)
@@ -207,18 +246,19 @@ def compute_heading_metrics(
             expected_count=0,
         )
 
-    # Match detected to expected using normalized text
-    expected_norms = [_normalize_heading(t) for _, t in expected]
+    # Match detected to expected using (level, normalized text)
+    expected_entries = [(lvl, _normalize_heading(t)) for lvl, t in expected]
     matched = set()
     correct = 0
 
-    for _, title in detected:
+    for det_level, title in detected:
         norm = _normalize_heading(title)
-        for i, exp_norm in enumerate(expected_norms):
+        for i, (exp_level, exp_norm) in enumerate(expected_entries):
             if i in matched:
                 continue
-            # Exact match or substring match (heading text might be truncated)
-            if norm == exp_norm or norm in exp_norm or exp_norm in norm:
+            # Text must match (exact or substring) AND level must match
+            text_ok = norm == exp_norm or norm in exp_norm or exp_norm in norm
+            if text_ok and det_level == exp_level:
                 matched.add(i)
                 correct += 1
                 break
