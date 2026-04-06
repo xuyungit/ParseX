@@ -976,16 +976,17 @@ class ImageProcessor:
             elem, page_elements, image_path = task
             context = _get_context_before(elem, page_elements)
             evidence = _collect_overlapping_evidence(elem, page_elements)
-            skipped = _skip_vlm_for_large_text_overlap(
-                elem=elem,
-                evidence=evidence,
-                max_chars=self._config.vlm_max_description_chars,
-                overlap_char_threshold=self._config.vlm_skip_large_text_overlap_chars,
-            )
-            if skipped is not None:
-                description, metadata_updates = skipped
-                elem.metadata.update(metadata_updates)
-                return elem, description, 0
+            if not self._config.vlm_refine_all_ocr:
+                skipped = _skip_vlm_for_large_text_overlap(
+                    elem=elem,
+                    evidence=evidence,
+                    max_chars=self._config.vlm_max_description_chars,
+                    overlap_char_threshold=self._config.vlm_skip_large_text_overlap_chars,
+                )
+                if skipped is not None:
+                    description, metadata_updates = skipped
+                    elem.metadata.update(metadata_updates)
+                    return elem, description, 0
 
             attempts = max(self._config.vlm_retry_attempts, 0) + 1
             preferred_language = _detect_prompt_language(

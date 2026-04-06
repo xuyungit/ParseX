@@ -79,6 +79,7 @@ class ImageProcessorConfig(ProcessorToggle):
     vlm_max_description_chars: int = 1200
     vlm_skip_large_text_overlap_chars: int = 1200
     vlm_correction_mode: bool = True
+    vlm_refine_all_ocr: bool = False
     vlm_debug_raw_preview_chars: int = 1200
 
 
