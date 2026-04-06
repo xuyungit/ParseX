@@ -230,6 +230,13 @@ class ContentValueProcessor:
         if in_body:
             score += 0.22
             reasons.append("body_column")
+        if elem.source == "ocr":
+            # OCR elements come from actual document page content,
+            # not from UI chrome or navigation.  Give them a baseline
+            # boost so position/fragmentation penalties don't filter
+            # out real content split into small blocks by OCR layout.
+            score += 0.15
+            reasons.append("ocr_content")
         if self._has_body_continuity(page.elements, elem_idx, elem, page_signals):
             score += 0.18
             reasons.append("body_continuity")
@@ -251,15 +258,19 @@ class ContentValueProcessor:
             else:
                 score -= 0.32
             reasons.append("sparse_short_text")
-        if line_count >= 2 and char_count <= 24:
+        # OCR blocks on scanned pages get their position from the
+        # document layout, not from UI structure.  Position-based and
+        # fragmentation penalties are lighter for OCR sources.
+        is_ocr = elem.source == "ocr"
+        if not is_ocr and line_count >= 2 and char_count <= 24:
             avg_line_len = char_count / max(line_count, 1)
             if avg_line_len <= 8:
                 score -= 0.22
                 reasons.append("multi_short_lines")
-        if top_edge or bottom_edge:
+        if not is_ocr and (top_edge or bottom_edge):
             score -= 0.18
             reasons.append("edge_band")
-        if left_edge or right_edge:
+        if not is_ocr and (left_edge or right_edge):
             score -= 0.12
             reasons.append("side_edge")
         if width >= page_signals.width * 0.75 and char_count <= 20:
