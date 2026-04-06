@@ -301,6 +301,11 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
       confidence: float
 ```
 
+复杂表格补充约束：
+  - 当 OCR 返回 HTML `<table>` 时，OCRBuilder 负责先规范化为 Markdown 表格
+  - 规范化过程需要正确处理 `rowspan` / `colspan`、多行表头、缺失 `<th>` 的 OCR 脏 HTML
+  - 单元格中的内联文本、图片、换行应尽量保留原始顺序，避免后续表格评测和检索信息丢失
+
 **预期效果**：相比当前全量 OCR，减少 60-70% 的 OCR 调用。
 
 ### 3.3 处理层（Processors）
