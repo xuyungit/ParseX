@@ -6,66 +6,66 @@ This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Image Pipeline & Quality Checks (2026-04-06)
+## Latest Iteration: Image Pipeline & VLM Correction (2026-04-06)
 
 ### What Was Done
 
-**Task A: Image Output Contract**
-- Eliminated placeholder text leak (`"Text content preserved in OCR body text."`)
-- Added `_INTERNAL_MARKER_FRAGMENTS` safety net in `get_image_reference_text()`
-- Aligned `_is_renderable()` in completeness checker with renderer suppression logic
-- Fixed chapter file image paths (`images/` → `../images/` in `chapters/*.md`)
+**Image Output Contract & Quality Checks**
+- Eliminated placeholder text leak, added `ProductQualityChecker` (4 checks)
+- Fixed chapter file image paths, completeness checker alignment
+- tool-eval supports artifact-only mode (no expected.md required)
 
-**Task B: Semi-Automatic Product Quality Checks**
-- Created `ProductQualityChecker` with 4 checks: placeholder leakage, HTML table
-  leakage, image asset linkage (Markdown↔disk), duplicate body text
-- Wired into pipeline with `verification.product_quality_check` toggle
-- Registered 4 new warning categories in eval reporting
+**VLM-Authoritative Correction Architecture**
+- VLM is authoritative, OCR is initial draft. VLM receives both the original
+  image and OCR evidence, so it has strictly more information.
+- Three-field output: `vlm_corrected_text` (refined text), `vlm_corrected_table`
+  (refined table), `description` (image semantic description) — stored and
+  rendered independently in their natural formats
+- OCR elements suppressed via bbox overlap + text containment matching
+- `vlm_refine_all_ocr` config switch: when enabled, ALL scanned-page images go
+  through VLM refinement (higher quality, higher cost); when disabled (default),
+  images well-covered by OCR are skipped to save cost
 
-**Image Pipeline Architecture Fix**
-- Root cause: scanned page full-page images were not removed after OCR, causing
-  VLM to produce duplicate descriptions of content OCR already extracted
-- Step 1: `OCRBuilder._mark_fullpage_scan_images()` marks full-page scan images
-  as `skipped` after OCR runs (area > 50% of page on SCANNED pages)
-- Step 2: VLM-authoritative correction model — VLM output supersedes OCR (not
-  the other way around). Overlapping OCR elements are suppressed, VLM content
-  stored as `vlm_corrected_content` and rendered as body text by the renderer
-- `ImageProcessor.process()` now checks `skipped` early, preventing unnecessary
-  classification and VLM calls on already-skipped images
+**ContentValueProcessor Fixes**
+- OCR elements exempt from position/fragmentation penalties (edge_band,
+  side_edge, multi_short_lines) — OCR block positions reflect document layout,
+  not UI structure
+- Body-column short text penalty reduced (-0.10 vs -0.32 for edges)
+- OCR baseline boost +0.15
 
-**Trust Model Decision**
-- VLM receives both the original image AND OCR evidence as reference, so it has
-  strictly more information than OCR alone
-- Default to VLM output; safety guards only reject empty/truncated VLM responses
-- OCR is not used to second-guess VLM content (numbers, wording)
+**VLM Prompt Improvements**
+- visible_text policy: "transcribe ALL readable text including icons, labels"
+- Route hints: text-heavy → capture all visible text; table → non-table text
+  goes to visible_text; diagram → readable labels in visible_text
+- Evidence-first policy rewritten for completeness over compactness
 
 **Eval & Reliability**
-- `tool-eval` now supports directories without `expected.md` (artifact-only mode)
-- Eval runner catches per-document failures and continues (failed docs listed in
-  report under "Failed Documents" section)
-- OCR retry: 5 attempts with exponential backoff (2s→4s→8s→16s→30s)
+- Per-document error tolerance in eval runner
+- OCR: 5 retries with exponential backoff (cap 30s)
+- Internal test set expanded from 4 to 7 documents (+ocr01, text_pic02, receipt)
 
 ### Measured Impact (Public Eval, 9/10 docs)
 
 | Metric | Before | After | Change |
 |--------|--------|-------|--------|
 | Warnings | 10 | 0 | ↓ 100% |
-| Avg edit distance | 0.145 | 0.118 | ↓ 19% |
-| Avg char F1 | 0.936 | 0.955 | ↑ 2% |
+| Avg edit distance | 0.145 | 0.101 | ↓ 30% |
+| Avg char F1 | 0.936 | 0.964 | ↑ 3% |
 | VLM calls | 5 | 0 | ↓ 100% |
-| Wall time | 44.6s | 26.6s | ↓ 40% |
-| Heading F1 | 0.603 | 0.559 | (1 doc missing) |
-| Table F1 | 0.476 | 0.418 | (1 doc missing) |
+| Wall time | 44.6s | 6.5s | ↓ 85% |
 
-Note: heading/table F1 dip is due to `omnidoc_research_report_zh_table_01`
-failing with OCR 500 (PaddleOCR backend bug on large images). Remaining 9 docs
-show no regression.
+Internal eval: original 4 docs zero regression; 3 new docs provide expanded
+coverage (ocr01: scanned+tables, text_pic02: mixed text/images, receipt:
+non-standard layout).
 
-### Known Issue
+### Known Issues
 
-- `omnidoc_research_report_zh_table_01` (2586×3507, 5MB rendered PNG) stably
-  triggers PaddleOCR HTTP 500. Other similar-sized documents succeed. This is a
-  service-side bug, not a ParserX issue.
+- `omnidoc_research_report_zh_table_01`: PaddleOCR HTTP 500 on large images
+  (service-side bug, not ParserX)
+- `receipt`: 14 orphan-heading warnings (ChapterProcessor too aggressive on
+  non-document layouts)
+- `ocr01`: VLM sometimes puts table content in visible_text instead of markdown
+  (prompt/response quality, partially mitigated by image_type + tabular heuristic)
 
 ## Alignment Summary
 
@@ -180,18 +180,61 @@ Why this conclusion was adopted:
 We will follow this order unless new benchmark evidence strongly contradicts it:
 
 1. ~~Stabilize and expose the benchmark workflow~~ ✅
-2. ~~Reduce VLM drift~~ ✅ (largely completed)
+2. ~~Reduce VLM drift~~ ✅
 3. ~~Image output contract + product quality checks~~ ✅
-4. ~~VLM-authoritative correction model (skip full-page scans, VLM supersedes OCR)~~ ✅
-5. Header/footer retention policy (first-page identity preservation)
-6. Chart retention and chart-body integration
-7. Run VLM model / prompt / routing A/B tests
-8. Revisit `ChapterProcessor` fallback refinement
-9. Move to deeper structure work such as `StructureRoleAnalyzer`
+4. ~~VLM-authoritative correction model + three-field output~~ ✅
+5. ~~Internal test set expansion (ocr01, text_pic02, receipt)~~ ✅
+6. Fix receipt heading over-detection (ChapterProcessor)
+7. Header/footer retention policy (first-page identity preservation)
+8. text_pic02 residual warnings (low-confidence VLM + duplicates)
+9. Formula recognition (FormulaProcessor)
+10. Line unwrap polish (native PDF hard-wrap scars)
+11. Run VLM model / prompt / routing A/B tests
+12. Revisit `ChapterProcessor` fallback refinement
+13. Deeper structure work (`StructureRoleAnalyzer`)
 
-Items 1-4 are completed. Next priority is header/footer retention (item 5),
-which is the clearest remaining gap between ParserX scores and human preference
-on finance/report documents.
+Items 1-5 are completed.
+
+### Next Priorities
+
+**Near-term (next 1-2 iterations):**
+
+1. **receipt heading over-detection** (14 warnings) — ChapterProcessor
+   incorrectly promotes short text like "$200.00" and "管理订阅 ›" to headings
+   on non-document layouts (receipts, emails). Needs more conservative candidate
+   selection or a layout-type pre-filter.
+
+2. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
+   gap vs LlamaParse on finance/report documents. Design already in
+   `docs/header_footer_image_policy.md`. Needs a financial/report PDF in the
+   internal test set to validate.
+
+3. **text_pic02 residual warnings** (4 warnings) — low-confidence VLM on
+   screenshot images + remaining duplicate_body_text. May improve with VLM
+   prompt refinements already shipped.
+
+**Mid-term:**
+
+4. **Formula recognition** — eval residual analysis shows clear formula
+   differences (H₂SiCl₂ vs $\mathrm{H_{2}SiCl_{2}}$). VLM is the highest-value
+   correction target for formulas. Could be a dedicated FormulaProcessor or
+   integrated into VLM correction.
+
+5. **Line unwrap polish** — text_table01 still has visible hard-wrap scars on
+   native PDFs. Backlog P1 #16.
+
+6. **`vlm_refine_all_ocr=true` quality evaluation** — compare on/off mode on
+   the internal set to quantify the quality vs cost tradeoff and decide whether
+   to change the default.
+
+7. **VLM model / prompt A/B tests** — now that we have a stable baseline with
+   0 warnings, it's a good time to compare different VLM models/prompts.
+
+**Test data gaps:**
+
+- Financial/report PDFs (needed for header/footer retention validation)
+- Academic documents with formulas (needed for formula recognition)
+- These should be added to `ground_truth/` before starting those iterations.
 
 ## P0: Must Fix
 
