@@ -31,6 +31,7 @@ class ProvidersConfig(BaseModel):
 
 class MetadataBuilderConfig(BaseModel):
     heading_font_ratio: float = 1.2
+    heading_max_char_ratio: float = 0.10
     header_zone_ratio: float = 0.08
     footer_zone_ratio: float = 0.08
     repetition_threshold: float = 0.5
@@ -65,6 +66,7 @@ class ProcessorToggle(BaseModel):
 class TableProcessorConfig(ProcessorToggle):
     vlm_fallback: bool = True
     cross_page_merge: bool = True
+    vlm_refine_merged_tables: bool = False
 
 
 class ImageProcessorConfig(ProcessorToggle):

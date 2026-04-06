@@ -56,6 +56,11 @@ _PURE_NUMBER_RE = re.compile(r"^\d+$")
 _SUBTITLE_PREFIX_RE = re.compile(r"^[—–\-一]{2,}")
 _HEADING_COLON_END_RE = re.compile(r"[：:]$")
 
+# Price/currency: "$200.00", "¥1,000", "€50.00", etc.
+_PRICE_RE = re.compile(r"^[$¥€£₽]\s*[\d,]+(?:\.\d+)?$")
+# Navigation link: ends with "›" or trailing " >" (common in emails/receipts)
+_NAV_LINK_RE = re.compile(r"[›»>]\s*$")
+
 
 def _is_false_positive(text: str) -> bool:
     """Filter out text that looks like a heading due to numbering but isn't.
@@ -73,6 +78,10 @@ def _is_false_positive(text: str) -> bool:
     if _TOC_RE.search(stripped):
         return True
     if _PURE_NUMBER_RE.match(stripped):
+        return True
+    if _PRICE_RE.match(stripped):
+        return True
+    if _NAV_LINK_RE.search(stripped):
         return True
     return False
 

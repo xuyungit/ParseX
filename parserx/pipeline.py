@@ -201,6 +201,7 @@ class Pipeline:
                 config=self._config.processors.image,
                 vlm_service=self._vlm_service,
                 max_concurrent=self._config.services.vlm.max_concurrent,
+                table_config=self._config.processors.table,
             )
             doc = vlm_processor.process(doc)
         return doc
@@ -328,6 +329,7 @@ class Pipeline:
             processors.append(ImageProcessor(
                 config=self._config.processors.image,
                 vlm_service=self._vlm_service,
+                table_config=self._config.processors.table,
             ))
 
         if self._config.processors.line_unwrap.enabled:

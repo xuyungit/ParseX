@@ -107,12 +107,39 @@ class MetadataBuilder:
                     return
 
     def _detect_heading_candidates(self, doc: Document) -> None:
-        """Find fonts that are larger or bolder than body — these are heading candidates."""
+        """Find fonts that are larger or bolder than body — these are heading candidates.
+
+        Applies a frequency filter: fonts that appear too often (by
+        character count) are likely secondary body fonts (labels, nav
+        links), not true headings.  A font whose char count exceeds
+        ``heading_max_char_ratio`` of the body font's char count is
+        excluded.
+        """
         body = doc.metadata.font_stats.body_font
         if body.size == 0:
             return
 
         ratio = self._config.heading_font_ratio
+        font_counts = doc.metadata.font_stats.font_counts or {}
+
+        # Body font char count as denominator for frequency ratio.
+        body_key = _font_key(body)
+        body_chars = font_counts.get(body_key, 1)
+
+        # Pre-compute char counts grouped by font size (rounded to 0.5pt)
+        # to catch fonts that appear under different names at the same size.
+        size_group_chars: dict[float, int] = {}
+        for key, count in font_counts.items():
+            # Key format: "name_size_bold"
+            parts = key.rsplit("_", 2)
+            if len(parts) >= 2:
+                try:
+                    size = float(parts[-2])
+                    rounded = round(size * 2) / 2  # round to 0.5pt
+                    size_group_chars[rounded] = size_group_chars.get(rounded, 0) + count
+                except ValueError:
+                    pass
+
         seen_keys: set[str] = set()
         candidates: list[FontInfo] = []
 
@@ -133,8 +160,18 @@ class MetadataBuilder:
                 elif elem.font.bold and not body.bold and elem.font.size >= body.size:
                     is_heading = True
 
-                if is_heading:
-                    candidates.append(elem.font.model_copy())
+                if not is_heading:
+                    continue
+
+                # Frequency filter: fonts whose SIZE GROUP appears too
+                # often relative to body text are likely secondary body
+                # fonts (labels, nav links on receipts/emails).
+                rounded_size = round(elem.font.size * 2) / 2
+                group_chars = size_group_chars.get(rounded_size, 0)
+                if body_chars > 0 and group_chars > body_chars * self._config.heading_max_char_ratio:
+                    continue
+
+                candidates.append(elem.font.model_copy())
 
         # Sort by size descending — larger fonts = higher heading level
         candidates.sort(key=lambda f: (-f.size, not f.bold))

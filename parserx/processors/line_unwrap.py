@@ -1,12 +1,22 @@
-"""Line unwrap processor for fixing visual hard line breaks."""
+"""Line unwrap processor for fixing visual hard line breaks.
+
+Two-pass strategy:
+1. Cross-element merging: adjacent text elements that are continuation
+   lines of the same paragraph get merged into a single element.
+2. Within-element unwrapping: remaining ``\\n`` characters inside
+   multi-line elements get joined when they are visual line breaks.
+"""
 
 from __future__ import annotations
 
+import logging
 import re
 from statistics import median
 
 from parserx.config.schema import LineUnwrapConfig
 from parserx.models.elements import Document, FontInfo, PageElement
+
+log = logging.getLogger(__name__)
 
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;.]$")  # Colon deliberately excluded.
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -61,7 +71,9 @@ def _should_merge_lines(current: str, next_line: str, average_line_length: float
     if not current or not next_line:
         return False
 
-    if _looks_like_list_item(current) or _looks_like_list_item(next_line):
+    # A new list item starting on next_line should not merge.
+    # But a list item on current CAN have continuation lines.
+    if _looks_like_list_item(next_line):
         return False
 
     if _SENTENCE_END_RE.search(current):
@@ -123,6 +135,105 @@ def _unwrap_text_block(text: str, average_line_length: float) -> str:
     return "\n".join(result)
 
 
+# ── Cross-element merging helpers ──────────────────────────────────────
+
+
+def _has_bbox(elem: PageElement) -> bool:
+    return elem.bbox != (0.0, 0.0, 0.0, 0.0)
+
+
+def _vertical_gap(a: PageElement, b: PageElement) -> float | None:
+    """Vertical distance from bottom of *a* to top of *b*.
+
+    Returns ``None`` when either element lacks bbox data.
+    """
+    if not _has_bbox(a) or not _has_bbox(b):
+        return None
+    return b.bbox[1] - a.bbox[3]  # b.y0 - a.y1
+
+
+def _estimate_interline_gap(elements: list[PageElement]) -> float | None:
+    """Median vertical gap between consecutive text elements on a page."""
+    gaps: list[float] = []
+    prev: PageElement | None = None
+    for elem in elements:
+        if elem.type != "text":
+            prev = None
+            continue
+        if prev is not None:
+            gap = _vertical_gap(prev, elem)
+            if gap is not None and gap >= 0:
+                gaps.append(gap)
+        prev = elem
+    if len(gaps) < 2:
+        return None
+    return float(median(gaps))
+
+
+def _should_merge_elements(
+    a: PageElement,
+    b: PageElement,
+    average_line_length: float,
+    typical_gap: float | None,
+) -> bool:
+    """Decide whether adjacent text element *b* is a continuation of *a*."""
+    if a.type != "text" or b.type != "text":
+        return False
+    if a.page_number != b.page_number:
+        return False
+    if a.metadata.get("heading_level") or b.metadata.get("heading_level"):
+        return False
+    if a.metadata.get("skip_render") or b.metadata.get("skip_render"):
+        return False
+    if _font_key(a.font) != _font_key(b.font):
+        return False
+
+    # Vertical gap: large gap → paragraph break.
+    if typical_gap is not None and typical_gap > 0:
+        gap = _vertical_gap(a, b)
+        if gap is not None and gap > typical_gap * 2.0:
+            return False
+
+    return _should_merge_lines(a.content, b.content, average_line_length)
+
+
+def _merge_element_into(target: PageElement, source: PageElement) -> None:
+    """Merge *source* content into *target* in-place."""
+    target.content = _join_lines(target.content, source.content)
+    # Expand bbox to encompass both elements.
+    if _has_bbox(target) and _has_bbox(source):
+        target.bbox = (
+            min(target.bbox[0], source.bbox[0]),
+            min(target.bbox[1], source.bbox[1]),
+            max(target.bbox[2], source.bbox[2]),
+            max(target.bbox[3], source.bbox[3]),
+        )
+
+
+def _merge_adjacent_elements(
+    elements: list[PageElement],
+    average_line_length: float,
+    typical_gap: float | None,
+) -> list[PageElement]:
+    """Merge consecutive continuation-line elements into single elements."""
+    if not elements:
+        return elements
+
+    result: list[PageElement] = []
+    current = elements[0]
+
+    for i in range(1, len(elements)):
+        nxt = elements[i]
+        if _should_merge_elements(current, nxt, average_line_length, typical_gap):
+            _merge_element_into(current, nxt)
+        else:
+            result.append(current)
+            current = nxt
+
+    result.append(current)
+    return result
+
+
 class LineUnwrapProcessor:
     """Fix paragraph-internal hard line breaks introduced by PDF extraction."""
 
@@ -135,6 +246,20 @@ class LineUnwrapProcessor:
 
         average_line_length = self._estimate_body_line_length(doc)
 
+        # Pass 1: merge adjacent text elements that are continuation lines.
+        merged_count = 0
+        for page in doc.pages:
+            before = len(page.elements)
+            typical_gap = _estimate_interline_gap(page.elements)
+            page.elements = _merge_adjacent_elements(
+                page.elements, average_line_length, typical_gap,
+            )
+            merged_count += before - len(page.elements)
+
+        if merged_count > 0:
+            log.info("Merged %d continuation-line elements across pages", merged_count)
+
+        # Pass 2: join remaining visual line breaks within elements.
         for page in doc.pages:
             for element in page.elements:
                 if element.type != "text":
