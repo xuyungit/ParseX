@@ -240,7 +240,16 @@ class ContentValueProcessor:
             score += 0.28
             reasons.append("compact_list_item")
         if char_count <= 16 and density < 0.09:
-            score -= 0.08 if (compact_list_item or closing_signature) else 0.32
+            if compact_list_item or closing_signature:
+                score -= 0.08
+            elif in_body:
+                # Short text in the body column is often a legitimate
+                # fragment (OCR splits, brief answers, labels).  Apply
+                # only a mild penalty — heavier signals like edge_band
+                # or image_cluster still contribute if applicable.
+                score -= 0.10
+            else:
+                score -= 0.32
             reasons.append("sparse_short_text")
         if line_count >= 2 and char_count <= 24:
             avg_line_len = char_count / max(line_count, 1)
