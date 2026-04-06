@@ -487,15 +487,21 @@ class OCRBuilder:
         images are no longer independent content — they ARE the page
         that OCR already processed.
 
-        Two strategies are applied:
-
-        1. Any single image covering > 50% of the page is skipped
-           (classic full-page scan).
-        2. If the *combined* area of all images on the page exceeds
-           50%, all images are skipped (cropped or tiled scans where
-           each piece is small but together they compose the page).
+        On a SCANNED page, images may be the raw scan source or inset
+        content that OCR's layout analysis classified as "figure".  We
+        skip an image only when OCR text/table elements **within** its
+        bbox already represent its content.  Images whose interior is
+        not covered by OCR (e.g. inset diagrams, icon grids, tables
+        that OCR classified as figures) are kept for VLM processing.
         """
-        page_area = max(page.width * page.height, 1.0)
+        ocr_elems = [
+            e for e in page.elements
+            if e.type in {"text", "table"} and e.source == "ocr"
+            and e.content.strip()
+        ]
+        if not ocr_elems:
+            return 0
+
         image_elems = [
             e for e in page.elements
             if e.type == "image" and not e.metadata.get("skipped")
@@ -503,26 +509,34 @@ class OCRBuilder:
         if not image_elems:
             return 0
 
-        # Strategy 1: individual large images
+        page_area = max(page.width * page.height, 1.0)
         marked = 0
-        for elem in image_elems:
-            x0, y0, x1, y1 = elem.bbox
-            if max((x1 - x0) * (y1 - y0), 0.0) / page_area > 0.5:
-                elem.metadata["skipped"] = True
-                elem.metadata["skip_reason"] = "fullpage_scan_covered_by_ocr"
-                marked += 1
+        for img in image_elems:
+            ix0, iy0, ix1, iy1 = img.bbox
+            img_area = max((ix1 - ix0) * (iy1 - iy0), 0.0)
+            if img_area <= 0:
+                continue
 
-        # Strategy 2: combined coverage (skip remaining if total > 50%)
-        if not marked:
-            total_area = sum(
-                max((e.bbox[2] - e.bbox[0]) * (e.bbox[3] - e.bbox[1]), 0.0)
-                for e in image_elems
-            )
-            if total_area / page_area > 0.5:
-                for elem in image_elems:
-                    elem.metadata["skipped"] = True
-                    elem.metadata["skip_reason"] = "fullpage_scan_covered_by_ocr"
-                    marked += 1
+            # Sum the content length of OCR elements whose bbox
+            # overlaps with this image.
+            overlap_chars = 0
+            for ocr in ocr_elems:
+                ox0, oy0, ox1, oy1 = ocr.bbox
+                inter_x0, inter_y0 = max(ix0, ox0), max(iy0, oy0)
+                inter_x1, inter_y1 = min(ix1, ox1), min(iy1, oy1)
+                if inter_x1 > inter_x0 and inter_y1 > inter_y0:
+                    overlap_chars += len(ocr.content)
+
+            # Image whose content is well-covered by OCR text is
+            # redundant.  A full-page scan (> 50% page area) with
+            # substantial overlapping OCR, or any image with heavy
+            # OCR overlap relative to its size.
+            if overlap_chars >= 40 or (
+                img_area / page_area > 0.5 and overlap_chars >= 20
+            ):
+                img.metadata["skipped"] = True
+                img.metadata["skip_reason"] = "scan_image_covered_by_ocr"
+                marked += 1
 
         if marked:
             log.debug(

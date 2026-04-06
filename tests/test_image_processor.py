@@ -204,6 +204,7 @@ def test_vlm_json_falls_back_to_overlap_evidence_on_number_mismatch(tmp_path: Pa
 
 
 def test_vlm_json_output_prefers_markdown_table(tmp_path: Path):
+    """VLM markdown table goes to vlm_corrected_content for body rendering."""
     image_path = _write_test_image(tmp_path / "table.png")
     elem = _img_elem(400, 300)
     elem.metadata["saved_abs_path"] = str(image_path)
@@ -216,7 +217,8 @@ def test_vlm_json_output_prefers_markdown_table(tmp_path: Path):
 
     ImageProcessor(config=config, vlm_service=vlm).process(doc)
 
-    assert elem.metadata["description"].startswith("| A | B |")
+    # Markdown table goes to corrected_content (rendered as body text)
+    assert elem.metadata.get("vlm_corrected_content", "").startswith("| A | B |")
 
 
 def test_vlm_retries_when_output_is_not_json(tmp_path: Path):

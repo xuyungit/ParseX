@@ -59,10 +59,10 @@ def test_skip_rich_native():
 
 
 def test_fullpage_scan_image_marked_skipped():
-    """Full-page image on a SCANNED page should be marked skipped after OCR."""
+    """Image is skipped when OCR text overlaps its bbox."""
     image = PageElement(
         type="image", page_number=1,
-        bbox=(0, 0, 595, 842),  # Covers whole page
+        bbox=(0, 0, 595, 842),
         metadata={"xref": 5, "width": 595, "height": 842},
     )
     ocr_text = PageElement(
@@ -78,11 +78,32 @@ def test_fullpage_scan_image_marked_skipped():
 
     assert marked == 1
     assert image.metadata["skipped"] is True
-    assert image.metadata["skip_reason"] == "fullpage_scan_covered_by_ocr"
+
+
+def test_image_not_skipped_when_ocr_outside():
+    """Image kept when OCR text is outside its bbox (OCR missed its content)."""
+    image = PageElement(
+        type="image", page_number=1,
+        bbox=(50, 50, 300, 300),  # Image in upper-left
+        metadata={"xref": 5, "width": 250, "height": 250},
+    )
+    ocr_text = PageElement(
+        type="text", page_number=1, content="OCR提取的正文文字" * 10,
+        source="ocr", bbox=(50, 400, 500, 700),  # OCR text is below the image
+    )
+    page = Page(
+        number=1, width=595, height=842, page_type=PageType.SCANNED,
+        elements=[image, ocr_text],
+    )
+
+    marked = OCRBuilder._mark_fullpage_scan_images(page)
+
+    assert marked == 0
+    assert image.metadata.get("skipped") is not True
 
 
 def test_small_image_on_scanned_page_not_skipped():
-    """Small image on a SCANNED page should NOT be skipped."""
+    """Small image on a SCANNED page should NOT be skipped when no OCR overlap."""
     small_image = PageElement(
         type="image", page_number=1,
         bbox=(100, 100, 200, 200),  # Small area
