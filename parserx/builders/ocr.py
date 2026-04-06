@@ -434,9 +434,15 @@ class OCRBuilder:
     - force_full_page config → OCR everything (debug)
     """
 
-    def __init__(self, config: OCRBuilderConfig | None = None):
+    def __init__(
+        self,
+        config: OCRBuilderConfig | None = None,
+        *,
+        skip_scan_image_marking: bool = False,
+    ):
         self._config = config or OCRBuilderConfig()
         self._ocr = create_ocr_service(self._config)  # None when engine="none"
+        self._skip_scan_image_marking = skip_scan_image_marking
 
     def build(self, doc: Document, source_path: Path) -> Document:
         """Run selective OCR and add results to document."""
@@ -459,7 +465,8 @@ class OCRBuilder:
                     if page.page_type == PageType.SCANNED:
                         # Scanned: no native text, use OCR directly.
                         page.elements.extend(ocr_elements)
-                        self._mark_fullpage_scan_images(page)
+                        if not self._skip_scan_image_marking:
+                            self._mark_fullpage_scan_images(page)
                     else:
                         # Mixed / sparse native: deduplicate against existing
                         new, dropped = self._deduplicate(

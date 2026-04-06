@@ -229,7 +229,10 @@ class Pipeline:
         if not cfg.endpoint or not cfg.token:
             log.info("OCR service not configured; selective OCR disabled")
             return None
-        return OCRBuilder(cfg)
+        return OCRBuilder(
+            cfg,
+            skip_scan_image_marking=self._config.processors.image.vlm_refine_all_ocr,
+        )
 
     def _create_llm_service(self):
         """Create LLM service if configured with endpoint and key."""
