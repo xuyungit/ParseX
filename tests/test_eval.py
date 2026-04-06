@@ -11,6 +11,7 @@ from parserx.eval.metrics import (
     TableMetrics,
     _extract_tables,
     _normalize_cell,
+    compute_residual_diagnostics,
     compute_edit_distance,
     compute_heading_metrics,
     compute_table_metrics,
@@ -98,6 +99,28 @@ def test_text_metrics_cjk():
     m = compute_text_metrics("你好世界测试文档", "你好世界测试文档")
     assert m.edit_distance == 0.0
     assert m.char_f1 > 0.99
+
+
+def test_residual_diagnostics_tags_image_reference_markup_and_length_bias():
+    output = "<!-- PAGE 1 -->\n> [图片] Text content preserved in OCR body text.\n\n# Title\n\nBody"
+    expected = "# Title\n\nBody"
+
+    diagnostics = compute_residual_diagnostics(output, expected)
+
+    assert "output_heavy" in diagnostics.themes
+    assert "image_reference_markup" in diagnostics.themes
+    assert "Text content preserved in OCR body text." in diagnostics.extra.text
+
+
+def test_residual_diagnostics_tags_missing_heading():
+    output = "Body only"
+    expected = "# Title\n\nBody only"
+
+    diagnostics = compute_residual_diagnostics(output, expected)
+
+    assert "output_light" in diagnostics.themes
+    assert "missing_heading" in diagnostics.themes
+    assert "# Title" in diagnostics.missing.text
 
 
 # ── Heading metrics ─────────────────────────────────────────────────────
@@ -341,6 +364,10 @@ def test_format_report_includes_warning_and_api_sections():
                 llm_fallback_hits=4,
             ),
             warnings=["warning 1", "warning 2", "warning 3"],
+            residuals=compute_residual_diagnostics(
+                "<!-- PAGE 1 -->\n> [图片] Text content preserved in OCR body text.\n\n# Title\n\nBody",
+                "# Title\n\nBody",
+            ),
         ),
     ]
 
@@ -359,6 +386,8 @@ def test_format_report_includes_warning_and_api_sections():
     assert "Total warnings: 3" in report
     assert "API calls (OCR/VLM/LLM): 1/0/2" in report
     assert "LLM fallback hits: 4" in report
+    assert "Residual Themes" in report
+    assert "Residual Diagnostics" in report
     assert "Warning Types" in report
     assert "Warning Hotspots" in report
 

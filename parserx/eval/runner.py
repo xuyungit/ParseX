@@ -10,6 +10,7 @@ from parserx.config.schema import ParserXConfig
 from parserx.eval.metrics import (
     CostMetrics,
     EvalResult,
+    compute_residual_diagnostics,
     compute_heading_metrics,
     compute_table_metrics,
     compute_text_metrics,
@@ -68,6 +69,7 @@ class EvalRunner:
                 images_skipped=parse_result.images_skipped,
             ),
             warnings=parse_result.warnings,
+            residuals=compute_residual_diagnostics(parse_result.markdown, expected_md),
         )
 
     def evaluate_dir(
@@ -203,6 +205,25 @@ class EvalRunner:
             )
 
         warning_hotspots = [r for r in results if r.warnings]
+        residual_theme_counts: dict[str, int] = {}
+        for result in results:
+            for theme in result.residuals.themes:
+                residual_theme_counts[theme] = residual_theme_counts.get(theme, 0) + 1
+
+        if residual_theme_counts:
+            lines.extend([
+                "",
+                "## Residual Themes",
+                "",
+                "| Theme | Docs |",
+                "|-------|------|",
+            ])
+            for theme, count in sorted(
+                residual_theme_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            ):
+                lines.append(f"| {theme} | {count} |")
+
         if warning_hotspots:
             warning_type_counts = summarize_warning_types(
                 [warning for result in results for warning in result.warnings]
@@ -227,6 +248,33 @@ class EvalRunner:
                 if len(result.warnings) > 2:
                     preview += "; ..."
                 lines.append(f"- {result.document_name}: {result.cost.warning_count} warning(s) — {preview}")
+
+        residual_hotspots = [
+            result for result in results
+            if result.residuals.extra.text or result.residuals.missing.text
+        ]
+        if residual_hotspots:
+            lines.extend([
+                "",
+                "## Residual Diagnostics",
+                "",
+            ])
+            for result in sorted(
+                residual_hotspots,
+                key=lambda item: (-item.text.edit_distance, item.document_name),
+            ):
+                themes = ", ".join(result.residuals.themes) if result.residuals.themes else "(none)"
+                lines.append(f"### {result.document_name}")
+                lines.append("")
+                lines.append(f"- Themes: `{themes}`")
+                lines.append(
+                    f"- Blocks: extra={result.residuals.extra_block_count}, missing={result.residuals.missing_block_count}"
+                )
+                if result.residuals.extra.text:
+                    lines.append(f"- Output-only excerpt: `{result.residuals.extra.text}`")
+                if result.residuals.missing.text:
+                    lines.append(f"- Expected-only excerpt: `{result.residuals.missing.text}`")
+                lines.append("")
 
         lines.append("")
         return "\n".join(lines)
