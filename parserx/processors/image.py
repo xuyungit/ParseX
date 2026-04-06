@@ -164,12 +164,12 @@ Rules:
 
 
 _EVIDENCE_FIRST_POLICY = """\
-Output policy:
-- If the image is text-heavy, prioritize exact transcription in visible_text and keep summary empty unless a very short structural note is necessary
-- If the image is a table, put the table in markdown and avoid repeating the same cells in summary
-- If OCR/native reference text is provided and the same text is visible in the image, keep wording and all numbers aligned with that visible evidence
-- If OCR/native overlap already contains a long body of text, do not dump the entire body into visible_text just to be safe; keep the JSON short and valid
-- Prefer omission over guesswork; do not "improve" wording or normalize identifiers
+Output policy — the three fields serve different purposes and can all be non-empty:
+- visible_text: transcribe ALL readable text in the image, including text inside icons, labels, headings, and captions. Even short phrases matter. Use OCR/native reference text to keep wording and numbers aligned, but do not omit text that is clearly visible.
+- markdown: if the image contains a table, reproduce it as a Markdown table. Include all rows and columns. Do not repeat the table content in visible_text.
+- summary: add a brief description ONLY when the image carries visual meaning beyond its text/table content (e.g. chart trends, diagram relationships, photo subjects). Keep empty for pure text or table images.
+- All numbers, dates, and identifiers must match the image exactly.
+- Prefer omission over guesswork; do not "improve" wording or normalize identifiers.
 """
 
 
@@ -587,36 +587,43 @@ def _apply_vlm_corrections(
     best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
     strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
-    # ── Pick the authoritative VLM content ────────────────────────────
-    image_type = str(image.metadata.get("vlm_image_type", ""))
-    vlm_content = ""
-    if markdown:
-        vlm_content = markdown
-        updates["vlm_route"] = "table_correction"
-    elif visible_text and image_type in ("table", "text"):
-        # VLM identified the image as table/text content but put the
-        # result in visible_text instead of markdown.  The content is
-        # still body text — use it regardless of OCR overlap.
-        vlm_content = visible_text
-        updates["vlm_route"] = "text_correction"
-    elif visible_text and _looks_like_tabular(visible_text):
-        # VLM didn't flag image_type correctly but the content has
-        # tabular structure (repeated category/value patterns).
-        vlm_content = visible_text
-        updates["vlm_route"] = "text_correction"
-    elif visible_text and strong_overlap:
-        # Generic image with overlapping OCR — VLM text supersedes.
-        vlm_content = visible_text
-        updates["vlm_route"] = "text_correction"
+    # ── Store each VLM field separately ─────────────────────────────
+    #
+    # VLM returns three independent outputs that can freely combine:
+    #   visible_text → corrected text  (replaces OCR text)
+    #   markdown     → corrected table (replaces OCR table)
+    #   summary      → image description (kept if it adds info)
+    #
+    # Each is stored in its own metadata key so the renderer can
+    # format them appropriately (table as markdown, text as prose,
+    # description attached to the image).
 
-    if not vlm_content or _normalized_len(vlm_content) < 10:
+    image_type = str(image.metadata.get("vlm_image_type", ""))
+    corrected_text = ""
+    corrected_table = ""
+
+    # Table: from markdown field, or from visible_text when VLM
+    # identified the image as a table but used the wrong field.
+    if markdown:
+        corrected_table = _truncate_description(markdown, max_chars)
+    elif visible_text and image_type == "table":
+        corrected_table = _truncate_description(visible_text, max_chars)
+    elif visible_text and _looks_like_tabular(visible_text):
+        corrected_table = _truncate_description(visible_text, max_chars)
+
+    # Text: from visible_text (when not already used as table).
+    if visible_text and not corrected_table:
+        if image_type == "text" or strong_overlap or _normalized_len(visible_text) >= 40:
+            corrected_text = _truncate_description(visible_text, max_chars)
+
+    # Need at least one non-empty correction to proceed.
+    all_corrections = f"{corrected_text} {corrected_table}".strip()
+    if _normalized_len(all_corrections) < 10:
         return "", {}  # VLM didn't return useful content — fallback.
 
-    # ── Suppress overlapping OCR elements ─────────────────────────────
-    # VLM output is the authoritative corrected version.  Suppress
-    # OCR elements whose content is already in the VLM output.
+    # ── Suppress OCR elements covered by VLM output ──────────────────
     suppressed = _suppress_ocr_covered_by_vlm(
-        vlm_content, image, page_elements,
+        all_corrections, image, page_elements,
     )
     if suppressed:
         updates["ocr_elements_suppressed"] = suppressed
@@ -627,19 +634,22 @@ def _apply_vlm_corrections(
         updates["native_text_overlap_skip"] = True
         return "", updates
 
-    # Store VLM content so the renderer emits it as body text.
-    image.metadata["vlm_corrected_content"] = _truncate_description(
-        vlm_content, max_chars,
-    )
+    # Store fields separately for the renderer.
+    if corrected_text:
+        image.metadata["vlm_corrected_text"] = corrected_text
+        updates["vlm_route_text"] = True
+    if corrected_table:
+        image.metadata["vlm_corrected_table"] = corrected_table
+        updates["vlm_route_table"] = True
 
-    # ── Check whether summary adds independent info ───────────────────
+    # ── Check whether summary adds independent info ──────────────────
     remaining_desc = ""
     if summary:
         from parserx.verification.product_quality import _char_overlap_ratio
 
         overlap = _char_overlap_ratio(
             normalize_for_comparison(summary),
-            normalize_for_comparison(vlm_content),
+            normalize_for_comparison(all_corrections),
         )
         if overlap <= 0.6:
             remaining_desc = _truncate_description(summary, min(max_chars, 400))
@@ -751,8 +761,9 @@ def _build_route_hint(
 
     if evidence_table or image_class == ImageClassification.TABLE_IMAGE:
         return (
-            "table-like: fill markdown with the table, keep summary to at most one short clause, "
-            "and use visible_text only for stray labels outside the table."
+            "table-like: reproduce the full table in markdown. Put any non-table text "
+            "(titles, footnotes, labels) in visible_text. Keep summary empty unless "
+            "the table has a visual meaning that text alone cannot convey."
         )
 
     if _looks_text_heavy(
@@ -761,14 +772,14 @@ def _build_route_hint(
         evidence_text=evidence_text,
     ):
         return (
-            "text-heavy: prioritize exact visible_text transcription; summary should stay empty unless "
-            "a single short note is needed to describe layout or purpose. If OCR/native overlap already "
-            "contains long body text, keep JSON compact instead of copying the full passage."
+            "text-heavy: transcribe ALL visible text in visible_text, including short "
+            "labels, icon text, and headings. Keep summary empty unless a brief "
+            "structural note is needed."
         )
 
     return (
-        "diagram/photo-like: keep summary short and grounded; use visible_text only for short labels that "
-        "are clearly readable."
+        "diagram/photo-like: put any readable text (labels, captions, numbers) in "
+        "visible_text. Use summary for a brief description of the visual content."
     )
 
 

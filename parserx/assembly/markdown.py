@@ -100,16 +100,17 @@ class MarkdownRenderer:
         caption = str(element.metadata.get("caption", "")).strip()
         skipped = element.metadata.get("skipped", False)
 
-        if skipped:
-            return ""
-
-        # VLM correction: when VLM produced authoritative text/table
-        # content for this image region, render it as body text instead
-        # of as an image reference.  A remaining summary (independent
-        # semantic info) is stored in ``description``.
-        corrected = str(element.metadata.get("vlm_corrected_content", "")).strip()
-        if corrected:
-            parts = [corrected]
+        # VLM correction takes priority: even if the image is "skipped"
+        # (no image file to render), corrected text/table content from
+        # VLM still needs to appear in the output.
+        corrected_table = str(element.metadata.get("vlm_corrected_table", "")).strip()
+        corrected_text = str(element.metadata.get("vlm_corrected_text", "")).strip()
+        if corrected_table or corrected_text:
+            parts: list[str] = []
+            if corrected_text:
+                parts.append(corrected_text)
+            if corrected_table:
+                parts.append(corrected_table)
             if description:
                 ref = get_image_reference_text(element)
                 if ref and image_path:
@@ -119,6 +120,9 @@ class MarkdownRenderer:
             if caption:
                 parts.append(f"*{caption}*")
             return "\n\n".join(parts)
+
+        if skipped:
+            return ""
 
         # Normalize description for embedding
         desc_oneline = description.replace("\n", " ").strip() if description else ""

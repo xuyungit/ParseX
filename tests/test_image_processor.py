@@ -169,8 +169,8 @@ def test_vlm_json_corrects_ocr_and_keeps_independent_summary(tmp_path: Path):
 
     ImageProcessor(config=config, vlm_service=vlm).process(doc)
 
-    # VLM visible_text stored as corrected content
-    assert elem.metadata.get("vlm_corrected_content")
+    # VLM visible_text stored as corrected text
+    assert elem.metadata.get("vlm_corrected_text")
     # OCR element suppressed
     assert ocr_text.metadata.get("skip_render") is True
     # Summary is independent (English vs Chinese) → kept as description
@@ -218,7 +218,7 @@ def test_vlm_json_output_prefers_markdown_table(tmp_path: Path):
     ImageProcessor(config=config, vlm_service=vlm).process(doc)
 
     # Markdown table goes to corrected_content (rendered as body text)
-    assert elem.metadata.get("vlm_corrected_content", "").startswith("| A | B |")
+    assert elem.metadata.get("vlm_corrected_table", "").startswith("| A | B |")
 
 
 def test_vlm_retries_when_output_is_not_json(tmp_path: Path):
@@ -330,7 +330,7 @@ def test_build_vlm_system_prompt_auto_selects_english_policy():
     )
 
     assert "Only describe content that is clearly visible" in prompt
-    assert "If the image is text-heavy, prioritize exact transcription" in prompt
+    assert "visible_text: transcribe ALL readable text" in prompt
 
 
 def test_build_route_hint_prefers_text_heavy_mode():
@@ -376,7 +376,7 @@ def test_vlm_corrects_ocr_text(tmp_path: Path):
     # OCR element suppressed (not mutated)
     assert ocr_text.metadata.get("skip_render") is True
     # VLM content stored as corrected content on the image
-    assert "100 万元" in elem.metadata.get("vlm_corrected_content", "")
+    assert "100 万元" in elem.metadata.get("vlm_corrected_text", "")
 
 
 def test_vlm_corrects_ocr_table(tmp_path: Path):
@@ -406,7 +406,7 @@ def test_vlm_corrects_ocr_table(tmp_path: Path):
     # OCR table suppressed
     assert ocr_table.metadata.get("skip_render") is True
     # VLM table stored as corrected content
-    assert "Item" in elem.metadata.get("vlm_corrected_content", "")
+    assert "Item" in elem.metadata.get("vlm_corrected_table", "")
 
 
 def test_vlm_chart_summary_kept_as_description(tmp_path: Path):
@@ -458,7 +458,7 @@ def test_vlm_text_correction_plus_independent_summary(tmp_path: Path):
 
     # OCR suppressed, VLM content stored
     assert ocr_text.metadata.get("skip_render") is True
-    assert "500 万" in elem.metadata.get("vlm_corrected_content", "")
+    assert "500 万" in elem.metadata.get("vlm_corrected_text", "")
     # Summary is independent (English description of visual layout) → kept
     assert "workflow diagram" in str(elem.metadata.get("description", ""))
 
@@ -490,7 +490,7 @@ def test_vlm_correction_trusts_vlm_numbers(tmp_path: Path):
 
     # VLM is authoritative — its content is used, OCR suppressed
     assert ocr_table.metadata.get("skip_render") is True
-    assert "88.3" in elem.metadata.get("vlm_corrected_content", "")
+    assert "88.3" in elem.metadata.get("vlm_corrected_table", "")
 
 
 def test_correction_disabled_by_config(tmp_path: Path):
