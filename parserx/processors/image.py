@@ -567,15 +567,16 @@ def _apply_vlm_corrections(
     best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
     strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
-    if not strong_overlap:
-        return "", {}  # No OCR overlap — normal image, use description path.
-
     # ── Pick the authoritative VLM content ────────────────────────────
     vlm_content = ""
     if markdown:
         vlm_content = markdown
         updates["vlm_route"] = "table_correction"
-    elif visible_text:
+    elif visible_text and strong_overlap:
+        # visible_text correction only makes sense when there IS
+        # overlapping OCR text to supersede.  Without overlap the
+        # image may be a standalone diagram whose visible_text is
+        # just incidental labels.
         vlm_content = visible_text
         updates["vlm_route"] = "text_correction"
 
@@ -584,22 +585,22 @@ def _apply_vlm_corrections(
 
     # ── Suppress overlapping OCR elements ─────────────────────────────
     suppressed = _suppress_overlapping_ocr(image, page_elements)
-    if not suppressed:
-        # No OCR elements to suppress.  If the image strongly overlaps
-        # *native* text, the content is already in the body and the
-        # image is redundant — skip it entirely.  Native text is
-        # authoritative and should not be suppressed.
-        if strong_overlap and _normalized_len(evidence_text) >= 40:
-            image.metadata["skipped"] = True
-            image.metadata["skip_reason"] = "content_covered_by_native_text"
-            updates["native_text_overlap_skip"] = True
-            return "", updates
-        return "", {}  # No overlap — fallback.
+    if suppressed:
+        updates["ocr_elements_suppressed"] = suppressed
+    elif strong_overlap and _normalized_len(evidence_text) >= 40:
+        # No OCR elements to suppress, but the image strongly overlaps
+        # *native* text — the content is already in the body.  Native
+        # text is authoritative and should not be suppressed.
+        image.metadata["skipped"] = True
+        image.metadata["skip_reason"] = "content_covered_by_native_text"
+        updates["native_text_overlap_skip"] = True
+        return "", updates
 
-    updates["ocr_elements_suppressed"] = suppressed
-
-    # Store the corrected content so the renderer can emit it as body
-    # text instead of as an image reference.
+    # Store VLM content so the renderer emits it as body text.
+    # This applies whether we suppressed OCR elements (correction) or
+    # the image had no overlapping OCR at all (OCR missed this region,
+    # common on scanned pages where layout analysis classified the
+    # area as "figure").
     image.metadata["vlm_corrected_content"] = _truncate_description(
         vlm_content, max_chars,
     )
