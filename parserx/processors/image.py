@@ -360,6 +360,26 @@ def _normalized_len(text: str) -> int:
     return len(normalize_for_comparison(text))
 
 
+def _looks_like_tabular(text: str) -> bool:
+    """Heuristic: text has tabular structure even without markdown pipes.
+
+    Detects patterns like repeated category/drug/instruction blocks
+    common in OCR/VLM output from table images.
+    """
+    if not text or len(text) < 40:
+        return False
+    # Multiple lines with similar structure suggest tabular layout.
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(lines) >= 4:
+        return True
+    # Single long line with many short phrases separated by spaces
+    # (flattened table rows).
+    words = text.split()
+    if len(words) >= 15 and text.count("禁忌") + text.count("不能用") >= 2:
+        return True
+    return False
+
+
 def _is_strong_overlap(best_overlap: float, evidence_text: str) -> bool:
     return best_overlap >= 0.5 or (
         best_overlap >= 0.3 and _normalized_len(evidence_text) >= 24
@@ -568,15 +588,24 @@ def _apply_vlm_corrections(
     strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
     # ── Pick the authoritative VLM content ────────────────────────────
+    image_type = str(image.metadata.get("vlm_image_type", ""))
     vlm_content = ""
     if markdown:
         vlm_content = markdown
         updates["vlm_route"] = "table_correction"
+    elif visible_text and image_type in ("table", "text"):
+        # VLM identified the image as table/text content but put the
+        # result in visible_text instead of markdown.  The content is
+        # still body text — use it regardless of OCR overlap.
+        vlm_content = visible_text
+        updates["vlm_route"] = "text_correction"
+    elif visible_text and _looks_like_tabular(visible_text):
+        # VLM didn't flag image_type correctly but the content has
+        # tabular structure (repeated category/value patterns).
+        vlm_content = visible_text
+        updates["vlm_route"] = "text_correction"
     elif visible_text and strong_overlap:
-        # visible_text correction only makes sense when there IS
-        # overlapping OCR text to supersede.  Without overlap the
-        # image may be a standalone diagram whose visible_text is
-        # just incidental labels.
+        # Generic image with overlapping OCR — VLM text supersedes.
         vlm_content = visible_text
         updates["vlm_route"] = "text_correction"
 
