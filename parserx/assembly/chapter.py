@@ -11,6 +11,7 @@ Split points are H1 headings. Each chapter includes its H2/H3 subsections.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from parserx.assembly.markdown import MarkdownRenderer
@@ -18,6 +19,23 @@ from parserx.config.schema import OutputConfig
 from parserx.models.elements import Document, Page, PageElement
 
 log = logging.getLogger(__name__)
+
+
+def _rebase_image_paths(markdown: str, image_dir: str) -> str:
+    """Rewrite ``images/…`` references to ``../images/…`` for chapter files.
+
+    Chapter files live inside a ``chapters/`` subdirectory, so relative
+    image paths must go up one level to reach the root output directory
+    where extracted images are stored.
+    """
+    # Only replace paths inside Markdown image syntax ![…](images/…)
+    # to avoid accidental matches in body text.
+    prefix = re.escape(image_dir + "/")
+    return re.sub(
+        rf"(!\[[^\]]*\]\()({prefix})",
+        rf"\1../{image_dir}/",
+        markdown,
+    )
 
 
 class ChapterAssembler:
@@ -57,8 +75,12 @@ class ChapterAssembler:
         chapters_dir = output_dir / "chapters"
         chapters_dir.mkdir(exist_ok=True)
 
+        image_dir = self._config.image_dir  # e.g. "images"
         for idx, (title, chapter_doc) in enumerate(chapters, 1):
             chapter_md = self._renderer.render(chapter_doc)
+            # Chapter files live in chapters/, so image references
+            # need to go up one level to reach the root images dir.
+            chapter_md = _rebase_image_paths(chapter_md, image_dir)
             chapter_path = chapters_dir / f"ch_{idx:02d}.md"
             chapter_path.write_text(chapter_md, encoding="utf-8")
 

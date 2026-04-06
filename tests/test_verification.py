@@ -89,6 +89,7 @@ def test_completeness_checker_stays_quiet_when_output_matches():
 
 
 def test_completeness_checker_compacts_ocr_overlap_image_reference():
+    """OCR-overlap text-heavy images are suppressed when no saved_path exists."""
     long_text = "采购金额与项目范围说明" * 50
     image = PageElement(
         type="image",
@@ -106,8 +107,53 @@ def test_completeness_checker_compacts_ocr_overlap_image_reference():
     markdown = MarkdownRenderer().render(doc)
     warnings = CompletenessChecker().check(doc, markdown)
 
-    assert "Text content preserved in OCR body text." in markdown
+    # Description is suppressed — no placeholder or duplicate text in output.
+    assert "preserved in OCR body text" not in markdown
     assert markdown.count(long_text) == 1
+    assert warnings == []
+
+
+def test_ocr_overlap_text_heavy_with_saved_path_renders_minimal():
+    """OCR-overlap text-heavy image with saved_path renders image link only."""
+    image = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "needs_vlm": True,
+            "description": "一些已在正文中出现的文字",
+            "description_source": "ocr_overlap_evidence",
+            "text_heavy_image": True,
+            "saved_path": "images/p1_img1.png",
+        },
+    )
+    doc = Document(pages=[Page(number=1, elements=[image])])
+
+    markdown = MarkdownRenderer().render(doc)
+
+    assert "![](images/p1_img1.png)" in markdown
+    assert "一些已在正文中出现的文字" not in markdown
+
+
+def test_suppressed_ocr_overlap_image_no_page_marker_mismatch():
+    """A page with only a suppressed OCR-overlap image should not trigger
+    a page-marker mismatch warning — the renderer produces no output for
+    that page, and the completeness checker should agree."""
+    image = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "needs_vlm": True,
+            "description": "这些文字已经在正文中",
+            "description_source": "ocr_overlap_evidence",
+            "text_heavy_image": True,
+        },
+    )
+    doc = Document(pages=[Page(number=1, elements=[image])])
+
+    markdown = MarkdownRenderer().render(doc)
+    warnings = CompletenessChecker().check(doc, markdown)
+
+    assert "Page marker mismatch" not in " ".join(warnings)
     assert warnings == []
 
 

@@ -23,10 +23,12 @@ def _is_renderable(element: PageElement) -> bool:
     if element.type == "image":
         if element.metadata.get("skipped"):
             return False
-        return bool(
-            element.metadata.get("saved_path")
-            or element.metadata.get("description", "").strip()
-        )
+        # An image is renderable only when the renderer will actually
+        # produce output: either a saved file path exists, or the
+        # description survives get_image_reference_text() suppression.
+        has_path = bool(element.metadata.get("saved_path"))
+        has_desc = bool(get_image_reference_text(element))
+        return has_path or has_desc
     return bool(element.content.strip())
 
 
@@ -113,6 +115,13 @@ class CompletenessChecker:
 
             saved_path = str(elem.metadata.get("saved_path", "")).strip()
             description = get_image_reference_text(elem)
+
+            # Description intentionally suppressed (e.g. text-heavy OCR
+            # overlap already in body) and no saved image file — the
+            # renderer correctly produces nothing for this image.
+            if not saved_path and not description:
+                continue
+
             referenced = False
 
             if saved_path and saved_path in markdown:

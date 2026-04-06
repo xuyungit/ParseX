@@ -5,18 +5,29 @@ from __future__ import annotations
 from parserx.config.schema import OutputConfig
 from parserx.models.elements import Document, PageElement
 
-_OCR_OVERLAP_REFERENCE_TEXT = "Text content preserved in OCR body text."
+_INTERNAL_MARKER_FRAGMENTS = frozenset({
+    "preserved in OCR body text",
+    "preserved in body text",
+})
 
 
 def get_image_reference_text(element: PageElement) -> str:
-    """Return the text that should appear in rendered image references."""
+    """Return the text that should appear in rendered image references.
+
+    Returns empty string when the image content is already covered by
+    surrounding body text (OCR overlap evidence on text-heavy images)
+    or when the description contains internal marker text that should
+    never be user-visible.
+    """
     description = str(element.metadata.get("description", "")).replace("\n", " ").strip()
     if (
         description
         and element.metadata.get("description_source") == "ocr_overlap_evidence"
         and element.metadata.get("text_heavy_image")
     ):
-        return _OCR_OVERLAP_REFERENCE_TEXT
+        return ""
+    if description and any(frag in description for frag in _INTERNAL_MARKER_FRAGMENTS):
+        return ""
     return description
 
 
@@ -92,15 +103,34 @@ class MarkdownRenderer:
         if skipped:
             return ""
 
+        # VLM correction: when VLM produced authoritative text/table
+        # content for this image region, render it as body text instead
+        # of as an image reference.  A remaining summary (independent
+        # semantic info) is stored in ``description``.
+        corrected = str(element.metadata.get("vlm_corrected_content", "")).strip()
+        if corrected:
+            parts = [corrected]
+            if description:
+                ref = get_image_reference_text(element)
+                if ref and image_path:
+                    parts.append(f"![{ref}]({image_path})")
+                elif ref:
+                    parts.append(f"*{ref}*")
+            if caption:
+                parts.append(f"*{caption}*")
+            return "\n\n".join(parts)
+
         # Normalize description for embedding
         desc_oneline = description.replace("\n", " ").strip() if description else ""
         reference_text = get_image_reference_text(element)
         body = ""
 
         if image_path and description:
-            # OCR-overlap text-heavy images already have the body text rendered
-            # elsewhere; keep the image reference compact to avoid duplication.
-            if reference_text and reference_text != desc_oneline:
+            if not reference_text:
+                # Description was suppressed (e.g. text-heavy OCR overlap
+                # already rendered in body) — keep image link only.
+                body = f"![]({image_path})"
+            elif reference_text != desc_oneline:
                 body = f"![{reference_text}]({image_path})"
             # Short description → alt text; long → separate block
             elif len(desc_oneline) <= 120:
@@ -110,7 +140,11 @@ class MarkdownRenderer:
         elif image_path:
             body = f"![]({image_path})"
         elif description:
-            body = f"> [图片] {reference_text or desc_oneline}"
+            if not reference_text:
+                # No path and description suppressed — skip entirely.
+                body = ""
+            else:
+                body = f"> [图片] {reference_text or desc_oneline}"
 
         if not body:
             return ""

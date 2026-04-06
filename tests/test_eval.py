@@ -102,14 +102,14 @@ def test_text_metrics_cjk():
 
 
 def test_residual_diagnostics_tags_image_reference_markup_and_length_bias():
-    output = "<!-- PAGE 1 -->\n> [图片] Text content preserved in OCR body text.\n\n# Title\n\nBody"
+    output = "<!-- PAGE 1 -->\n> [图片] 某项目采购流程示意图\n\n# Title\n\nBody"
     expected = "# Title\n\nBody"
 
     diagnostics = compute_residual_diagnostics(output, expected)
 
     assert "output_heavy" in diagnostics.themes
     assert "image_reference_markup" in diagnostics.themes
-    assert "Text content preserved in OCR body text." in diagnostics.extra.text
+    assert "某项目采购流程示意图" in diagnostics.extra.text
 
 
 def test_residual_diagnostics_tags_missing_heading():
@@ -365,7 +365,7 @@ def test_format_report_includes_warning_and_api_sections():
             ),
             warnings=["warning 1", "warning 2", "warning 3"],
             residuals=compute_residual_diagnostics(
-                "<!-- PAGE 1 -->\n> [图片] Text content preserved in OCR body text.\n\n# Title\n\nBody",
+                "<!-- PAGE 1 -->\n> [图片] 某项目采购流程示意图\n\n# Title\n\nBody",
                 "# Title\n\nBody",
             ),
         ),

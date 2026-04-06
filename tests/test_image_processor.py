@@ -148,7 +148,8 @@ def test_vlm_json_output_prefers_summary_for_informational(tmp_path: Path):
     assert len(vlm.calls) == 1
 
 
-def test_vlm_json_prefers_visible_text_when_overlap_evidence_is_text_heavy(tmp_path: Path):
+def test_vlm_json_corrects_ocr_and_keeps_independent_summary(tmp_path: Path):
+    """VLM correction path: visible_text replaces OCR, independent summary kept."""
     image_path = _write_test_image(tmp_path / "text-heavy.png")
     elem = _img_elem(400, 300)
     elem.page_number = 1
@@ -168,10 +169,12 @@ def test_vlm_json_prefers_visible_text_when_overlap_evidence_is_text_heavy(tmp_p
 
     ImageProcessor(config=config, vlm_service=vlm).process(doc)
 
-    assert elem.metadata["description"] == "项目名称\n采购金额 100 万元\n联系人 张三"
-    assert elem.metadata["description_source"] == "vlm_visible_text"
-    assert elem.metadata["vlm_summary_suppressed"] is True
-    assert elem.metadata["text_heavy_image"] is True
+    # VLM visible_text stored as corrected content
+    assert elem.metadata.get("vlm_corrected_content")
+    # OCR element suppressed
+    assert ocr_text.metadata.get("skip_render") is True
+    # Summary is independent (English vs Chinese) → kept as description
+    assert "procurement" in str(elem.metadata.get("description", ""))
 
 
 def test_vlm_json_falls_back_to_overlap_evidence_on_number_mismatch(tmp_path: Path):
@@ -339,3 +342,180 @@ def test_build_route_hint_prefers_text_heavy_mode():
     )
 
     assert route_hint.startswith("text-heavy:")
+
+
+# ── VLM correction routing tests ──────────────────────────────────────
+
+
+def test_vlm_corrects_ocr_text(tmp_path: Path):
+    """VLM visible_text supersedes overlapping OCR text (suppressed, not mutated)."""
+    image_path = _write_test_image(tmp_path / "scan.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    ocr_text = PageElement(
+        type="text", page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="采购金额 1OO 万元，联系人 张三",  # OCR error: 1OO
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"text","summary":"","visible_text":"采购金额 100 万元，联系人 张三","markdown":""}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=True,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # OCR element suppressed (not mutated)
+    assert ocr_text.metadata.get("skip_render") is True
+    # VLM content stored as corrected content on the image
+    assert "100 万元" in elem.metadata.get("vlm_corrected_content", "")
+
+
+def test_vlm_corrects_ocr_table(tmp_path: Path):
+    """VLM markdown supersedes overlapping OCR table."""
+    image_path = _write_test_image(tmp_path / "table.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    ocr_table = PageElement(
+        type="table", page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="| Itern | Qty |\n|---|---|\n| Bolt | 100 |",  # OCR error: Itern
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_table])])
+    vlm = FakeVLMService([
+        '{"image_type":"table","summary":"","visible_text":"","markdown":"| Item | Qty |\\n|---|---|\\n| Bolt | 100 |"}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=True,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # OCR table suppressed
+    assert ocr_table.metadata.get("skip_render") is True
+    # VLM table stored as corrected content
+    assert "Item" in elem.metadata.get("vlm_corrected_content", "")
+
+
+def test_vlm_chart_summary_kept_as_description(tmp_path: Path):
+    """Chart/diagram images should keep summary as description."""
+    image_path = _write_test_image(tmp_path / "chart.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    doc = Document(pages=[Page(number=1, elements=[elem])])
+    vlm = FakeVLMService([
+        '{"image_type":"chart","summary":"A bar chart showing quarterly revenue growth.","visible_text":"Q1 Q2 Q3 Q4","markdown":""}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=True,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # No OCR overlap → correction doesn't fire → falls through to description
+    assert elem.metadata.get("description")
+    assert elem.metadata.get("skipped") is not True
+
+
+def test_vlm_text_correction_plus_independent_summary(tmp_path: Path):
+    """When VLM corrects text but summary has independent info, both apply."""
+    image_path = _write_test_image(tmp_path / "mixed.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    ocr_text = PageElement(
+        type="text", page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="采购项目一期 总预算 5OO 万",  # OCR error
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"text","summary":"The image also contains a workflow diagram showing the procurement approval process.","visible_text":"采购项目一期 总预算 500 万","markdown":""}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=True,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # OCR suppressed, VLM content stored
+    assert ocr_text.metadata.get("skip_render") is True
+    assert "500 万" in elem.metadata.get("vlm_corrected_content", "")
+    # Summary is independent (English description of visual layout) → kept
+    assert "workflow diagram" in str(elem.metadata.get("description", ""))
+
+
+def test_vlm_correction_trusts_vlm_numbers(tmp_path: Path):
+    """VLM is authoritative — even different numbers from OCR are accepted."""
+    image_path = _write_test_image(tmp_path / "table.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    ocr_table = PageElement(
+        type="table", page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="| Item | Price |\n|---|---|\n| Widget | 99.5 |",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_table])])
+    # VLM sees the image and determines the correct price is 88.3
+    vlm = FakeVLMService([
+        '{"image_type":"table","summary":"","visible_text":"","markdown":"| Item | Price |\\n|---|---|\\n| Widget | 88.3 |"}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=True,
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # VLM is authoritative — its content is used, OCR suppressed
+    assert ocr_table.metadata.get("skip_render") is True
+    assert "88.3" in elem.metadata.get("vlm_corrected_content", "")
+
+
+def test_correction_disabled_by_config(tmp_path: Path):
+    """When vlm_correction_mode is off, fall through to description path."""
+    image_path = _write_test_image(tmp_path / "text.png")
+    elem = _img_elem(400, 300)
+    elem.page_number = 1
+    elem.metadata["saved_abs_path"] = str(image_path)
+
+    ocr_text = PageElement(
+        type="text", page_number=1,
+        bbox=(10.0, 10.0, 390.0, 290.0),
+        content="采购金额 1OO 万元",
+        source="ocr",
+    )
+    doc = Document(pages=[Page(number=1, elements=[elem, ocr_text])])
+    vlm = FakeVLMService([
+        '{"image_type":"text","summary":"","visible_text":"采购金额 100 万元","markdown":""}'
+    ])
+    config = ImageProcessorConfig(
+        vlm_description=True, vlm_response_format="json",
+        vlm_correction_mode=False,  # Disabled
+    )
+
+    ImageProcessor(config=config, vlm_service=vlm).process(doc)
+
+    # OCR should NOT be suppressed
+    assert ocr_text.metadata.get("skip_render") is not True
+    # Image should have a description via the fallback path
+    assert elem.metadata.get("description")
