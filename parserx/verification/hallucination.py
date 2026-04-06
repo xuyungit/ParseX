@@ -71,6 +71,21 @@ class HallucinationDetector:
                     image.metadata["low_confidence"] = False
                     continue
 
+                # VLM summary descriptions are semantic (e.g. "this is a
+                # node detail page") — inherently different from raw OCR
+                # text.  When the image already has vlm_corrected_text or
+                # vlm_corrected_table, the fidelity is in those fields,
+                # not in the summary.  Skip the edit-distance check.
+                if (
+                    image.metadata.get("description_source") == "vlm_summary"
+                    and (
+                        image.metadata.get("vlm_corrected_text")
+                        or image.metadata.get("vlm_corrected_table")
+                    )
+                ):
+                    image.metadata["low_confidence"] = False
+                    continue
+
                 evidence = self._collect_evidence(image, page.elements)
                 if not evidence:
                     continue

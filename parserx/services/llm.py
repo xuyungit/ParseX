@@ -51,6 +51,16 @@ class VLMService(Protocol):
         json_schema_name: str = "parserx_image_description",
     ) -> str: ...
 
+    def describe_images(
+        self,
+        image_paths: list[Path],
+        prompt: str,
+        *,
+        context: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> str: ...
+
 
 class OpenAICompatibleService:
     """LLM/VLM service supporting both Responses API and Chat Completions API.
@@ -277,6 +287,96 @@ class OpenAICompatibleService:
                 json_schema=json_schema,
                 json_schema_name=json_schema_name,
             ),
+            **self._extra_request_kwargs(),
+        )
+        if self._api_style is None:
+            self._api_style = "chat"
+        return response.choices[0].message.content or ""
+
+    def describe_images(
+        self,
+        image_paths: list[Path],
+        prompt: str,
+        *,
+        context: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+    ) -> str:
+        """Multi-image understanding — sends all images in a single request."""
+        image_data_urls = [_encode_image_data_url(p) for p in image_paths]
+
+        if self._api_style != "chat":
+            try:
+                return self._describe_images_responses(
+                    image_data_urls, prompt, context, temperature, max_tokens,
+                )
+            except Exception as exc:
+                if self._api_style is None and _is_not_found(exc):
+                    log.info("Responses API not available, falling back to Chat Completions")
+                    self._api_style = "chat"
+                else:
+                    raise
+
+        return self._describe_images_chat(
+            image_data_urls, prompt, context, temperature, max_tokens,
+        )
+
+    def _describe_images_responses(
+        self,
+        image_data_urls: list[str],
+        prompt: str,
+        context: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "input_text", "text": context})
+        content.append({"type": "input_text", "text": prompt})
+        for url in image_data_urls:
+            content.append({"type": "input_image", "image_url": url})
+
+        tokens: list[str] = []
+        with self._client.responses.create(
+            model=self._model,
+            input=[{"role": "user", "content": content}],
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            stream=True,
+            **self._extra_request_kwargs(),
+        ) as stream:
+            for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    tokens.append(event.delta)
+
+        text = "".join(tokens).strip()
+        if self._api_style is None:
+            self._api_style = "responses"
+        return _strip_code_fences(text)
+
+    def _describe_images_chat(
+        self,
+        image_data_urls: list[str],
+        prompt: str,
+        context: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "text", "text": context})
+        content.append({"type": "text", "text": prompt})
+        for url in image_data_urls:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": url},
+            })
+
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": content}],
+            temperature=temperature,
+            max_tokens=max_tokens,
             **self._extra_request_kwargs(),
         )
         if self._api_style is None:

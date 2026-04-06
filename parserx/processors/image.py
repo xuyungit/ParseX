@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from parserx.config.schema import ImageProcessorConfig
-from parserx.models.elements import Document, PageElement
+from parserx.config.schema import ImageProcessorConfig, TableProcessorConfig
+from parserx.models.elements import Document, Page, PageElement
 from parserx.services.llm import OpenAICompatibleService
 from parserx.text_utils import compute_edit_distance, normalize_for_comparison
 
@@ -893,14 +893,32 @@ class ImageProcessor:
         config: ImageProcessorConfig | None = None,
         vlm_service: OpenAICompatibleService | None = None,
         max_concurrent: int = 6,
+        table_config: TableProcessorConfig | None = None,
     ):
         self._config = config or ImageProcessorConfig()
         self._vlm = vlm_service
         self._max_concurrent = max_concurrent
+        self._table_config = table_config or TableProcessorConfig()
 
     def process(self, doc: Document) -> Document:
         if not self._config.enabled:
             return doc
+
+        # ── Identify pages already covered by cross-page merged tables ──
+        table_covered_pages = self._find_table_covered_pages(doc)
+        if table_covered_pages:
+            log.info(
+                "Pages covered by merged tables (VLM skipped): %s",
+                sorted(table_covered_pages),
+            )
+
+        # ── Optional: refine merged tables via multi-image VLM ──────────
+        if (
+            self._table_config.vlm_refine_merged_tables
+            and self._vlm
+            and table_covered_pages
+        ):
+            self._refine_merged_tables(doc)
 
         stats = {"decorative": 0, "informational": 0, "table": 0, "text": 0, "blank": 0, "vlm_called": 0}
         vlm_tasks: list[tuple[PageElement, list[PageElement], Path]] = []
@@ -937,7 +955,14 @@ class ImageProcessor:
                     stats["informational"] += 1
                     elem.metadata["needs_vlm"] = True
 
-                # Step 2: Collect VLM tasks
+                # Step 2: Skip images on pages already covered by merged tables
+                if elem.page_number in table_covered_pages:
+                    elem.metadata["skipped"] = True
+                    elem.metadata["skip_reason"] = "content_covered_by_merged_table"
+                    elem.metadata["description"] = ""
+                    continue
+
+                # Step 3: Collect VLM tasks
                 if (self._vlm
                         and self._config.vlm_description
                         and elem.metadata.get("needs_vlm")
@@ -1064,3 +1089,97 @@ class ImageProcessor:
                 api_call_count += calls_made
 
         return api_call_count
+
+    # ── Cross-page merged table support ─────────────────────────────────
+
+    @staticmethod
+    def _find_table_covered_pages(doc: Document) -> set[int]:
+        """Return page numbers whose content is already in a merged table.
+
+        When TableProcessor merges a table spanning pages [3, 4, 5, 6],
+        the merged table element already contains the complete content
+        from all pages.  Images on ALL of these pages (including page 3)
+        are redundant — they show the same table content that the merged
+        element already captured via OCR.
+        """
+        covered: set[int] = set()
+        for elem in doc.elements_by_type("table"):
+            merged_pages = elem.metadata.get("merged_from_pages")
+            if merged_pages and len(merged_pages) > 1:
+                covered.update(merged_pages)
+        return covered
+
+    def _refine_merged_tables(self, doc: Document) -> None:
+        """Use multi-image VLM to refine cross-page merged tables.
+
+        For each merged table, sends all constituent page images to VLM
+        in a single call alongside the OCR-merged markdown.  VLM output
+        replaces the merged table content.
+        """
+        assert self._vlm is not None
+
+        page_map: dict[int, Page] = {p.number: p for p in doc.pages}
+
+        for elem in doc.elements_by_type("table"):
+            merged_pages = elem.metadata.get("merged_from_pages")
+            if not merged_pages or len(merged_pages) < 2:
+                continue
+
+            # Collect page images for all constituent pages.
+            image_paths: list[Path] = []
+            for pn in merged_pages:
+                page = page_map.get(pn)
+                if page and page.image_path and page.image_path.exists():
+                    image_paths.append(page.image_path)
+
+            if len(image_paths) < 2:
+                log.info(
+                    "Skipping VLM refinement for merged table (pages %s): "
+                    "not enough page images (%d)",
+                    merged_pages, len(image_paths),
+                )
+                continue
+
+            prompt = (
+                "These images show consecutive pages of a SINGLE table in a "
+                "scanned document. The OCR-merged result is below. Please "
+                "correct any OCR errors, fix cell alignment issues, and "
+                "return the complete table in clean Markdown format.\n\n"
+                "OCR-merged table:\n"
+                f"```\n{elem.content}\n```\n\n"
+                "Return ONLY the corrected Markdown table, nothing else."
+            )
+
+            try:
+                log.info(
+                    "Refining merged table (pages %s) with %d-image VLM call",
+                    merged_pages, len(image_paths),
+                )
+                result = self._vlm.describe_images(
+                    image_paths,
+                    prompt,
+                    temperature=0.1,
+                    max_tokens=self._config.vlm_max_tokens,
+                )
+                result = result.strip()
+
+                # Basic validation: result should contain table markup.
+                if "|" in result and "---" in result:
+                    elem.content = result
+                    elem.metadata["vlm_refined"] = True
+                    log.info(
+                        "Merged table (pages %s) refined by VLM (%d chars)",
+                        merged_pages, len(result),
+                    )
+                else:
+                    log.warning(
+                        "VLM refinement for merged table (pages %s) did not "
+                        "return valid table markup; keeping OCR version",
+                        merged_pages,
+                    )
+            except Exception:
+                log.exception(
+                    "VLM refinement failed for merged table (pages %s); "
+                    "keeping OCR version",
+                    merged_pages,
+                )

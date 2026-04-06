@@ -293,3 +293,76 @@ def test_count_rendered_tables_counts_distinct_blocks():
         "| C |\n|---|\n| 3 |"
     )
     assert _count_rendered_tables(markdown) == 2
+
+
+def test_hallucination_detector_skips_vlm_summary_with_corrected_content():
+    """VLM summary descriptions are semantic — skip hallucination check when
+    the image already has vlm_corrected_text or vlm_corrected_table."""
+    image = PageElement(
+        type="image",
+        page_number=8,
+        bbox=(0.0, 0.0, 500.0, 400.0),
+        metadata={
+            "description": "这是一个节点详情管理页面截图",
+            "description_source": "vlm_summary",
+            "vlm_corrected_table": "| 节点ID | 02012ee1 |\n|---|---|\n| 资源类 | baremetal-node |",
+        },
+    )
+    ocr_text = PageElement(
+        type="text",
+        page_number=8,
+        bbox=(10.0, 10.0, 490.0, 390.0),
+        content="节点ID 02012ee1 资源类 baremetal-node",
+        source="native",
+    )
+    doc = Document(pages=[Page(number=8, elements=[image, ocr_text])])
+
+    warnings = HallucinationDetector().detect(doc)
+
+    assert warnings == []
+    assert image.metadata["low_confidence"] is False
+
+
+def test_is_renderable_true_for_skipped_image_with_vlm_corrections():
+    """Skipped images with vlm_corrected_table should be renderable."""
+    from parserx.verification.completeness import _is_renderable
+
+    image = PageElement(
+        type="image",
+        page_number=6,
+        metadata={
+            "skipped": True,
+            "vlm_corrected_table": "| A | B |\n|---|---|\n| 1 | 2 |",
+        },
+    )
+    assert _is_renderable(image) is True
+
+    image_no_vlm = PageElement(
+        type="image",
+        page_number=6,
+        metadata={"skipped": True},
+    )
+    assert _is_renderable(image_no_vlm) is False
+
+
+def test_text_volume_includes_vlm_corrected_content():
+    """Text volume check should include VLM-corrected content from images."""
+    text_elem = PageElement(type="text", content="正文内容", page_number=1)
+    image_elem = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "vlm_corrected_text": "注册节点 节点信息 驱动详情",
+            "vlm_corrected_table": "| A | B |\n|---|---|\n| 1 | 2 |",
+            "saved_path": "images/fig1.png",
+        },
+    )
+    doc = Document(pages=[Page(number=1, elements=[text_elem, image_elem])])
+
+    renderer = MarkdownRenderer()
+    markdown = renderer.render(doc)
+
+    checker = CompletenessChecker()
+    warnings = checker._check_text_volume(doc, markdown)
+
+    assert not any("volume drifted" in w for w in warnings)

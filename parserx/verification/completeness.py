@@ -21,6 +21,14 @@ def _is_renderable(element: PageElement) -> bool:
     if element.type in {"header", "footer"}:
         return False
     if element.type == "image":
+        # The renderer emits VLM-corrected content even for skipped
+        # images (no image file), so check corrected fields first.
+        has_vlm_content = bool(
+            element.metadata.get("vlm_corrected_text")
+            or element.metadata.get("vlm_corrected_table")
+        )
+        if has_vlm_content:
+            return True
         if element.metadata.get("skipped"):
             return False
         # An image is renderable only when the renderer will actually
@@ -84,11 +92,20 @@ class CompletenessChecker:
         ]
 
     def _check_text_volume(self, doc: Document, markdown: str) -> list[str]:
-        source_text = "\n".join(
-            elem.content
-            for elem in doc.all_elements
-            if elem.type in {"text", "table", "formula"} and elem.content.strip()
-        )
+        parts: list[str] = []
+        for elem in doc.all_elements:
+            if elem.type in {"text", "table", "formula"} and elem.content.strip():
+                parts.append(elem.content)
+            # VLM-corrected content on image elements is rendered by the
+            # assembler but not present in the element's content field.
+            if elem.type == "image":
+                vlm_text = str(elem.metadata.get("vlm_corrected_text", "")).strip()
+                vlm_table = str(elem.metadata.get("vlm_corrected_table", "")).strip()
+                if vlm_text:
+                    parts.append(vlm_text)
+                if vlm_table:
+                    parts.append(vlm_table)
+        source_text = "\n".join(parts)
         source_len = len(normalize_for_comparison(source_text))
         output_len = len(_normalize_markdown_for_volume(markdown))
 
@@ -137,7 +154,16 @@ class CompletenessChecker:
         return warnings
 
     def _check_table_count(self, doc: Document, markdown: str) -> list[str]:
-        expected_tables = len(doc.elements_by_type("table"))
+        expected_tables = len(
+            [e for e in doc.elements_by_type("table")
+             if not e.metadata.get("skip_render")]
+        )
+        # VLM-corrected tables on image elements also render as table
+        # blocks when the content uses markdown table syntax.
+        for elem in doc.elements_by_type("image"):
+            vlm_table = str(elem.metadata.get("vlm_corrected_table", "")).strip()
+            if vlm_table and _count_rendered_tables(vlm_table) > 0:
+                expected_tables += 1
         rendered_tables = _count_rendered_tables(markdown)
         if expected_tables == rendered_tables:
             return []
