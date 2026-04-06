@@ -79,6 +79,54 @@ def main() -> None:
     compare_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
     compare_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
+    # parserx tool-eval
+    tool_eval_cmd = sub.add_parser(
+        "tool-eval",
+        help="Run llamaparse/liteparse/builtin/ParserX and score all Markdown outputs",
+    )
+    tool_eval_cmd.add_argument("ground_truth", type=Path, help="Ground truth directory")
+    tool_eval_cmd.add_argument("-c", "--config", type=Path, help="ParserX config YAML path")
+    tool_eval_cmd.add_argument(
+        "--set", dest="overrides", action="append", default=[],
+        help="Override ParserX config with dotted.path=value (repeatable)",
+    )
+    tool_eval_cmd.add_argument(
+        "--include-doc", dest="include_docs", action="append", default=[],
+        help="Only evaluate the named document directory (repeatable)",
+    )
+    tool_eval_cmd.add_argument(
+        "--include-list", type=Path,
+        help="Path to newline-delimited document names to evaluate",
+    )
+    tool_eval_cmd.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=Path("reports/tool_eval_artifacts"),
+        help="Directory where per-tool Markdown artifacts will be written",
+    )
+    tool_eval_cmd.add_argument(
+        "--llamaparse-tier",
+        default="agentic",
+        help="LlamaParse tier (default: agentic)",
+    )
+    tool_eval_cmd.add_argument(
+        "--llamaparse-version",
+        default="latest",
+        help="LlamaParse API version (default: latest)",
+    )
+    tool_eval_cmd.add_argument(
+        "--liteparse-ocr-language",
+        help="Optional LiteParse OCR language override",
+    )
+    tool_eval_cmd.add_argument(
+        "--liteparse-dpi",
+        type=int,
+        default=150,
+        help="LiteParse render DPI (default: 150)",
+    )
+    tool_eval_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
+    tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -87,6 +135,7 @@ def main() -> None:
 
     level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+    logging.getLogger("pdfminer").setLevel(logging.INFO)
 
     if args.command == "parse":
         _cmd_parse(args)
@@ -94,6 +143,8 @@ def main() -> None:
         _cmd_eval(args)
     elif args.command == "compare":
         _cmd_compare(args)
+    elif args.command == "tool-eval":
+        _cmd_tool_eval(args)
 
 
 def _cmd_parse(args: argparse.Namespace) -> None:
@@ -123,7 +174,9 @@ def _cmd_eval(args: argparse.Namespace) -> None:
         getattr(args, "include_list", None),
     )
     results = runner.evaluate_dir(args.ground_truth, include_docs=include_docs)
-    report = EvalRunner.format_report(results, metadata=metadata)
+    report = EvalRunner.format_report(
+        results, metadata=metadata, failed_docs=runner.failed_docs,
+    )
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -159,6 +212,53 @@ def _cmd_compare(args: argparse.Namespace) -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
         logging.info("Compare report written to %s", args.output)
+    else:
+        print(report)
+
+
+def _cmd_tool_eval(args: argparse.Namespace) -> None:
+    from parserx.tool_eval.adapters import (
+        BuiltinDocPdfAdapter,
+        LlamaParseAdapter,
+        LiteParseAdapter,
+        ParserXAdapter,
+    )
+    from parserx.tool_eval.runner import MultiToolEvalRunner
+
+    config, _metadata = _load_cli_config(args.config, args.overrides, label="Tool Eval")
+    include_docs = _resolve_include_docs(
+        getattr(args, "include_docs", None),
+        getattr(args, "include_list", None),
+    )
+    runner = MultiToolEvalRunner(
+        tools=[
+            LlamaParseAdapter(
+                tier=args.llamaparse_tier,
+                version=args.llamaparse_version,
+            ),
+            LiteParseAdapter(
+                ocr_language=args.liteparse_ocr_language,
+                dpi=args.liteparse_dpi,
+            ),
+            BuiltinDocPdfAdapter(),
+            ParserXAdapter(config),
+        ]
+    )
+    records = runner.evaluate_dir(
+        args.ground_truth,
+        args.artifacts_dir,
+        include_docs=include_docs,
+    )
+    report = MultiToolEvalRunner.format_report(
+        records,
+        ground_truth_dir=args.ground_truth,
+        artifacts_dir=args.artifacts_dir,
+    )
+
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(report, encoding="utf-8")
+        logging.info("Tool-eval report written to %s", args.output)
     else:
         print(report)
 

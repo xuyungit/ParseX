@@ -67,7 +67,7 @@ class PaddleOCRService:
         self._url = cfg.endpoint
         self._token = cfg.token
         self._model = cfg.model
-        self._max_retries = 3
+        self._max_retries = 5
         self._timeout = 600
 
     def recognize(self, image_path: Path) -> OCRResult:
@@ -111,7 +111,7 @@ class PaddleOCRService:
             except Exception as exc:
                 last_error = exc
                 if attempt < self._max_retries:
-                    wait = 2 * attempt
+                    wait = min(2 ** attempt, 30)  # exponential backoff, cap 30s
                     log.warning("OCR retry %d: %s (wait %ds)", attempt, exc, wait)
                     time.sleep(wait)
 

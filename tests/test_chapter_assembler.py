@@ -89,6 +89,45 @@ def test_no_split_when_disabled(tmp_path: Path):
     assert not (tmp_path / "chapters").exists()
 
 
+def test_chapter_image_paths_are_rebased(tmp_path: Path):
+    """Image references in chapter files should use ../images/ paths."""
+    img = PageElement(
+        type="image",
+        page_number=1,
+        metadata={
+            "saved_path": "images/p1_img1.png",
+            "description": "A diagram",
+        },
+    )
+    h1 = _text_elem("第一章 总则", 16.0, bold=True)
+    body = _text_elem("正文内容" * 20, 10.0)
+    doc = Document(pages=[Page(number=1, width=595, height=842, elements=[h1, body, img])])
+    MetadataBuilder().build(doc)
+    ChapterProcessor().process(doc)
+
+    assembler = ChapterAssembler()
+    assembler.assemble(doc, tmp_path)
+
+    chapter_files = sorted((tmp_path / "chapters").glob("ch_*.md"))
+    assert chapter_files, "Expected at least one chapter file"
+
+    for ch in chapter_files:
+        text = ch.read_text(encoding="utf-8")
+        if "images/" in text:
+            assert "../images/" in text, (
+                f"Chapter file {ch.name} has unreachable image path: "
+                "expected ../images/ prefix for chapter subdirectory"
+            )
+            assert "](images/" not in text, (
+                f"Chapter file {ch.name} still has root-relative image path"
+            )
+
+    # final.md should keep original images/ paths (not rebased)
+    final = (tmp_path / "final.md").read_text(encoding="utf-8")
+    if "images/" in final:
+        assert "](images/" in final
+
+
 # ── Integration with real PDF ───────────────────────────────────────────
 
 SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))

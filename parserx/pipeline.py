@@ -32,6 +32,7 @@ from parserx.services.llm import create_llm_service, create_vlm_service
 from parserx.verification import (
     CompletenessChecker,
     HallucinationDetector,
+    ProductQualityChecker,
     StructureValidator,
 )
 
@@ -60,6 +61,7 @@ class Pipeline:
         self._structure_validator = StructureValidator()
         self._completeness_checker = CompletenessChecker()
         self._hallucination_detector = HallucinationDetector(self._config.verification)
+        self._product_quality_checker = ProductQualityChecker()
 
     def parse(self, path: str | Path) -> str:
         """Parse a document and return Markdown output."""
@@ -256,6 +258,11 @@ class Pipeline:
 
         if markdown is not None and self._config.verification.completeness_check:
             warnings.extend(self._completeness_checker.check(doc, markdown))
+
+        if markdown is not None and self._config.verification.product_quality_check:
+            warnings.extend(
+                self._product_quality_checker.check(doc, markdown, chapter_dir)
+            )
 
         self._store_warnings(doc, warnings)
         self._log_warnings(warnings)

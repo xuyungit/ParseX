@@ -16,6 +16,10 @@ _WARNING_RULES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"orphan H\d+", re.IGNORECASE), "orphan_heading", "Orphan heading"),
     (re.compile(r"empty heading", re.IGNORECASE), "empty_heading", "Empty heading"),
     (re.compile(r"Chapter file is empty", re.IGNORECASE), "empty_chapter_file", "Empty chapter file"),
+    (re.compile(r"Placeholder/debug text detected", re.IGNORECASE), "placeholder_leakage", "Placeholder leakage"),
+    (re.compile(r"HTML table markup detected", re.IGNORECASE), "html_table_leakage", "HTML table leakage"),
+    (re.compile(r"Image reference .+ not found|Image file .+ not referenced", re.IGNORECASE), "image_asset_orphan", "Image asset orphan"),
+    (re.compile(r"image description duplicates .+ body text", re.IGNORECASE), "duplicate_body_text", "Duplicate body text"),
 ]
 
 _WARNING_LABELS = {code: label for _, code, label in _WARNING_RULES}

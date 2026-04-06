@@ -530,6 +530,117 @@ def _select_vlm_description(
     return "", updates
 
 
+def _apply_vlm_corrections(
+    *,
+    image: PageElement,
+    visible_text: str,
+    markdown: str,
+    summary: str,
+    evidence: dict[str, object],
+    page_elements: list[PageElement],
+    max_chars: int,
+) -> tuple[str, dict[str, object]]:
+    """Use VLM output as the authoritative version of the image region.
+
+    VLM receives both the original image *and* the OCR evidence as
+    reference, so it has strictly more information than OCR alone.
+    When VLM returns text or table content that covers the same page
+    region as existing OCR elements, the VLM output is preferred:
+
+    1. Overlapping OCR elements are suppressed (``skip_render``).
+    2. The VLM content is stored in ``vlm_corrected_content`` on the
+       image element so the renderer can emit it as body text instead
+       of an image reference.
+    3. If VLM also returns a *summary* that carries independent semantic
+       information (chart interpretation, diagram meaning), it is kept as
+       the image description.
+
+    Safety guards are minimal — we only reject VLM output when it is
+    empty, truncated, or structurally invalid.  We do *not* use OCR to
+    second-guess VLM content (numbers, wording), because VLM already
+    had the OCR text as reference when it produced its answer.
+
+    Returns ``(remaining_description, metadata_updates)``.
+    """
+    updates: dict[str, object] = {}
+    evidence_text = str(evidence.get("text", "")).strip()
+    best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
+    strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
+
+    if not strong_overlap:
+        return "", {}  # No OCR overlap — normal image, use description path.
+
+    # ── Pick the authoritative VLM content ────────────────────────────
+    vlm_content = ""
+    if markdown:
+        vlm_content = markdown
+        updates["vlm_route"] = "table_correction"
+    elif visible_text:
+        vlm_content = visible_text
+        updates["vlm_route"] = "text_correction"
+
+    if not vlm_content or _normalized_len(vlm_content) < 10:
+        return "", {}  # VLM didn't return useful content — fallback.
+
+    # ── Suppress overlapping OCR elements ─────────────────────────────
+    suppressed = _suppress_overlapping_ocr(image, page_elements)
+    if not suppressed:
+        return "", {}  # Nothing to suppress — fallback.
+
+    updates["ocr_elements_suppressed"] = suppressed
+
+    # Store the corrected content so the renderer can emit it as body
+    # text instead of as an image reference.
+    image.metadata["vlm_corrected_content"] = _truncate_description(
+        vlm_content, max_chars,
+    )
+
+    # ── Check whether summary adds independent info ───────────────────
+    remaining_desc = ""
+    if summary:
+        from parserx.verification.product_quality import _char_overlap_ratio
+
+        overlap = _char_overlap_ratio(
+            normalize_for_comparison(summary),
+            normalize_for_comparison(vlm_content),
+        )
+        if overlap <= 0.6:
+            remaining_desc = _truncate_description(summary, min(max_chars, 400))
+            updates["vlm_summary_independent"] = True
+        else:
+            updates["vlm_summary_suppressed"] = True
+
+    return remaining_desc, updates
+
+
+def _suppress_overlapping_ocr(
+    image: PageElement,
+    page_elements: list[PageElement],
+) -> int:
+    """Mark OCR elements overlapping *image* as ``skip_render``.
+
+    Returns the number of elements suppressed.
+    """
+    if not _has_bbox(image):
+        return 0
+    count = 0
+    for elem in page_elements:
+        if elem is image:
+            continue
+        if elem.type not in {"text", "table"}:
+            continue
+        if elem.source != "ocr":
+            continue
+        if not _has_bbox(elem) or not elem.content.strip():
+            continue
+        overlap = _bbox_overlap_ratio(image.bbox, elem.bbox)
+        if overlap > 0.3:
+            elem.metadata["skip_render"] = True
+            elem.metadata["suppressed_by_vlm_correction"] = True
+            count += 1
+    return count
+
+
 def _skip_vlm_for_large_text_overlap(
     *,
     elem: PageElement,
@@ -608,6 +719,7 @@ def _normalize_vlm_output(
     response_format: str,
     max_chars: int,
     debug_raw_preview_chars: int,
+    correction_mode: bool = True,
 ) -> tuple[str, bool, dict[str, object]]:
     if response_format != "json":
         return _truncate_description(raw, max_chars), True, {}
@@ -638,6 +750,31 @@ def _normalize_vlm_output(
         updates["vlm_image_type"] = image_type
 
     evidence = _collect_overlapping_evidence(elem, page_elements)
+
+    # ── VLM correction path: use VLM output to fix OCR, not as a
+    #    parallel description.
+    if not correction_mode:
+        correction_updates: dict[str, object] = {}
+        remaining_desc = ""
+    else:
+        remaining_desc, correction_updates = _apply_vlm_corrections(
+            image=elem,
+            visible_text=visible_text,
+            markdown=markdown,
+            summary=summary,
+            evidence=evidence,
+            page_elements=page_elements,
+            max_chars=max_chars,
+        )
+    if correction_updates:
+        updates.update(correction_updates)
+        updates["vlm_route"] = "correction"
+        if remaining_desc:
+            updates["description_source"] = "vlm_summary"
+            return remaining_desc, True, updates
+        return "", True, updates
+
+    # ── Fallback: original description-selection path ──────────────────
     description, routed_updates = _select_vlm_description(
         elem=elem,
         summary=summary,
@@ -699,6 +836,11 @@ class ImageProcessor:
         for page in doc.pages:
             for elem in page.elements:
                 if elem.type != "image":
+                    continue
+
+                # Already marked by an earlier stage (e.g. fullpage scan
+                # images marked by OCRBuilder) — skip all further work.
+                if elem.metadata.get("skipped"):
                     continue
 
                 # Step 1: Classify
@@ -817,6 +959,7 @@ class ImageProcessor:
                     response_format=self._config.vlm_response_format,
                     max_chars=self._config.vlm_max_description_chars,
                     debug_raw_preview_chars=self._config.vlm_debug_raw_preview_chars,
+                    correction_mode=self._config.vlm_correction_mode,
                 )
                 if metadata_updates:
                     elem.metadata.update(metadata_updates)

@@ -78,6 +78,7 @@ class ImageProcessorConfig(ProcessorToggle):
     vlm_max_tokens: int = 8192
     vlm_max_description_chars: int = 1200
     vlm_skip_large_text_overlap_chars: int = 1200
+    vlm_correction_mode: bool = True
     vlm_debug_raw_preview_chars: int = 1200
 
 
@@ -145,6 +146,7 @@ class VerificationConfig(BaseModel):
     hallucination_detection: bool = True
     completeness_check: bool = True
     structure_validation: bool = True
+    product_quality_check: bool = True
     hallucination_threshold: float = 0.3
 
 

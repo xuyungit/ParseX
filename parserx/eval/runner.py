@@ -35,6 +35,7 @@ class EvalRunner:
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config or ParserXConfig()
         self._pipeline = Pipeline(self._config)
+        self.failed_docs: list[tuple[str, str]] = []
 
     def evaluate_single(
         self, input_path: Path, expected_md_path: Path, name: str = "",
@@ -78,7 +79,14 @@ class EvalRunner:
         *,
         include_docs: set[str] | None = None,
     ) -> list[EvalResult]:
-        """Evaluate all documents in a ground truth directory."""
+        """Evaluate all documents in a ground truth directory.
+
+        Documents that fail during parsing are logged and skipped so that
+        one broken document does not abort the entire evaluation run.
+        Failed document names are stored in ``self.failed_docs``.
+        """
+        self.failed_docs.clear()
+
         if (ground_truth_dir / "expected.md").exists():
             if include_docs is not None and ground_truth_dir.name not in include_docs:
                 log.info("Skipping %s (not in include set)", ground_truth_dir.name)
@@ -117,7 +125,12 @@ class EvalRunner:
             return None
 
         log.info("Evaluating: %s", doc_dir.name)
-        result = self.evaluate_single(input_path, expected_path, name=doc_dir.name)
+        try:
+            result = self.evaluate_single(input_path, expected_path, name=doc_dir.name)
+        except Exception as exc:
+            log.error("  FAILED: %s — %s", doc_dir.name, exc)
+            self.failed_docs.append((doc_dir.name, str(exc)))
+            return None
         log.info(
             "  Text: edit_dist=%.3f, char_f1=%.3f | Headings: P=%.2f R=%.2f F1=%.2f (%d/%d) | Tables: %d found, %.2f cell_f1 | Warn: %d | API O/V/L: %d/%d/%d | Time: %.1fs",
             result.text.edit_distance,
@@ -142,9 +155,10 @@ class EvalRunner:
         results: list[EvalResult],
         *,
         metadata: ReportMetadata | None = None,
+        failed_docs: list[tuple[str, str]] | None = None,
     ) -> str:
         """Format evaluation results as a human-readable report."""
-        if not results:
+        if not results and not failed_docs:
             return "No results."
 
         lines = ["# ParserX Evaluation Report", ""]
@@ -275,6 +289,12 @@ class EvalRunner:
                 if result.residuals.missing.text:
                     lines.append(f"- Expected-only excerpt: `{result.residuals.missing.text}`")
                 lines.append("")
+
+        if failed_docs:
+            lines.extend(["", "## Failed Documents", ""])
+            for name, error in failed_docs:
+                lines.append(f"- **{name}**: {error}")
+            lines.append("")
 
         lines.append("")
         return "\n".join(lines)

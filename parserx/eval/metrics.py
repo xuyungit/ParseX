@@ -293,7 +293,7 @@ def _infer_residual_themes(
     missing_text = missing.text
 
     if extra_text:
-        if "Text content preserved in OCR body text." in extra_text or "[图片]" in extra_text or "![" in extra_text:
+        if "[图片]" in extra_text or "![" in extra_text:
             themes.append("image_reference_markup")
         if extra_text.count("|") >= 4:
             themes.append("table_markup_shape")
