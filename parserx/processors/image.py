@@ -613,23 +613,21 @@ def _apply_vlm_corrections(
         return "", {}  # VLM didn't return useful content — fallback.
 
     # ── Suppress overlapping OCR elements ─────────────────────────────
-    suppressed = _suppress_overlapping_ocr(image, page_elements)
+    # VLM output is the authoritative corrected version.  Suppress
+    # OCR elements whose content is already in the VLM output.
+    suppressed = _suppress_ocr_covered_by_vlm(
+        vlm_content, image, page_elements,
+    )
     if suppressed:
         updates["ocr_elements_suppressed"] = suppressed
     elif strong_overlap and _normalized_len(evidence_text) >= 40:
-        # No OCR elements to suppress, but the image strongly overlaps
-        # *native* text — the content is already in the body.  Native
-        # text is authoritative and should not be suppressed.
+        # No OCR elements, but native text covers the region.
         image.metadata["skipped"] = True
         image.metadata["skip_reason"] = "content_covered_by_native_text"
         updates["native_text_overlap_skip"] = True
         return "", updates
 
     # Store VLM content so the renderer emits it as body text.
-    # This applies whether we suppressed OCR elements (correction) or
-    # the image had no overlapping OCR at all (OCR missed this region,
-    # common on scanned pages where layout analysis classified the
-    # area as "figure").
     image.metadata["vlm_corrected_content"] = _truncate_description(
         vlm_content, max_chars,
     )
@@ -652,17 +650,26 @@ def _apply_vlm_corrections(
     return remaining_desc, updates
 
 
-def _suppress_overlapping_ocr(
+def _suppress_ocr_covered_by_vlm(
+    vlm_content: str,
     image: PageElement,
     page_elements: list[PageElement],
 ) -> int:
-    """Mark OCR elements overlapping *image* as ``skip_render``.
+    """Suppress OCR elements that VLM output supersedes.
 
-    Returns the number of elements suppressed.
+    Two strategies:
+    1. **Bbox overlap**: OCR elements whose bbox overlaps the image are
+       the direct targets of VLM correction (VLM saw and refined them).
+       These are always suppressed.
+    2. **Text containment**: OCR elements outside the image bbox whose
+       text appears verbatim in the VLM output are duplicates.
+
+    Native-source elements are never suppressed.
     """
-    if not _has_bbox(image):
-        return 0
     count = 0
+    has_bbox = _has_bbox(image)
+    vlm_norm = normalize_for_comparison(vlm_content) if vlm_content else ""
+
     for elem in page_elements:
         if elem is image:
             continue
@@ -670,10 +677,25 @@ def _suppress_overlapping_ocr(
             continue
         if elem.source != "ocr":
             continue
-        if not _has_bbox(elem) or not elem.content.strip():
+        if elem.metadata.get("skip_render") or elem.metadata.get("skipped"):
             continue
-        overlap = _bbox_overlap_ratio(image.bbox, elem.bbox)
-        if overlap > 0.3:
+
+        suppress = False
+
+        # Strategy 1: bbox overlap — VLM is correcting this element.
+        if has_bbox and _has_bbox(elem):
+            if _bbox_overlap_ratio(image.bbox, elem.bbox) > 0.3:
+                suppress = True
+
+        # Strategy 2: text containment — OCR text already in VLM output.
+        if not suppress and vlm_norm:
+            elem_text = elem.content.strip()
+            if elem_text and len(elem_text) >= 2:
+                elem_norm = normalize_for_comparison(elem_text)
+                if elem_norm and elem_norm in vlm_norm:
+                    suppress = True
+
+        if suppress:
             elem.metadata["skip_render"] = True
             elem.metadata["suppressed_by_vlm_correction"] = True
             count += 1
