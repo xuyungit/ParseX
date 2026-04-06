@@ -585,7 +585,16 @@ def _apply_vlm_corrections(
     # ── Suppress overlapping OCR elements ─────────────────────────────
     suppressed = _suppress_overlapping_ocr(image, page_elements)
     if not suppressed:
-        return "", {}  # Nothing to suppress — fallback.
+        # No OCR elements to suppress.  If the image strongly overlaps
+        # *native* text, the content is already in the body and the
+        # image is redundant — skip it entirely.  Native text is
+        # authoritative and should not be suppressed.
+        if strong_overlap and _normalized_len(evidence_text) >= 40:
+            image.metadata["skipped"] = True
+            image.metadata["skip_reason"] = "content_covered_by_native_text"
+            updates["native_text_overlap_skip"] = True
+            return "", updates
+        return "", {}  # No overlap — fallback.
 
     updates["ocr_elements_suppressed"] = suppressed
 

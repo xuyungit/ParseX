@@ -481,33 +481,52 @@ class OCRBuilder:
 
     @staticmethod
     def _mark_fullpage_scan_images(page: Page) -> int:
-        """Mark full-page scan images as skipped on SCANNED pages.
+        """Mark scan-source images as skipped on SCANNED pages.
 
-        After OCR extracts text from a scanned page, the original page-
-        level scan image is no longer an independent content image — it IS
-        the page that OCR already processed.  Images whose bbox covers
-        more than half the page area are marked ``skipped`` so that
-        ImageExtractor, ImageProcessor and MarkdownRenderer all ignore them.
+        After OCR extracts text from a scanned page, the original scan
+        images are no longer independent content — they ARE the page
+        that OCR already processed.
 
-        Small embedded images on the same page (diagrams, logos) are left
-        untouched.
+        Two strategies are applied:
+
+        1. Any single image covering > 50% of the page is skipped
+           (classic full-page scan).
+        2. If the *combined* area of all images on the page exceeds
+           50%, all images are skipped (cropped or tiled scans where
+           each piece is small but together they compose the page).
         """
         page_area = max(page.width * page.height, 1.0)
+        image_elems = [
+            e for e in page.elements
+            if e.type == "image" and not e.metadata.get("skipped")
+        ]
+        if not image_elems:
+            return 0
+
+        # Strategy 1: individual large images
         marked = 0
-        for elem in page.elements:
-            if elem.type != "image":
-                continue
-            if elem.metadata.get("skipped"):
-                continue
+        for elem in image_elems:
             x0, y0, x1, y1 = elem.bbox
-            image_area = max((x1 - x0) * (y1 - y0), 0.0)
-            if image_area / page_area > 0.5:
+            if max((x1 - x0) * (y1 - y0), 0.0) / page_area > 0.5:
                 elem.metadata["skipped"] = True
                 elem.metadata["skip_reason"] = "fullpage_scan_covered_by_ocr"
                 marked += 1
+
+        # Strategy 2: combined coverage (skip remaining if total > 50%)
+        if not marked:
+            total_area = sum(
+                max((e.bbox[2] - e.bbox[0]) * (e.bbox[3] - e.bbox[1]), 0.0)
+                for e in image_elems
+            )
+            if total_area / page_area > 0.5:
+                for elem in image_elems:
+                    elem.metadata["skipped"] = True
+                    elem.metadata["skip_reason"] = "fullpage_scan_covered_by_ocr"
+                    marked += 1
+
         if marked:
             log.debug(
-                "Marked %d full-page scan image(s) as skipped on page %d",
+                "Marked %d scan-source image(s) as skipped on page %d",
                 marked, page.number,
             )
         return marked
