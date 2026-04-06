@@ -12,6 +12,8 @@ This document defines the evaluation strategy we want to use going forward.
 - Evaluate both open, reproducible documents and real internal documents.
 - Compare quality gains against added cost, latency, and API calls.
 - Support A/B testing for changes such as ChapterProcessor LLM fallback.
+- Track not only fidelity metrics, but also product-quality signals that affect
+  human readers directly.
 
 ## Dataset Strategy
 
@@ -80,7 +82,73 @@ For model-assisted features, we should also track:
 - `api_calls.ocr`
 - per-document count of `llm_fallback_used`
 
+## Layered Evaluation Model
+
+We should evaluate ParserX in three layers, not one.
+
+### 1. Automatic Core Fidelity Metrics
+
+These remain the default regression metrics:
+
+- edit distance
+- character F1
+- heading precision / recall / F1
+- table cell F1
+- latency
+- warning count
+- API-call counts
+
+These metrics are still critical, but they are not enough to judge whether the
+Markdown is actually pleasant and useful to read.
+
+### 2. Semi-Automatic Product-Quality Checks
+
+The following quality checks should be added to the framework whenever
+possible, so they do not remain purely subjective forever:
+
+- first-page identity retention:
+  - title
+  - organization / broker / issuer
+  - report date
+  - recommendation or analyst block when present
+- duplicate-body detection:
+  - repeated paragraphs caused by OCR + image text overlap
+- image placeholder quality:
+  - leaked internal strings such as `Text content preserved in OCR body text.`
+- HTML leakage in Markdown-first outputs:
+  - count `<table>` or other raw HTML blocks
+- chart retention:
+  - chart title preserved
+  - linked image asset exists
+  - optional chart-derived table or summary exists
+- image asset linkage:
+  - Markdown image reference exists but file missing
+  - file exists but is never referenced
+- rough reading-order sanity:
+  - title or identity block should not disappear entirely
+  - large body blocks should not precede the title page metadata in obvious cases
+
+These checks should produce warnings or scored hints, not absolute truth.
+
+### 3. Human Review
+
+Human review should focus only on what automation cannot yet judge reliably:
+
+- whether repeated headers are useful metadata or just clutter
+- whether preserving a chart image adds value or only redundancy
+- whether section ordering "feels right" in complex layouts
+- whether formatting loss is acceptable for the target use case
+
+See [`docs/quality_rubric.md`](quality_rubric.md) for the quality dimensions
+and definitions we want human reviewers and future heuristics to share.
+
 ## Recommended Workflow
+
+For cross-tool Markdown comparison that writes side-by-side artifacts for
+manual review, see [`docs/tool_eval.md`](tool_eval.md).
+
+When reviewing `tool-eval` outputs, use [`docs/quality_rubric.md`](quality_rubric.md)
+instead of relying only on aggregate scores.
 
 ### Public benchmark setup
 
@@ -145,6 +213,8 @@ uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 - warning count
 - API calls
 - wall time
+- semi-automatic product-quality warnings where available
+- human rubric notes on representative docs
 
 For ParserX, parser changes should not be treated as fully validated until:
 - the offline regression suite passes
@@ -233,6 +303,8 @@ The codebase already has:
 What is still missing operationally:
 - a documented private dataset path convention in daily use
 - richer public datasets beyond the initial smoke subset
+- semi-automatic checks for document identity retention, image policy, and
+  Markdown usability
 
 ## Immediate Next Steps
 
