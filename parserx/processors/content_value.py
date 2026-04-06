@@ -21,6 +21,9 @@ log = logging.getLogger(__name__)
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;.]$")
 _LIST_ITEM_RE = re.compile(r"^(?:[-*•]\s+|\d+[.)、]\s+)")
 _PURE_SYMBOL_RE = re.compile(r"^[\W_?？!！]+$")
+_METADATA_FIELD_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z]{1,12}\s*[：:]\s*.+$")
+_DATEISH_RE = re.compile(r"^\d{4}(?:[./\-年])\s*\d{1,2}(?:[./\-月])(?:\s*\d{1,2}(?:日)?)?$")
+_SHORT_CJK_NAME_RE = re.compile(r"^[\u4e00-\u9fff]{2,6}$")
 
 _LLM_SYSTEM = """\
 你是文档信息价值判别助手。请判断候选块在脱离原界面/版式后，是否仍然对文档理解有独立信息价值。
@@ -207,6 +210,7 @@ class ContentValueProcessor:
             elem,
             page_signals,
         )
+        closing_signature = self._looks_like_trailing_signature(page.elements, elem_idx, elem)
 
         if char_count >= 24:
             score += 0.35
@@ -214,6 +218,12 @@ class ContentValueProcessor:
         if _SENTENCE_END_RE.search(text):
             score += 0.18
             reasons.append("sentence_like")
+        if self._looks_like_cover_title(page, elem, in_body=in_body, top_edge=top_edge):
+            score += 0.65
+            reasons.append("cover_title")
+        if self._looks_like_cover_metadata(page, elem, top_edge=top_edge):
+            score += 0.4
+            reasons.append("cover_metadata")
         if text.endswith(("：", ":")):
             score += 0.14
             reasons.append("prompt_anchor")
@@ -223,11 +233,14 @@ class ContentValueProcessor:
         if self._has_body_continuity(page.elements, elem_idx, elem, page_signals):
             score += 0.18
             reasons.append("body_continuity")
+        if closing_signature:
+            score += 0.35
+            reasons.append("closing_signature")
         if compact_list_item:
             score += 0.28
             reasons.append("compact_list_item")
         if char_count <= 16 and density < 0.09:
-            score -= 0.1 if compact_list_item else 0.32
+            score -= 0.08 if (compact_list_item or closing_signature) else 0.32
             reasons.append("sparse_short_text")
         if line_count >= 2 and char_count <= 24:
             avg_line_len = char_count / max(line_count, 1)
@@ -356,6 +369,69 @@ class ContentValueProcessor:
                 continue
             if _vertical_gap(elem, neighbor) <= 70:
                 return True
+        return False
+
+    def _looks_like_cover_title(
+        self,
+        page: Page,
+        elem: PageElement,
+        *,
+        in_body: bool,
+        top_edge: bool,
+    ) -> bool:
+        if page.number != 1 or not top_edge or not in_body:
+            return False
+        text = _compact_text(elem.content)
+        if not text:
+            return False
+        if _METADATA_FIELD_RE.match(text):
+            return False
+        if _SENTENCE_END_RE.search(text):
+            return False
+        return 6 <= len(text) <= 28
+
+    def _looks_like_cover_metadata(
+        self,
+        page: Page,
+        elem: PageElement,
+        *,
+        top_edge: bool,
+    ) -> bool:
+        if page.number != 1 or not top_edge:
+            return False
+        text = _compact_text(elem.content)
+        return bool(_METADATA_FIELD_RE.match(text))
+
+    def _looks_like_trailing_signature(
+        self,
+        elements: list[PageElement],
+        elem_idx: int,
+        elem: PageElement,
+    ) -> bool:
+        text = _compact_text(elem.content)
+        if not text or len(text) > 20:
+            return False
+
+        prev_elem = self._neighbor_text(elements, elem_idx, step=-1)
+        if prev_elem is None:
+            return False
+
+        next_elem = self._neighbor_text(elements, elem_idx, step=1)
+        if next_elem is not None and len(_compact_text(next_elem.content)) > 20:
+            return False
+
+        prev_text = _compact_text(prev_elem.content)
+        if len(prev_text) < 24 and _SHORT_CJK_NAME_RE.match(prev_text):
+            prev_prev = self._neighbor_text(elements, elements.index(prev_elem), step=-1)
+            if prev_prev is None or len(_compact_text(prev_prev.content)) < 24:
+                return False
+        elif len(prev_text) < 24:
+            return False
+
+        if _DATEISH_RE.match(text):
+            return True
+        if _SHORT_CJK_NAME_RE.match(text):
+            return True
         return False
 
     def _anchors_following_body(

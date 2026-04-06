@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 from parserx.text_utils import compute_edit_distance, normalize_for_comparison
 
@@ -65,6 +66,26 @@ class CostMetrics:
 
 
 @dataclass
+class ResidualSnippet:
+    """Representative residual snippet for a document diff."""
+
+    text: str = ""
+    line_count: int = 0
+    char_count: int = 0
+
+
+@dataclass
+class ResidualDiagnostics:
+    """High-level residual themes plus representative diff snippets."""
+
+    themes: list[str] = field(default_factory=list)
+    extra: ResidualSnippet = field(default_factory=ResidualSnippet)
+    missing: ResidualSnippet = field(default_factory=ResidualSnippet)
+    extra_block_count: int = 0
+    missing_block_count: int = 0
+
+
+@dataclass
 class EvalResult:
     """Complete evaluation result for a single document."""
 
@@ -74,6 +95,7 @@ class EvalResult:
     tables: TableMetrics = field(default_factory=TableMetrics)
     cost: CostMetrics = field(default_factory=CostMetrics)
     warnings: list[str] = field(default_factory=list)
+    residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
 
 
 # ── Edit distance ───────────────────────────────────────────────────────
@@ -110,6 +132,40 @@ def compute_text_metrics(output: str, expected: str) -> TextMetrics:
         char_precision=round(precision, 4),
         char_recall=round(recall, 4),
         char_f1=round(f1, 4),
+    )
+
+
+def compute_residual_diagnostics(output: str, expected: str) -> ResidualDiagnostics:
+    """Summarize the largest extra/missing content regions and likely themes."""
+    out_lines_raw = _meaningful_lines(output)
+    exp_lines_raw = _meaningful_lines(expected)
+    out_norm = [normalize_for_comparison(line) for line in out_lines_raw]
+    exp_norm = [normalize_for_comparison(line) for line in exp_lines_raw]
+
+    matcher = SequenceMatcher(a=exp_norm, b=out_norm, autojunk=False)
+    extra_blocks: list[ResidualSnippet] = []
+    missing_blocks: list[ResidualSnippet] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in {"replace", "delete"}:
+            snippet = _build_residual_snippet(exp_lines_raw[i1:i2])
+            if snippet.char_count:
+                missing_blocks.append(snippet)
+        if tag in {"replace", "insert"}:
+            snippet = _build_residual_snippet(out_lines_raw[j1:j2])
+            if snippet.char_count:
+                extra_blocks.append(snippet)
+
+    extra = _pick_largest_snippet(extra_blocks)
+    missing = _pick_largest_snippet(missing_blocks)
+    themes = _infer_residual_themes(output, expected, extra, missing)
+
+    return ResidualDiagnostics(
+        themes=themes,
+        extra=extra,
+        missing=missing,
+        extra_block_count=len(extra_blocks),
+        missing_block_count=len(missing_blocks),
     )
 
 
@@ -186,6 +242,74 @@ def compute_heading_metrics(
         expected_count=len(expected),
         correct_count=correct,
     )
+
+
+def _meaningful_lines(markdown: str) -> list[str]:
+    lines: list[str] = []
+    for raw in markdown.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("<!-- PAGE "):
+            continue
+        lines.append(stripped)
+    return lines
+
+
+def _build_residual_snippet(lines: list[str], max_chars: int = 280) -> ResidualSnippet:
+    if not lines:
+        return ResidualSnippet()
+    text = "\n".join(lines)
+    compact = text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+    return ResidualSnippet(
+        text=compact,
+        line_count=len(lines),
+        char_count=len(normalize_for_comparison(text)),
+    )
+
+
+def _pick_largest_snippet(snippets: list[ResidualSnippet]) -> ResidualSnippet:
+    if not snippets:
+        return ResidualSnippet()
+    return max(snippets, key=lambda item: (item.char_count, item.line_count))
+
+
+def _infer_residual_themes(
+    output: str,
+    expected: str,
+    extra: ResidualSnippet,
+    missing: ResidualSnippet,
+) -> list[str]:
+    themes: list[str] = []
+    out_len = len(normalize_for_comparison(output))
+    exp_len = len(normalize_for_comparison(expected))
+
+    if out_len > exp_len * 1.08:
+        themes.append("output_heavy")
+    elif exp_len > out_len * 1.08:
+        themes.append("output_light")
+
+    extra_text = extra.text
+    missing_text = missing.text
+
+    if extra_text:
+        if "Text content preserved in OCR body text." in extra_text or "[图片]" in extra_text or "![" in extra_text:
+            themes.append("image_reference_markup")
+        if extra_text.count("|") >= 4:
+            themes.append("table_markup_shape")
+        if any(line.startswith("#") for line in extra_text.splitlines()):
+            themes.append("extra_heading")
+    if missing_text:
+        if missing_text.count("|") >= 4:
+            themes.append("missing_table_shape")
+        if any(line.startswith("#") for line in missing_text.splitlines()):
+            themes.append("missing_heading")
+
+    deduped: list[str] = []
+    for theme in themes:
+        if theme not in deduped:
+            deduped.append(theme)
+    return deduped
 
 
 # ── Table metrics ──────────────────────────────────────────────────────

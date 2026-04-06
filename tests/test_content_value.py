@@ -144,3 +144,78 @@ def test_content_value_preserves_compact_list_after_colon_prompt():
     assert doc.pages[0].elements[1].metadata.get("skip_render") is not True
     assert doc.pages[0].elements[2].metadata.get("skip_render") is not True
     assert doc.pages[0].elements[3].metadata["skip_render"] is True
+
+
+def test_content_value_preserves_cover_title_and_cover_metadata():
+    doc = Document(
+        pages=[
+            Page(
+                number=1,
+                width=1000,
+                height=1400,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="2025 年个人工作总结",
+                        bbox=(250, 40, 520, 90),
+                    ),
+                    PageElement(
+                        type="text",
+                        content="总结岗位：硫化",
+                        bbox=(60, 100, 220, 140),
+                    ),
+                    PageElement(
+                        type="text",
+                        content="总结人：李飞",
+                        bbox=(60, 150, 200, 190),
+                    ),
+                    PageElement(
+                        type="text",
+                        content="## 一、本年安全质量问题分析",
+                        bbox=(120, 260, 620, 320),
+                        metadata={"heading_level": 2},
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ContentValueProcessor(ContentValueConfig()).process(doc)
+
+    assert doc.pages[0].elements[0].metadata.get("skip_render") is not True
+    assert doc.pages[0].elements[1].metadata.get("skip_render") is not True
+    assert doc.pages[0].elements[2].metadata.get("skip_render") is not True
+
+
+def test_content_value_preserves_trailing_signature_and_date():
+    doc = Document(
+        pages=[
+            Page(
+                number=3,
+                width=1000,
+                height=1400,
+                elements=[
+                    PageElement(
+                        type="text",
+                        content="该同志工作积极主动，能配合车间完成各项生产任务，能发现生产过程中存在的问题。",
+                        bbox=(80, 200, 900, 280),
+                    ),
+                    PageElement(
+                        type="text",
+                        content="秦燕刚",
+                        bbox=(80, 320, 180, 360),
+                    ),
+                    PageElement(
+                        type="text",
+                        content="2026.1.26",
+                        bbox=(80, 380, 220, 420),
+                    ),
+                ],
+            )
+        ]
+    )
+
+    ContentValueProcessor(ContentValueConfig()).process(doc)
+
+    assert doc.pages[0].elements[1].metadata.get("skip_render") is not True
+    assert doc.pages[0].elements[2].metadata.get("skip_render") is not True
