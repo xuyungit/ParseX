@@ -457,9 +457,11 @@ class OCRBuilder:
                 ocr_elements = self._ocr_page(fitz_doc, page)
                 if ocr_elements:
                     if page.page_type == PageType.SCANNED:
-                        # Scanned: no native text, use OCR directly
+                        # Scanned: no native text, use OCR directly.
+                        # Images are NOT skipped here — VLM correction
+                        # in ImageProcessor handles dedup and can fix
+                        # OCR errors that simple overlap checks miss.
                         page.elements.extend(ocr_elements)
-                        self._mark_fullpage_scan_images(page)
                     else:
                         # Mixed / sparse native: deduplicate against existing
                         new, dropped = self._deduplicate(
