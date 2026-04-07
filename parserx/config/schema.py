@@ -86,8 +86,13 @@ class ImageProcessorConfig(ProcessorToggle):
 
 
 class FormulaProcessorConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     model: str = "unimernet"
+    vlm_correction: bool = False
+    vlm_structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
+    vlm_max_candidates: int = 6
+    vlm_candidate_max_chars: int = 1200
+    vlm_max_tokens: int = 1200
 
 
 class LineUnwrapConfig(BaseModel):
