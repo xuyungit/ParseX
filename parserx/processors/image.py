@@ -550,6 +550,79 @@ def _select_vlm_description(
     return "", updates
 
 
+def _apply_vlm_supplement(
+    *,
+    image: PageElement,
+    visible_text: str,
+    page_elements: list[PageElement],
+    max_chars: int,
+) -> tuple[str, dict[str, object]]:
+    """Supplement OCR with VLM-discovered text on full-page scan images.
+
+    Unlike ``_apply_vlm_corrections``, this does NOT suppress any OCR
+    elements.  It extracts lines from VLM's visible_text that OCR
+    missed and stores them as ``vlm_corrected_text`` so they appear in
+    the output alongside OCR content.
+
+    The image itself is skipped (OCR already covers the page body).
+    """
+    updates: dict[str, object] = {"vlm_supplement_mode": True}
+
+    if not visible_text:
+        image.metadata["skipped"] = True
+        image.metadata["skip_reason"] = "fullpage_scan_no_supplement"
+        return "", updates
+
+    # Collect all OCR text on this page for deduplication.
+    ocr_texts: set[str] = set()
+    for elem in page_elements:
+        if elem is image:
+            continue
+        if elem.source != "ocr" or elem.type not in ("text", "table"):
+            continue
+        if elem.metadata.get("skip_render"):
+            continue
+        ocr_texts.add(normalize_for_comparison(elem.content.strip()))
+
+    # Keep only VLM lines that OCR didn't extract.
+    supplement_lines: list[str] = []
+    for line in visible_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        line_norm = normalize_for_comparison(line)
+        if not line_norm:
+            continue
+        # Check if any OCR element contains this line or vice versa.
+        covered = any(
+            line_norm in ocr_norm or ocr_norm in line_norm
+            for ocr_norm in ocr_texts
+        )
+        if not covered:
+            supplement_lines.append(line)
+
+    # Skip the image — OCR content is the primary source.
+    image.metadata["skipped"] = True
+    image.metadata["skip_reason"] = "fullpage_scan_ocr_primary"
+
+    if supplement_lines:
+        supplement_text = "\n".join(supplement_lines)
+        image.metadata["vlm_corrected_text"] = _truncate_description(
+            supplement_text, max_chars,
+        )
+        image.metadata["skipped"] = False  # Need to render supplement
+        updates["vlm_supplement_lines"] = len(supplement_lines)
+        updates["vlm_route_text"] = True
+        log.info(
+            "VLM supplement: %d lines OCR missed on fullpage scan",
+            len(supplement_lines),
+        )
+    else:
+        updates["vlm_supplement_lines"] = 0
+
+    return "", updates
+
+
 def _apply_vlm_corrections(
     *,
     image: PageElement,
@@ -587,6 +660,44 @@ def _apply_vlm_corrections(
     best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
     strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
+    # ── Detect full-page scan images ────────────────────────────────
+    #
+    # Full-page scan images cover the entire page.  OCR has already
+    # extracted body text from the page; VLM supplements OCR by
+    # finding text that OCR missed (e.g. colored logos, small edge
+    # text, vertical labels).  In this mode VLM should NOT suppress
+    # existing OCR elements — it should only add what's missing.
+    is_fullpage_scan = False
+    if _has_bbox(image):
+        ocr_count = sum(
+            1 for e in page_elements
+            if e is not image and e.source == "ocr"
+            and e.type in ("text", "table")
+            and not e.metadata.get("skip_render")
+        )
+        if ocr_count >= 3:
+            img_w = image.bbox[2] - image.bbox[0]
+            img_h = image.bbox[3] - image.bbox[1]
+            page_area = max(img_w * img_h, 1.0)
+            # If 3+ OCR elements exist and all overlap the image,
+            # this is a full-page scan, not a local illustration.
+            overlapping = sum(
+                1 for e in page_elements
+                if e is not image and e.source == "ocr"
+                and e.type in ("text", "table")
+                and _has_bbox(e) and _bbox_overlap_ratio(image.bbox, e.bbox) > 0.3
+            )
+            if overlapping >= 3:
+                is_fullpage_scan = True
+
+    if is_fullpage_scan:
+        return _apply_vlm_supplement(
+            image=image,
+            visible_text=visible_text,
+            page_elements=page_elements,
+            max_chars=max_chars,
+        )
+
     # ── Store each VLM field separately ─────────────────────────────
     #
     # VLM returns three independent outputs that can freely combine:
@@ -611,9 +722,14 @@ def _apply_vlm_corrections(
     elif visible_text and _looks_like_tabular(visible_text):
         corrected_table = _truncate_description(visible_text, max_chars)
 
-    # Text: from visible_text (when not already used as table).
-    if visible_text and not corrected_table:
-        if image_type == "text" or strong_overlap or _normalized_len(visible_text) >= 40:
+    # Text: from visible_text.  When markdown already provided a table,
+    # visible_text may still carry non-table text (titles, labels,
+    # metadata) that should be preserved as corrected_text.
+    if visible_text:
+        # If visible_text was already consumed as table, skip.
+        if corrected_table and corrected_table == _truncate_description(visible_text, max_chars):
+            pass
+        elif image_type == "text" or strong_overlap or _normalized_len(visible_text) >= 40:
             corrected_text = _truncate_description(visible_text, max_chars)
 
     # Need at least one non-empty correction to proceed.
