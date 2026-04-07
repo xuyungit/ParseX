@@ -1,0 +1,12 @@
+{
+  "name": "parserx-tooling",
+  "private": true,
+  "scripts": {
+    "llamaparse": "tsx scripts/llamaparse_to_markdown.ts"
+  },
+  "dependencies": {
+    "@llamaindex/liteparse": "^1.4.4",
+    "@llamaindex/llama-cloud": "^2.2.0",
+    "tsx": "^4.21.0"
+  }
+}

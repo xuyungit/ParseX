@@ -455,15 +455,49 @@ LLM 兜底（仅当规则置信度低时）：
 预期效果：企业文档中 30-50% 图片为低信息量元素，可跳过 VLM；同时保留真正有价值的图文信息。
 ```
 
-#### 3.3.5 FormulaProcessor — ❌ 待实现（低优先级）
+#### 3.3.5 FormulaProcessor — ✅ 已实现 (`processors/formula.py`)
 
 ```
-策略：模型检测 + 专业识别
-  - 默认关闭（config: formula.enabled: false）
-  - 需要 LayoutBuilder 先标记 formula 区域
-  - 使用公式识别模型（UniMERNet 或类似）将图片转为 LaTeX
-  - 行内公式 → $...$，独立公式 → $$...$$
-  - 依赖本地 GPU 或远程推理服务，当前阶段不实现
+文件：processors/formula.py
+
+策略：正则化 Unicode→LaTeX 格式统一（无需 GPU）
+
+当前实现：五种高置信度变换，按特异度从高到低排列：
+
+  1. 温度归一化：
+     (\d+)\s*[℃|°C] → $\d+^{\circ}\mathrm{C}$
+     例：30℃ → $30^{\circ}\mathrm{C}$
+
+  2. 化学式检测 + Unicode 下标转换：
+     检测元素符号（118 种）+ Unicode 下标字符序列
+     例：H₂SiCl₂ → $\mathrm{H_{2}SiCl_{2}}$
+     保护：无下标的纯文本不触发（Fe and Cu → 不变）
+
+  3. 微量单位：
+     (\d+)\s*μ[LgmM] → $\d+\,\mathrm{\mu X}$
+     裸单位 μg/mL → $\mathrm{\mu g/mL}$
+
+  4. 独立数学符号（仅在 $...$ 之外转换）：
+     ≥ → $\ge$, ≤ → $\le$, ± → $\pm$, × → $\times$ 等
+
+  5. LaTeX 碎片整理：
+     PyMuPDF 提取的碎片化 LaTeX（如 $ {}^{13} $C）合并为 $^{13}C$
+     元素 + 分离下标（如 CDCl$ _3 $）合并为 $CDCl_{3}$
+
+不做的事：
+  - 不转换散文中的上下标（脚注 ¹²³ 等）
+  - 不自动检测/包裹任意数学表达式
+  - 不修改已正确的 LaTeX 内容
+
+未来扩展方向：
+  - 使用公式识别模型（UniMERNet）处理图片中的公式
+  - 更深度的 LaTeX 碎片合并和 \mathrm{} 语义包裹
+  - 行内公式 vs 独立公式分类
+
+效果（2026-04-07）：
+  - en_text_01: edit_dist 0.283→0.170 (↓40%)
+  - en_text_02: edit_dist 0.088→0.051 (↓42%)
+  - zh_text_02: edit_dist 0.238→0.166 (↓30%)
 ```
 
 #### 3.3.6 LineUnwrapProcessor — ✅ 已实现 (`processors/line_unwrap.py`)
@@ -1078,7 +1112,7 @@ parserx/
 1. ImageProcessor：图片分类 + 选择性 VLM 描述
 2. 复杂表格处理：VLM 兜底 + 交叉验证
 3. 跨页表格合并
-4. FormulaProcessor：公式检测 + LaTeX 转换
+4. FormulaProcessor：公式检测 + LaTeX 转换 ✅ (正则化归一化已实现)
 5. HallucinationDetector：VLM 输出交叉校验
 6. LineUnwrapProcessor：规则化换行修复
 7. CrossReferenceResolver：图文关联
@@ -1168,7 +1202,8 @@ ground_truth/
 - 验证层是后续大改章节/列表识别的安全网。
 - `ChapterProcessor` 的语义化增强收益很高，但应在可度量、可校验的前提下进行。
 - `CrossReferenceResolver` 对最终可读性和消费体验有价值，但不阻塞当前主链路。
-- `LayoutBuilder` / `ReadingOrderProcessor` / `FormulaProcessor` 仍属于增强项，而非当前原型闭环的缺口。
+- `LayoutBuilder` / `ReadingOrderProcessor` 仍属于增强项，而非当前原型闭环的缺口。
+- `FormulaProcessor` 已实现正则化 Unicode→LaTeX 归一化（2026-04-07），不需 GPU。
 
 ---
 
@@ -1317,7 +1352,7 @@ ground_truth/
 | 处理 | TextCleanProcessor | `processors/text_clean.py` | ✅ | CJK 空格 + C1 编码 + 控制字符 |
 | 处理 | TableProcessor | `processors/table.py` | ✅ | 跨页表格合并（列数匹配 + 表头去重） |
 | 处理 | LineUnwrapProcessor | `processors/line_unwrap.py` | ✅ | 规则化换行修复，中文/英文续行 + 连字符合并 |
-| 处理 | FormulaProcessor | — | ❌ | 低优先级，需本地 GPU |
+| 处理 | FormulaProcessor | `processors/formula.py` | ✅ | Unicode→LaTeX 正则归一化（温度、化学式、单位、数学符号、碎片整理） |
 | 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
 | 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
 | 组装 | ChapterAssembler | `assembly/chapter.py` | ✅ | H1 切分 + index.md |
@@ -1360,7 +1395,7 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | **P1** | ChapterProcessor fallback 精化 | `processors/chapter.py` | 在有评测基线后再加强 prompt、批次策略和全局层级一致性修正 |
 | **P2** | CrossReferenceResolver 扩展 | `assembly/crossref.py` | 继续补脚注/引用关联与跨页 caption 关联 |
 | **P2** | StructureRoleAnalyzer（新建议模块） | `builders/structure_roles.py` 或 `processors/structure_roles.py` | 对应 3.3.9；作为 Chapter/LineUnwrap 共享基础设施 |
-| **P3** | FormulaProcessor | `processors/formula.py` | 需本地 GPU |
+| ~~P3~~ | ~~FormulaProcessor~~ | `processors/formula.py` | ✅ 已实现（正则化归一化，不需 GPU） |
 | **P3** | LayoutBuilder | `builders/layout.py` | 需本地 GPU 或远程服务 |
 | **P3** | ReadingOrderProcessor | `processors/reading_order.py` | 大部分文档单列 |
 

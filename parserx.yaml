@@ -49,7 +49,7 @@ processors:
     vlm_skip_large_text_overlap_chars: 1200
     vlm_debug_raw_preview_chars: 1200
   formula:
-    enabled: false
+    enabled: true
   line_unwrap:
     enabled: true
     llm_fallback: false
