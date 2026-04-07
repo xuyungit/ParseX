@@ -1,12 +1,77 @@
 # Iteration Backlog
 
-Updated: 2026-04-06
+Updated: 2026-04-07
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Image Pipeline & VLM Correction (2026-04-06)
+## Latest Iteration: Verification Fixes, Duplication Elimination & Line Unwrap (2026-04-07)
+
+### What Was Done
+
+**Verification Layer — False Positive Elimination (text_pic02: 4→0 warnings)**
+- HallucinationDetector: skip edit-distance check for `vlm_summary` descriptions
+  when the image already has `vlm_corrected_text`/`vlm_corrected_table`. Semantic
+  summaries are inherently different from raw OCR text.
+- CompletenessChecker: `_is_renderable` now treats images with VLM corrections as
+  renderable even when skipped. `_check_text_volume` includes VLM-corrected
+  content in source volume. `_check_table_count` counts VLM-produced tables from
+  image elements.
+
+**Cross-Page Table Duplication Fix (ocr01: 1→0 warnings, VLM 13→1 calls)**
+- Root cause: TableProcessor merges cross-page tables (e.g., pages 3-6), but
+  ImageProcessor independently VLM-processes images on those pages, producing
+  duplicate content.
+- Fix: ImageProcessor now builds a `table_covered_pages` set from
+  `merged_from_pages` metadata and skips VLM for images on those pages.
+- Optional `vlm_refine_merged_tables` config toggle: when enabled, sends ALL
+  page images of a merged table to VLM in a single multi-image call to
+  correct/refine the merged table.
+- VLM service extended with `describe_images()` for multi-image requests.
+
+**Receipt Heading Over-Detection (receipt: 14→2 warnings)**
+- MetadataBuilder: added font-size-group frequency filter — font sizes whose
+  total character count exceeds 10% of body text are excluded from heading
+  candidates. Catches secondary body fonts used for labels/nav links.
+- ChapterProcessor: added false-positive patterns for prices (`$200.00`) and
+  navigation links (`管理订阅 ›`).
+- Remaining 2 warnings: single label "账单与付款" at a unique font size (edge case).
+
+**Line Unwrap Polish (text_table01, text_table_libreoffice: edit_dist 0.030→0.000)**
+- Root cause: PyMuPDF extracts each visual line as a separate PageElement. The
+  within-element unwrap processor never sees them together.
+- Fix: two-pass approach in LineUnwrapProcessor:
+  1. Cross-element merging: adjacent text elements with same font, no sentence-end
+     punctuation, and close vertical proximity get merged into single elements.
+  2. Within-element unwrapping: existing `_unwrap_text_block` handles remaining `\n`.
+- List item continuation lines now merge correctly (only next-line list markers
+  block merging, not current-line markers).
+
+### Measured Impact
+
+**Internal eval (7 docs):**
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Total warnings | 19 | 2 | ↓ 89% |
+| Avg edit distance | 0.075 | 0.033 | ↓ 56% |
+| Avg char F1 | 0.964 | 0.983 | ↑ 2% |
+| text_table01 edit_dist | 0.030 | 0.000 | ↓ 100% |
+| text_table_libreoffice edit_dist | 0.030 | 0.000 | ↓ 100% |
+| ocr01 VLM calls | 13 | 1 | ↓ 92% |
+
+**Public eval (9/10 docs):** 0 warnings, no regressions.
+
+**Tests:** 243 passed, 0 failures.
+
+### Known Issues
+
+- `receipt`: 2 remaining orphan-heading warnings ("账单与付款" at unique font size)
+- `omnidoc_research_report_zh_table_01`: PaddleOCR HTTP 500 (external service bug)
+- `omnidoc_academic_literature_en_text_01`: edit_dist 0.283 (formula format gap)
+
+## Previous Iteration: Image Pipeline & VLM Correction (2026-04-06)
 
 ### What Was Done
 
@@ -184,57 +249,67 @@ We will follow this order unless new benchmark evidence strongly contradicts it:
 3. ~~Image output contract + product quality checks~~ ✅
 4. ~~VLM-authoritative correction model + three-field output~~ ✅
 5. ~~Internal test set expansion (ocr01, text_pic02, receipt)~~ ✅
-6. Fix receipt heading over-detection (ChapterProcessor)
+6. ~~Fix receipt heading over-detection (ChapterProcessor)~~ ✅
 7. Header/footer retention policy (first-page identity preservation)
-8. text_pic02 residual warnings (low-confidence VLM + duplicates)
+8. ~~text_pic02 residual warnings (low-confidence VLM + duplicates)~~ ✅
 9. Formula recognition (FormulaProcessor)
-10. Line unwrap polish (native PDF hard-wrap scars)
+10. ~~Line unwrap polish (native PDF hard-wrap scars)~~ ✅
 11. Run VLM model / prompt / routing A/B tests
 12. Revisit `ChapterProcessor` fallback refinement
 13. Deeper structure work (`StructureRoleAnalyzer`)
 
-Items 1-5 are completed.
+Items 1-6, 8, 10 are completed.  Also completed in this iteration:
+cross-page table VLM duplication fix, multi-image VLM service extension.
 
 ### Next Priorities
 
 **Near-term (next 1-2 iterations):**
 
-1. **receipt heading over-detection** (14 warnings) — ChapterProcessor
-   incorrectly promotes short text like "$200.00" and "管理订阅 ›" to headings
-   on non-document layouts (receipts, emails). Needs more conservative candidate
-   selection or a layout-type pre-filter.
-
-2. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
+1. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
    gap vs LlamaParse on finance/report documents. Design already in
    `docs/header_footer_image_policy.md`. Needs a financial/report PDF in the
    internal test set to validate.
 
-3. **text_pic02 residual warnings** (4 warnings) — low-confidence VLM on
-   screenshot images + remaining duplicate_body_text. May improve with VLM
-   prompt refinements already shipped.
-
-**Mid-term:**
-
-4. **Formula recognition** — eval residual analysis shows clear formula
+2. **Formula recognition** — eval residual analysis shows clear formula
    differences (H₂SiCl₂ vs $\mathrm{H_{2}SiCl_{2}}$). VLM is the highest-value
    correction target for formulas. Could be a dedicated FormulaProcessor or
    integrated into VLM correction.
 
-5. **Line unwrap polish** — text_table01 still has visible hard-wrap scars on
-   native PDFs. Backlog P1 #16.
+3. **`vlm_refine_merged_tables=true` quality evaluation** — now implemented but
+   default off. Test on ocr01 to compare VLM-refined merged tables vs OCR-only.
 
-6. **`vlm_refine_all_ocr=true` quality evaluation** — compare on/off mode on
+**Mid-term:**
+
+4. **`vlm_refine_all_ocr=true` quality evaluation** — compare on/off mode on
    the internal set to quantify the quality vs cost tradeoff and decide whether
    to change the default.
 
-7. **VLM model / prompt A/B tests** — now that we have a stable baseline with
-   0 warnings, it's a good time to compare different VLM models/prompts.
+5. **VLM model / prompt A/B tests** — now that we have a stable baseline with
+   2 warnings, it's a good time to compare different VLM models/prompts.
+
+6. **Revisit `ChapterProcessor` fallback refinement** — receipt edge case
+   "账单与付款" (2 warnings) may benefit from LLM fallback or additional
+   heuristic refinement.
+
+7. **Deeper structure work (`StructureRoleAnalyzer`)** — document self-induction
+   for chapter/list detection.
 
 **Test data gaps:**
 
 - Financial/report PDFs (needed for header/footer retention validation)
 - Academic documents with formulas (needed for formula recognition)
 - These should be added to `ground_truth/` before starting those iterations.
+
+### Completed in This Iteration
+
+- ~~receipt heading over-detection~~ (14→2 warnings): frequency-based heading
+  candidate filter + price/nav-link false-positive patterns
+- ~~text_pic02 residual warnings~~ (4→0): verification layer now accounts for
+  VLM-corrected content on image elements
+- ~~Cross-page table VLM duplication~~ (ocr01 duplicate content eliminated):
+  ImageProcessor skips VLM on pages covered by merged tables
+- ~~Line unwrap polish~~ (text_table01, text_table_libreoffice → perfect scores):
+  cross-element merging joins adjacent continuation-line elements
 
 ## P0: Must Fix
 
@@ -355,25 +430,12 @@ Why:
 
 ### 5. Reduce VLM drift against OCR/native evidence
 
-Current signals:
-- repeated `low-confidence VLM description`
-- frequent number mismatch warnings
-- rendered text volume drift on public samples
-
-Tasks:
-- bias image rendering toward OCR/native text when the image is text-heavy
-- prefer `visible_text` over `summary` when OCR evidence strongly overlaps
-- add a VLM post-filter for numeric consistency
-- suppress overly long summaries when `markdown` or `visible_text` already exists
-
-Status:
-- largely completed in the current iteration
-- repeated benchmark no longer shows `image missing reference` instability
-- long-text images now route through OCR overlap evidence instead of brittle VLM transcription
-
-Remaining follow-up:
-- reduce residual `number mismatch` on the DashScope/Qwen path
-- verify whether `text volume drift` is still VLM-related or now mostly OCR/cleanup-side
+Status (2026-04-07): **Completed.**
+- VLM drift largely resolved in 2026-04-06 iteration.
+- Remaining false positives (low-confidence VLM on vlm_summary descriptions,
+  text volume drift from VLM corrections, table count mismatch) fixed in
+  2026-04-07 iteration by making the verification layer VLM-correction-aware.
+- text_pic02: 4→0 warnings.
 
 Why:
 - this is the biggest quality warning source in the current baseline
@@ -531,18 +593,16 @@ Why:
 
 ### 16. Improve line-unwrapping polish for native-text internal PDFs
 
-Current signals:
-- internal prose samples such as `text_table01` are mostly accurate, but still
-  look visibly wrapped compared with smoother LlamaParse output
-
-Tasks:
-- reduce intra-paragraph hard-wrap scars in native PDFs
-- keep paragraph boundaries stable while removing line-level visual breaks
-- ensure unwrap does not collapse list structure or numbered items
-
-Why:
-- this is one of the clearest remaining gaps on otherwise well-parsed internal
-  documents
+Status (2026-04-07): **Completed.**
+- Root cause: PyMuPDF extracts each visual line as a separate PageElement;
+  within-element unwrap never sees adjacent elements.
+- Fix: two-pass `LineUnwrapProcessor` — cross-element merging (pass 1) joins
+  adjacent same-font text elements that are continuation lines, then
+  within-element unwrap (pass 2) handles remaining `\n`.
+- List item continuation lines merge correctly; new list markers block merging.
+- Vertical gap heuristic prevents merging across paragraph breaks.
+- text_table01: edit_dist 0.030→0.000, char_f1 0.986→1.000.
+- text_table_libreoffice: edit_dist 0.030→0.000, char_f1 0.985→1.000.
 
 ## P2: Reliability / Production Hardening
 
