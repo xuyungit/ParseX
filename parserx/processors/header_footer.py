@@ -133,18 +133,33 @@ class HeaderFooterProcessor:
                 len(repeated_top), len(repeated_bottom),
             )
 
-        # Step 3: Remove matching elements
-        removed_count = 0
-        for page in doc.pages:
-            original_count = len(page.elements)
-            page.elements = [
-                elem for elem in page.elements
-                if not self._should_remove(elem, page, repeated_top, repeated_bottom,
-                                           header_zone, footer_zone)
-            ]
-            removed_count += original_count - len(page.elements)
+        # Step 3: Identify the first page number for first-page identity retention
+        first_page_num = doc.pages[0].number if doc.pages else 1
 
-        log.info("Removed %d header/footer elements", removed_count)
+        # Step 4: Remove matching elements (retain first-page identity)
+        removed_count = 0
+        retained_count = 0
+        for page in doc.pages:
+            kept: list[PageElement] = []
+            for elem in page.elements:
+                if self._should_remove(elem, page, repeated_top, repeated_bottom,
+                                       header_zone, footer_zone):
+                    # First-page exception: keep repeated furniture on page 1,
+                    # but always remove page numbers even on page 1.
+                    if page.number == first_page_num and not _is_page_number(elem.content):
+                        elem.metadata["retained_page_identity"] = True
+                        kept.append(elem)
+                        retained_count += 1
+                    else:
+                        removed_count += 1
+                else:
+                    kept.append(elem)
+            page.elements = kept
+
+        log.info(
+            "Removed %d header/footer elements, retained %d on first page",
+            removed_count, retained_count,
+        )
         return doc
 
     def _get_edge_texts(

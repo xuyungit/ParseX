@@ -212,6 +212,8 @@ class ContentValueProcessor:
         )
         closing_signature = self._looks_like_trailing_signature(page.elements, elem_idx, elem)
 
+        is_ocr = elem.source == "ocr"
+
         if char_count >= 24:
             score += 0.35
             reasons.append("content_dense")
@@ -232,10 +234,11 @@ class ContentValueProcessor:
             reasons.append("body_column")
         if elem.source == "ocr":
             # OCR elements come from actual document page content,
-            # not from UI chrome or navigation.  Give them a baseline
-            # boost so position/fragmentation penalties don't filter
-            # out real content split into small blocks by OCR layout.
-            score += 0.15
+            # not from UI chrome or navigation.  Give them a strong
+            # baseline so position/fragmentation penalties don't filter
+            # out real content — even short labels carry information
+            # value in scanned documents (stock codes, ratings, etc.).
+            score += 0.25
             reasons.append("ocr_content")
         if self._has_body_continuity(page.elements, elem_idx, elem, page_signals):
             score += 0.18
@@ -246,14 +249,14 @@ class ContentValueProcessor:
         if compact_list_item:
             score += 0.28
             reasons.append("compact_list_item")
-        if char_count <= 16 and density < 0.09:
+        if char_count <= 16 and density < 0.09 and not is_ocr:
+            # Short sparse text penalty — only for native (non-OCR) elements.
+            # OCR content comes from actual document pages and even short
+            # labels (stock codes, ratings, metadata) carry information
+            # value.  Penalizing them causes identity metadata loss.
             if compact_list_item or closing_signature:
                 score -= 0.08
             elif in_body:
-                # Short text in the body column is often a legitimate
-                # fragment (OCR splits, brief answers, labels).  Apply
-                # only a mild penalty — heavier signals like edge_band
-                # or image_cluster still contribute if applicable.
                 score -= 0.10
             else:
                 score -= 0.32
@@ -261,7 +264,6 @@ class ContentValueProcessor:
         # OCR blocks on scanned pages get their position from the
         # document layout, not from UI structure.  Position-based and
         # fragmentation penalties are lighter for OCR sources.
-        is_ocr = elem.source == "ocr"
         if not is_ocr and line_count >= 2 and char_count <= 24:
             avg_line_len = char_count / max(line_count, 1)
             if avg_line_len <= 8:
