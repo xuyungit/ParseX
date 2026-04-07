@@ -9,7 +9,8 @@ def test_default_config():
     config = ParserXConfig()
     assert config.providers.pdf.engine == "pymupdf"
     assert config.processors.text_clean.enabled is True
-    assert config.processors.formula.enabled is False
+    assert config.processors.formula.enabled is True
+    assert config.processors.formula.vlm_correction is False
     assert config.processors.image.vlm_prompt_style == "strict_auto"
     assert config.processors.image.vlm_structured_output_mode == "json_schema"
     assert config.processors.image.vlm_max_tokens == 8192
