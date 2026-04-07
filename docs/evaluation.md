@@ -293,22 +293,205 @@ uv run parserx compare ground_truth_public \
   --set-b processors.image.vlm_prompt_style=strict_en
 ```
 
-## Current Gap
+## Current State (2026-04-07)
 
-The codebase already has:
-- `parserx.eval.metrics`
-- `parserx.eval.runner`
-- `parserx.eval.benchmark`
+The codebase has:
+- `parserx.eval.metrics` — edit distance, char F1, heading F1, table cell F1
+- `parserx.eval.runner` — full eval runner with per-document reporting
+- `parserx.eval.benchmark` — OmniDocBench public benchmark download
+- `parserx.eval.warnings` — 23 categorized warning types with `summarize_warning_types()`
+- `parserx.eval.reporting` — config/model metadata in report headers
+- `parserx.eval.compare` — A/B comparison reporting
+- `parserx compare` CLI with `--set-a`/`--set-b` config overrides
+- `ground_truth_public/` with 10 docs + `subsets/warning_heavy.txt`
+- `ground_truth/` with 7 internal docs
+- `ProductQualityChecker` with 4 semi-automatic checks
 
 What is still missing operationally:
-- a documented private dataset path convention in daily use
-- richer public datasets beyond the initial smoke subset
-- semi-automatic checks for document identity retention, image policy, and
-  Markdown usability
+- semi-automatic checks for document identity retention (first-page title/org/date)
+- chart-specific asset-linkage checks
+- richer public datasets (financial/report PDFs, academic docs with formulas)
+- repeated-page-identity over-retention warnings
 
-## Immediate Next Steps
+## Full-Cycle Evaluation Playbook
 
-1. Create the first small `ground_truth_public/` set in-repo.
-2. Add a compare workflow for `llm_fallback=false` vs `llm_fallback=true`.
-3. Extend CLI/reporting so `warnings` and API call counts are easier to read.
-4. Use both public and private evaluation before refining ChapterProcessor prompts.
+This section documents the complete end-to-end evaluation workflow, including
+multi-VLM comparison and cross-tool (LlamaParse) comparison. Run this after
+any significant iteration to get a holistic view of quality.
+
+### Prerequisites
+
+```bash
+# Python dependencies
+uv pip install 'parserx[bench]'
+
+# Node dependencies (for LlamaParse)
+npm install
+
+# Environment variables required:
+#   OPENAI_BASE_URL, OPENAI_API_KEY, VLM_MODEL    — default VLM (config A)
+#   OPENAI_BASE_URL_B, OPENAI_API_KEY_B, VLM_MODEL_B — VLM config B
+#   OPENAI_BASE_URL_C, OPENAI_API_KEY_C, VLM_MODEL_C — VLM config C
+#   PADDLE_OCR_ENDPOINT, PADDLE_OCR_TOKEN          — PaddleOCR
+#   LLAMA_CLOUD_API_KEY                             — LlamaParse
+```
+
+### Step 1: Run ParserX eval on both test sets
+
+```bash
+# Public test set (9-10 docs, OmniDocBench + smoke samples)
+uv run parserx eval ground_truth_public \
+  -o reports/full_eval_public.md
+
+# Private test set (7 docs, internal business documents)
+uv run parserx eval ground_truth \
+  -o reports/full_eval_internal.md
+```
+
+### Step 2: Multi-VLM A/B comparison
+
+Three VLM configurations are available:
+
+| Config | File | Env Vars | Notes |
+|--------|------|----------|-------|
+| A (default) | `parserx.yaml` | `OPENAI_BASE_URL`, `VLM_MODEL` | Default model |
+| B | `configs/vlm_b.yaml` | `OPENAI_BASE_URL_B`, `VLM_MODEL_B` | Alternative model |
+| C | `configs/vlm_c.yaml` | `OPENAI_BASE_URL_C`, `VLM_MODEL_C` | Alternative model (responses API) |
+
+Run pairwise comparisons:
+
+```bash
+# A vs B
+uv run parserx compare ground_truth_public \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_b.yaml \
+  --label-a "vlm-a" --label-b "vlm-b" \
+  -o reports/compare_vlm_a_vs_b_public.md
+
+uv run parserx compare ground_truth \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_b.yaml \
+  --label-a "vlm-a" --label-b "vlm-b" \
+  -o reports/compare_vlm_a_vs_b_internal.md
+
+# A vs C
+uv run parserx compare ground_truth_public \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_c.yaml \
+  --label-a "vlm-a" --label-b "vlm-c" \
+  -o reports/compare_vlm_a_vs_c_public.md
+
+uv run parserx compare ground_truth \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_c.yaml \
+  --label-a "vlm-a" --label-b "vlm-c" \
+  -o reports/compare_vlm_a_vs_c_internal.md
+```
+
+To narrow to the warning-heavy subset:
+
+```bash
+uv run parserx compare ground_truth_public \
+  --include-list ground_truth_public/subsets/warning_heavy.txt \
+  --config-a parserx.yaml \
+  --config-b configs/vlm_b.yaml \
+  --label-a "vlm-a" --label-b "vlm-b" \
+  -o reports/compare_vlm_a_vs_b_warning_heavy.md
+```
+
+### Step 3: Cross-tool comparison (ParserX vs LlamaParse)
+
+The `parserx tool-eval` command runs multiple parsing tools on the same
+documents and generates side-by-side artifacts for comparison.
+
+```bash
+# Public test set — generates artifacts for all 4 tools
+uv run parserx tool-eval ground_truth_public \
+  --artifacts-dir reports/tool_eval_public_artifacts \
+  -o reports/tool_eval_public.md
+
+# Private test set
+uv run parserx tool-eval ground_truth \
+  --artifacts-dir reports/tool_eval_internal_artifacts \
+  -o reports/tool_eval_internal.md
+```
+
+To run only specific documents:
+
+```bash
+uv run parserx tool-eval ground_truth_public \
+  --include-doc omnidoc_research_report_zh_table_02 \
+  --artifacts-dir reports/tool_eval_public_artifacts \
+  -o reports/tool_eval_single.md
+```
+
+#### Output structure
+
+After `tool-eval` completes, artifacts are organized as:
+
+```
+reports/tool_eval_public_artifacts/
+├── manifest.json                    # Index of all records + metrics
+├── parserx/{doc_name}/output.md     # ParserX Markdown output
+├── llamaparse/{doc_name}/output.md  # LlamaParse Markdown output
+├── liteparse/{doc_name}/output.md   # LiteParse output
+└── builtin_doc_pdf/{doc_name}/output.md
+```
+
+Each `output.md` can be directly compared side-by-side. The `manifest.json`
+contains per-document metrics for every tool.
+
+#### Running LlamaParse standalone
+
+If you only need LlamaParse output for a single document:
+
+```bash
+npm run llamaparse -- \
+  --input ground_truth_public/omnidoc_research_report_zh_table_02/input.pdf \
+  --output /tmp/llamaparse_output.md \
+  --metadata /tmp/llamaparse_meta.json
+```
+
+### Step 4: Human review
+
+After automated metrics are collected:
+
+1. Open `reports/tool_eval_*_artifacts/{tool}/{doc}/output.md` for each tool
+2. Compare side-by-side using `docs/quality_rubric.md` dimensions:
+   - Information retention (titles, dates, ratings, analysts)
+   - Table accuracy
+   - Heading structure
+   - Reading order
+   - Chart/image handling
+3. Record observations in the iteration backlog
+
+### Quick reference: all evaluation commands
+
+```bash
+# ── Single-config eval ──
+uv run parserx eval <gt_dir> -o <report.md>
+
+# ── A/B config compare ──
+uv run parserx compare <gt_dir> \
+  --config-a <a.yaml> --config-b <b.yaml> \
+  --label-a <name> --label-b <name> \
+  -o <report.md>
+
+# ── Multi-tool eval (ParserX + LlamaParse + others) ──
+uv run parserx tool-eval <gt_dir> \
+  --artifacts-dir <dir> -o <report.md>
+
+# ── Feature toggle experiment ──
+uv run parserx compare <gt_dir> \
+  --set-a processors.image.vlm_refine_all_ocr=false \
+  --set-b processors.image.vlm_refine_all_ocr=true \
+  --label-a "ocr-only" --label-b "vlm-refine" \
+  -o <report.md>
+```
+
+## Remaining Evaluation Improvements
+
+1. Add first-page identity retention check to `ProductQualityChecker`.
+2. Add financial/report PDFs and academic formula docs to ground truth sets.
+3. Add chart-specific asset-linkage check (depends on chart extraction work).
+4. Consider LLM-as-judge evaluation for reading quality beyond text fidelity.
