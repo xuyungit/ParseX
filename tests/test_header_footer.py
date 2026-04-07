@@ -50,9 +50,13 @@ def test_remove_repeated_headers():
     processor = HeaderFooterProcessor()
     result = processor.process(doc)
 
-    for page in result.pages:
+    # Page 1: header retained as first-page identity
+    page1_texts = [e.content for e in result.pages[0].elements if e.type == "text"]
+    assert "公司机密文件" in page1_texts
+
+    # Pages 2+: header removed
+    for page in result.pages[1:]:
         texts = [e.content for e in page.elements if e.type == "text"]
-        # Header "公司机密文件" should be removed
         assert "公司机密文件" not in texts
         # Body should remain
         assert any("正文内容" in t for t in texts)
@@ -133,8 +137,12 @@ def test_threshold_boundary_removed():
     processor = HeaderFooterProcessor()
     result = processor.process(doc)
 
-    # 60% > 50%, so the header should be removed
-    for page in result.pages[:6]:
+    # 60% > 50%, so the header should be removed on pages 2+
+    # Page 1 retains it as first-page identity
+    page1_texts = [e.content for e in result.pages[0].elements]
+    assert "多数页眉" in page1_texts
+
+    for page in result.pages[1:6]:
         texts = [e.content for e in page.elements]
         assert "多数页眉" not in texts
 
@@ -157,3 +165,79 @@ def test_preserve_non_repeated():
     # Non-repeated headers should be preserved
     for page in result.pages:
         assert len(page.elements) == 2
+
+
+# ── First-page identity retention tests ──
+
+
+def test_first_page_identity_retained():
+    """Repeated header should be kept on page 1 and removed on pages 2+."""
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # Page 1: repeated header "公司机密文件" should be KEPT
+    page1_texts = [e.content for e in result.pages[0].elements if e.type == "text"]
+    assert "公司机密文件" in page1_texts
+
+    # Pages 2-5: repeated header should be REMOVED
+    for page in result.pages[1:]:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        assert "公司机密文件" not in texts
+
+
+def test_first_page_page_numbers_still_removed():
+    """Page numbers should be removed even on page 1."""
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # Page 1 should NOT have page number
+    for page in result.pages:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        assert not any(
+            t.strip().replace("-", "").replace(" ", "").isdigit()
+            for t in texts
+        )
+
+
+def test_retained_elements_have_metadata_flag():
+    """Retained first-page identity elements should have the metadata flag."""
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # The retained header on page 1 should have the flag
+    retained = [
+        e for e in result.pages[0].elements
+        if e.metadata.get("retained_page_identity")
+    ]
+    assert len(retained) == 1
+    assert retained[0].content == "公司机密文件"
+
+
+def test_first_page_unique_content_not_flagged():
+    """Content only on page 1 (not repeated) should NOT get the retained flag.
+
+    The retained_page_identity flag is only for elements that *would have been
+    removed* but were kept because they're on page 1.
+    """
+    pages = []
+    for i in range(1, 4):
+        elements = [_text_elem("正文" * 20, 100, 700, i)]
+        if i == 1:
+            elements.insert(0, _text_elem("首页独有标题", 10, 25, i))
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    doc = Document(pages=pages)
+
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    # The unique first-page element should be preserved (not removed)
+    page1_texts = [e.content for e in result.pages[0].elements]
+    assert "首页独有标题" in page1_texts
+
+    # It should NOT have the retained_page_identity flag (it was never a removal candidate)
+    for e in result.pages[0].elements:
+        if e.content == "首页独有标题":
+            assert not e.metadata.get("retained_page_identity")

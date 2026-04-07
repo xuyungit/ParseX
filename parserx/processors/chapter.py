@@ -225,6 +225,10 @@ class ChapterProcessor:
                 if elem.type != "text":
                     continue
 
+                # Skip retained page-identity elements (header/footer kept on first page)
+                if elem.metadata.get("retained_page_identity"):
+                    continue
+
                 # Skip elements with heading_level already set (e.g. from DOCX styles)
                 if elem.metadata.get("heading_level"):
                     if not self._keep_existing_ocr_heading(page.width, elem):
