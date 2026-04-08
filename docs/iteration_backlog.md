@@ -82,7 +82,7 @@ re-deriving priorities each time.
 ## Baseline: paper_chn01 (2026-04-08)
 
 Initial baseline: edit_dist=0.874, char_f1=0.295, heading_f1=0.08, table_cell_f1=0.00.
-After all fixes: **edit_dist=0.536, char_f1=0.804, heading_f1=0.23, table_cell_f1=1.00**.
+After all fixes: **edit_dist=0.503, char_f1=0.891, heading_f1=0.23, table_cell_f1=1.00**.
 
 ### What Was Done
 
@@ -132,18 +132,26 @@ After all fixes: **edit_dist=0.536, char_f1=0.804, heading_f1=0.23, table_cell_f
   line chart, not a data table).
 - Impact: table_cell_f1 0.00 → 1.00.
 
+**5. LaTeX prime simplification** (`processors/text_clean.py`)
+- New `simplify_latex_primes()`: `x^{^{\prime}}` → `x'` and
+  `x^{\prime}` → `x'`.  Both render identically; the apostrophe form is
+  standard and matches expected.md.
+- Applied in `TextCleanProcessor._clean()` after other normalizations.
+- Impact: char_f1 0.804 → 0.891, edit_dist 0.536 → 0.503.
+
 ### Remaining Issues
 
-- `paper_chn01`: edit_dist=0.536, char_f1=0.804, heading_f1=0.23, table_cell_f1=1.00.
+- `paper_chn01`: edit_dist=0.503, char_f1=0.891, heading_f1=0.23, table_cell_f1=1.00.
   1. **Heading detection** (heading_f1=0.23, 3/14): Section headings on pages
      6-7 (NATIVE) not detected — same font size as body text.  Pages 2-5
      (OCR) headings partially detected but numbering patterns may differ from
      expected format.  ChapterProcessor needs adaptation for journals where
      headings share body font size.
-  2. **edit_dist still 0.536**: Remaining gap is mostly LaTeX style differences
-     between OCR output (e.g. `x^{^{\prime}}`) and expected.md (e.g. `x'`),
-     plus minor OCR text accuracy differences vs LlamaParse baseline.
-     These differences don't affect rendering quality.
+  2. **edit_dist=0.503**: Remaining gap is mostly formatting noise — superscript
+     reference style (`<sup>[1]</sup>` vs `$ ^{[1]} $`), LaTeX block structure
+     (multi-line vs compact), minor OCR text inaccuracies (e.g. spurious
+     hyphen in `DI-ILSR`).  These do not affect rendering quality or
+     readability.  Further optimization is not cost-effective.
 
 ## Previous Iteration: DOCX Pipeline Fix & .doc Support (2026-04-08)
 
