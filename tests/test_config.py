@@ -72,6 +72,8 @@ def test_load_config_with_result_reports_project_source(tmp_path: Path, monkeypa
 
 def test_load_config_with_result_reports_default_fallback(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    import parserx.config.schema as _schema
+    monkeypatch.setattr(_schema, "_GLOBAL_CONFIG_DIR", tmp_path / "no_global")
 
     loaded = load_config_with_result()
 

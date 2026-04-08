@@ -76,7 +76,27 @@ ParserX takes a third path: **deterministic rules first, AI only where needed**.
 
 **Assembly** — Renders the processed document as Markdown, optionally splitting into chapter files. Figure/table captions are associated before rendering.
 
-## Quick Start
+## Installation
+
+### Global install (recommended)
+
+```bash
+# Install as a global CLI tool — accessible from anywhere
+uv tool install -e /path/to/ParserX
+
+# Initialize global config (~/.config/parserx/)
+psx init
+
+# Edit API keys
+vim ~/.config/parserx/.env
+```
+
+After install, both `psx` and `parserx` commands are available. Use `psx` as the short form.
+
+> **Note:** `-e` (editable) means Python code changes take effect immediately.
+> Only re-run `uv tool install -e /path/to/ParserX --force` if `pyproject.toml` dependencies change.
+
+### Development setup
 
 ```bash
 git clone https://github.com/your-org/ParserX.git
@@ -84,30 +104,59 @@ cd ParserX
 uv sync
 ```
 
-### Basic Usage
+In development mode, use `uv run psx` or `uv run parserx` instead of the bare command.
+
+## Quick Start
 
 ```bash
-# Parse a PDF to stdout
-uv run parserx parse document.pdf
+# Parse a PDF — outputs to ./output/document/
+psx parse document.pdf
 
-# Output to file
-uv run parserx parse document.pdf -o output.md
+# Specify output directory
+psx parse document.pdf -o /tmp/result/
 
-# Split into chapters
-uv run parserx parse document.pdf -o output_dir/ --split-chapters
+# Also split into chapter files
+psx parse document.pdf --split-chapters
 
-# Use a config file
-uv run parserx parse document.pdf -c parserx.yaml -v
+# Print to stdout (no files written)
+psx parse document.pdf --stdout
+
+# Disable VLM / OCR / LLM for faster local-only processing
+psx parse document.pdf --no-vlm --no-ocr --no-llm
+
+# Override model names
+psx parse document.pdf --vlm-model gpt-4o --llm-model gpt-4o-mini
+
+# Use a specific config file with verbose logging
+psx parse document.pdf -c parserx.yaml -v
 ```
+
+Output directory structure:
+```
+output/document/
+├── output.md      # Complete Markdown (images use relative paths)
+├── images/        # Extracted images
+│   ├── p1_img1.png
+│   └── p3_img2.jpg
+├── index.md       # Table of contents (with --split-chapters)
+└── chapters/      # Per-chapter files (with --split-chapters)
+```
+
+### Configuration
+
+Config is resolved in order: `--config` flag > `./parserx.yaml` > `~/.config/parserx/config.yaml` > built-in defaults.
+
+API credentials are loaded from `.env` files: `./.env` > `~/.config/parserx/.env`.
+
+Run `psx init` to generate the global config templates with all available options.
 
 ### Enable VLM Image Descriptions
 
-Set environment variables (or use a `.env` file) for an OpenAI-compatible endpoint:
+Set in `~/.config/parserx/.env` (or project `.env`):
 
 ```bash
-OPENAI_BASE_URL="https://api.openai.com/v1" \
-OPENAI_API_KEY="your-key" \
-uv run parserx parse document.pdf -c parserx.yaml -v
+OPENAI_API_KEY=your-key
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 Without these, VLM steps are skipped automatically — everything else works.
@@ -115,12 +164,11 @@ Without these, VLM steps are skipped automatically — everything else works.
 ### Enable OCR for Scanned Documents
 
 ```bash
-PADDLE_OCR_ENDPOINT="your-paddleocr-endpoint" \
-PADDLE_OCR_TOKEN="your-token" \
-uv run parserx parse scanned.pdf -c parserx.yaml
+PADDLE_OCR_ENDPOINT=your-paddleocr-endpoint
+PADDLE_OCR_TOKEN=your-token
 ```
 
-Without OCR credentials, scanned pages are skipped. See `.env.example` for all available variables.
+Without OCR credentials, scanned pages are skipped.
 
 ### Real End-to-End Test
 

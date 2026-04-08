@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 from parserx.assembly.chapter import ChapterAssembler
@@ -101,6 +102,19 @@ class Pipeline:
 
     def parse_to_dir(self, path: str | Path, output_dir: str | Path) -> Path:
         """Parse a document and write chapter files + index to output_dir."""
+        return self.parse_result_to_dir(path, output_dir).markdown_path
+
+    def parse_result_to_dir(
+        self, path: str | Path, output_dir: str | Path,
+    ) -> ParseResult:
+        """Parse a document, write to output_dir, and return stats.
+
+        Writes output.md + images/ (and optionally index.md + chapters/
+        when chapter_split is enabled in config).
+
+        The returned ParseResult includes the markdown text and all
+        statistics.  ``result.markdown_path`` points to the written file.
+        """
         path = Path(path)
         output_dir = Path(output_dir)
         if not path.exists():
@@ -108,12 +122,37 @@ class Pipeline:
 
         doc = self._run_pipeline(path, output_dir=output_dir)
         assembler = ChapterAssembler(self._config.output)
-        final_path = assembler.assemble(doc, output_dir)
+        md_path = assembler.assemble(doc, output_dir)
 
         markdown = self._renderer.render(doc)
         self._verify_all(doc, markdown, chapter_dir=output_dir)
 
-        return final_path
+        images_total = len(doc.elements_by_type("image"))
+        images_skipped = sum(
+            1 for e in doc.elements_by_type("image")
+            if e.metadata.get("skipped")
+        )
+        llm_fallback_hits = sum(
+            1 for elem in doc.all_elements
+            if elem.metadata.get("llm_fallback_used")
+        )
+        from collections import Counter
+        pt_counter: Counter[str] = Counter()
+        for p in doc.pages:
+            pt_counter[p.page_type.value] += 1
+
+        return ParseResult(
+            markdown=markdown,
+            markdown_path=md_path,
+            page_count=len(doc.pages),
+            element_count=len(doc.all_elements),
+            api_calls=self._collect_api_calls(doc),
+            images_total=images_total,
+            images_skipped=images_skipped,
+            llm_fallback_hits=llm_fallback_hits,
+            page_types=dict(pt_counter),
+            warnings=list(doc.metadata.verification_warnings),
+        )
 
     def parse_to_document(self, path: str | Path) -> Document:
         """Parse and return the Document model (for programmatic use)."""
@@ -151,15 +190,22 @@ class Pipeline:
             )
             if scanned_pages > 0:
                 log.info("Running selective OCR (%d pages need it)", scanned_pages)
+                t0 = time.monotonic()
                 doc = self._ocr_builder.build(doc, path)
+                log.info("OCR done (%.1fs)", time.monotonic() - t0)
             else:
                 log.info("OCR: all pages native, skipping")
 
         # Step 4: Run processors
-        for processor in self._processors:
+        total_processors = len(self._processors)
+        for proc_idx, processor in enumerate(self._processors, 1):
             name = type(processor).__name__
-            log.info("Processing: %s", name)
+            log.info("[%d/%d] %s", proc_idx, total_processors, name)
+            t0 = time.monotonic()
             doc = processor.process(doc)
+            elapsed = time.monotonic() - t0
+            if elapsed > 1.0:
+                log.info("[%d/%d] %s done (%.1fs)", proc_idx, total_processors, name, elapsed)
 
             # After ImageProcessor classifies: extract images to disk and
             # run VLM descriptions.  When output_dir is None we still need

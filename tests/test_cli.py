@@ -36,6 +36,9 @@ def test_cmd_compare_warns_when_both_configs_omitted(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(EvalRunner, "evaluate_dir", fake_evaluate_dir)
+    # Ensure no global config interferes
+    import parserx.config.schema as _schema
+    monkeypatch.setattr(_schema, "_GLOBAL_CONFIG_DIR", tmp_path / "no_global")
 
     args = argparse.Namespace(
         ground_truth=tmp_path,

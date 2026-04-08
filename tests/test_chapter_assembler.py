@@ -44,7 +44,7 @@ def test_assemble_creates_files(tmp_path: Path):
     final_path = assembler.assemble(doc, tmp_path)
 
     assert final_path.exists()
-    assert (tmp_path / "final.md").exists()
+    assert (tmp_path / "output.md").exists()
     assert (tmp_path / "index.md").exists()
     assert (tmp_path / "chapters").is_dir()
 
@@ -85,7 +85,7 @@ def test_no_split_when_disabled(tmp_path: Path):
     assembler = ChapterAssembler(OutputConfig(chapter_split=False))
     assembler.assemble(doc, tmp_path)
 
-    assert (tmp_path / "final.md").exists()
+    assert (tmp_path / "output.md").exists()
     assert not (tmp_path / "chapters").exists()
 
 
@@ -122,8 +122,8 @@ def test_chapter_image_paths_are_rebased(tmp_path: Path):
                 f"Chapter file {ch.name} still has root-relative image path"
             )
 
-    # final.md should keep original images/ paths (not rebased)
-    final = (tmp_path / "final.md").read_text(encoding="utf-8")
+    # output.md should keep original images/ paths (not rebased)
+    final = (tmp_path / "output.md").read_text(encoding="utf-8")
     if "images/" in final:
         assert "](images/" in final
 

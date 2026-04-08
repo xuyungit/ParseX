@@ -1087,11 +1087,16 @@ class ImageProcessor:
 
         with ThreadPoolExecutor(max_workers=self._max_concurrent) as executor:
             futures = {executor.submit(_describe, task): task for task in tasks}
+            done_count = 0
+            total = len(futures)
             for future in as_completed(futures):
                 elem, description, calls_made = future.result()
                 if description:
                     elem.metadata["description"] = description
                 api_call_count += calls_made
+                done_count += 1
+                if total > 1:
+                    log.info("VLM %d/%d done (page %d)", done_count, total, elem.page_number)
 
         return api_call_count
 
