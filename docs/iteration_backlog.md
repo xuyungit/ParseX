@@ -1,12 +1,73 @@
 # Iteration Backlog
 
-Updated: 2026-04-08
+Updated: 2026-04-08 (DOCX pipeline fix)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: OCR-Scan Detection & VLM Path Simplification (2026-04-08)
+## Latest Iteration: DOCX Pipeline Fix & .doc Support (2026-04-08)
+
+### What Was Done
+
+**DOCX 流式文档处理路径修复 (`pipeline.py`)**
+- 根因：DOCX 元素 bbox 全为 `(0, 0, 0, 0)`（流式文档无页面几何信息），导致
+  ContentValueProcessor 的 `wide_sparse_banner`（`width >= page.width * 0.75`
+  → `0 >= 0` 始终 true）和 `image_cluster`（所有元素重叠在原点）惩罚全面误触发。
+  绝大多数文本被错误标记 `skip_render`，封面、目录、子标题、列表项等全部丢失。
+- 修复：pipeline 在 DOCX 模式下跳过三类几何依赖处理器
+  （`_GEOMETRY_PROCESSORS = (HeaderFooterProcessor, CodeBlockProcessor,
+  ContentValueProcessor)`），同时跳过无意义的 builder 步骤（MetadataBuilder
+  字体统计、OCRBuilder、ReadingOrderBuilder）。
+- DOCX 处理链简化为：Extract → Chapter → Table → Image → Formula → LineUnwrap
+  → TextClean → Render。
+- 设计原则：DOCX 是流式文档，有样式语义（标题、列表、表格），不需要几何推断。
+  提取原始信息 + 章节识别即可。
+
+**新增 .doc 格式支持 (`pipeline.py`)**
+- `_convert_doc_to_docx()`: 调用 LibreOffice headless (`soffice --convert-to docx`)
+  将 .doc 转换为 .docx，保留语义信息后走 DOCX 处理路径。
+- `source_path` 保留原始 .doc 路径以便追溯。
+- 不将 DOC/DOCX 转成 PDF 处理，因为转 PDF 会丢失样式语义信息（标题样式→几何位置），
+  反而增加处理复杂度。
+
+**新增评测样本 `text_report01`**
+- 来源：四川省重大技术装备首台套申请模板 Word 文档。
+- 包含封面、目录、多级子标题、表格、图片——典型的企业 Word 表格文档。
+- LlamaParse baseline 已校正（清除 HTML 表格、分页线、错误标题等 artifact）。
+
+### Measured Impact
+
+| Document | Edit Dist | Char F1 | Heading F1 | Table F1 | Warn | Notes |
+|----------|-----------|---------|------------|----------|------|-------|
+| text_report01 (before) | — | — | — | — | 1 | 701 chars output, volume drift warning |
+| text_report01 (after) | 0.097 | 0.955 | 0.714 | 1.000 | 0 | 1017 chars output, no warnings |
+
+**回归检查**：全量 ground_truth/ 回归正常，其他 PDF 文档指标无变化。
+
+### Key Insights
+
+1. **流式文档 vs 页面文档**：DOCX 和 PDF 是根本不同的文档模型。PDF 有页面几何，
+   适合基于 bbox 的处理器（页眉页脚检测、信息价值评分、等宽字体检测）。DOCX 是
+   流式的，有样式语义但无几何信息，应走简化路径。不应将 DOCX 转 PDF 来统一处理——
+   转换会丢失样式语义，引入额外的布局偏差。
+
+2. **ContentValueProcessor 的零值陷阱**：当 `page.width = 0` 时，
+   `width >= page.width * 0.75` 等条件始终为 true，所有元素都被惩罚。
+   这类"零值导致条件反转"的 bug 在依赖几何信号的模块中需要警惕。
+
+3. **.doc → .docx 是语义等价转换**：同为 Word 格式家族，LibreOffice 转换
+   保留标题样式、列表类型、表格结构等语义信息。而 .doc/.docx → PDF 是降维转换，
+   会丢失语义并引入不必要的几何复杂度。
+
+### Remaining Gaps
+
+- text_report01 封面区域的结构化格式（列表项 `- **标签**：` vs 纯文本行）取决于
+  Docling 提取层面的段落样式识别，非 pipeline 处理层面问题。
+- DOCX 图片提取为零（Docling 提取流程未输出嵌入图片），需排查 ImageExtractor
+  的 `extract_docx` 路径。
+
+## Previous Iteration: OCR-Scan Detection & VLM Path Simplification (2026-04-08)
 
 ### What Was Done
 
