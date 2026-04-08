@@ -15,6 +15,7 @@ from parserx.models.elements import (
     PageElement,
     PageType,
 )
+from parserx.processors.text_clean import normalize_fullwidth_ascii
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class PDFProvider:
                             italic=bool(flags & 2**1),  # bit 1 = italic
                         )
 
-                line_text = "".join(line_parts)
+                line_text = normalize_fullwidth_ascii("".join(line_parts))
                 if line_text.strip():
                     lines_text.append(line_text)
 
@@ -171,7 +172,11 @@ class PDFProvider:
 
             # Build markdown table
             for row_idx, row in enumerate(extracted):
-                cells = [str(cell).replace("\n", " ").strip() if cell else "" for cell in row]
+                cells = [
+                    normalize_fullwidth_ascii(str(cell).replace("\n", " ").strip())
+                    if cell else ""
+                    for cell in row
+                ]
                 md_lines.append("| " + " | ".join(cells) + " |")
                 if row_idx == 0:
                     md_lines.append("|" + "|".join(["---"] * len(cells)) + "|")
@@ -280,6 +285,23 @@ class PDFProvider:
 
         if total_text_chars < 200 and image_coverage > 0.3:
             return PageType.MIXED
+
+        # Detect garbled text from fonts with missing encoding tables
+        # (e.g. CFF Type1 fonts without ToUnicode CMap).  PyMuPDF returns
+        # U+FFFD for unmappable characters.  A high ratio means the page
+        # needs OCR to recover the lost text.
+        #
+        # Use SCANNED (not MIXED) so OCR fully replaces native text.
+        # MIXED would only add missing text via dedup, keeping the garbled
+        # native elements.  Since the page is vector-rendered, OCR on
+        # the rasterized image should produce good results for all text.
+        if total_text_chars > 0:
+            replacement_chars = sum(
+                e.content.count("\ufffd") for e in text_elements
+            )
+            if replacement_chars / total_text_chars > 0.05:
+                return PageType.SCANNED
+
         return PageType.NATIVE
 
     @staticmethod
