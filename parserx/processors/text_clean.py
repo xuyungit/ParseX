@@ -120,6 +120,22 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r"[^\S\n]+", " ", text)
 
 
+# ── LaTeX prime simplification ────────────────────────────────────────
+
+# OCR engines (e.g. PaddleOCR) often produce verbose prime notation:
+#   x^{^{\prime}}  or  x^{\prime}  instead of  x'
+# Both render identically in LaTeX.  Simplify for readability.
+_RE_DOUBLE_PRIME = re.compile(r"\^\{\^\{\\prime\}\}")   # ^{^{\prime}} → '
+_RE_SINGLE_PRIME = re.compile(r"\^\{\\prime\}")          # ^{\prime} → '
+
+
+def simplify_latex_primes(text: str) -> str:
+    """Simplify verbose LaTeX prime notation to apostrophe form."""
+    text = _RE_DOUBLE_PRIME.sub("'", text)
+    text = _RE_SINGLE_PRIME.sub("'", text)
+    return text
+
+
 class TextCleanProcessor:
     """Clean text artifacts from extracted content."""
 
@@ -141,5 +157,6 @@ class TextCleanProcessor:
             text = normalize_fullwidth_ascii(text)
         if self._config.fix_cjk_spaces:
             text = fix_chinese_spaces(text)
+        text = simplify_latex_primes(text)
         text = normalize_whitespace(text)
         return text.strip()

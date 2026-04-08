@@ -6,6 +6,7 @@ from parserx.processors.text_clean import (
     fix_chinese_spaces,
     normalize_fullwidth_ascii,
     normalize_whitespace,
+    simplify_latex_primes,
 )
 
 
@@ -75,3 +76,22 @@ def test_normalize_fullwidth_mixed():
     assert normalize_fullwidth_ascii("ＤＩＩＬＳＲ") == "DIILSR"
     # Chinese text with interspersed full-width ASCII
     assert normalize_fullwidth_ascii("式（１６），（１７）") == "式（16），（17）"
+
+
+# ── LaTeX prime simplification ────────────────────────────────────────
+
+
+def test_simplify_latex_double_prime():
+    assert simplify_latex_primes(r"x^{^{\prime}}") == "x'"
+    assert simplify_latex_primes(r"(x^{^{\prime}})^{3}") == "(x')^{3}"
+
+
+def test_simplify_latex_single_prime():
+    assert simplify_latex_primes(r"x^{\prime}") == "x'"
+    assert simplify_latex_primes(r"z^{\prime}EI") == "z'EI"
+
+
+def test_simplify_latex_preserves_other():
+    # Normal superscripts should not be affected
+    assert simplify_latex_primes(r"x^{2}") == r"x^{2}"
+    assert simplify_latex_primes("no primes here") == "no primes here"
