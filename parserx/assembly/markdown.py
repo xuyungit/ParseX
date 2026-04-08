@@ -82,7 +82,9 @@ class MarkdownRenderer:
         return element.content
 
     def _render_text(self, element: PageElement) -> str:
-        """Render text element, applying heading level if detected."""
+        """Render text element, applying heading level or code fence if detected."""
+        if element.metadata.get("code_block"):
+            return f"```\n{element.content}\n```"
         heading_level = element.metadata.get("heading_level")
         if heading_level:
             prefix = "#" * heading_level

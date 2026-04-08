@@ -225,6 +225,10 @@ class ChapterProcessor:
                 if elem.type != "text":
                     continue
 
+                # Skip code blocks (detected by CodeBlockProcessor)
+                if elem.metadata.get("code_block"):
+                    continue
+
                 # Skip retained page-identity elements (header/footer kept on first page)
                 if elem.metadata.get("retained_page_identity"):
                     continue
@@ -534,6 +538,10 @@ class ChapterProcessor:
             idx += direction
         return ""
 
+    # Maximum number of LLM-fallback-only headings at the same level
+    # before we suspect they are really a numbered list, not headings.
+    _FALLBACK_DENSITY_LIMIT = 8
+
     def _apply_llm_fallback(
         self,
         doc: Document,
@@ -542,7 +550,9 @@ class ChapterProcessor:
         if not self._config.llm_fallback or self._llm is None or not candidates:
             return 0
 
-        accepted = 0
+        # Collect all accepted predictions first, then apply density guard.
+        pending: list[tuple[PageElement, int]] = []  # (element, level)
+
         for batch in self._iter_candidate_batches(candidates, _FALLBACK_MAX_CANDIDATES):
             predictions, attempted = self._classify_candidates(batch, doc)
             if attempted:
@@ -559,10 +569,35 @@ class ChapterProcessor:
                 if level == 0 or elem.metadata.get("heading_level"):
                     continue
 
-                elem.metadata["heading_level"] = level
-                elem.metadata["llm_fallback_used"] = True
-                elem.metadata["llm_heading_confirmed"] = True
-                accepted += 1
+                pending.append((elem, level))
+
+        # Density guard: if too many fallback headings appear at the same
+        # level, they are likely numbered list items, not real headings.
+        level_counts: dict[int, int] = {}
+        for _, level in pending:
+            level_counts[level] = level_counts.get(level, 0) + 1
+
+        suppressed_levels: set[int] = set()
+        for level, count in level_counts.items():
+            if count > self._FALLBACK_DENSITY_LIMIT:
+                suppressed_levels.add(level)
+
+        if suppressed_levels:
+            log.info(
+                "Heading density guard: suppressing %d fallback heading(s) "
+                "at level(s) %s (likely numbered list)",
+                sum(c for lv, c in level_counts.items() if lv in suppressed_levels),
+                sorted(suppressed_levels),
+            )
+
+        accepted = 0
+        for elem, level in pending:
+            if level in suppressed_levels:
+                continue
+            elem.metadata["heading_level"] = level
+            elem.metadata["llm_fallback_used"] = True
+            elem.metadata["llm_heading_confirmed"] = True
+            accepted += 1
 
         return accepted
 

@@ -86,28 +86,24 @@ re-deriving priorities each time.
   recover this without page rendering + VLM.
 - 4 pages of JTG 3362 not detected as OCR-scan (image coverage <50% on those
   pages — e.g., cover page with partial scan image).
-- `text_code_block`: Code block / inline code detection missing; heading
-  over-detection on numbered lists. Details:
-  1. **No code block detection**: Commands in Monaco/Menlo monospace fonts
-     (11.2pt) rendered as plain text instead of fenced code blocks. E.g.,
-     `ceph osd set nobackfill`, `docker stop ceph_osd_6`, multi-line fstab
-     entries, and `parted`/`kolla-ansible` commands all lack ``` fencing.
-  2. **Heading over-detection**: 13 numbered list items (steps 1–13) detected
-     as `##` headings via LLM fallback. These are ordered list items, not
-     section headings. The document has only one true heading ("换盘步骤").
-  3. **Shell comments misread as Markdown headings**: Lines like
-     `# 参考命令如下` inside code blocks are shell comments, but get rendered
-     as `#` Markdown headings because code block boundaries aren't detected.
-  4. **Inline code not detected**: Commands embedded mid-sentence (e.g.,
-     `docker stop ceph_osd_6` in "停止osd容器，`docker stop ceph_osd_6`")
-     should be inline code but appear as plain text.
-  5. **Sub-item merging**: Roman numeral sub-items (i/ii/iii under step 8)
-     collapsed into a single line.
-  Root cause: ParserX currently has no mechanism to detect monospace-font
-  regions and emit them as code blocks or inline code. The font signal is
-  clear (Monaco 11.2pt / Menlo-Regular 11.2pt vs body PingFangSC 12.8pt),
-  but no processor acts on it. This is a **new capability** requirement,
-  not a bug in existing rules.
+- `text_code_block`: Code block detection missing, causing cascading failures.
+  **Severe issues:**
+  1. **Shell comments `#` become H1 headings**: Lines like `# 参考命令如下`
+     are shell comments inside code regions, but rendered as Markdown `#`
+     headings — completely wrong semantics.
+  2. **Line breaks lost in code regions**: Multi-line code gets merged into
+     single lines by LineUnwrapProcessor. E.g., three separate `ceph osd set`
+     commands become one line; roman numeral sub-items (i/ii/iii) collapse;
+     comment + command + comment all concatenated.
+  **Minor issues:**
+  3. Heading over-detection on numbered list items (not critical).
+  4. Inline code not detected (commands mid-sentence lack backticks).
+  **Root cause**: All severe issues trace to one gap — ParserX has no
+  mechanism to detect monospace-font regions (Monaco 11.2pt / Menlo-Regular
+  11.2pt vs body PingFangSC 12.8pt) and emit them as fenced code blocks.
+  If code regions were identified, LineUnwrapProcessor would skip them and
+  `#` comments would stay inside fences. This is a **new capability**
+  requirement, not a bug in existing rules.
 
 ## Previous Iteration: Formula Format Normalization (2026-04-07)
 
