@@ -38,6 +38,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "fonttools>=4.62.1",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
 ]
