@@ -21,6 +21,7 @@ from parserx.models.elements import Document
 from parserx.models.results import ParseResult
 from parserx.processors.base import Processor
 from parserx.processors.chapter import ChapterProcessor
+from parserx.processors.code_block import CodeBlockProcessor
 from parserx.processors.content_value import ContentValueProcessor
 from parserx.processors.formula import FormulaProcessor
 from parserx.processors.header_footer import HeaderFooterProcessor
@@ -352,8 +353,8 @@ class Pipeline:
     def _build_processors(self) -> list[Processor]:
         """Build the processor chain based on config.
 
-        Order: HeaderFooter → Chapter → Table → Image(+VLM) → Formula → LineUnwrap
-        → TextClean → ContentValue.
+        Order: HeaderFooter → CodeBlock → Chapter → Table → Image(+VLM) → Formula
+        → LineUnwrap → TextClean → ContentValue.
         """
         processors: list[Processor] = []
 
@@ -362,6 +363,9 @@ class Pipeline:
                 config=self._config.processors.header_footer,
                 metadata_config=self._config.builders.metadata,
             ))
+
+        if self._config.processors.code_block.enabled:
+            processors.append(CodeBlockProcessor(self._config.processors.code_block))
 
         if self._config.processors.chapter.enabled:
             processors.append(ChapterProcessor(

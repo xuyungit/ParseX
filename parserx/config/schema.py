@@ -95,6 +95,10 @@ class FormulaProcessorConfig(BaseModel):
     vlm_max_tokens: int = 1200
 
 
+class CodeBlockConfig(BaseModel):
+    enabled: bool = True
+
+
 class LineUnwrapConfig(BaseModel):
     enabled: bool = True
     llm_fallback: bool = False
@@ -121,6 +125,7 @@ class ReadingOrderConfig(BaseModel):
 
 class ProcessorsConfig(BaseModel):
     header_footer: ProcessorToggle = Field(default_factory=ProcessorToggle)
+    code_block: CodeBlockConfig = Field(default_factory=CodeBlockConfig)
     chapter: ProcessorToggle = Field(default_factory=ProcessorToggle)
     table: TableProcessorConfig = Field(default_factory=TableProcessorConfig)
     image: ImageProcessorConfig = Field(default_factory=ImageProcessorConfig)

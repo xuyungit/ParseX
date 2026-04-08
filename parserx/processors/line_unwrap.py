@@ -175,6 +175,7 @@ def _should_merge_elements(
     b: PageElement,
     average_line_length: float,
     typical_gap: float | None,
+    page_right_margin: float | None = None,
 ) -> bool:
     """Decide whether adjacent text element *b* is a continuation of *a*."""
     if a.type != "text" or b.type != "text":
@@ -185,6 +186,8 @@ def _should_merge_elements(
         return False
     if a.metadata.get("skip_render") or b.metadata.get("skip_render"):
         return False
+    if a.metadata.get("code_block") or b.metadata.get("code_block"):
+        return False
     if _font_key(a.font) != _font_key(b.font):
         return False
 
@@ -192,6 +195,12 @@ def _should_merge_elements(
     if typical_gap is not None and typical_gap > 0:
         gap = _vertical_gap(a, b)
         if gap is not None and gap > typical_gap * 2.0:
+            return False
+
+    # Width guard: if element *a* ends well before the right margin,
+    # the line break is intentional (not a soft wrap).
+    if page_right_margin is not None and page_right_margin > 0 and _has_bbox(a):
+        if a.bbox[2] < page_right_margin * 0.85:
             return False
 
     return _should_merge_lines(a.content, b.content, average_line_length)
@@ -210,6 +219,18 @@ def _merge_element_into(target: PageElement, source: PageElement) -> None:
         )
 
 
+def _estimate_page_right_margin(elements: list[PageElement]) -> float | None:
+    """Estimate the right margin of the page from text element bboxes."""
+    right_edges: list[float] = []
+    for elem in elements:
+        if elem.type == "text" and _has_bbox(elem):
+            right_edges.append(elem.bbox[2])
+    if len(right_edges) < 2:
+        return None
+    # Use the maximum right edge as the page right margin estimate.
+    return max(right_edges)
+
+
 def _merge_adjacent_elements(
     elements: list[PageElement],
     average_line_length: float,
@@ -219,12 +240,16 @@ def _merge_adjacent_elements(
     if not elements:
         return elements
 
+    page_right_margin = _estimate_page_right_margin(elements)
+
     result: list[PageElement] = []
     current = elements[0]
 
     for i in range(1, len(elements)):
         nxt = elements[i]
-        if _should_merge_elements(current, nxt, average_line_length, typical_gap):
+        if _should_merge_elements(
+            current, nxt, average_line_length, typical_gap, page_right_margin,
+        ):
             _merge_element_into(current, nxt)
         else:
             result.append(current)
@@ -265,6 +290,8 @@ class LineUnwrapProcessor:
                 if element.type != "text":
                     continue
                 if element.metadata.get("heading_level"):
+                    continue
+                if element.metadata.get("code_block"):
                     continue
                 element.content = _unwrap_text_block(element.content, average_line_length)
 
