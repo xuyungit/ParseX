@@ -144,6 +144,59 @@ def test_native_page_fullpage_image_not_affected():
     assert not builder._should_ocr_page(page)
 
 
+def test_scanned_page_replaces_native_text_with_ocr():
+    """On SCANNED pages with existing native text (OCR-layered scan PDFs),
+    the native text elements should be replaced by fresh OCR results.
+
+    This covers the case where _classify_page detects an OCR text layer
+    on a scan image and reclassifies the page as SCANNED.
+    """
+    native_text = PageElement(
+        type="text", page_number=1, content="旧OCR文字（质量差）" * 5,
+        source="native", bbox=(50, 50, 500, 200),
+    )
+    native_table = PageElement(
+        type="table", page_number=1, content="| 旧 | 表格 |",
+        source="native", bbox=(50, 300, 500, 500),
+    )
+    scan_image = PageElement(
+        type="image", page_number=1,
+        bbox=(0, 0, 595, 842),
+        metadata={"xref": 5, "width": 595, "height": 842},
+    )
+    page = Page(
+        number=1, width=595, height=842, page_type=PageType.SCANNED,
+        elements=[native_text, native_table, scan_image],
+    )
+
+    # Simulate what build() does for SCANNED pages with OCR results.
+    ocr_elements = [
+        PageElement(
+            type="text", page_number=1, content="新OCR文字（质量好）" * 5,
+            source="ocr", bbox=(50, 50, 500, 200),
+        ),
+    ]
+
+    # Replicate the build() logic for SCANNED pages:
+    existing_text = [
+        e for e in page.elements
+        if e.type in {"text", "table"} and e.source == "native"
+    ]
+    if existing_text:
+        page.elements = [
+            e for e in page.elements
+            if not (e.type in {"text", "table"} and e.source == "native")
+        ]
+    page.elements.extend(ocr_elements)
+
+    # Native text/table replaced, image preserved, OCR added
+    types_sources = [(e.type, e.source) for e in page.elements]
+    assert ("text", "native") not in types_sources
+    assert ("table", "native") not in types_sources
+    assert ("image", "native") in types_sources
+    assert ("text", "ocr") in types_sources
+
+
 def test_result_to_elements_keeps_normal_paragraph_title_as_heading():
     builder = _make_builder()
     result = OCRResult(

@@ -234,6 +234,12 @@ class PDFProvider:
         """Classify page as native, scanned, or mixed.
 
         Per-page classification (not per-document) addresses P15.
+
+        Detects OCR-layered scanned PDFs by checking spatial
+        relationships: if a dominant image covers most of the page
+        and most text characters are located *inside* that image's
+        bounding box, the page is a scan with an overlaid OCR text
+        layer — not a genuine native PDF.
         """
         total_text_chars = sum(len(e.content) for e in text_elements)
         page_area = fitz_page.rect.width * fitz_page.rect.height
@@ -243,18 +249,55 @@ class PDFProvider:
 
         # Check if large images cover most of the page (likely scanned)
         total_image_area = 0.0
+        dominant_image: PageElement | None = None
+        dominant_image_area = 0.0
         for img in image_elements:
             img_w = img.bbox[2] - img.bbox[0]
             img_h = img.bbox[3] - img.bbox[1]
-            total_image_area += img_w * img_h
+            area = img_w * img_h
+            total_image_area += area
+            if area > dominant_image_area:
+                dominant_image_area = area
+                dominant_image = img
 
         image_coverage = total_image_area / page_area
 
         if total_text_chars < 50 and image_coverage > 0.5:
             return PageType.SCANNED
+
+        # Detect OCR text layer on scanned pages: a dominant image
+        # covers >50% of the page and >70% of text chars sit inside it.
+        if (
+            dominant_image is not None
+            and dominant_image_area / page_area > 0.5
+            and total_text_chars > 0
+        ):
+            chars_inside = self._count_chars_inside_bbox(
+                text_elements, dominant_image.bbox,
+            )
+            if chars_inside / total_text_chars > 0.7:
+                return PageType.SCANNED
+
         if total_text_chars < 200 and image_coverage > 0.3:
             return PageType.MIXED
         return PageType.NATIVE
+
+    @staticmethod
+    def _count_chars_inside_bbox(
+        text_elements: list[PageElement],
+        bbox: tuple[float, float, float, float],
+    ) -> int:
+        """Count how many text characters are spatially inside a bbox."""
+        bx0, by0, bx1, by1 = bbox
+        inside = 0
+        for elem in text_elements:
+            # Use element bbox center to determine containment.
+            ex0, ey0, ex1, ey1 = elem.bbox
+            cx = (ex0 + ex1) / 2
+            cy = (ey0 + ey1) / 2
+            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                inside += len(elem.content)
+        return inside
 
     # ------------------------------------------------------------------
     # Deduplication helpers
