@@ -203,3 +203,83 @@ def test_parse_result_separates_llm_api_calls_from_fallback_hits(tmp_path: Path,
 
     assert result.api_calls["llm"] == 1
     assert result.llm_fallback_hits == 2
+
+
+# ── Quality check (formula fragmentation detection) ──────────────────
+
+
+def test_quality_check_flags_formula_pages(monkeypatch):
+    """Pages with formula fragments should be reclassified to SCANNED."""
+    from parserx.models.elements import Document, Page, PageElement, PageType
+
+    # Simulate a page with formula-like fragmented text (many short lines)
+    formula_lines = "\n".join(
+        ["EIδ11=(x", "′)", "3", "12+l3", "48-(x", "′+m)", "3", "12"]
+        + ["正常文本行" * 5] * 3  # some normal lines to pass element count
+    )
+    elems = [
+        PageElement(type="text", content=formula_lines, bbox=(0, 0, 300, 400)),
+    ] + [
+        PageElement(type="text", content=f"短{i}", bbox=(0, i * 10, 100, i * 10 + 10))
+        for i in range(15)  # ensure > 10 text elements
+    ]
+    page = Page(number=2, width=595, height=842, elements=elems, page_type=PageType.NATIVE)
+    doc = Document(pages=[page])
+
+    # Mock LLM to return formula detection
+    class MockLLM:
+        def complete(self, system, user, *, temperature=0.0, max_tokens=64):
+            return '{"has_formula_fragments": true}'
+
+    pipeline = _pipeline_no_ocr()
+    monkeypatch.setattr(pipeline, "_llm_service", MockLLM())
+
+    pipeline._check_page_quality(doc)
+
+    assert doc.pages[0].page_type == PageType.SCANNED
+
+
+def test_quality_check_keeps_normal_pages(monkeypatch):
+    """Normal text pages should stay NATIVE."""
+    from parserx.models.elements import Document, Page, PageElement, PageType
+
+    # Normal page with long text lines
+    elems = [
+        PageElement(
+            type="text",
+            content="这是一段正常的中文文本，没有公式碎片化的问题。" * 5,
+            bbox=(0, i * 50, 500, i * 50 + 40),
+        )
+        for i in range(12)
+    ]
+    page = Page(number=1, width=595, height=842, elements=elems, page_type=PageType.NATIVE)
+    doc = Document(pages=[page])
+
+    class MockLLM:
+        def complete(self, system, user, *, temperature=0.0, max_tokens=64):
+            return '{"has_formula_fragments": false}'
+
+    pipeline = _pipeline_no_ocr()
+    monkeypatch.setattr(pipeline, "_llm_service", MockLLM())
+
+    pipeline._check_page_quality(doc)
+
+    assert doc.pages[0].page_type == PageType.NATIVE
+
+
+def test_quality_check_skips_without_llm():
+    """No crash when LLM service is not configured."""
+    from parserx.models.elements import Document, Page, PageElement, PageType
+
+    elems = [
+        PageElement(type="text", content="x\n1\n2", bbox=(0, 0, 100, 100))
+        for _ in range(12)
+    ]
+    page = Page(number=1, width=595, height=842, elements=elems, page_type=PageType.NATIVE)
+    doc = Document(pages=[page])
+
+    pipeline = _pipeline_no_ocr()
+    # _llm_service is None by default (no credentials)
+    pipeline._check_page_quality(doc)
+
+    assert doc.pages[0].page_type == PageType.NATIVE

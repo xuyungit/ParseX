@@ -18,7 +18,7 @@ from parserx.builders.metadata import MetadataBuilder
 from parserx.builders.reading_order import ReadingOrderBuilder
 from parserx.builders.ocr import OCRBuilder
 from parserx.config.schema import ParserXConfig
-from parserx.models.elements import Document
+from parserx.models.elements import Document, PageType
 from parserx.models.results import ParseResult
 from parserx.processors.base import Processor
 from parserx.processors.chapter import ChapterProcessor
@@ -201,6 +201,14 @@ class Pipeline:
                     len(doc.metadata.numbering_patterns),
                 )
 
+        # Step 2.5: LLM quality check — detect formula fragmentation (PDF only)
+        if (
+            self._llm_service
+            and not is_docx
+            and self._config.builders.quality_check.enabled
+        ):
+            self._check_page_quality(doc)
+
         # Step 3: OCR (PDF only)
         if self._ocr_builder and not is_docx:
             scanned_pages = sum(
@@ -371,6 +379,98 @@ class Pipeline:
             cfg,
             skip_scan_image_marking=self._config.processors.image.vlm_refine_all_ocr,
         )
+
+    # ------------------------------------------------------------------
+    # LLM-based page quality check
+    # ------------------------------------------------------------------
+
+    _QUALITY_CHECK_SYSTEM = """\
+You are a document extraction quality checker. Analyze the extracted text
+from a single PDF page and determine whether it contains **fragmented
+mathematical formulas**.
+
+Fragmentation symptoms:
+- Fraction numerators and denominators appear on separate lines
+- Isolated single digits, operators (+, -, =, ×), or parentheses
+- Variable names and their superscripts/subscripts split across lines
+- Equation numbers like (1), (2) appearing as isolated fragments
+
+If the page text looks like normal prose, tables, code, or reference
+lists, answer false — even if it contains some short lines.
+
+Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_fragments": false}
+"""
+
+    def _check_page_quality(self, doc: Document) -> None:
+        """Check NATIVE pages for formula fragmentation via LLM.
+
+        Pages flagged as fragmented are reclassified to SCANNED so the
+        OCR builder will fully replace their text.
+        """
+        cfg = self._config.builders.quality_check
+        flagged = 0
+
+        for page in doc.pages:
+            if page.page_type != PageType.NATIVE:
+                continue
+
+            # Cheap pre-filter: skip pages with few text elements
+            text_elems = [e for e in page.elements if e.type == "text"]
+            if len(text_elems) < 10:
+                continue
+
+            # Count lines and short lines
+            total_lines = 0
+            short_lines = 0
+            for elem in text_elems:
+                for line in elem.content.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    total_lines += 1
+                    if len(line) <= 5:
+                        short_lines += 1
+
+            if total_lines == 0:
+                continue
+
+            # Pre-filter: only send to LLM if short-line ratio exceeds
+            # a loose threshold (avoids LLM calls on clean pages).
+            if short_lines / total_lines < cfg.pre_filter_short_ratio:
+                continue
+
+            # Build text summary for LLM
+            text_parts = [e.content for e in text_elems]
+            summary = "\n".join(text_parts)[: cfg.max_text_chars]
+
+            try:
+                response = self._llm_service.complete(
+                    self._QUALITY_CHECK_SYSTEM,
+                    summary,
+                    temperature=0.0,
+                    max_tokens=64,
+                )
+                # Robust check: parse JSON or fall back to substring match
+                has_fragments = False
+                try:
+                    import json
+                    result = json.loads(response)
+                    has_fragments = bool(result.get("has_formula_fragments"))
+                except (json.JSONDecodeError, AttributeError):
+                    has_fragments = "true" in response.lower()
+
+                if has_fragments:
+                    page.page_type = PageType.SCANNED
+                    flagged += 1
+                    log.info(
+                        "Quality check: page %d flagged as formula-fragmented → OCR",
+                        page.number,
+                    )
+            except Exception as exc:
+                log.debug("Quality check LLM call failed for page %d: %s", page.number, exc)
+
+        if flagged:
+            log.info("Quality check: %d page(s) reclassified for OCR", flagged)
 
     def _create_llm_service(self):
         """Create LLM service if configured with endpoint and key."""
