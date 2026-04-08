@@ -168,28 +168,39 @@ class Pipeline:
         self._verify_all(doc)
         return doc
 
+    # Processors that rely on bounding-box geometry and are meaningless for
+    # flow-based DOCX documents (no page coordinates).
+    _GEOMETRY_PROCESSORS = (
+        HeaderFooterProcessor,
+        CodeBlockProcessor,
+        ContentValueProcessor,
+    )
+
     def _run_pipeline(self, path: Path, output_dir: Path | None) -> Document:
         """Execute the full pipeline: extract → build → process."""
+        is_docx = path.suffix.lower() in (".docx", ".doc")
+
         # Step 1: Extract
         log.info("Extracting: %s", path.name)
         doc = self._extract(path)
         log.info("Extracted %d pages, %d elements", len(doc.pages), len(doc.all_elements))
 
-        # Step 2: Build metadata
-        log.info("Building metadata")
-        doc = self._metadata_builder.build(doc)
-        if doc.metadata.font_stats.body_font.size > 0:
-            body = doc.metadata.font_stats.body_font
-            log.info(
-                "Body font: %s %.1fpt%s, %d heading candidate(s), %d numbering pattern(s)",
-                body.name, body.size,
-                " bold" if body.bold else "",
-                len(doc.metadata.font_stats.heading_candidates),
-                len(doc.metadata.numbering_patterns),
-            )
+        # Step 2: Build metadata (font stats are meaningful for PDF only)
+        if not is_docx:
+            log.info("Building metadata")
+            doc = self._metadata_builder.build(doc)
+            if doc.metadata.font_stats.body_font.size > 0:
+                body = doc.metadata.font_stats.body_font
+                log.info(
+                    "Body font: %s %.1fpt%s, %d heading candidate(s), %d numbering pattern(s)",
+                    body.name, body.size,
+                    " bold" if body.bold else "",
+                    len(doc.metadata.font_stats.heading_candidates),
+                    len(doc.metadata.numbering_patterns),
+                )
 
-        # Step 3: OCR (selective)
-        if self._ocr_builder and path.suffix.lower() == ".pdf":
+        # Step 3: OCR (PDF only)
+        if self._ocr_builder and not is_docx:
             scanned_pages = sum(
                 1 for p in doc.pages if p.page_type.value in ("scanned", "mixed")
             )
@@ -201,13 +212,23 @@ class Pipeline:
             else:
                 log.info("OCR: all pages native, skipping")
 
-        # Step 3.5: Reading order (column detection + reorder)
-        if self._reading_order_builder:
+        # Step 3.5: Reading order — column detection uses geometry (PDF only)
+        if self._reading_order_builder and not is_docx:
             doc = self._reading_order_builder.build(doc)
 
-        # Step 4: Run processors
-        total_processors = len(self._processors)
-        for proc_idx, processor in enumerate(self._processors, 1):
+        # Step 4: Run processors (skip geometry-dependent ones for DOCX)
+        processors = self._processors
+        if is_docx:
+            processors = [
+                p for p in processors
+                if not isinstance(p, self._GEOMETRY_PROCESSORS)
+            ]
+            log.info(
+                "DOCX mode: running %d processors (skipped geometry-dependent)",
+                len(processors),
+            )
+        total_processors = len(processors)
+        for proc_idx, processor in enumerate(processors, 1):
             name = type(processor).__name__
             log.info("[%d/%d] %s", proc_idx, total_processors, name)
             t0 = time.monotonic()
@@ -249,7 +270,7 @@ class Pipeline:
         log.info("Extracting images to %s", images_dir / "images")
         if suffix == ".pdf":
             doc = self._image_extractor.extract(doc, source, images_dir)
-        elif suffix == ".docx":
+        elif suffix in (".docx", ".doc"):
             doc = self._image_extractor.extract_docx(doc, source, images_dir)
 
         if self._vlm_service and self._config.processors.image.vlm_description:
@@ -269,7 +290,46 @@ class Pipeline:
             return PDFProvider().extract(path)
         if suffix == ".docx":
             return DOCXProvider().extract(path)
+        if suffix == ".doc":
+            docx_path = self._convert_doc_to_docx(path)
+            doc = DOCXProvider().extract(docx_path)
+            doc.metadata.source_path = str(path)
+            return doc
         raise ValueError(f"Unsupported format: {suffix}")
+
+    @staticmethod
+    def _convert_doc_to_docx(path: Path) -> Path:
+        """Convert .doc to .docx using LibreOffice."""
+        import subprocess
+
+        out_dir = path.parent
+        log.info("Converting .doc to .docx: %s", path.name)
+        result = subprocess.run(
+            [
+                "soffice",
+                "--headless",
+                "--convert-to",
+                "docx",
+                "--outdir",
+                str(out_dir),
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                f"LibreOffice conversion failed: {detail or 'exit ' + str(result.returncode)}"
+            )
+        docx_path = out_dir / (path.stem + ".docx")
+        if not docx_path.exists():
+            raise FileNotFoundError(
+                f"LibreOffice conversion produced no output: {docx_path}"
+            )
+        log.info("Converted: %s", docx_path.name)
+        return docx_path
 
     def _create_vlm_service(self):
         """Create VLM service if configured with endpoint and key."""

@@ -3,15 +3,20 @@
 Standard process for adding a new test document to `ground_truth/` and
 establishing its evaluation baseline.
 
-## 1. Add the source PDF
+## 1. Add the source document
 
 ```bash
 mkdir -p ground_truth/<doc_name>
 cp /path/to/source.pdf ground_truth/<doc_name>/input.pdf
+# or for Word documents:
+cp /path/to/source.docx ground_truth/<doc_name>/input.docx
 ```
 
+Supported formats: `.pdf`, `.docx`, `.doc` (`.doc` is auto-converted to
+`.docx` via LibreOffice at parse time).
+
 Naming convention: `<type>_<description>`, e.g. `text_code_block`,
-`paper01`, `ocr_scan_jtg3362`.
+`paper01`, `ocr_scan_jtg3362`, `text_report01`.
 
 ## 2. Generate expected.md baseline
 
@@ -46,8 +51,10 @@ Save the corrected file as `ground_truth/<doc_name>/expected.md`.
 ## 3. Run ParserX and compare
 
 ```bash
-# Run ParserX
+# Run ParserX (works with .pdf, .docx, or .doc)
 psx parse ground_truth/<doc_name>/input.pdf --out /tmp/<doc_name>_parserx
+# or:
+psx parse ground_truth/<doc_name>/input.docx --out /tmp/<doc_name>_parserx
 
 # Run eval (compares output against expected.md)
 psx eval ground_truth/<doc_name>
@@ -55,6 +62,12 @@ psx eval ground_truth/<doc_name>
 # If needed, inspect the output directly
 cat /tmp/<doc_name>_parserx/output.md
 ```
+
+Note: For DOCX documents, the pipeline automatically skips geometry-dependent
+processors (HeaderFooter, CodeBlock, ContentValue) and builders (Metadata
+font stats, OCR, ReadingOrder) since DOCX is a flow-based format with no
+page geometry. The simplified chain is: Extract → Chapter → Table → Image →
+Formula → LineUnwrap → TextClean → Render.
 
 ## 4. Analyze issues and record in backlog
 
@@ -91,11 +104,11 @@ Compare per-document metrics against the last recorded baseline in
 
 ## Notes
 
-- `ground_truth/` is gitignored (contains potentially large PDFs). Only
-  `expected.md` files may be committed if desired; PDFs should be shared
-  via other means.
+- `ground_truth/` is gitignored (contains potentially large PDFs/DOCX files).
+  Only `expected.md` files may be committed if desired; source documents
+  should be shared via other means.
 - LlamaParse is used as the baseline generator because it generally
-  produces good Markdown from diverse PDF types. It is NOT treated as
-  ground truth — it is the starting point for manual correction.
+  produces good Markdown from diverse PDF and DOCX types. It is NOT treated
+  as ground truth — it is the starting point for manual correction.
 - The eval metrics (edit_dist, char_f1, heading_f1, table_cell_f1) are
   computed against `expected.md`. Lower edit_dist and higher F1 are better.
