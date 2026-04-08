@@ -213,6 +213,7 @@ class VLMReviewProcessor:
         if page.page_type in (PageType.SCANNED, PageType.MIXED):
             return True
 
+
         # Review native pages with suspiciously little text —
         # may indicate vector-rendered text loss.
         text_chars = sum(

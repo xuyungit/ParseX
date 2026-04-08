@@ -108,6 +108,7 @@ class TextCleanConfig(BaseModel):
     enabled: bool = True
     fix_cjk_spaces: bool = True
     fix_encoding: bool = True
+    normalize_fullwidth: bool = True
 
 
 class ContentValueConfig(ProcessorToggle):

@@ -148,6 +148,7 @@ def test_skip_native_with_sufficient_text():
     assert len(selected) == 0
 
 
+
 def test_review_all_pages_override():
     proc = VLMReviewProcessor(config=VLMReviewConfig(review_all_pages=True))
     doc = Document(pages=[_make_native_page(1), _make_native_page(2)])

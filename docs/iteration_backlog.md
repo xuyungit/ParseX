@@ -79,6 +79,50 @@ re-deriving priorities each time.
 - No warning integration yet for VLM review stats (correction count,
   review failures).
 
+## Baseline: paper_chn01 (2026-04-08)
+
+Initial baseline: edit_dist=0.874, char_f1=0.295, heading_f1=0.08, table_cell_f1=0.00.
+After fixes: **edit_dist=0.650, char_f1=0.723, heading_f1=0.22**.
+
+### What Was Done
+
+**Full-width → half-width ASCII normalization** (`processors/text_clean.py`)
+- New `normalize_fullwidth_ascii()` function using `str.maketrans`: converts
+  full-width digits (FF10-FF19), letters (FF21-FF3A, FF41-FF5A), and selected
+  math/bracket symbols to half-width. Preserves Chinese punctuation（，。：；！？）.
+- Applied at extraction time in `PDFProvider._extract_text_elements` and
+  `_extract_tables` so all downstream processors see clean text.
+- Also applied in `TextCleanProcessor._clean()` as safety net for text from
+  VLM review / OCR.
+- New config: `TextCleanConfig.normalize_fullwidth: bool = True`.
+
+**Garbled text → OCR fallback** (`providers/pdf.py`)
+- `_classify_page()` now counts U+FFFD replacement characters.  If ratio
+  exceeds 5% of total text chars, page is classified as SCANNED (not MIXED)
+  so OCR fully replaces the garbled native text.
+- Root cause: CFF Type1 fonts (`FzBookMaker*`) embedded in the PDF have
+  glyph outlines but no ToUnicode CMap or Encoding table.  PyMuPDF can
+  render them (glyph shapes) but cannot extract text (no Unicode mapping).
+  PDF viewers work because they use glyph outlines directly for rendering.
+- Using SCANNED (not MIXED) is critical: MIXED mode deduplicates and keeps
+  garbled native text; SCANNED mode replaces all native text with OCR output.
+
+### Remaining Issues
+
+- `paper_chn01`: edit_dist=0.650, char_f1=0.723, heading_f1=0.22, table_cell_f1=0.00.
+  Key remaining issues:
+  1. **Formula destruction**: Math formulas still rendered as broken plain text
+     fragments. Formulas are vector-rendered positioned chars, not LaTeX.
+     Needs VLM/OCR-based formula recognition (major feature).
+  2. **Heading detection**: Section headings (1-6) on pages 2-7 not detected —
+     they have same font size as body text in this journal format.
+     ChapterProcessor's font-based detection doesn't fire.
+  3. **Table extraction**: Table 1 cell_f1=0.00 — PyMuPDF `find_tables()` may
+     not detect the table structure.
+  Root cause: (a) Formula reconstruction from positioned characters is a new
+  capability. (b) Heading detection needs adaptation for dense two-column
+  academic formats where headings share body font size.
+
 ## Previous Iteration: DOCX Pipeline Fix & .doc Support (2026-04-08)
 
 ### What Was Done
