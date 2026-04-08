@@ -463,7 +463,24 @@ class OCRBuilder:
                 ocr_elements = self._ocr_page(fitz_doc, page)
                 if ocr_elements:
                     if page.page_type == PageType.SCANNED:
-                        # Scanned: no native text, use OCR directly.
+                        # Scanned page: replace any pre-existing text/table
+                        # elements with fresh OCR results.  Pre-existing text
+                        # may come from an embedded OCR text layer (common in
+                        # "searchable scan" PDFs) whose quality can be poor.
+                        # Image elements are preserved for downstream VLM.
+                        existing_text = [
+                            e for e in page.elements
+                            if e.type in {"text", "table"} and e.source == "native"
+                        ]
+                        if existing_text:
+                            page.elements = [
+                                e for e in page.elements
+                                if not (e.type in {"text", "table"} and e.source == "native")
+                            ]
+                            log.debug(
+                                "Replaced %d native text/table elements with OCR on scanned page %d",
+                                len(existing_text), page.number,
+                            )
                         page.elements.extend(ocr_elements)
                         if not self._skip_scan_image_marking:
                             self._mark_fullpage_scan_images(page)
