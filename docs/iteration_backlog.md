@@ -79,6 +79,22 @@ re-deriving priorities each time.
 
 ### Open Issues
 
+- `paper01` (TensorFlow whitepaper, 19pp): edit_dist 0.530→0.319 after Tier 1
+  reading order fix (11/19 pages reordered). Remaining issues:
+  1. ~~**Two-column reading order**~~: ✅ Tier 1 geometric detection works on
+     11/19 pages. 8 pages still undetected — mostly pages with large
+     cross-column figures/tables that break gutter continuity. Needs
+     **Tier 2 PaddleOCR layout fallback** for these ambiguous pages.
+  2. **Images/figures missing**: 5+ figures not extracted or poorly handled.
+  3. **Heading detection chaotic**: single digits ("2"), figure labels
+     ("C", "b", "x") detected as `##` headings. Section numbers split
+     from heading text due to column break.
+  4. ~~**Width guard breaks two-column merge**~~: ✅ Fixed with per-column
+     `column_right_margin` metadata. LineUnwrap now uses column-aware
+     right margin on multi-column pages.
+  5. **Code block (Figure 1)** not fenced: Python code in Courier font
+     rendered as plain text with comments merged into code lines.
+  6. **Table 1** not extracted as table (rendered as narrative text).
 - `ocr_scan_jtg3362` char_F1=0.562: PaddleOCR quality on low-resolution scans
   is limited. VLM page-level review could improve this.
 - `text_table_word` heading_F1=0.667: "专家评审组名单" rendered as 593 bezier
@@ -86,24 +102,9 @@ re-deriving priorities each time.
   recover this without page rendering + VLM.
 - 4 pages of JTG 3362 not detected as OCR-scan (image coverage <50% on those
   pages — e.g., cover page with partial scan image).
-- `text_code_block`: Code block detection missing, causing cascading failures.
-  **Severe issues:**
-  1. **Shell comments `#` become H1 headings**: Lines like `# 参考命令如下`
-     are shell comments inside code regions, but rendered as Markdown `#`
-     headings — completely wrong semantics.
-  2. **Line breaks lost in code regions**: Multi-line code gets merged into
-     single lines by LineUnwrapProcessor. E.g., three separate `ceph osd set`
-     commands become one line; roman numeral sub-items (i/ii/iii) collapse;
-     comment + command + comment all concatenated.
-  **Minor issues:**
-  3. Heading over-detection on numbered list items (not critical).
-  4. Inline code not detected (commands mid-sentence lack backticks).
-  **Root cause**: All severe issues trace to one gap — ParserX has no
-  mechanism to detect monospace-font regions (Monaco 11.2pt / Menlo-Regular
-  11.2pt vs body PingFangSC 12.8pt) and emit them as fenced code blocks.
-  If code regions were identified, LineUnwrapProcessor would skip them and
-  `#` comments would stay inside fences. This is a **new capability**
-  requirement, not a bug in existing rules.
+- `text_code_block`: ✅ Core issues resolved by CodeBlockProcessor (2026-04-08).
+  Shell `#` no longer becomes H1, code line breaks preserved. Remaining:
+  inline code detection (commands mid-sentence lack backticks) — deferred.
 
 ## Previous Iteration: Formula Format Normalization (2026-04-07)
 
@@ -431,12 +432,24 @@ VLM path simplification (2026-04-08).
 
 14. **VLM Review Processor** (page-level OCR correction and missing-text recovery)
 15. **OCR-layered scan detection** ✅ (2026-04-08)
+16. **Code block detection** ✅ (2026-04-08): CodeBlockProcessor, body font
+    recalculation, heading density guard, line width guard.
+17. **Multi-column reading order — Tier 1** ✅ (2026-04-08): Geometric gutter
+    detection + zone-based reordering + per-column right margin in LineUnwrap.
+    paper01: edit_dist 0.530→0.319 (↓40%), 11/19 pages reordered.
+18. **Multi-column reading order — Tier 2** (PaddleOCR layout fallback for
+    pages where geometric detection fails, e.g. large cross-column figures)
 
 ### Next Priorities
 
 **Near-term (next 1-2 iterations):**
 
-1. **VLM Review Processor (page-level review)** — the highest-impact new
+1. **Multi-column reading order — Tier 2 (PaddleOCR fallback)** — for the
+   8/19 pages of paper01 where geometric detection fails (large cross-column
+   figures break gutter continuity). Render page as image → PaddleOCR layout
+   API → use `block_order` for reading order. Need "layout-only" API path.
+
+2. **VLM Review Processor (page-level review)** — the highest-impact new
    capability. Addresses two unsolved edge cases simultaneously:
    - Pure scanned pages: OCR errors remain uncorrected (no VLM participation)
    - Vector-rendered text: text converted to curves, invisible to extraction

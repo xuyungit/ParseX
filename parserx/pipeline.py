@@ -15,6 +15,7 @@ from parserx.assembly.crossref import CrossReferenceResolver
 from parserx.assembly.markdown import MarkdownRenderer
 from parserx.builders.image_extract import ImageExtractor
 from parserx.builders.metadata import MetadataBuilder
+from parserx.builders.reading_order import ReadingOrderBuilder
 from parserx.builders.ocr import OCRBuilder
 from parserx.config.schema import ParserXConfig
 from parserx.models.elements import Document
@@ -54,6 +55,9 @@ class Pipeline:
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config or ParserXConfig()
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
+        self._reading_order_builder = ReadingOrderBuilder(
+            self._config.processors.reading_order,
+        )
         self._ocr_builder = self._create_ocr_builder()
         self._image_extractor = ImageExtractor()
         self._llm_service = self._create_llm_service()
@@ -196,6 +200,10 @@ class Pipeline:
                 log.info("OCR done (%.1fs)", time.monotonic() - t0)
             else:
                 log.info("OCR: all pages native, skipping")
+
+        # Step 3.5: Reading order (column detection + reorder)
+        if self._reading_order_builder:
+            doc = self._reading_order_builder.build(doc)
 
         # Step 4: Run processors
         total_processors = len(self._processors)
