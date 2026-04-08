@@ -52,10 +52,19 @@ class OCRBuilderConfig(BaseModel):
     force_full_page: bool = False
 
 
+class QualityCheckConfig(BaseModel):
+    """LLM-based page quality check for formula fragmentation detection."""
+
+    enabled: bool = True
+    pre_filter_short_ratio: float = 0.25
+    max_text_chars: int = 2000
+
+
 class BuildersConfig(BaseModel):
     metadata: MetadataBuilderConfig = Field(default_factory=MetadataBuilderConfig)
     layout: LayoutBuilderConfig = Field(default_factory=LayoutBuilderConfig)
     ocr: OCRBuilderConfig = Field(default_factory=OCRBuilderConfig)
+    quality_check: QualityCheckConfig = Field(default_factory=QualityCheckConfig)
 
 
 class ProcessorToggle(BaseModel):
