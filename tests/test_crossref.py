@@ -189,7 +189,7 @@ def test_pipeline_renders_captioned_output(tmp_path: Path, monkeypatch):
     dummy.write_bytes(b"%PDF-1.4 fake")
 
     pipeline.parse_to_dir(dummy, tmp_path)
-    markdown = (tmp_path / "final.md").read_text(encoding="utf-8")
+    markdown = (tmp_path / "output.md").read_text(encoding="utf-8")
 
     assert "![](images/fig-1.png)" in markdown
     assert markdown.count("Figure 1. Pipeline overview") == 1

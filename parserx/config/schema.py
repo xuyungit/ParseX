@@ -184,6 +184,7 @@ class ParserXConfig(BaseModel):
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::([^}]*))?\}")
 _DEFAULT_CONFIG_FILENAME = "parserx.yaml"
 _EXTENDS_KEY = "extends"
+_GLOBAL_CONFIG_DIR = Path.home() / ".config" / "parserx"
 
 
 @dataclass(frozen=True)
@@ -265,22 +266,31 @@ def load_config(path: str | Path | None = None) -> ParserXConfig:
 def load_config_with_result(path: str | Path | None = None) -> ConfigLoadResult:
     """Load configuration from YAML file with environment variable resolution.
 
-    Loads .env file (if present) before resolving ${VAR} placeholders,
-    so credentials can be managed via .env for local development.
-    If no path is given, returns default config.
+    Lookup order for .env:  ./.env → ~/.config/parserx/.env
+    Lookup order for config (when no --config given):
+      ./parserx.yaml → ~/.config/parserx/config.yaml → built-in defaults
     """
+    # Load .env: project-local first, then global
     load_dotenv(override=False)
+    global_env = _GLOBAL_CONFIG_DIR / ".env"
+    if global_env.exists():
+        load_dotenv(global_env, override=False)
 
     requested_path = Path(path) if path is not None else None
     if path is None:
+        # Try project-local, then global config
         default_path = Path.cwd() / _DEFAULT_CONFIG_FILENAME
-        if not default_path.exists():
+        global_config = _GLOBAL_CONFIG_DIR / "config.yaml"
+        if default_path.exists():
+            path = default_path
+        elif global_config.exists():
+            path = global_config
+        else:
             return ConfigLoadResult(
                 config=ParserXConfig(),
                 resolved_path=None,
                 source="defaults",
             )
-        path = default_path
 
     path = Path(path)
     if not path.exists():

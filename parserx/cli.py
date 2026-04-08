@@ -4,25 +4,34 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
+# Suppress PyMuPDF's unsolicited recommendation print — ParserX has its own
+# layout analysis pipeline.
+os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
+
 from parserx.config.schema import ConfigLoadResult, apply_overrides, load_config_with_result
 from parserx.eval.reporting import build_config_report_metadata
+from parserx.models.results import ParseResult
 from parserx.pipeline import Pipeline
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="parserx",
-        description="High-fidelity document parsing for knowledge bases and retrieval",
+        prog="psx",
+        description="ParserX — high-fidelity document parsing for knowledge bases and retrieval",
     )
     sub = parser.add_subparsers(dest="command")
 
     # parserx parse
     parse_cmd = sub.add_parser("parse", help="Parse a document to Markdown")
-    parse_cmd.add_argument("input", type=Path, help="Input document path")
-    parse_cmd.add_argument("-o", "--output", type=Path, help="Output file or directory")
+    parse_cmd.add_argument("input", type=Path, help="Input document path (PDF, DOCX)")
+    parse_cmd.add_argument(
+        "-o", "--output", type=Path,
+        help="Output directory (default: ./output/<filename>/)",
+    )
     parse_cmd.add_argument("-c", "--config", type=Path, help="Config YAML path")
     parse_cmd.add_argument(
         "--set", dest="overrides", action="append", default=[],
@@ -30,9 +39,37 @@ def main() -> None:
     )
     parse_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parse_cmd.add_argument(
-        "--split-chapters", action="store_true",
-        help="Split into chapter files (output must be a directory)",
+        "--stdout", action="store_true",
+        help="Print Markdown to stdout instead of writing files",
     )
+    parse_cmd.add_argument(
+        "--split-chapters", action="store_true",
+        help="Also generate index.md and per-chapter files",
+    )
+    # ── Convenience flags ──────────────────────────────────────────────
+    parse_cmd.add_argument(
+        "--no-vlm", action="store_true",
+        help="Disable VLM (image description, table/formula correction)",
+    )
+    parse_cmd.add_argument(
+        "--no-ocr", action="store_true",
+        help="Disable OCR (process native text only)",
+    )
+    parse_cmd.add_argument(
+        "--no-llm", action="store_true",
+        help="Disable LLM fallback (pure rule-based processing)",
+    )
+    parse_cmd.add_argument("--vlm-model", help="Override VLM model name")
+    parse_cmd.add_argument("--llm-model", help="Override LLM model name")
+    parse_cmd.add_argument(
+        "--no-formula", action="store_true",
+        help="Skip formula detection",
+    )
+    parse_cmd.add_argument(
+        "--no-table-vlm", action="store_true",
+        help="Disable VLM table correction",
+    )
+    parse_cmd.add_argument("--ocr-lang", help="OCR language (default: ch_sim+en)")
 
     # parserx eval
     eval_cmd = sub.add_parser("eval", help="Evaluate parsing against ground truth")
@@ -127,6 +164,9 @@ def main() -> None:
     tool_eval_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
     tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
+    # parserx init
+    sub.add_parser("init", help="Create global config directory (~/.config/parserx/)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -137,7 +177,9 @@ def main() -> None:
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
     logging.getLogger("pdfminer").setLevel(logging.INFO)
 
-    if args.command == "parse":
+    if args.command == "init":
+        _cmd_init()
+    elif args.command == "parse":
         _cmd_parse(args)
     elif args.command == "eval":
         _cmd_eval(args)
@@ -147,21 +189,195 @@ def main() -> None:
         _cmd_tool_eval(args)
 
 
+_CONFIG_TEMPLATE = """\
+# ParserX Global Configuration
+# Credentials are resolved from environment variables (set in .env alongside this file).
+
+providers:
+  pdf:
+    engine: pymupdf
+  docx:
+    engine: docling
+
+builders:
+  ocr:
+    engine: paddleocr
+    lang: ch_sim+en
+    endpoint: ${PADDLE_OCR_ENDPOINT}
+    token: ${PADDLE_OCR_TOKEN}
+    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.5}
+    selective: true
+
+processors:
+  header_footer:
+    enabled: true
+  chapter:
+    enabled: true
+    llm_fallback: true
+  table:
+    enabled: true
+    vlm_fallback: true
+  image:
+    enabled: true
+    vlm_description: true
+    skip_decorative: true
+  formula:
+    enabled: true
+  line_unwrap:
+    enabled: true
+  text_clean:
+    enabled: true
+
+services:
+  vlm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL}
+    model: ${VLM_MODEL:gpt-4o-mini}
+    api_key: ${OPENAI_API_KEY}
+  llm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL}
+    model: ${LLM_MODEL:gpt-4o-mini}
+    api_key: ${OPENAI_API_KEY}
+
+output:
+  format: markdown
+  image_dir: images
+"""
+
+_ENV_TEMPLATE = """\
+# ParserX API credentials
+# Fill in the values below, then they will be picked up automatically.
+
+OPENAI_API_KEY=
+OPENAI_BASE_URL=
+
+# Optional: PaddleOCR service (needed for scanned PDF pages)
+PADDLE_OCR_ENDPOINT=
+PADDLE_OCR_TOKEN=
+
+# Optional: override model names
+# VLM_MODEL=gpt-4o-mini
+# LLM_MODEL=gpt-4o-mini
+"""
+
+
+def _cmd_init() -> None:
+    from parserx.config.schema import _GLOBAL_CONFIG_DIR
+
+    config_dir = _GLOBAL_CONFIG_DIR
+    config_path = config_dir / "config.yaml"
+    env_path = config_dir / ".env"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    created = []
+    if not config_path.exists():
+        config_path.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
+        created.append(str(config_path))
+    else:
+        print(f"  exists: {config_path}", file=sys.stderr)
+
+    if not env_path.exists():
+        env_path.write_text(_ENV_TEMPLATE, encoding="utf-8")
+        created.append(str(env_path))
+    else:
+        print(f"  exists: {env_path}", file=sys.stderr)
+
+    if created:
+        print(f"Created:", file=sys.stderr)
+        for p in created:
+            print(f"  {p}", file=sys.stderr)
+        print(f"\nNext: edit {env_path} to fill in your API keys.", file=sys.stderr)
+    else:
+        print("Global config already exists. Nothing to do.", file=sys.stderr)
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
-    config = apply_overrides(load_config_with_result(args.config).config, args.overrides)
+    # Build overrides from convenience flags (applied before --set)
+    flag_overrides = _collect_flag_overrides(args)
+    all_overrides = flag_overrides + list(args.overrides)
+
+    loaded = load_config_with_result(args.config)
+    config = apply_overrides(loaded.config, all_overrides)
+
+    # Chapter splitting: honour both --split-chapters flag and config default
+    if args.split_chapters:
+        config.output.chapter_split = True
+    elif not args.split_chapters and not any("chapter_split" in o for o in args.overrides):
+        # Default off for CLI usage (config default is True for eval pipelines)
+        config.output.chapter_split = False
+
     pipeline = Pipeline(config)
 
-    if args.split_chapters and args.output:
-        pipeline.parse_to_dir(args.input, args.output)
-        logging.info("Written to %s", args.output)
-    elif args.output:
-        result = pipeline.parse(args.input)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(result, encoding="utf-8")
-        logging.info("Written to %s (%d chars)", args.output, len(result))
-    else:
+    if args.stdout:
+        # Legacy stdout mode
         result = pipeline.parse(args.input)
         print(result)
+        return
+
+    # Directory output mode (default)
+    output_dir = args.output or Path("output") / args.input.stem
+    result = pipeline.parse_result_to_dir(args.input, output_dir)
+    _print_summary(args.input, output_dir, result)
+
+
+def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:
+    """Convert convenience flags to dotted-path config overrides."""
+    overrides: list[str] = []
+    if getattr(args, "no_vlm", False):
+        overrides.append("services.vlm.endpoint=")
+    if getattr(args, "no_ocr", False):
+        overrides.append("builders.ocr.engine=none")
+    if getattr(args, "no_llm", False):
+        overrides.append("services.llm.endpoint=")
+    if getattr(args, "vlm_model", None):
+        overrides.append(f"services.vlm.model={args.vlm_model}")
+    if getattr(args, "llm_model", None):
+        overrides.append(f"services.llm.model={args.llm_model}")
+    if getattr(args, "no_formula", False):
+        overrides.append("processors.formula.enabled=false")
+    if getattr(args, "no_table_vlm", False):
+        overrides.append("processors.table.vlm_fallback=false")
+    if getattr(args, "ocr_lang", None):
+        overrides.append(f"builders.ocr.lang={args.ocr_lang}")
+    return overrides
+
+
+def _print_summary(
+    input_path: Path,
+    output_dir: Path,
+    result: ParseResult,
+) -> None:
+    """Print a human-readable processing summary to stderr."""
+
+    # Page type breakdown
+    pt = result.page_types
+    page_parts = []
+    for key in ("native", "scanned", "mixed"):
+        if pt.get(key, 0) > 0:
+            page_parts.append(f"{pt[key]} {key}")
+    page_detail = f" ({', '.join(page_parts)})" if page_parts else ""
+
+    # API calls
+    api = result.api_calls
+    api_parts = []
+    for key in ("ocr", "vlm", "llm"):
+        if api.get(key, 0) > 0:
+            api_parts.append(f"{key.upper()} {api[key]}")
+    api_line = " \u00b7 ".join(api_parts) if api_parts else "none"
+
+    images_extracted = result.images_total - result.images_skipped
+
+    lines = [
+        f"Done: {input_path.name} \u2192 {output_dir}/",
+        f"  Pages:      {result.page_count}{page_detail}",
+        f"  Images:     {images_extracted} extracted, {result.images_skipped} skipped",
+        f"  API calls:  {api_line}",
+    ]
+    if result.warnings:
+        lines.append(f"  Warnings:   {len(result.warnings)}")
+    print("\n".join(lines), file=sys.stderr)
 
 
 def _cmd_eval(args: argparse.Namespace) -> None:

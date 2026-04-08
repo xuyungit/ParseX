@@ -457,9 +457,15 @@ class OCRBuilder:
 
         fitz_doc = fitz.open(str(source_path))
 
+        pages_to_ocr = [p for p in doc.pages if self._should_ocr_page(p)]
+        total_ocr = len(pages_to_ocr)
+
         for page in doc.pages:
             if self._should_ocr_page(page):
-                log.debug("OCR page %d (%s)", page.number, page.page_type.value)
+                log.info(
+                    "OCR page %d/%d (page %d, %s)",
+                    ocr_count + 1, total_ocr, page.number, page.page_type.value,
+                )
                 ocr_elements = self._ocr_page(fitz_doc, page)
                 if ocr_elements:
                     if page.page_type == PageType.SCANNED:

@@ -3,7 +3,7 @@
 Takes a processed Document with heading_level annotations and produces:
 - index.md: table of contents with links
 - chapters/ch_01.md, ch_02.md, ...: per-chapter content
-- final.md: complete document (from MarkdownRenderer)
+- output.md: complete document (from MarkdownRenderer)
 
 Split points are H1 headings. Each chapter includes its H2/H3 subsections.
 """
@@ -48,15 +48,15 @@ class ChapterAssembler:
     def assemble(self, doc: Document, output_dir: Path) -> Path:
         """Write chapter files and index to output_dir.
 
-        Returns the path to final.md.
+        Returns the path to output.md.
         """
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Render full document
         full_markdown = self._renderer.render(doc)
-        final_path = output_dir / "final.md"
+        final_path = output_dir / "output.md"
         final_path.write_text(full_markdown, encoding="utf-8")
-        log.info("Written final.md (%d chars)", len(full_markdown))
+        log.info("Written output.md (%d chars)", len(full_markdown))
 
         if not self._config.chapter_split:
             return final_path

@@ -86,6 +86,28 @@ re-deriving priorities each time.
   recover this without page rendering + VLM.
 - 4 pages of JTG 3362 not detected as OCR-scan (image coverage <50% on those
   pages — e.g., cover page with partial scan image).
+- `text_code_block`: Code block / inline code detection missing; heading
+  over-detection on numbered lists. Details:
+  1. **No code block detection**: Commands in Monaco/Menlo monospace fonts
+     (11.2pt) rendered as plain text instead of fenced code blocks. E.g.,
+     `ceph osd set nobackfill`, `docker stop ceph_osd_6`, multi-line fstab
+     entries, and `parted`/`kolla-ansible` commands all lack ``` fencing.
+  2. **Heading over-detection**: 13 numbered list items (steps 1–13) detected
+     as `##` headings via LLM fallback. These are ordered list items, not
+     section headings. The document has only one true heading ("换盘步骤").
+  3. **Shell comments misread as Markdown headings**: Lines like
+     `# 参考命令如下` inside code blocks are shell comments, but get rendered
+     as `#` Markdown headings because code block boundaries aren't detected.
+  4. **Inline code not detected**: Commands embedded mid-sentence (e.g.,
+     `docker stop ceph_osd_6` in "停止osd容器，`docker stop ceph_osd_6`")
+     should be inline code but appear as plain text.
+  5. **Sub-item merging**: Roman numeral sub-items (i/ii/iii under step 8)
+     collapsed into a single line.
+  Root cause: ParserX currently has no mechanism to detect monospace-font
+  regions and emit them as code blocks or inline code. The font signal is
+  clear (Monaco 11.2pt / Menlo-Regular 11.2pt vs body PingFangSC 12.8pt),
+  but no processor acts on it. This is a **new capability** requirement,
+  not a bug in existing rules.
 
 ## Previous Iteration: Formula Format Normalization (2026-04-07)
 
@@ -879,4 +901,23 @@ Tasks:
 
 Why:
 - internal samples currently expose more realistic generalization gaps than the
+  public set
+
+### 16. OCR async batch mode — merged-PDF submission
+
+Tasks:
+- Add async job API support to `PaddleOCRService`: submit → poll jobId → download JSONL result
+- Implement `_build_image_bundle_pdf()`: merge multiple page images into a single PDF for one-shot submission
+- Add auto-split on 413 (payload too large): recursively halve the batch and retry
+- Strategy selection: auto / sync_images / async_pdf_bundle
+  - `auto`: use sync for <=2 pages, async bundle for >=3 pages
+  - Expose as CLI flag or config: `builders.ocr.mode`
+- Validate page-count alignment between submitted bundle and returned JSONL
+- Reference implementation: legacy doc-refine `pipeline.py` lines 223-301 (async API), 1260-1300 (bundle PDF builder)
+- Requires: confirm async job endpoint URL (separate from current sync endpoint); add `job_url` and `async_auth_scheme` to `OCRBuilderConfig`
+
+Why:
+- Current sync per-page OCR is the main bottleneck for scanned PDFs (3 pages = 3 sequential HTTP round-trips, often minutes of wait)
+- Async bundle mode sends one request for all pages, server processes in parallel, typically 2-3x faster
+- Legacy pipeline validated this pattern on 268-page scan PDFs
   small public subset alone
