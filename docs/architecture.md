@@ -104,17 +104,13 @@ class DocumentMetadata(BaseModel):
 
 OCR 同理：仅对缺文字/乱码区域做 OCR，原生文本完好的区域跳过。
 
-### 2.3 交叉验证，不盲信
+### 2.3 VLM 权威性与安全护栏
 
-**问题**：VLM 可能篡改原文（P6）。
+**核心假设**：VLM 同时接收原始图片和 OCR 文本作为参考，其信息量严格大于 OCR。因此当 VLM 和 OCR 对同一区域都有输出时，优先保留 VLM 的结果。
 
-**原则**：VLM 输出与 OCR/原生提取结果交叉比对。偏差大的标记为低置信。
+**安全护栏**：VLM 输出仅在为空、截断或结构无效时被拒绝。不用 OCR 去"纠正" VLM 的内容（因为 VLM 已经看过 OCR 文本）。但验证层会检测 VLM 幻觉和数值偏差，标记为警告供人工审查。
 
-```
-VLM 提取的文字 ←对比→ OCR/原生提取的文字
-  │                          │
-  └── 编辑距离 > 阈值 ──→ 标记为低置信，保留两个版本
-```
+**设计演进**（2026-04-08）：早期设计尝试在 VLM 输出与 OCR 之间做编辑距离交叉验证。实践表明这会导致过多误报，因为 VLM 的修正本身就会改变原文。当前设计改为：VLM 权威，护栏最小化，验证层事后检测。
 
 ### 2.4 全局元数据，局部处理
 
@@ -174,7 +170,12 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
      - 每个文本块的字体名、字号、粗体/斜体标志、位置坐标
   2. PyMuPDF page.find_tables() 提取原生表格 → Markdown 表格格式
   3. PyMuPDF page.get_image_info(xrefs=True) 提取图片引用（含 xref）
-  4. 逐页分类：native / scanned / mixed（基于文本字符数 vs 图片覆盖率）
+  4. 逐页分类：native / scanned / mixed
+     - 基础信号：文本字符数 vs 图片覆盖率
+     - OCR-layered scan 检测（2026-04-08）：当主图覆盖页面 >50%
+       且 >70% 的文字在该图 bbox 内时，判定为 SCANNED。这捕获了
+       "可搜索扫描件"（invisible/visible OCR 文本层 + 扫描底图）
+       的情况，使其正确进入 OCR 重跑流程。
 ```
 
 #### DOCXProvider — ✅ 已实现 (`providers/docx.py`)
@@ -279,7 +280,9 @@ VLM 提取的文字 ←对比→ OCR/原生提取的文字
 
 选择逻辑（逐区域决策）：
   - 原生文本完好 → 跳过 OCR
-  - MetadataBuilder 标记为 scanned 的页面 → 全页 OCR
+  - PDFProvider 标记为 scanned 的页面 → 全页 OCR
+    ∘ 包括 OCR-layered scan：先移除旧 native text/table 元素，
+      再用新 OCR 结果替换（保留 image 元素供 VLM 处理）
   - 矢量渲染文字（原生提取为空但有渲染内容）→ 区域 OCR
   - 乱码字体（Unicode 块分布异常，参考 LiteParse）→ 区域 OCR
   - 图片中的文字（layout_type=figure 且含文字）→ 区域 OCR
@@ -453,6 +456,43 @@ LLM 兜底（仅当规则置信度低时）：
   - 关键判断是：删除该元素后，文档的事实、结构、结论、步骤是否受损
 
 预期效果：企业文档中 30-50% 图片为低信息量元素，可跳过 VLM；同时保留真正有价值的图文信息。
+
+VLM Correction 架构（2026-04-06 实现，2026-04-08 简化）：
+
+核心假设：VLM 同时看到原图和 OCR 文本，信息量严格大于 OCR，因此
+VLM 输出优先级高于 OCR。
+
+处理流程（统一路径，无分支）：
+  1. 对每个非 skipped 的 image 元素，收集 overlapping OCR evidence
+  2. VLM 接收图片 + OCR evidence，返回三类独立输出：
+     - visible_text → vlm_corrected_text（修正后的文本）
+     - markdown → vlm_corrected_table（修正后的表格）
+     - summary → 图片描述（仅当携带独立语义信息时保留）
+  3. 被 VLM 覆盖的 OCR 元素标记 skip_render（避免重复）
+  4. 渲染层根据 metadata 分别输出文本/表格/描述
+
+设计决策记录（2026-04-08）：
+  - 删除了 is_fullpage_scan 检测和 _apply_vlm_supplement 分支。
+    原因：(a) OCR Builder 层已正确处理全页扫描图标记；
+    (b) supplement 模式丢弃了 VLM 的 table 和 description 输出，
+    违反了"VLM > OCR"的核心假设；(c) 第二层检测的启发式不可靠
+    （3 个 OCR 元素重叠就触发，无面积检查）。
+  - 所有非 skipped 图片统一走 correction 路径，代码更简洁，
+    VLM 三类输出全部保留。
+
+待实现 — VLM Review Processor（页面级审校）：
+  当前 VLM 只能处理已有的 image 元素。以下场景 VLM 无法参与：
+  - 纯扫描页：扫描底图被 skip，OCR 结果无 VLM 修正
+  - 矢量渲染文本：文字转为矢量曲线，无 image 元素，文本提取不到
+  - OCR-layered scan：重新 OCR 后仍有识别误差
+
+  设计方向：新增独立的 VLMReviewProcessor，在 ImageProcessor 之后运行：
+  - 对选定页面渲染为图片，连同当前提取结果发送给 VLM
+  - VLM 以"审校者"角色识别和修正提取错误（非重新提取）
+  - 返回结构化修正指令，in-place 更新对应元素
+  - 每页仅 1 次 VLM 调用，成本可控
+  - 触发条件：SCANNED 页面、有扫描底图的 NATIVE 页面、
+    检测到可能有缺失内容的页面
 ```
 
 #### 3.3.5 FormulaProcessor — ✅ 已实现 (`processors/formula.py`)

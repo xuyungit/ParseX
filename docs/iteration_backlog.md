@@ -1,12 +1,93 @@
 # Iteration Backlog
 
-Updated: 2026-04-07
+Updated: 2026-04-08
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Formula Format Normalization (2026-04-07)
+## Latest Iteration: OCR-Scan Detection & VLM Path Simplification (2026-04-08)
+
+### What Was Done
+
+**OCR-Layered Scan Detection (`providers/pdf.py`)**
+- New spatial detection in `_classify_page()`: if a dominant image covers >50%
+  of the page and >70% of text characters sit inside that image's bbox, the
+  page is classified as SCANNED.
+- This correctly identifies "searchable scan" PDFs where a previous OCR tool
+  embedded a visible (or invisible) text layer on top of scan images. Without
+  this detection, these pages were misclassified as NATIVE, causing ParserX to
+  trust the (often poor quality) embedded OCR text.
+- Validated on JTG 3362-2018 (268-page OCR scan PDF): 264/268 pages correctly
+  detected. Zero false positives on 14 other normal PDFs and 2 vector-table PDFs.
+- Helper method `_count_chars_inside_bbox()` added.
+
+**OCR Builder: Native Text Replacement (`builders/ocr.py`)**
+- On SCANNED pages, if pre-existing native text/table elements are found (from
+  an embedded OCR text layer), they are removed before adding fresh OCR results.
+- Image elements are preserved for downstream VLM processing.
+- This ensures ParserX re-OCRs with its own PaddleOCR engine rather than
+  trusting the embedded text layer.
+
+**VLM Correction Path Simplification (`processors/image.py`)**
+- Removed `_apply_vlm_supplement()` function (~70 lines).
+- Removed `is_fullpage_scan` detection block from `_apply_vlm_corrections()`.
+- All non-skipped images now follow a single VLM correction path.
+- Rationale: the fullpage scan detection was redundant (OCR Builder already
+  handles it), used unreliable heuristics (3 OCR elements overlapping = trigger),
+  and silently discarded VLM table and description outputs.
+
+**Ground Truth Expansion**
+- Added `ocr_scan_jtg3362`: 4-page subset of JTG 3362-2018 (OCR text layer +
+  scan images, many OCR character errors). Tests OCR-layered scan detection.
+- Added `text_table_word`: Word-exported PDF where table headers are rendered as
+  vector curves (outlined text, invisible to text extraction). Tests detection
+  of missing vector-rendered text.
+
+### Measured Impact
+
+| Document | Edit Dist | Char F1 | Heading F1 | Table F1 | Notes |
+|----------|-----------|---------|------------|----------|-------|
+| ocr_scan_jtg3362 | 0.648 | 0.562 | 0.000 | 0.476 | PaddleOCR re-ran; quality limited by scan resolution |
+| text_table_word | 0.050 | 0.973 | 0.667 | 0.913 | Vector header text still missing |
+| text_table_libreoffice | 0.000 | 1.000 | 1.000 | 1.000 | Control: no regression |
+
+**Tests:** 307 passed (8 new: 7 for page classification, 1 for OCR text replacement).
+
+### Key Insights from Architecture Discussion
+
+1. **VLM > OCR principle**: When VLM has OCR text as reference, its output should
+   be prioritized. The supplement mode violated this by discarding VLM table/
+   description corrections on full-page scans.
+
+2. **Classification is the foundation**: The OCR-layered scan problem was not a
+   VLM issue — it was a classification issue. Correct classification (SCANNED vs
+   NATIVE) determines whether OCR re-runs and whether the right processing path
+   is taken.
+
+3. **Two unsolved edge cases require a new VLM capability**:
+   - Pure scanned pages: VLM completely absent (scan image skipped, no other
+     image elements). OCR errors remain uncorrected.
+   - Vector-rendered text: Characters converted to curves, no image element for
+     VLM to process, text extraction fails silently.
+   Both point to a **page-level VLM review** capability (see Next Priorities).
+
+4. **Generalization over specificity**: Avoid fine-grained heuristics tied to
+   specific document features (image size ratios, overlap counts). Prefer
+   principled geometric signals (spatial containment) that generalize across
+   document types.
+
+### Open Issues
+
+- `ocr_scan_jtg3362` char_F1=0.562: PaddleOCR quality on low-resolution scans
+  is limited. VLM page-level review could improve this.
+- `text_table_word` heading_F1=0.667: "专家评审组名单" rendered as 593 bezier
+  curves, completely invisible to text extraction. No current mechanism can
+  recover this without page rendering + VLM.
+- 4 pages of JTG 3362 not detected as OCR-scan (image coverage <50% on those
+  pages — e.g., cover page with partial scan image).
+
+## Previous Iteration: Formula Format Normalization (2026-04-07)
 
 ### What Was Done
 
@@ -327,21 +408,31 @@ We will follow this order unless new benchmark evidence strongly contradicts it:
 13. Deeper structure work (`StructureRoleAnalyzer`)
 
 Items 1-6, 8-10 are completed.  Also completed: cross-page table VLM
-duplication fix, multi-image VLM service extension.
+duplication fix, multi-image VLM service extension, OCR-scan detection and
+VLM path simplification (2026-04-08).
+
+14. **VLM Review Processor** (page-level OCR correction and missing-text recovery)
+15. **OCR-layered scan detection** ✅ (2026-04-08)
 
 ### Next Priorities
 
 **Near-term (next 1-2 iterations):**
 
-1. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
-   gap vs LlamaParse on finance/report documents. Design already in
-   `docs/header_footer_image_policy.md`. Needs a financial/report PDF in the
-   internal test set to validate.
+1. **VLM Review Processor (page-level review)** — the highest-impact new
+   capability. Addresses two unsolved edge cases simultaneously:
+   - Pure scanned pages: OCR errors remain uncorrected (no VLM participation)
+   - Vector-rendered text: text converted to curves, invisible to extraction
+   Design: render selected pages as images, send page image + current extraction
+   results to VLM as "reviewer" (not re-extractor). VLM returns structured
+   corrections, applied in-place. One VLM call per page. Trigger conditions:
+   SCANNED pages, pages with scan-like images, pages with suspected missing
+   content. See architecture.md §3.3.4 for design details.
 
-2. **Formula recognition** — eval residual analysis shows clear formula
-   differences (H₂SiCl₂ vs $\mathrm{H_{2}SiCl_{2}}$). VLM is the highest-value
-   correction target for formulas. Could be a dedicated FormulaProcessor or
-   integrated into VLM correction.
+2. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
+   gap vs LlamaParse on finance/report documents. Design already in
+   `docs/header_footer_image_policy.md`. Current implementation retains all
+   repeated furniture on page 1 (except page numbers), which is overly broad
+   but low-risk. May tighten with quantity limit (max 1-2 retained elements).
 
 3. **`vlm_refine_merged_tables=true` quality evaluation** — now implemented but
    default off. Test on ocr01 to compare VLM-refined merged tables vs OCR-only.
@@ -695,34 +786,39 @@ Why:
 
 ## Suggested Next Iteration
 
-Current state (2026-04-07, post formula iteration):
-- Internal eval: 2 warnings (receipt edge case only), edit_dist 0.036, char_f1 0.982
+Current state (2026-04-08, post OCR-scan detection iteration):
+- Internal eval (9 docs): edit_dist 0.232 (avg incl. new hard docs), char_f1 0.845
+- Internal eval (original 7 docs): 2 warnings, edit_dist 0.036, char_f1 0.982
 - Public eval: 0 warnings, edit_dist 0.077, char_f1 0.977
-- Three formula-heavy docs improved by 30-42% edit distance.
-- Evaluation infrastructure is mature: config metadata, warning-type breakdown,
-  warning-heavy subset, per-document diagnostics, A/B compare — all operational.
-- Remaining quality gaps: header/footer identity, deeper LaTeX normalization,
-  chart retention.
+- OCR-layered scan PDFs now correctly classified and re-OCR'd.
+- VLM correction path simplified (single path, no supplement branch).
+- Two new ground truth documents added (ocr_scan_jtg3362, text_table_word).
+- Remaining quality gaps: scanned page OCR quality (needs VLM review),
+  vector-rendered text recovery (needs VLM review), header/footer identity.
 
 Recommended next iteration priorities:
 
-1. **Header/footer first-page identity retention** — the clearest remaining gap
-   vs LlamaParse on finance/report documents. Needs a financial/report PDF added
-   to `ground_truth/` first. Design in `docs/header_footer_image_policy.md`.
+1. **VLM Review Processor** — the highest-impact new capability. A new processor
+   that renders selected pages as images and sends them to VLM as a "reviewer"
+   to identify and correct extraction errors. Addresses two unsolved problems:
+   - Scanned pages where OCR errors remain uncorrected (ocr_scan_jtg3362:
+     char_F1=0.562)
+   - Vector-rendered text invisible to extraction (text_table_word: heading
+     "专家评审组名单" missing)
+   Design: one VLM call per page, structured correction output, in-place update.
 
-2. **Deeper LaTeX normalization** — en_text_01 still has 0.170 edit distance from
-   `\mathrm{}` wrapping differences and space normalization. Could be addressed
-   by more aggressive LaTeX fragment merging or VLM-based formula correction.
+2. **Header/footer first-page identity retention** — current implementation is
+   overly broad (retains all repeated furniture on page 1). Consider limiting to
+   max 1-2 retained elements. Lower priority than VLM review.
 
-3. **Receipt remaining edge case** — 2 orphan-heading warnings from "账单与付款"
-   at a unique font size. Low priority.
+3. **Deeper LaTeX normalization** — en_text_01 still has 0.170 edit distance from
+   `\mathrm{}` wrapping differences and space normalization.
 
 4. **Chart retention and chart-body integration** — chart titles and chart data
    often missing. Needs chart-type image detection and chart-aware rendering.
 
 5. **LLM chapter fallback determinism** — zh_text_02 shows occasional spurious
-   orphan-heading warnings due to LLM non-determinism. Low priority but affects
-   eval stability.
+   orphan-heading warnings due to LLM non-determinism. Low priority.
 
 ## Newly Clarified Product Requirements
 
