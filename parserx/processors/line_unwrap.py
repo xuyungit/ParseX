@@ -188,6 +188,11 @@ def _should_merge_elements(
         return False
     if a.metadata.get("code_block") or b.metadata.get("code_block"):
         return False
+    # Never merge elements from different columns.
+    col_a = a.metadata.get("column")
+    col_b = b.metadata.get("column")
+    if col_a and col_b and col_a != col_b:
+        return False
     if _font_key(a.font) != _font_key(b.font):
         return False
 
@@ -199,8 +204,10 @@ def _should_merge_elements(
 
     # Width guard: if element *a* ends well before the right margin,
     # the line break is intentional (not a soft wrap).
-    if page_right_margin is not None and page_right_margin > 0 and _has_bbox(a):
-        if a.bbox[2] < page_right_margin * 0.85:
+    # Prefer per-column right margin over global page right margin.
+    effective_right = a.metadata.get("column_right_margin") or page_right_margin
+    if effective_right is not None and effective_right > 0 and _has_bbox(a):
+        if a.bbox[2] < effective_right * 0.85:
             return False
 
     return _should_merge_lines(a.content, b.content, average_line_length)
