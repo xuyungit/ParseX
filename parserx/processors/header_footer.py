@@ -15,7 +15,7 @@ import logging
 import re
 from collections import Counter
 
-from parserx.config.schema import MetadataBuilderConfig, ProcessorToggle
+from parserx.config.schema import HeaderFooterConfig, MetadataBuilderConfig
 from parserx.models.elements import Document, Page, PageElement
 
 log = logging.getLogger(__name__)
@@ -86,10 +86,10 @@ class HeaderFooterProcessor:
 
     def __init__(
         self,
-        config: ProcessorToggle | None = None,
+        config: HeaderFooterConfig | None = None,
         metadata_config: MetadataBuilderConfig | None = None,
     ):
-        self._config = config or ProcessorToggle()
+        self._config = config or HeaderFooterConfig()
         self._meta_config = metadata_config or MetadataBuilderConfig()
 
     def process(self, doc: Document) -> Document:
@@ -137,23 +137,41 @@ class HeaderFooterProcessor:
         first_page_num = doc.pages[0].number if doc.pages else 1
 
         # Step 4: Remove matching elements (retain first-page identity)
+        max_retain = getattr(self._config, "max_retained_identity", 2)
         removed_count = 0
         retained_count = 0
         for page in doc.pages:
             kept: list[PageElement] = []
-            for elem in page.elements:
-                if self._should_remove(elem, page, repeated_top, repeated_bottom,
-                                       header_zone, footer_zone):
-                    # First-page exception: keep repeated furniture on page 1,
-                    # but always remove page numbers even on page 1.
-                    if page.number == first_page_num and not _is_page_number(elem.content):
+            if page.number == first_page_num:
+                # Collect first-page candidates, then rank and limit.
+                candidates: list[PageElement] = []
+                for elem in page.elements:
+                    if self._should_remove(elem, page, repeated_top, repeated_bottom,
+                                           header_zone, footer_zone):
+                        if _is_page_number(elem.content):
+                            removed_count += 1
+                        else:
+                            candidates.append(elem)
+                    else:
+                        kept.append(elem)
+
+                # Rank candidates by information density (longer text first).
+                candidates.sort(key=lambda e: len(e.content.strip()), reverse=True)
+                for idx, elem in enumerate(candidates):
+                    if idx < max_retain:
                         elem.metadata["retained_page_identity"] = True
+                        elem.metadata["exclude_from_heading_detection"] = True
                         kept.append(elem)
                         retained_count += 1
                     else:
                         removed_count += 1
-                else:
-                    kept.append(elem)
+            else:
+                for elem in page.elements:
+                    if self._should_remove(elem, page, repeated_top, repeated_bottom,
+                                           header_zone, footer_zone):
+                        removed_count += 1
+                    else:
+                        kept.append(elem)
             page.elements = kept
 
         log.info(

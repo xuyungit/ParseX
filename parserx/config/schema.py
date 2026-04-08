@@ -123,8 +123,26 @@ class ReadingOrderConfig(BaseModel):
     method: str = "geometric"
 
 
+class VLMReviewConfig(BaseModel):
+    """Page-level VLM review for OCR correction and missing-text recovery."""
+
+    enabled: bool = True
+    review_all_pages: bool = False
+    min_text_chars_for_skip: int = 500
+    render_dpi: int = 200
+    max_pages_per_doc: int = 50
+    max_tokens: int = 4096
+    structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
+
+
+class HeaderFooterConfig(ProcessorToggle):
+    """Header/footer detection and first-page identity retention."""
+
+    max_retained_identity: int = 2
+
+
 class ProcessorsConfig(BaseModel):
-    header_footer: ProcessorToggle = Field(default_factory=ProcessorToggle)
+    header_footer: HeaderFooterConfig = Field(default_factory=HeaderFooterConfig)
     code_block: CodeBlockConfig = Field(default_factory=CodeBlockConfig)
     chapter: ProcessorToggle = Field(default_factory=ProcessorToggle)
     table: TableProcessorConfig = Field(default_factory=TableProcessorConfig)
@@ -134,6 +152,7 @@ class ProcessorsConfig(BaseModel):
     text_clean: TextCleanConfig = Field(default_factory=TextCleanConfig)
     content_value: ContentValueConfig = Field(default_factory=ContentValueConfig)
     reading_order: ReadingOrderConfig = Field(default_factory=ReadingOrderConfig)
+    vlm_review: VLMReviewConfig = Field(default_factory=VLMReviewConfig)
 
 
 class ServiceConfig(BaseModel):

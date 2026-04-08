@@ -30,6 +30,7 @@ from parserx.processors.image import ImageProcessor
 from parserx.processors.line_unwrap import LineUnwrapProcessor
 from parserx.processors.table import TableProcessor
 from parserx.processors.text_clean import TextCleanProcessor
+from parserx.processors.vlm_review import VLMReviewProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
 from parserx.services.llm import create_llm_service, create_vlm_service
@@ -174,6 +175,7 @@ class Pipeline:
         HeaderFooterProcessor,
         CodeBlockProcessor,
         ContentValueProcessor,
+        VLMReviewProcessor,
     )
 
     def _run_pipeline(self, path: Path, output_dir: Path | None) -> Document:
@@ -256,6 +258,25 @@ class Pipeline:
                             if elem.type == "image":
                                 elem.metadata.pop("saved_path", None)
                                 elem.metadata.pop("saved_abs_path", None)
+
+                # Page-level VLM review (after images are extracted/described).
+                if (
+                    self._config.processors.vlm_review.enabled
+                    and self._vlm_service
+                    and not is_docx
+                ):
+                    review_proc = VLMReviewProcessor(
+                        config=self._config.processors.vlm_review,
+                        vlm_service=self._vlm_service,
+                        source_path=path,
+                        max_concurrent=self._config.services.vlm.max_concurrent,
+                    )
+                    log.info("[VLM Review] reviewing pages")
+                    t0 = time.monotonic()
+                    doc = review_proc.process(doc)
+                    elapsed = time.monotonic() - t0
+                    if elapsed > 1.0:
+                        log.info("[VLM Review] done (%.1fs)", elapsed)
 
         log.info("Resolving figure/table captions")
         doc = self._crossref_resolver.resolve(doc)
@@ -450,6 +471,9 @@ class Pipeline:
                 vlm_service=self._vlm_service,
                 table_config=self._config.processors.table,
             ))
+
+        # VLMReviewProcessor: page-level review runs after image extraction
+        # (injected during _run, not here, because it needs source_path)
 
         if self._config.processors.formula.enabled:
             processors.append(FormulaProcessor(
