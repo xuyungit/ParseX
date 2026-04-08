@@ -1,12 +1,85 @@
 # Iteration Backlog
 
-Updated: 2026-04-08 (DOCX pipeline fix)
+Updated: 2026-04-08 (VLM Review Processor + Header/Footer identity)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: DOCX Pipeline Fix & .doc Support (2026-04-08)
+## Latest Iteration: VLM Review Processor + Header/Footer Identity (2026-04-08)
+
+### What Was Done
+
+**VLM Review Processor (`processors/vlm_review.py`) — NEW**
+- New page-level VLM review capability that addresses two previously unsolvable
+  problems: scanned page OCR errors and vector-rendered text loss.
+- Renders selected pages as images (PyMuPDF, 200 DPI), sends page image +
+  current extraction summary to VLM as a "reviewer".
+- VLM returns structured JSON corrections: `fix_text`, `add_missing`, `fix_table`.
+- Corrections applied in-place: text replacement, new element insertion,
+  source tagged as `"vlm"`, original preserved in `vlm_review_original` metadata.
+- Selective triggering: SCANNED/MIXED pages always reviewed, NATIVE pages
+  reviewed only when text is suspiciously sparse (< `min_text_chars_for_skip`).
+- Cost controls: `max_pages_per_doc=50`, concurrent execution via ThreadPoolExecutor.
+- Config: `processors.vlm_review.enabled`, `review_all_pages`, `render_dpi`,
+  `max_tokens`, `structured_output_mode`.
+- Runs after ImageProcessor + image extraction/VLM description, before FormulaProcessor.
+- DOCX mode skips (added to `_GEOMETRY_PROCESSORS`).
+
+**Header/Footer First-Page Identity Retention Tightened**
+- Previously: ALL repeated furniture on page 1 (except page numbers) was retained.
+- Now: maximum `max_retained_identity` elements retained (default 2), ranked by
+  text length (information density). Excess elements are removed.
+- Retained elements now also receive `exclude_from_heading_detection=True` metadata
+  for downstream safety.
+- New `HeaderFooterConfig` extends `ProcessorToggle` with `max_retained_identity`.
+
+**Config Changes (`config/schema.py`)**
+- New `VLMReviewConfig`: enabled, review_all_pages, min_text_chars_for_skip,
+  render_dpi, max_pages_per_doc, max_tokens, structured_output_mode.
+- New `HeaderFooterConfig(ProcessorToggle)`: max_retained_identity (default 2).
+- `ProcessorsConfig.header_footer` type changed from `ProcessorToggle` to
+  `HeaderFooterConfig` (backward compatible — inherits enabled + llm_fallback).
+- `ProcessorsConfig.vlm_review` added.
+
+### Tests
+
+- 25 new tests in `test_vlm_review_processor.py`: page selection, extraction
+  summary, JSON parsing, correction application, config disabled, end-to-end.
+- 4 new tests in `test_header_footer.py`: max_retained_identity (default/custom),
+  exclude_from_heading_detection, page numbers still removed with high limit.
+- Full suite: 357 passed, 4 skipped, 0 failures.
+
+### Key Design Decisions
+
+1. **VLM Review is a reviewer, not a re-extractor.** It receives both the page
+   image and the current extraction results. This prevents it from hallucinating
+   content and focuses corrections on actual extraction errors.
+
+2. **Selective page triggering** keeps costs manageable. A 100-page native PDF
+   with clean extraction triggers zero VLM review calls. Only problematic pages
+   (scanned, mixed, sparse text) are reviewed.
+
+3. **Header/footer identity limit = 2** prevents bloated first-page retention
+   while keeping the most information-dense elements. Ranking by text length is
+   a simple but effective proxy for information density.
+
+4. **Pipeline integration**: VLMReviewProcessor runs inline after image
+   extraction (not in `_build_processors`), because it needs `source_path` for
+   PyMuPDF rendering. Created fresh in each `_run` call.
+
+### Remaining Gaps
+
+- VLM Review has not been tested on real documents yet — needs end-to-end eval
+  on `ocr_scan_jtg3362` (target: char_F1 >> 0.562) and `text_table_word`
+  (target: heading_F1 >> 0.667).
+- VLM prompt may need tuning based on real correction quality.
+- `exclude_from_heading_detection` is set but ChapterProcessor already uses
+  `retained_page_identity` check — both signals now present for safety.
+- No warning integration yet for VLM review stats (correction count,
+  review failures).
+
+## Previous Iteration: DOCX Pipeline Fix & .doc Support (2026-04-08)
 
 ### What Was Done
 
@@ -479,7 +552,7 @@ We will follow this order unless new benchmark evidence strongly contradicts it:
 4. ~~VLM-authoritative correction model + three-field output~~ ✅
 5. ~~Internal test set expansion (ocr01, text_pic02, receipt)~~ ✅
 6. ~~Fix receipt heading over-detection (ChapterProcessor)~~ ✅
-7. Header/footer retention policy (first-page identity preservation)
+7. ~~Header/footer retention policy (first-page identity preservation)~~ ✅
 8. ~~text_pic02 residual warnings (low-confidence VLM + duplicates)~~ ✅
 9. ~~Formula format normalization (FormulaProcessor)~~ ✅
 10. ~~Line unwrap polish (native PDF hard-wrap scars)~~ ✅
@@ -491,7 +564,7 @@ Items 1-6, 8-10 are completed.  Also completed: cross-page table VLM
 duplication fix, multi-image VLM service extension, OCR-scan detection and
 VLM path simplification (2026-04-08).
 
-14. **VLM Review Processor** (page-level OCR correction and missing-text recovery)
+14. **VLM Review Processor** ✅ (2026-04-08): page-level OCR correction and missing-text recovery
 15. **OCR-layered scan detection** ✅ (2026-04-08)
 16. **Code block detection** ✅ (2026-04-08): CodeBlockProcessor, body font
     recalculation, heading density guard, line width guard.
@@ -505,26 +578,15 @@ VLM path simplification (2026-04-08).
 
 **Near-term (next 1-2 iterations):**
 
-1. **Multi-column reading order — Tier 2 (PaddleOCR fallback)** — for the
+1. **VLM Review Processor end-to-end eval** — run on ocr_scan_jtg3362
+   (target: char_F1 >> 0.562) and text_table_word (target: heading_F1 >> 0.667).
+   Tune VLM prompt based on real correction quality. May need to adjust
+   structured output schema or add fallback parsing.
+
+2. **Multi-column reading order — Tier 2 (PaddleOCR fallback)** — for the
    8/19 pages of paper01 where geometric detection fails (large cross-column
    figures break gutter continuity). Render page as image → PaddleOCR layout
    API → use `block_order` for reading order. Need "layout-only" API path.
-
-2. **VLM Review Processor (page-level review)** — the highest-impact new
-   capability. Addresses two unsolved edge cases simultaneously:
-   - Pure scanned pages: OCR errors remain uncorrected (no VLM participation)
-   - Vector-rendered text: text converted to curves, invisible to extraction
-   Design: render selected pages as images, send page image + current extraction
-   results to VLM as "reviewer" (not re-extractor). VLM returns structured
-   corrections, applied in-place. One VLM call per page. Trigger conditions:
-   SCANNED pages, pages with scan-like images, pages with suspected missing
-   content. See architecture.md §3.3.4 for design details.
-
-2. **Header/footer first-page identity retention** — backlog P0 #1. The clearest
-   gap vs LlamaParse on finance/report documents. Design already in
-   `docs/header_footer_image_policy.md`. Current implementation retains all
-   repeated furniture on page 1 (except page numbers), which is overly broad
-   but low-risk. May tighten with quantity limit (max 1-2 retained elements).
 
 3. **`vlm_refine_merged_tables=true` quality evaluation** — now implemented but
    default off. Test on ocr01 to compare VLM-refined merged tables vs OCR-only.
@@ -545,9 +607,12 @@ VLM path simplification (2026-04-08).
 7. **Deeper structure work (`StructureRoleAnalyzer`)** — document self-induction
    for chapter/list detection.
 
+8. **OCR async batch mode** — merged-PDF submission for scanned PDFs,
+   2-3x speed improvement.
+
 **Test data gaps:**
 
-- Financial/report PDFs (needed for header/footer retention validation)
+- Financial/report PDFs (for header/footer retention evaluation)
 - Academic documents with formulas (needed for formula recognition)
 - These should be added to `ground_truth/` before starting those iterations.
 

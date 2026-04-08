@@ -487,19 +487,18 @@ VLM 输出优先级高于 OCR。
   - 所有非 skipped 图片统一走 correction 路径，代码更简洁，
     VLM 三类输出全部保留。
 
-待实现 — VLM Review Processor（页面级审校）：
-  当前 VLM 只能处理已有的 image 元素。以下场景 VLM 无法参与：
-  - 纯扫描页：扫描底图被 skip，OCR 结果无 VLM 修正
-  - 矢量渲染文本：文字转为矢量曲线，无 image 元素，文本提取不到
-  - OCR-layered scan：重新 OCR 后仍有识别误差
-
-  设计方向：新增独立的 VLMReviewProcessor，在 ImageProcessor 之后运行：
-  - 对选定页面渲染为图片，连同当前提取结果发送给 VLM
-  - VLM 以"审校者"角色识别和修正提取错误（非重新提取）
-  - 返回结构化修正指令，in-place 更新对应元素
-  - 每页仅 1 次 VLM 调用，成本可控
-  - 触发条件：SCANNED 页面、有扫描底图的 NATIVE 页面、
-    检测到可能有缺失内容的页面
+✅ 已实现 — VLM Review Processor（页面级审校，`processors/vlm_review.py`）：
+  在 ImageProcessor 之后运行，对选定页面进行页面级 VLM 审校：
+  - 渲染页面为图片（PyMuPDF，200 DPI），连同当前提取摘要发送给 VLM
+  - VLM 以"审校者"角色返回结构化修正（fix_text / add_missing / fix_table）
+  - 修正 in-place 更新元素内容，标记 source="vlm"
+  - 每页 1 次 VLM 调用，成本可控
+  - 触发条件（选择性，非全量）：
+    - SCANNED / MIXED 页面（OCR 结果可能有错误）
+    - NATIVE 页面文本极少（疑似矢量渲染文本丢失）
+  - 可通过 `processors.vlm_review.review_all_pages=true` 强制全量
+  - 成本保护：`max_pages_per_doc=50`（默认）
+  - 并发执行 ThreadPoolExecutor，DOCX 模式跳过
 ```
 
 #### 3.3.5 FormulaProcessor — ✅ 已实现 (`processors/formula.py`)

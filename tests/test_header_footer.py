@@ -1,6 +1,7 @@
 """Tests for HeaderFooterProcessor."""
 
 from parserx.models.elements import Document, FontInfo, Page, PageElement
+from parserx.config.schema import HeaderFooterConfig
 from parserx.processors.header_footer import (
     HeaderFooterProcessor,
     _is_page_number,
@@ -241,3 +242,81 @@ def test_first_page_unique_content_not_flagged():
     for e in result.pages[0].elements:
         if e.content == "首页独有标题":
             assert not e.metadata.get("retained_page_identity")
+
+
+# ── Max retained identity limit tests ──
+
+
+def _make_doc_with_many_headers(page_count: int = 5) -> Document:
+    """Create a doc with 4 repeated headers on each page."""
+    pages = []
+    for i in range(1, page_count + 1):
+        elements = [
+            _text_elem("公司机密文件", 5, 15, i),           # Header 1
+            _text_elem("内部使用", 16, 26, i),               # Header 2
+            _text_elem("XY科技有限公司研究报告", 27, 42, i),  # Header 3 (longest)
+            _text_elem("2026年度", 43, 53, i),               # Header 4
+            _text_elem(f"正文内容第{i}页" * 10, 100, 700, i),
+            _text_elem(f"- {i} -", 770, 785, i),
+        ]
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    return Document(pages=pages)
+
+
+def test_max_retained_identity_default_2():
+    """With default max_retained_identity=2, only 2 elements retained on page 1."""
+    doc = _make_doc_with_many_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    retained = [
+        e for e in result.pages[0].elements
+        if e.metadata.get("retained_page_identity")
+    ]
+    assert len(retained) == 2
+    # Longest text should be retained first (information density ranking).
+    assert retained[0].content == "XY科技有限公司研究报告"
+
+
+def test_max_retained_identity_custom():
+    """Custom max_retained_identity=1 should keep only 1 element."""
+    doc = _make_doc_with_many_headers(5)
+    config = HeaderFooterConfig(max_retained_identity=1)
+    processor = HeaderFooterProcessor(config=config)
+    result = processor.process(doc)
+
+    retained = [
+        e for e in result.pages[0].elements
+        if e.metadata.get("retained_page_identity")
+    ]
+    assert len(retained) == 1
+
+
+def test_retained_have_exclude_from_heading_detection():
+    """Retained elements should have exclude_from_heading_detection metadata."""
+    doc = _make_doc_with_headers(5)
+    processor = HeaderFooterProcessor()
+    result = processor.process(doc)
+
+    retained = [
+        e for e in result.pages[0].elements
+        if e.metadata.get("retained_page_identity")
+    ]
+    assert len(retained) >= 1
+    for e in retained:
+        assert e.metadata.get("exclude_from_heading_detection") is True
+
+
+def test_page_numbers_removed_even_with_high_limit():
+    """Page numbers should always be removed, regardless of max_retained_identity."""
+    doc = _make_doc_with_many_headers(5)
+    config = HeaderFooterConfig(max_retained_identity=10)
+    processor = HeaderFooterProcessor(config=config)
+    result = processor.process(doc)
+
+    for page in result.pages:
+        texts = [e.content for e in page.elements if e.type == "text"]
+        assert not any(
+            t.strip().replace("-", "").replace(" ", "").isdigit()
+            for t in texts
+        )
