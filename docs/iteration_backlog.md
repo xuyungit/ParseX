@@ -1,12 +1,106 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (gutter refinement + adaptive line unwrap + patent01 GT)
+Updated: 2026-04-09 (VLM review eval + outlined text detection + GT fix)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Gutter Refinement + Adaptive Line Unwrap (2026-04-09)
+## Backlog Candidates
+
+### Smart Routing for Fast / Broad-Coverage Document Conversion
+
+- Investigate a lightweight routing layer that chooses between existing
+  ParserX paths and external fallbacks instead of forcing a single parser for
+  every document.
+- Current intuition:
+  - For PDF, keep ParserX's native `PyMuPDF` path as the default fast path.
+  - For scanned / garbled / visually complex PDF pages, continue to use the
+    selective OCR path.
+  - For non-PDF or unsupported document types, and for "quick preview"
+    conversions where fidelity is less critical, consider `markitdown` as a
+    fallback backend.
+- Motivation:
+  - `markitdown` is fast and supports more file types, but current quality on
+    complex PDFs (for example `paper_chn01`) is not strong enough to replace
+    ParserX on high-fidelity parsing.
+  - ParserX still has clear value on complex PDF structure, OCR recovery, and
+    layout-sensitive output.
+- Open design questions:
+  - Which signals should drive routing: file extension, page type mix
+    (native/scanned/mixed), text extractability, garbled-font ratio, page
+    count, user-selected speed vs. quality mode?
+  - Should routing happen per-document, per-page, or both?
+  - How should we expose backend provenance in output / eval reports so we can
+    compare quality and debug fallback behavior later?
+  - Where should we draw the line between "quick conversion" and
+    "high-fidelity parsing" in the product surface?
+
+## Latest Iteration: VLM Review Eval + Outlined Text Detection (2026-04-09)
+
+### What Was Done
+
+**0. ocr_scan_jtg3362 ground truth correction**
+
+- Root cause: expected.md contained content not on the PDF pages (e.g.
+  `## 2 术语和符号`, `## 3 材料`, `3.2.1` body text on page 4 were from
+  other pages of the full 268-page document, not the 4-page extract).
+- Fix: rewrote expected.md to match actual PDF content (verified by
+  rendering pages as images).
+- Impact: baseline char_f1 jumped from 0.572 to 0.881 (pure GT fix).
+
+**1. VLM review end-to-end evaluation on ocr_scan_jtg3362**
+
+- VLM review applied 18-19 correct OCR character corrections per run
+  (混疑土→混凝土, f_nd→f_sd, Highwav→Highway, table cell fills).
+- **Net effect: negative.** char_f1 0.881→0.865, table_f1 0.86→0.74.
+- Root causes of degradation:
+  - VLM fills merged table cells where expected leaves them empty
+  - VLM adds LaTeX markup and full-width parens (formatting drift)
+  - Occasional hallucination (changed "JTG 3362" to "JTG D62")
+- Conclusion: VLM review OCR character corrections are accurate, but
+  table and formatting modifications hurt quality.
+
+**2. VLM review evaluation on text_table_word**
+
+- Confirmed: page 2 table headers (序号, 工作单位, 职务/职称, 签字)
+  are vector curves invisible to text extraction.
+- With `review_all_pages=true`, VLM correctly recovered all 4 headers
+  via `fix_table` correction. table_cell_f1: 0.913→0.926.
+- VLM did NOT recover the missing heading "专家评审组名单" (also
+  vector-rendered). The heading remains at heading_f1=0.667.
+
+**3. Outlined text auto-detection** (`processors/vlm_review.py`)
+
+- Added `_has_outlined_text_signal()`: detects NATIVE pages with tables
+  whose header row has ≥50% empty cells (≥3 columns required).
+- Extended `_needs_review()` to also select NATIVE pages with this signal.
+- text_table_word page 2 now auto-selected for VLM review without
+  needing `review_all_pages=true`.
+- No false positives on other ground truth documents.
+
+### Measured Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| ocr_scan_jtg3362 | char_f1 | 0.572 | 0.881 | +0.309 (GT fix) |
+| ocr_scan_jtg3362 | table_f1 | 0.476 | 0.86 | +0.384 (GT fix) |
+| text_table_word | table_f1 | 0.913 | 0.926 | +0.013 (outlined text) |
+
+### Remaining Issues
+
+- VLM review on ocr_scan_jtg3362 is net-negative: table formatting
+  drift and occasional hallucination outweigh OCR character fixes.
+  Consider: (a) restricting VLM review to fix_text only (disable
+  fix_table for non-outlined pages), (b) adding formatting preservation
+  constraints to the prompt, (c) adding hallucination guards.
+- text_table_word heading "专家评审组名单" is still missing (vector text,
+  not in any extraction element). VLM review sees the image but does not
+  report it as add_missing. Prompt improvement or two-pass review needed.
+- VLM review introduces non-determinism on scanned pages (paper_chn01
+  char_f1 varies ±0.015 per run). Consider caching or seeding.
+
+## Previous Iteration: Gutter Refinement + Adaptive Line Unwrap (2026-04-09)
 
 ### What Was Done
 

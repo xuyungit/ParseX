@@ -69,6 +69,7 @@ class Pipeline:
         self._structure_validator = StructureValidator()
         self._completeness_checker = CompletenessChecker()
         self._hallucination_detector = HallucinationDetector(self._config.verification)
+        self._outlined_text_pages: set[int] = set()
         self._product_quality_checker = ProductQualityChecker()
 
     def parse(self, path: str | Path) -> str:
@@ -404,15 +405,19 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
     def _check_page_quality(self, doc: Document) -> None:
         """Check NATIVE pages for quality issues and reclassify for OCR.
 
-        Two checks run in order:
+        Three checks run in order:
         1. Deterministic layout complexity — pages with many tiny fragments
            or single-char heading-font elements are likely figure-heavy and
            benefit from OCR layout detection over font-based analysis.
-        2. LLM formula fragmentation — pages with many short lines that
+        2. Outlined text detection — pages with tables whose header cells
+           are mostly empty, indicating vector-rendered text (e.g. Word
+           exports). Reclassified to MIXED so OCR can recover the text
+           while preserving usable native elements.
+        3. LLM formula fragmentation — pages with many short lines that
            look like split formulas.
 
-        Pages flagged by either check are reclassified to SCANNED so the
-        OCR builder will fully replace their text.
+        Pages flagged by checks 1/3 are reclassified to SCANNED (full OCR
+        replacement). Pages flagged by check 2 are reclassified to MIXED.
         """
         cfg = self._config.builders.quality_check
         flagged = 0
@@ -454,6 +459,34 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
                         tiny_ratio * 100,
                         single_char_big,
                     )
+
+        # ── Deterministic: outlined text detection ──
+        for page in doc.pages:
+            if page.page_type != PageType.NATIVE:
+                continue
+            for elem in page.elements:
+                if elem.type != "table":
+                    continue
+                lines = elem.content.split("\n")
+                if len(lines) < 2:
+                    continue
+                raw_cells = lines[0].split("|")
+                if len(raw_cells) < 4:  # need interior cells (leading + 3+ + trailing)
+                    continue
+                cells = [c.strip() for c in raw_cells[1:-1]]
+                if len(cells) < 3:
+                    continue
+                empty = sum(1 for c in cells if c == "")
+                if empty / len(cells) >= 0.5:
+                    page.page_type = PageType.SCANNED
+                    self._outlined_text_pages.add(page.number)
+                    flagged += 1
+                    log.info(
+                        "Quality check: page %d outlined text (table with"
+                        " %d/%d empty header cells) → OCR",
+                        page.number, empty, len(cells),
+                    )
+                    break  # one signal per page is enough
 
         # ── LLM: formula fragmentation check ──
         for page in doc.pages:
