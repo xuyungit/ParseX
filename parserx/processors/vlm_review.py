@@ -3,9 +3,9 @@
 Renders selected pages as images, sends them alongside current extraction
 results to a VLM "reviewer", and applies structured corrections in-place.
 
-Addresses two problems no other processor can solve:
-  - Scanned pages where OCR errors remain uncorrected (no VLM participation)
-  - Vector-rendered text (characters as bezier curves, invisible to extraction)
+Currently scoped to SCANNED/MIXED pages only (OCR error correction).
+NATIVE page review (vector-rendered text recovery) is not yet reliable
+enough with current VLM models — see iteration backlog for details.
 """
 
 from __future__ import annotations
@@ -30,29 +30,39 @@ log = logging.getLogger(__name__)
 
 _REVIEW_SYSTEM_PROMPT = """\
 You are a document extraction quality reviewer.
-You will receive a page image and the current extraction results for that page.
-Your job is to compare the image against the extraction and identify:
-1. Text errors: OCR mistakes, wrong characters, garbled text.
-2. Missing content: text, headings, or table content visible in the image
-   but absent from the extraction.
-3. Table errors: wrong structure, missing cells, or incorrect content.
-
-Rules:
-- Only report issues you can clearly see in the image.
-- Do NOT invent content that is not visible.
-- For Chinese text, pay special attention to similar-looking characters
-  (e.g. 混凝土 vs 混疑土, 钢筋 vs 钢盘).
-- For headings, include the heading level if determinable from visual style.
-- Keep corrections concise — provide the corrected text, not explanations.
-- If the extraction looks correct, return an empty corrections list.
+Compare a page image against extraction results to find errors.
+Respond ONLY with a JSON object in the exact format specified.
 """
 
 _REVIEW_USER_PROMPT_TEMPLATE = """\
-Here is the current extraction for page {page_number}:
+Compare the page image against this extraction for page {page_number}:
 
 {extraction_summary}
 
-Compare this against the page image. Report any errors or missing content.
+Find these issues:
+1. Text errors: wrong characters, OCR mistakes (especially similar Chinese chars: 混凝土/混疑土, 钢筋/钢盘)
+2. Missing content: text, headings, or tables visible in the image but absent from extraction.
+3. Table errors: wrong structure, missing column headers, missing cells, incorrect content
+
+Rules:
+- Only report issues clearly visible in the image. Do NOT invent content.
+- CRITICAL: Provide the EXACT text as shown in the image, character by character. \
+Do NOT rephrase, correct grammar, improve wording, or normalize formatting. \
+Transcribe faithfully what the image shows.
+- For fix_text: provide element_index, the exact original text, and the exact \
+corrected text as visible in the image.
+- For add_missing: provide the full content exactly as shown in the image.
+- For fix_table: provide element_index and the corrected full table in Markdown.
+- If extraction is correct, return empty corrections list.
+
+You MUST respond with this exact JSON format:
+{{"corrections": [...], "page_quality": "ok" or "needs_correction"}}
+
+Example with corrections:
+{{"corrections": [{{"type": "fix_text", "element_index": 3, "original": "钢盘混疑土", "corrected": "钢筋混凝土"}}, {{"type": "add_missing", "content": "## 第3章 设计规定", "content_type": "heading", "heading_level": 2, "insert_after_index": 5}}, {{"type": "fix_table", "element_index": 8, "original": "| 1 | 2 |", "corrected": "| 序号 | 名称 |\\n| 1 | 2 |"}}], "page_quality": "needs_correction"}}
+
+Example with no issues:
+{{"corrections": [], "page_quality": "ok"}}
 """
 
 _REVIEW_JSON_SCHEMA = {
@@ -192,10 +202,7 @@ class VLMReviewProcessor:
         if self._config.review_all_pages:
             pages = list(doc.pages)
         else:
-            pages = []
-            for page in doc.pages:
-                if self._needs_review(page):
-                    pages.append(page)
+            pages = [p for p in doc.pages if self._needs_review(p)]
 
         # Cost protection
         if len(pages) > self._config.max_pages_per_doc:
@@ -208,24 +215,14 @@ class VLMReviewProcessor:
         return pages
 
     def _needs_review(self, page: Page) -> bool:
-        """Determine whether a page needs VLM review."""
-        # Always review scanned and mixed pages — OCR errors likely.
-        if page.page_type in (PageType.SCANNED, PageType.MIXED):
-            return True
+        """Determine whether a page needs VLM review.
 
-
-        # Review native pages with suspiciously little text —
-        # may indicate vector-rendered text loss.
-        text_chars = sum(
-            len(elem.content)
-            for elem in page.elements
-            if elem.type == "text" and not elem.metadata.get("skip_render")
-        )
-        if text_chars < self._config.min_text_chars_for_skip and page.width > 0:
-            # Only flag if the page is non-trivial (has some area).
-            return True
-
-        return False
+        Currently only SCANNED/MIXED pages are reviewed — OCR errors are
+        expected on these pages.  NATIVE page review is deferred until VLM
+        models are reliable enough to avoid introducing more errors than
+        they fix (see iteration backlog).
+        """
+        return page.page_type in (PageType.SCANNED, PageType.MIXED)
 
     # ── Single-page review ────────────────────────────────────────────────
 
@@ -254,6 +251,10 @@ class VLMReviewProcessor:
             )
 
             corrections = self._parse_corrections(response)
+            log.debug(
+                "VLM review page %d: raw response: %.500s",
+                page.number, response,
+            )
             if not corrections:
                 return 0
 
@@ -334,10 +335,15 @@ class VLMReviewProcessor:
             log.warning("VLM review: could not parse JSON response")
             return []
 
-        if not isinstance(data, dict):
+        # Standard format: {"corrections": [...], "page_quality": "..."}
+        if isinstance(data, dict):
+            raw_corrections = data.get("corrections", [])
+        elif isinstance(data, list):
+            # Fallback: VLM returned a bare array of corrections.
+            raw_corrections = data
+        else:
             return []
 
-        raw_corrections = data.get("corrections", [])
         if not isinstance(raw_corrections, list):
             return []
 
@@ -403,15 +409,17 @@ class VLMReviewProcessor:
             if corr.original not in elem.content:
                 log.debug(
                     "VLM review: original text %r not found in element %d, "
-                    "applying anyway",
+                    "skipping correction",
                     corr.original[:50], corr.element_index,
                 )
+                return False
 
         # Record original for traceability.
         elem.metadata["vlm_review_original"] = elem.content
         if corr.original and corr.original in elem.content:
             elem.content = elem.content.replace(corr.original, corr.corrected, 1)
         else:
+            # No original provided — full replacement (e.g. fully garbled text).
             elem.content = corr.corrected
         elem.source = "vlm"
         elem.metadata["vlm_review_applied"] = corr.type

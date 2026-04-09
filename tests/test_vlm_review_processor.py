@@ -130,19 +130,10 @@ def test_select_mixed_pages():
     assert len(selected) == 1
 
 
-def test_select_native_with_sparse_text():
-    """NATIVE page with very little text should be selected (vector-rendered text suspect)."""
-    proc = VLMReviewProcessor(config=VLMReviewConfig(min_text_chars_for_skip=500))
-    page = _make_native_page(1, texts=["短"])  # Only 1 char
-    doc = Document(pages=[page])
-    selected = proc._select_pages(doc)
-    assert len(selected) == 1
-
-
-def test_skip_native_with_sufficient_text():
-    """NATIVE page with enough text should be skipped."""
-    proc = VLMReviewProcessor(config=VLMReviewConfig(min_text_chars_for_skip=100))
-    page = _make_native_page(1, texts=["正常内容" * 50])  # 200 chars
+def test_skip_native_pages():
+    """NATIVE pages should not be selected — only SCANNED/MIXED are reviewed."""
+    proc = VLMReviewProcessor(config=VLMReviewConfig())
+    page = _make_native_page(1, texts=["短"])  # Sparse text, but still NATIVE
     doc = Document(pages=[page])
     selected = proc._select_pages(doc)
     assert len(selected) == 0
@@ -283,6 +274,17 @@ def test_apply_fix_text_full_replacement():
     applied = proc._apply_corrections(page, [corr])
     assert applied == 1
     assert page.elements[0].content == "correct text"
+
+
+def test_apply_fix_skips_when_original_mismatches():
+    """When VLM provides an original that doesn't match, skip the correction."""
+    proc = VLMReviewProcessor()
+    page = _make_scanned_page(1, texts=["钢盤混疑土强度等级"])
+    corr = Correction(type="fix_text", element_index=0,
+                      original="完全不同的文本", corrected="钢筋混凝土")
+    applied = proc._apply_corrections(page, [corr])
+    assert applied == 0
+    assert page.elements[0].content == "钢盤混疑土强度等级"  # Unchanged
 
 
 def test_apply_fix_out_of_range():

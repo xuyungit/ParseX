@@ -150,7 +150,7 @@ class CodeBlockProcessor:
     @staticmethod
     def _recalculate_body_font(doc: Document) -> None:
         """Recompute body font and font counts excluding code_block elements."""
-        font_char_counts: Counter[str, int] = Counter()
+        font_char_counts: Counter[str] = Counter()
         font_samples: dict[str, FontInfo] = {}
 
         for page in doc.pages:

@@ -1,12 +1,180 @@
 # Iteration Backlog
 
-Updated: 2026-04-08 (VLM Review Processor + Header/Footer identity)
+Updated: 2026-04-09 (Heading detection: numbering coherence)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: VLM Review Processor + Header/Footer Identity (2026-04-08)
+## Latest Iteration: Heading Detection — Numbering Coherence (2026-04-09)
+
+### What Was Done
+
+**1. Fixed `section_arabic_spaced` regex to include "0"** (`builders/metadata.py`)
+- Changed `^[1-9]\d{0,2}` to `^\d{1,3}` — now matches "0 引 言" (section 0).
+- Root cause: many Chinese academic papers and standards start section numbering
+  from 0. The previous regex excluded single-digit "0", making such headings
+  completely undetectable — they weren't even LLM fallback candidates.
+
+**2. Document-level numbering coherence detection** (`processors/chapter.py`)
+- New `_promote_coherent_numbering()` method runs after per-element detection,
+  before LLM fallback.
+- Scans all text elements for arabic numbering signals (spaced, root, nested).
+- Root-level: if ≥3 elements form a near-sequential series (e.g., 0,1,2,3,4),
+  promotes all undetected members to H2 deterministically.
+- Nested-level: if ≥2 subsections under the same root (e.g., 2.1, 2.2),
+  promotes all to H3.
+- Density guard: if >8 root-level entries found, skip promotion (likely a
+  numbered list, not section headings).
+- New `_is_coherent_sequence()` helper: checks max gap ≤2, coverage ≥50%.
+
+**3. OCR-assigned heading level correction** (`processors/chapter.py`)
+- When OCR pre-assigns heading_level to an element, now checks for numbering
+  signal and corrects level accordingly (e.g., OCR says H2 but "2.1 xxx"
+  pattern → corrected to H3).
+- New filter: OCR headings ending with colon (：:) suppressed — these are
+  introductory clauses, not headings.
+
+**4. Targeted colon filter** (`processors/chapter.py`)
+- New `_ends_with_colon()` helper applied in coherence pass and OCR heading
+  suppression, but NOT in sidebar heading inference (where colon-ending labels
+  are legitimate section markers).
+- Prevents false positives like "具体实施步骤如下：" and "2 次加载具体方式如下：".
+
+### Measured Impact
+
+**Target document:**
+
+| Document | Metric | Before | After | Delta |
+|----------|--------|--------|-------|-------|
+| paper_chn01 | heading_F1 | 0.230 | ~0.69-0.71 | **+0.46-0.48** |
+| paper_chn01 | char_F1 | 0.891 | 0.889 | -0.002 (noise) |
+| text_code_block | heading_F1 | 0.191 | 0.500 | **+0.309** |
+
+**Regression (internal, 12 docs):** heading_F1 avg 0.538 → 0.561 (+0.023).
+No regressions: char_F1 avg ±0.001, table_F1 unchanged.
+
+**Tests:** 373 passed, 4 skipped, 0 failures (6 new tests).
+
+### Key Design Decisions
+
+1. **Coherence is a document-level signal.** Per-element detection treats each
+   heading in isolation. Coherence detection leverages the sequential structure
+   of the entire document, which is a much stronger signal than font size alone.
+
+2. **Deterministic over LLM.** The coherence pass is purely rule-based — no LLM
+   calls needed. This makes heading detection reproducible and eliminates the
+   non-determinism of LLM fallback for well-numbered documents.
+
+3. **Density guard prevents numbered-list false positives.** The same pattern
+   ("1. xxx", "2. xxx") applies to both section headings and numbered list items.
+   The >8 threshold distinguishes them: real section headings rarely exceed 8,
+   while procedural lists (like text_code_block's 13 steps) are filtered out.
+
+4. **Targeted colon filter.** Adding colon to the global `_looks_like_body_text`
+   broke sidebar heading inference. Instead, `_ends_with_colon()` is applied
+   only in coherence collection and OCR heading suppression, preserving the
+   sidebar label promotion path.
+
+### Remaining Issues
+
+- paper_chn01 heading_F1 ≈ 0.69-0.71 (not 1.0): "Abstract" is a false positive
+  (font-based detection), sections 5-6 are completely absent from extraction
+  (pages not extracted — provider/OCR issue, not heading detection).
+- paper_chn01 heading non-determinism: VLM corrections on OCR pages cause
+  small variations in text content, affecting heading matching.
+- paper01 heading_F1 = 0.167: two-column layout causes heading fragmentation —
+  not addressed by numbering coherence (different root cause).
+- ocr_scan_jtg3362 heading_F1 = 0.000: OCR quality too low for numbering
+  pattern recognition.
+
+## Previous Iteration: VLM Review Real-Document Validation (2026-04-08)
+
+### What Was Done
+
+**VLM Review prompt and parser fix**
+- Original prompt was not being followed by VLM (gpt-5.4-mini) — VLM returned
+  bare JSON arrays instead of the `{"corrections": [...], "page_quality": "..."}`
+  format. `json_schema` structured output mode did not take effect on this endpoint.
+- Fixed: embedded format instructions and few-shot examples directly in user prompt.
+- Fixed: parser now handles bare array fallback format.
+- Added faithful transcription instruction: "Provide the EXACT text as shown in
+  the image, character by character. Do NOT rephrase, correct grammar, improve
+  wording, or normalize formatting."
+
+**Page selection narrowed to SCANNED/MIXED only**
+- Original design also reviewed NATIVE pages with sparse text (`min_text_chars_for_skip`).
+- Real-document testing showed VLM corrections on NATIVE pages cause regressions:
+  `fix_text` overwrites correctly-extracted text, `fix_table` corrupts correct tables.
+- Root cause: gpt-5.4-mini is not reliable enough to correct well-extracted content.
+  It "improves" text based on its understanding rather than faithfully transcribing.
+- Decision: disabled NATIVE page review entirely. Only SCANNED/MIXED pages where
+  OCR errors are expected benefit from VLM correction.
+
+### Measured Impact
+
+**Target documents:**
+
+| Document | Metric | Before VLM Review | After | Delta |
+|----------|--------|-------------------|-------|-------|
+| ocr_scan_jtg3362 | char_F1 | 0.562 | ~0.55-0.58 | ±0.02 (non-deterministic) |
+| ocr_scan_jtg3362 | heading_F1 | 0.000 | 0.000 | +0.000 |
+| ocr_scan_jtg3362 | table_F1 | 0.476 | 0.476 | +0.000 |
+| text_table_word | char_F1 | 0.973 | 0.973 | +0.000 (NATIVE, now skipped) |
+| text_table_word | heading_F1 | 0.667 | 0.667 | +0.000 (NATIVE, now skipped) |
+| text_table_word | table_F1 | 0.913 | 0.913 | +0.000 (NATIVE, now skipped) |
+
+**Regression (internal, 12 docs):** char_F1 -0.001, heading_F1 +0.000, table_F1 +0.000.
+NATIVE documents show zero delta. SCANNED documents show small non-deterministic variance.
+
+**Regression (public, 9 docs):** char_F1 -0.068 due to VLM non-determinism on
+documents with SCANNED/MIXED pages (omnidoc series). Not a logic issue.
+
+**Tests:** 366 passed, 4 skipped, 0 failures.
+
+### Key Findings
+
+1. **VLM model quality is the bottleneck.** gpt-5.4-mini cannot reliably correct
+   document text — it introduces as many errors as it fixes. On NATIVE pages,
+   corrections are net negative. On SCANNED pages, corrections are roughly neutral
+   with high variance.
+
+2. **VLM non-determinism is significant.** Even with temperature=0.0, the same
+   input produces different correction sets across runs. This makes VLM Review
+   inherently non-reproducible with current models.
+
+3. **Faithful transcription vs. understanding.** VLM tends to "improve" or
+   "correct" text based on its understanding rather than faithfully reading the
+   image. This makes it unreliable for OCR correction where exact transcription
+   is required.
+
+4. **Overfitting trap.** During development, we tried many targeted filters
+   (NATIVE page skip, heading-only corrections, text length thresholds, table
+   content dedup, heading detection second pass). Each filter fixed one test
+   case but broke others. This violated the generalization principle — the
+   correct response to "VLM corrections hurt" is not more heuristics, but
+   better VLM capabilities.
+
+### Unsolved Problems
+
+- **text_table_word heading_F1=0.667**: "专家评审组名单" is 593 bezier curves,
+  invisible to text extraction. VLM page-level review CAN detect this (confirmed
+  in testing), but enabling NATIVE page review causes widespread regressions.
+  Needs either: (a) a more capable VLM model, or (b) a non-VLM approach to
+  detect vector-rendered text (e.g., path density analysis at extraction level).
+
+- **text_table_word table_F1=0.913**: table column headers rendered as vector
+  curves. Same root cause as above.
+
+- **ocr_scan_jtg3362 char_F1≈0.56**: PaddleOCR quality on low-resolution scans
+  is limited. VLM correction does not reliably improve it. Higher-quality VLM
+  or better OCR engine would help.
+
+- **VLM Review on SCANNED pages**: corrections are roughly neutral. With a more
+  capable model (or targeted prompt tuning per document type), there is potential
+  for significant OCR error correction.
+
+## Previous Iteration: VLM Review Processor + Header/Footer Identity (2026-04-08)
 
 ### What Was Done
 

@@ -106,8 +106,8 @@ class HeaderFooterProcessor:
             return doc  # Can't detect repetition with < 2 pages
 
         # Count how many pages have each normalized text in top/bottom zones
-        top_counter: Counter[str, int] = Counter()
-        bottom_counter: Counter[str, int] = Counter()
+        top_counter: Counter[str] = Counter()
+        bottom_counter: Counter[str] = Counter()
 
         for page in doc.pages:
             if not page.elements:

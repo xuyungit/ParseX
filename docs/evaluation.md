@@ -175,11 +175,66 @@ uv run parserx eval ground_truth_public \
 uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 ```
 
+### Regression test (recommended first step)
+
+After each non-trivial parsing change, run the regression test script to
+compare current evaluation scores against the best known baseline:
+
+```bash
+# Fast check — offline docs only, no API calls needed (~5s):
+uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
+uv run python scripts/regression_test.py --gt-dir ground_truth_public --deterministic-only
+
+# Full check — all docs, needs OCR/VLM/LLM services:
+uv run python scripts/regression_test.py --gt-dir ground_truth
+
+# Specific docs:
+uv run python scripts/regression_test.py --gt-dir ground_truth --include text_table01 deepseek
+```
+
+The script prints a colored diff table: green for improved metrics, red for
+regressions, and exits with code 1 if any regression exceeds tolerance
+(default 0.005).
+
+**Updating baseline after confirmed improvement:**
+
+```bash
+uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only --update-baseline
+```
+
+This takes the best of (current, baseline) per metric and writes it back to
+`best_scores.json`.  Baseline files live at:
+
+- `ground_truth/best_scores.json` — internal documents
+- `ground_truth_public/best_scores.json` — public documents
+
+#### Offline vs service-dependent documents
+
+Each document in `best_scores.json` has a `requires_services` field listing
+which external services (ocr, vlm, llm) are needed.  Documents with
+`requires_services: []` are **offline documents** — their results are fully
+deterministic and reproducible without any API calls.  The
+`--deterministic-only` flag selects exactly these documents.
+
+Current offline documents:
+- **Internal:** `deepseek`, `pdf_text01_tables`, `text_table01`,
+  `text_table_libreoffice`
+- **Public:** `header_footer_cleanup`
+
+When adding a new ground truth document, set `requires_services` in
+`best_scores.json` so the regression script knows whether to include it in
+offline runs.
+
 ### Local iteration checklist
 
 After each non-trivial parsing change:
 
-1. Run unit/integration tests
+1. Run regression test (offline)
+```bash
+uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
+```
+
+2. Run unit/integration tests
 ```bash
 uv run pytest tests/ -q
 ```
@@ -197,17 +252,17 @@ To run only the live suite:
 uv run pytest tests/test_live_e2e.py -q
 ```
 
-2. Run public evaluation
+3. Run public evaluation
 ```bash
 uv run parserx eval ground_truth_public -o reports/public_eval.md
 ```
 
-3. Run private evaluation
+4. Run private evaluation
 ```bash
 uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 ```
 
-4. Compare:
+5. Compare:
 - heading F1
 - edit distance / char F1
 - warning count
@@ -217,7 +272,7 @@ uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 - human rubric notes on representative docs
 
 For ParserX, parser changes should not be treated as fully validated until:
-- the offline regression suite passes
+- the offline regression test passes
 - the live E2E suite passes with services configured in `.env`
 
 ### A/B compare workflow
@@ -293,7 +348,7 @@ uv run parserx compare ground_truth_public \
   --set-b processors.image.vlm_prompt_style=strict_en
 ```
 
-## Current State (2026-04-07)
+## Current State (2026-04-09)
 
 The codebase has:
 - `parserx.eval.metrics` — edit distance, char F1, heading F1, table cell F1
@@ -306,6 +361,8 @@ The codebase has:
 - `ground_truth_public/` with 10 docs + `subsets/warning_heavy.txt`
 - `ground_truth/` with 7 internal docs
 - `ProductQualityChecker` with 4 semi-automatic checks
+- `scripts/regression_test.py` — regression test against best-known baselines
+- `ground_truth/best_scores.json` + `ground_truth_public/best_scores.json` — per-document best-known scores with `requires_services` classification
 
 What is still missing operationally:
 - semi-automatic checks for document identity retention (first-page title/org/date)
@@ -468,6 +525,16 @@ After automated metrics are collected:
 ### Quick reference: all evaluation commands
 
 ```bash
+# ── Regression test (fast, offline) ──
+uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
+uv run python scripts/regression_test.py --gt-dir ground_truth_public --deterministic-only
+
+# ── Regression test (full, needs services) ──
+uv run python scripts/regression_test.py --gt-dir ground_truth
+
+# ── Update baseline after improvement ──
+uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only --update-baseline
+
 # ── Single-config eval ──
 uv run parserx eval <gt_dir> -o <report.md>
 

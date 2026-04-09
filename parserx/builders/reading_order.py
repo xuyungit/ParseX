@@ -246,8 +246,8 @@ def reorder_elements(
 
     def _flush_zone() -> None:
         """Emit accumulated column elements: left first, then right."""
-        zone_left.sort(key=lambda e: e.bbox[1])
-        zone_right.sort(key=lambda e: e.bbox[1])
+        zone_left.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
+        zone_right.sort(key=lambda e: (e.bbox[1], e.bbox[0]))
         result.extend(zone_left)
         result.extend(zone_right)
         zone_left.clear()

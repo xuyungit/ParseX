@@ -163,6 +163,12 @@ def _looks_like_body_text(text: str) -> bool:
     return False
 
 
+def _ends_with_colon(text: str) -> bool:
+    """Text ending with colon is likely an introductory clause, not a heading."""
+    text = text.strip()
+    return bool(text) and text[-1] in "：:"
+
+
 def _truncate_text(text: str, limit: int = 120) -> str:
     compact = " ".join(part.strip() for part in text.splitlines() if part.strip())
     if len(compact) <= limit:
@@ -186,6 +192,21 @@ def _bump_processing_stat(doc: Document, key: str, amount: int = 1) -> None:
     doc.metadata.processing_stats[key] = (
         doc.metadata.processing_stats.get(key, 0) + amount
     )
+
+
+def _is_coherent_sequence(numbers: list[int], min_count: int = 3) -> bool:
+    """Check if sorted numbers form a near-sequential series.
+
+    Allows gaps of at most 2 between consecutive numbers, and requires
+    at least 50% coverage of the spanned range.
+    """
+    if len(numbers) < min_count:
+        return False
+    max_gap = max(numbers[i + 1] - numbers[i] for i in range(len(numbers) - 1))
+    if max_gap > 2:
+        return False
+    span = numbers[-1] - numbers[0] + 1
+    return len(numbers) / span >= 0.5
 
 
 def _is_right_sidebar(page_width: float, elem: PageElement) -> bool:
@@ -237,6 +258,17 @@ class ChapterProcessor:
                 if elem.metadata.get("heading_level"):
                     if not self._keep_existing_ocr_heading(page.width, elem):
                         continue
+                    first_line = elem.content.split("\n")[0].strip()
+                    # Suppress OCR headings that look like body text
+                    if elem.source == "ocr" and (
+                        _looks_like_body_text(first_line) or _ends_with_colon(first_line)
+                    ):
+                        elem.metadata.pop("heading_level", None)
+                        continue
+                    # Correct OCR-assigned level using numbering signal when available
+                    numbering_level = _heading_level_from_numbering(first_line)
+                    if numbering_level is not None and numbering_level != elem.metadata["heading_level"]:
+                        elem.metadata["heading_level"] = numbering_level
                     detected_count += 1
                     continue
 
@@ -264,14 +296,17 @@ class ChapterProcessor:
                 if candidate is not None:
                     fallback_candidates.append(candidate)
 
+        coherence_hits = self._promote_coherent_numbering(doc, fallback_candidates)
+        detected_count += coherence_hits
         fallback_hits = self._apply_llm_fallback(doc, fallback_candidates)
         detected_count += fallback_hits
         self._normalize_ocr_title_subtitle_pair(doc)
         self._merge_cover_heading_fragments(doc)
 
         log.info(
-            "Detected %d headings (%d via fallback)",
+            "Detected %d headings (%d via coherence, %d via fallback)",
             detected_count,
+            coherence_hits,
             fallback_hits,
         )
         return doc
@@ -339,6 +374,96 @@ class ChapterProcessor:
                 return font_level
 
         return None
+
+    # ── Numbering coherence pass ────────────────────────────────────────
+
+    def _promote_coherent_numbering(
+        self,
+        doc: Document,
+        fallback_candidates: list[dict],
+    ) -> int:
+        """Promote weak arabic numbering signals when document-level coherence is found.
+
+        When elements with arabic numbering form a sequential series
+        (e.g., 0, 1, 2, 3, 4, 5, 6), they are almost certainly section headings —
+        even without a font-size difference from body text. This promotes undetected
+        members of coherent sequences deterministically, without LLM.
+        """
+        root_entries: list[tuple[int, PageElement]] = []
+        nested_entries: dict[int, list[tuple[int, PageElement]]] = {}
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "text":
+                    continue
+                first_line = elem.content.split("\n")[0].strip()
+                if not first_line:
+                    continue
+                if (_looks_like_body_text(first_line) or _is_false_positive(first_line)
+                        or _ends_with_colon(first_line)):
+                    continue
+
+                result = detect_numbering_signal(first_line)
+                if not result:
+                    continue
+                signal, _ = result
+
+                if signal == "section_arabic_spaced":
+                    m = re.match(r"^(\d{1,3})\s+", first_line)
+                    if m:
+                        root_entries.append((int(m.group(1)), elem))
+                elif signal == "section_arabic_root":
+                    m = re.match(r"^(\d+)\.", first_line)
+                    if m:
+                        root_entries.append((int(m.group(1)), elem))
+                elif signal == "section_arabic_nested":
+                    m = re.match(r"^(\d+)\.(\d+)", first_line)
+                    if m:
+                        root = int(m.group(1))
+                        sub = int(m.group(2))
+                        nested_entries.setdefault(root, []).append((sub, elem))
+
+        promoted = 0
+        _COHERENCE_DENSITY_LIMIT = 8
+
+        # Root-level coherence: ≥3 sequential numbers, but not too many (likely a numbered list)
+        if 3 <= len(root_entries) <= _COHERENCE_DENSITY_LIMIT:
+            numbers = sorted(set(n for n, _ in root_entries))
+            if _is_coherent_sequence(numbers, min_count=3):
+                for _, elem in root_entries:
+                    if not elem.metadata.get("heading_level"):
+                        first_line = elem.content.split("\n")[0].strip()
+                        if _is_short_heading_text(first_line):
+                            elem.metadata["heading_level"] = 2
+                            elem.metadata["numbering_coherence"] = True
+                            promoted += 1
+
+        # Nested-level coherence per root: ≥2 subsections under the same root
+        for root, entries in nested_entries.items():
+            if len(entries) >= 2:
+                sub_numbers = sorted(set(s for s, _ in entries))
+                if _is_coherent_sequence(sub_numbers, min_count=2):
+                    for _, elem in entries:
+                        if not elem.metadata.get("heading_level"):
+                            first_line = elem.content.split("\n")[0].strip()
+                            if _is_short_heading_text(first_line):
+                                elem.metadata["heading_level"] = 3
+                                elem.metadata["numbering_coherence"] = True
+                                promoted += 1
+
+        # Remove promoted elements from fallback candidates
+        if promoted:
+            promoted_ids = {
+                id(c["element"])
+                for c in fallback_candidates
+                if c["element"].metadata.get("numbering_coherence")
+            }
+            fallback_candidates[:] = [
+                c for c in fallback_candidates if id(c["element"]) not in promoted_ids
+            ]
+            log.info("Numbering coherence: promoted %d heading(s)", promoted)
+
+        return promoted
 
     def _normalize_ocr_title_subtitle_pair(self, doc: Document) -> None:
         """Demote OCR doc-title H1 when it is actually a peer title next to a subtitle.

@@ -450,14 +450,14 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
                     temperature=0.0,
                     max_tokens=64,
                 )
-                # Robust check: parse JSON or fall back to substring match
                 has_fragments = False
                 try:
                     import json
                     result = json.loads(response)
                     has_fragments = bool(result.get("has_formula_fragments"))
                 except (json.JSONDecodeError, AttributeError):
-                    has_fragments = "true" in response.lower()
+                    log.warning("Quality check: could not parse LLM JSON response")
+                    has_fragments = False
 
                 if has_fragments:
                     page.page_type = PageType.SCANNED
