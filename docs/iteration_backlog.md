@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (VLM review eval + outlined text detection + GT fix)
+Updated: 2026-04-09 (VLM review eval + outlined text OCR + fix_table bug fix)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
@@ -61,44 +61,77 @@ re-deriving priorities each time.
 - Conclusion: VLM review OCR character corrections are accurate, but
   table and formatting modifications hurt quality.
 
-**2. VLM review evaluation on text_table_word**
+**2. Outlined text OCR recovery** (`pipeline.py _check_page_quality`)
 
-- Confirmed: page 2 table headers (序号, 工作单位, 职务/职称, 签字)
-  are vector curves invisible to text extraction.
-- With `review_all_pages=true`, VLM correctly recovered all 4 headers
-  via `fix_table` correction. table_cell_f1: 0.913→0.926.
-- VLM did NOT recover the missing heading "专家评审组名单" (also
-  vector-rendered). The heading remains at heading_f1=0.667.
-
-**3. Outlined text auto-detection** (`processors/vlm_review.py`)
-
-- Added `_has_outlined_text_signal()`: detects NATIVE pages with tables
-  whose header row has ≥50% empty cells (≥3 columns required).
-- Extended `_needs_review()` to also select NATIVE pages with this signal.
-- text_table_word page 2 now auto-selected for VLM review without
-  needing `review_all_pages=true`.
+- Better approach than VLM review: detect NATIVE pages with tables whose
+  header row has ≥50% empty cells (≥3 columns), then reclassify to
+  SCANNED and let OCR re-extract the entire page.
+- OCR reliably recovers both table headers AND surrounding headings that
+  are rendered as vector curves.
+- text_table_word: table_cell_f1 0.913→1.000, char_f1 0.973→0.987.
+  Heading "专家评审组名单" now extracted (as text, not yet heading-level).
+- VLM review runs after OCR and correctly returns "ok" (no corrections
+  needed) — VLM decides the OCR result is already good.
 - No false positives on other ground truth documents.
+
+**3. fix_table duplication bug fix** (`processors/vlm_review.py`)
+
+- Root cause: `_build_extraction_summary()` truncates text >200 chars.
+  VLM returns `fix_table` with `original` = truncated prefix and
+  `corrected` = full rewritten table. `str.replace(prefix, corrected, 1)`
+  only replaces the prefix portion, leaving original's remaining rows
+  appended after the corrected table → **content duplication**.
+- Fix: for `fix_table` corrections, use full element replacement instead
+  of prefix replacement.
+- Guard for cross-page merged tables: reject `fix_table` when corrected
+  length <50% of original (VLM only sees one page of a multi-page table).
+- ocr01: table_cell_f1 0.111→0.941 (duplication eliminated).
+
+**4. VLM provider A/B/C comparison** (14-document full eval)
+
+- Provider A: proxy gpt-5.4-mini (74.211.103.125)
+- Provider B: OpenAI gpt-5.4-mini (api.openai.com)
+- Provider C: qwen3.6-plus (dashscope.aliyuncs.com)
+
+Results (avg across 14 docs, after fix_table bug fix):
+
+| Config | Avg char_f1 | Avg table_f1 |
+|--------|-------------|--------------|
+| Baseline (no VLM review) | 0.902 | 0.501 |
+| +Provider A VLM review | 0.895 | 0.499 |
+| +Provider B VLM review | 0.884 | 0.479 |
+| +Provider C VLM review | 0.870 | 0.468 |
+
+Key findings:
+- fix_text (OCR character correction) is accurate across all providers.
+- fix_table quality varies: helps on some docs (text_pic02 table_f1
+  0.226→0.639 with Provider A), hurts on others via formatting drift.
+- Provider A (proxy) performs best overall; Provider C (qwen) worst.
+- VLM review is non-deterministic — same provider gives different
+  corrections per run (paper_chn01 char_f1 varies ±0.015).
 
 ### Measured Impact
 
 | Document | Metric | Before | After | Change |
 |----------|--------|--------|-------|--------|
-| ocr_scan_jtg3362 | char_f1 | 0.572 | 0.881 | +0.309 (GT fix) |
-| ocr_scan_jtg3362 | table_f1 | 0.476 | 0.86 | +0.384 (GT fix) |
-| text_table_word | table_f1 | 0.913 | 0.926 | +0.013 (outlined text) |
+| ocr_scan_jtg3362 | char_f1 | 0.572 | 0.891 | +0.319 (GT fix + OCR) |
+| ocr_scan_jtg3362 | table_f1 | 0.476 | 0.857 | +0.381 (GT fix + OCR) |
+| text_table_word | char_f1 | 0.973 | 0.987 | +0.014 (outlined OCR) |
+| text_table_word | table_f1 | 0.913 | 1.000 | +0.087 (outlined OCR) |
+| ocr01 | table_f1 | 0.111 | 0.941 | +0.830 (fix_table bug) |
 
 ### Remaining Issues
 
-- VLM review on ocr_scan_jtg3362 is net-negative: table formatting
-  drift and occasional hallucination outweigh OCR character fixes.
-  Consider: (a) restricting VLM review to fix_text only (disable
-  fix_table for non-outlined pages), (b) adding formatting preservation
-  constraints to the prompt, (c) adding hallucination guards.
-- text_table_word heading "专家评审组名单" is still missing (vector text,
-  not in any extraction element). VLM review sees the image but does not
-  report it as add_missing. Prompt improvement or two-pass review needed.
-- VLM review introduces non-determinism on scanned pages (paper_chn01
-  char_f1 varies ±0.015 per run). Consider caching or seeding.
+- text_table_word heading "专家评审组名单" extracted as plain text but
+  not detected as heading (heading_f1 still 0.667). ChapterProcessor
+  needs to recognize short Chinese section titles from OCR.
+- VLM review fix_table sometimes helps (text_pic02) sometimes hurts
+  (ocr_scan_jtg3362). The help/hurt ratio depends on OCR baseline
+  quality — when OCR already produces good tables, VLM modifications
+  tend to introduce formatting drift.
+- VLM review non-determinism on scanned pages. Consider: (a) prompt
+  refinement for format preservation, (b) temperature=0 enforcement,
+  (c) rejecting no-op corrections (original == corrected).
 
 ## Previous Iteration: Gutter Refinement + Adaptive Line Unwrap (2026-04-09)
 
