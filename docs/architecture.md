@@ -1287,7 +1287,7 @@ ground_truth/
 - 验证层是后续大改章节/列表识别的安全网。
 - `ChapterProcessor` 的语义化增强收益很高，但应在可度量、可校验的前提下进行。
 - `CrossReferenceResolver` 对最终可读性和消费体验有价值，但不阻塞当前主链路。
-- `LayoutBuilder` / `ReadingOrderProcessor` 仍属于增强项，而非当前原型闭环的缺口。
+- `LayoutBuilder` 仍属于增强项。`ReadingOrderBuilder` 已实现（几何 gutter 检测 + 文档级传播）。
 - `FormulaProcessor` 已实现正则化 Unicode→LaTeX 归一化（2026-04-07），不需 GPU。
 
 ---
@@ -1440,7 +1440,7 @@ ground_truth/
 | 处理 | FormulaProcessor | `processors/formula.py` | ✅ | Unicode→LaTeX 正则归一化（温度、化学式、单位、数学符号、碎片整理） |
 | 处理 | ContentValueProcessor | `processors/content_value.py` | ✅ | 信息价值评分 + 低价值元素抑制（仅 PDF；DOCX 模式跳过） |
 | 处理 | ReadingOrderBuilder | `builders/reading_order.py` | ✅ | 多栏布局检测 + 阅读顺序重排（仅 PDF；DOCX 模式跳过） |
-| 处理 | ReadingOrderProcessor | — | ❌ | 低优先级，大部分文档单列 |
+| 处理 | ReadingOrderBuilder | `builders/reading_order.py` | ✅ | 多栏检测 + 文档级传播 + 混合布局页支持 |
 | 组装 | MarkdownRenderer | `assembly/markdown.py` | ✅ | text/table/image/formula 渲染 |
 | 组装 | ChapterAssembler | `assembly/chapter.py` | ✅ | H1 切分 + index.md |
 | 组装 | CrossReferenceResolver | `assembly/crossref.py` | ✅ | 图注/表题关联并接入 Markdown 渲染；已补误匹配防护与边界测试；脚注关联仍待扩展 |
@@ -1484,7 +1484,7 @@ uv run parserx parse input.pdf -o output_dir/ --split-chapters -c parserx.yaml -
 | **P2** | StructureRoleAnalyzer（新建议模块） | `builders/structure_roles.py` 或 `processors/structure_roles.py` | 对应 3.3.9；作为 Chapter/LineUnwrap 共享基础设施 |
 | ~~P3~~ | ~~FormulaProcessor~~ | `processors/formula.py` | ✅ 已实现（正则化归一化，不需 GPU） |
 | **P3** | LayoutBuilder | `builders/layout.py` | 需本地 GPU 或远程服务 |
-| **P3** | ReadingOrderProcessor | `processors/reading_order.py` | 大部分文档单列 |
+| ~~P3~~ | ~~ReadingOrderProcessor~~ | `builders/reading_order.py` | ✅ 已实现（几何 gutter 检测 + 文档级传播 + 混合布局页支持） |
 
 ### 评测策略结论
 

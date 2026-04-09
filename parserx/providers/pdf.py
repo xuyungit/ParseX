@@ -20,6 +20,66 @@ from parserx.processors.text_clean import normalize_fullwidth_ascii
 log = logging.getLogger(__name__)
 
 
+def _is_cjk_or_fullwidth_punct(ch: str) -> bool:
+    """Return True if *ch* is CJK or fullwidth punctuation.
+
+    Fullwidth ASCII *letters* (Ａ-Ｚ, ａ-ｚ) and *digits* (０-９) are
+    excluded — they are Latin text rendered in wide form, and word-space
+    detection must still apply between them.
+    """
+    cp = ord(ch)
+    return (
+        0x3400 <= cp <= 0x4DBF  # CJK Unified Extension A
+        or 0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs
+        or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility Ideographs
+        or 0x20000 <= cp <= 0x2A6DF  # CJK Extension B
+        or 0x3000 <= cp <= 0x303F  # CJK Symbols and Punctuation
+        or 0xFF01 <= cp <= 0xFF0F  # Fullwidth punctuation ！＂＃…／
+        or 0xFF1A <= cp <= 0xFF20  # Fullwidth ：；＜＝＞？＠
+        or 0xFF3B <= cp <= 0xFF40  # Fullwidth ［＼］＾＿｀
+        or 0xFF5B <= cp <= 0xFF65  # Fullwidth ｛｜｝～ + halfwidth forms
+        or 0xFE30 <= cp <= 0xFE4F  # CJK Compatibility Forms
+    )
+
+
+def _reconstruct_line_from_chars(line_spans: list[dict]) -> str:
+    """Rebuild a text line from rawdict spans, inserting spaces at gaps.
+
+    PDFs often encode word boundaries as physical gaps between character
+    positions rather than explicit space characters.  This function detects
+    those gaps by comparing adjacent character bboxes and inserts a space
+    when the gap exceeds a font-size-relative threshold.
+
+    Between two adjacent CJK ideographs no space is inserted regardless of
+    the gap, because CJK scripts do not use inter-word spaces.
+    """
+    # Flatten all chars across spans, keeping font size.
+    chars: list[tuple[str, float, float, float]] = []  # (ch, x0, x1, font_size)
+    for span in line_spans:
+        font_size = span.get("size", 12.0)
+        for ch_dict in span.get("chars", []):
+            c = ch_dict.get("c", "")
+            if not c:
+                continue
+            bbox = ch_dict.get("bbox", (0, 0, 0, 0))
+            chars.append((c, bbox[0], bbox[2], font_size))
+
+    if not chars:
+        return ""
+
+    parts: list[str] = [chars[0][0]]
+    for i in range(1, len(chars)):
+        prev_ch, _, prev_x1, prev_sz = chars[i - 1]
+        curr_ch, curr_x0, _, curr_sz = chars[i]
+        gap = curr_x0 - prev_x1
+        threshold = (prev_sz + curr_sz) * 0.125  # 0.25 * avg font size
+        if gap > threshold and not (_is_cjk_or_fullwidth_punct(prev_ch) and _is_cjk_or_fullwidth_punct(curr_ch)):
+            parts.append(" ")
+        parts.append(curr_ch)
+
+    return "".join(parts)
+
+
 class PDFProvider:
     """Extract text, tables, and images from PDF using PyMuPDF.
 
@@ -87,12 +147,14 @@ class PDFProvider:
     ) -> list[PageElement]:
         """Extract text with character-level font metadata.
 
-        Uses page.get_text("dict") to get font name, size, and flags
-        for each text span. This is the key improvement over PyMuPDF4LLM
-        which only returns a Markdown string without font metadata.
+        Uses page.get_text("rawdict") to get per-character bounding boxes
+        alongside font name, size, and flags for each text span.  Character-
+        level positioning allows detecting inter-word gaps so that spaces
+        are correctly reconstructed (PDFs often encode word boundaries as
+        physical gaps rather than explicit space characters).
         """
         elements: list[PageElement] = []
-        page_dict = fitz_page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+        page_dict = fitz_page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
 
         for block in page_dict.get("blocks", []):
             if block.get("type") != 0:  # type 0 = text block
@@ -111,14 +173,13 @@ class PDFProvider:
             max_font_chars = 0
 
             for line in block.get("lines", []):
-                line_parts: list[str] = []
-                for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    if text:
-                        line_parts.append(text)
+                line_text = normalize_fullwidth_ascii(
+                    _reconstruct_line_from_chars(line.get("spans", []))
+                )
 
-                    # Track dominant font (by character count)
-                    char_count = len(text)
+                # Track dominant font (by character count)
+                for span in line.get("spans", []):
+                    char_count = len(span.get("chars", []))
                     if char_count > max_font_chars:
                         max_font_chars = char_count
                         flags = span.get("flags", 0)
@@ -129,7 +190,6 @@ class PDFProvider:
                             italic=bool(flags & 2**1),  # bit 1 = italic
                         )
 
-                line_text = normalize_fullwidth_ascii("".join(line_parts))
                 if line_text.strip():
                     lines_text.append(line_text)
 

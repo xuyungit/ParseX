@@ -60,7 +60,7 @@ ParserX takes a third path: **deterministic rules first, AI only where needed**.
                     └─────────────────────────────────────────────┘
 ```
 
-**Provider** — Extracts raw content from PDF (PyMuPDF character-level) or DOCX (Docling OOXML). Every text span carries font name, size, and bold flag — this metadata drives downstream heading detection without LLM.
+**Provider** — Extracts raw content from PDF (PyMuPDF character-level with gap-based word space recovery) or DOCX (Docling OOXML). Every text span carries font name, size, and bold flag — this metadata drives downstream heading detection without LLM.
 
 **Builders** — Analyzes the extracted content:
 - *MetadataBuilder* computes font statistics (body font vs heading candidates) and detects 7 numbering patterns
@@ -263,11 +263,11 @@ ParserX is under active development. The core pipeline is functional and tested.
 | Image classification + VLM | ✅ Done | Heuristic + concurrent VLM calls |
 | Text cleaning (CJK) | ✅ Done | Space normalization + encoding fix |
 | Evaluation framework | ✅ Done | Edit distance, heading/table F1, OmniDocBench support |
-| Line unwrap | 🚧 Planned | Cross-line sentence joining |
+| Line unwrap | ✅ Done | CJK/English continuation detection, cross-element merge |
 | LLM fallback for chapters | ✅ Done | Batch confirmation for low-confidence heading candidates |
 | Formula extraction | 🚧 Planned | LaTeX output, requires model integration |
 | Hallucination detection | ✅ Done | Cross-validate VLM output against OCR/native text |
-| Reading order | 🚧 Planned | Multi-column layout support |
+| Reading order | ✅ Done | Multi-column layout detection + document-level propagation |
 
 ## Development
 

@@ -20,6 +20,17 @@ log = logging.getLogger(__name__)
 
 _SENTENCE_END_RE = re.compile(r"[。！？!?；;.]$")  # Colon deliberately excluded.
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+# Next-line patterns that indicate a mid-sentence hard wrap in CJK text,
+# regardless of how short the current line is.  These are characters that
+# cannot start a new paragraph on their own.
+_CJK_CONTINUATION_RE = re.compile(
+    r"^(?:"
+    r"[.\uff0c\u3001\uff1b\uff1a\uff09\]\u3011\u300b\u300d\u300f\u201d\u2019\u3002]"  # orphan punct
+    r"|\[[\d,\u002d\uff0c ]+\]"  # bracketed reference [1], [2,3], [11-15]
+    r")"
+)
+
 _LIST_MARKER_RE = re.compile(
     r"^\s*(?:"
     r"[-*•·●○■□▪▸▹]"
@@ -106,6 +117,15 @@ def _should_merge_lines(
         return True
 
     if _contains_cjk(current) and _contains_cjk(next_line):
+        # Strong continuation signals: the next line starts in a way that
+        # cannot be a standalone paragraph (e.g. orphaned punctuation,
+        # bracketed reference, or a very short CJK fragment).  These
+        # override the line-length check because they indicate a hard
+        # wrap mid-sentence rather than a deliberate paragraph break.
+        stripped_next = next_line.lstrip()
+        if _CJK_CONTINUATION_RE.match(stripped_next):
+            return True
+
         # Fallback 24 approximates a typical short Chinese body line when we
         # cannot infer a body-font median from document metadata.
         effective_avg = average_line_length if average_line_length > 0 else 24

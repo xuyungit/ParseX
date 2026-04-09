@@ -229,7 +229,7 @@ def detect_columns_with_hint(
             col_sized += 1
         elif w < page_width * 0.15:
             tiny_count += 1
-    if col_sized < 4 or tiny_count > col_sized * 1.5:
+    if col_sized < 2 or tiny_count > col_sized * 1.5:
         return None
 
     # Classify elements relative to the hint gutter.
@@ -250,7 +250,7 @@ def detect_columns_with_hint(
         else:
             right_edges.append(elem.bbox[0])
 
-    if len(left_edges) < 2 or len(right_edges) < 2:
+    if len(left_edges) < 1 or len(right_edges) < 1:
         return None
 
     left_col_right = max(left_edges)
