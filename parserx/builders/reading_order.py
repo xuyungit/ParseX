@@ -127,9 +127,13 @@ def detect_columns(
             gutter_right = min(gutter_right, elem.bbox[0]) if gutter_right != best_x else elem.bbox[0]
 
     # Re-scan to find precise gutter edges using column-body elements.
+    # Skip elements that span across the gutter — they are effectively
+    # full-width (e.g. centered titles) and would distort boundaries.
     left_edges: list[float] = []
     right_edges: list[float] = []
     for elem in col_body:
+        if elem.bbox[0] < best_x < elem.bbox[2]:
+            continue
         xcenter = (elem.bbox[0] + elem.bbox[2]) / 2
         if xcenter < best_x:
             left_edges.append(elem.bbox[2])

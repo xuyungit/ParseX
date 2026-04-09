@@ -1,12 +1,110 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (heading fix + two-column + layout complexity + GT fix)
+Updated: 2026-04-09 (gutter refinement + adaptive line unwrap + patent01 GT)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Heading Fix + Two-Column + Layout Complexity (2026-04-09)
+## Latest Iteration: Gutter Refinement + Adaptive Line Unwrap (2026-04-09)
+
+### What Was Done
+
+**0. Column detection gutter refinement** (`builders/reading_order.py`)
+
+- Root cause: `detect_columns()` gutter boundary refinement included elements
+  that span across the gutter (e.g. centered titles). Their right edge polluted
+  `gutter_left`, producing a negative gutter width and causing confidence to
+  drop below threshold → column detection failed on pages with any centered
+  header above the two-column body.
+- Fix: skip elements whose bbox spans across `best_x` during the
+  `left_edges`/`right_edges` collection phase (lines 130–137). This mirrors the
+  existing `classify_element()` full-width check and is fully generic.
+- Validated on patent01 PAGE 1: `(12)发明专利` (bbox 242–352, centered, spans
+  gutter at x≈297) is now excluded. Gutter correctly computed as 293–307,
+  confidence passes threshold. Left-column fields (21)–(74) now appear before
+  right-column fields (51)–(56).
+- All 13 `test_reading_order.py` tests pass. No column detection changes on any
+  other ground truth document (paper01, paper_chn01, etc.).
+
+**1. Adaptive CJK line unwrap for narrow columns** (`processors/line_unwrap.py`)
+
+- Root cause: `_unwrap_text_block()` used a single global `average_line_length`
+  (median across the entire document). In mixed-width documents (e.g. patent
+  first page with narrow two-column metadata + single-column body on later
+  pages), the global average (~35 chars) was much wider than the narrow column
+  (~20 chars). CJK lines of 16–20 chars failed the `≥ avg×0.8` merge threshold.
+- Fix (two parts):
+  1. **Block-local column width estimate**: compute the 75th percentile of CJK
+     line lengths within each text block. When this local estimate is
+     significantly shorter than the global average (`< avg×0.8`), use it as
+     `effective_avg` for that block. P75 is used instead of max because lines
+     mixing CJK and ASCII characters have inflated character counts relative to
+     their physical width.
+  2. **Track last-original-line length**: after merging lines, `current` grows
+     longer and can erroneously trigger the next merge. The CJK merge check now
+     uses `last_raw_len` (the length of the last *original* line appended to
+     `current`) rather than `len(current)`. This prevents short intentional
+     breaks (e.g. `心（有限公司）` at 7 chars) from being masked by accumulated
+     merge length. The parameter defaults to `None` for cross-element merging
+     calls, preserving existing behavior.
+- Both changes are generic: they activate on any text block with narrow CJK
+  lines, regardless of document type.
+
+**2. patent01 ground truth** (`ground_truth/patent01/expected.md`)
+
+- New test document: Chinese invention patent (CN 106844965 B), 14 pages.
+- Two-column metadata on PAGE 1, single-column body on pages 2–14.
+- Exercises both column detection and narrow-column line unwrap.
+
+### Measured Impact
+
+**patent01 PAGE 1 (qualitative):**
+
+| Aspect | Before | After |
+|--------|--------|-------|
+| Column ordering | Left/right interleaved (y-sort) | Left column → right column |
+| `检测中\n心（有限公司）` | Broken | `检测中心（有限公司）` |
+| `连续梁\n桥实际刚度` | Broken | `连续梁桥实际刚度` |
+| Abstract body | Line-by-line breaks | Merged paragraphs |
+| Reference titles | `修正\n技术若干关键问题` broken | Merged |
+
+**Regression tests (10 deterministic docs):** No regressions from code changes.
+Observed VLM/LLM non-determinism on paper_chn01 (edit_distance ±0.013) and
+text_report01 (heading_f1 ±0.357 from LLM fallback) — confirmed identical
+output before/after changes when run without VLM/LLM.
+
+### Key Design Decisions
+
+1. **Gutter-spanning exclusion mirrors `classify_element()`.** The same
+   `bbox[0] < gutter_x < bbox[2]` check is already used to classify elements as
+   full-width during reordering. Applying it during gutter refinement makes the
+   two phases consistent.
+
+2. **P75 instead of max for local column width.** Max is skewed by lines with
+   mixed CJK+ASCII characters (ASCII characters are half-width in CJK fonts but
+   count as 1 in character length). P75 is robust against these outliers while
+   still representing the typical wrapped line length.
+
+3. **`last_raw_len` only affects within-element unwrap.** Cross-element merging
+   (`_should_merge_elements`) passes `last_raw_len=None`, falling back to the
+   existing `len(current)` behavior. This isolates the fix to the within-element
+   path where accumulated length is a known issue.
+
+### Remaining Issues
+
+- patent01 PAGE 1: `(19)中华人民共和国国家知识产权局` still gets heading markup
+  (H1 via LLM fallback) because `(19)` matches `section_arabic_paren` numbering
+  pattern. Patent field numbers `(N)` are not chapter numbers. A generic
+  "metadata field" filter could help, but requires careful design to avoid
+  suppressing legitimate `(一)` / `(二)` section headings.
+- patent01 PAGE 1: `(10)授权公告号` and `CN 106844965 B` are separate PDF text
+  blocks with 0.1pt y-offset, causing the value to sort before its label. A
+  y-coordinate snap-to-grid could fix this generically.
+- patent01 PAGE 1: chart in the abstract area has axis labels extracted as text.
+  Needs image-region text suppression in ImageProcessor.
+
+## Previous Iteration: Heading Fix + Two-Column + Layout Complexity (2026-04-09)
 
 ### What Was Done
 
