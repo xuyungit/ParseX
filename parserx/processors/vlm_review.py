@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -30,7 +31,9 @@ log = logging.getLogger(__name__)
 
 _REVIEW_SYSTEM_PROMPT = """\
 You are a document extraction quality reviewer.
-Compare a page image against extraction results to find errors.
+Compare a page image against extraction results to find OCR character errors.
+You MUST preserve the exact formatting of the extraction — your ONLY job is to \
+fix wrong characters.
 Respond ONLY with a JSON object in the exact format specified.
 """
 
@@ -46,14 +49,18 @@ Find these issues:
 
 Rules:
 - Only report issues clearly visible in the image. Do NOT invent content.
-- CRITICAL: Provide the EXACT text as shown in the image, character by character. \
-Do NOT rephrase, correct grammar, improve wording, or normalize formatting. \
-Transcribe faithfully what the image shows.
 - For fix_text: provide element_index, the exact original text, and the exact \
 corrected text as visible in the image.
 - For add_missing: provide the full content exactly as shown in the image.
 - For fix_table: provide element_index and the corrected full table in Markdown.
 - If extraction is correct, return empty corrections list.
+
+FORBIDDEN changes (format-only changes will be rejected):
+- Do NOT change punctuation width: keep ，as ，and , as , — never convert between them.
+- Do NOT add or remove LaTeX delimiters ($...$). Keep existing math notation as-is.
+- Do NOT fill empty table cells. If a cell is empty in the extraction, leave it empty.
+- Do NOT change spacing between characters or parenthesis style (（ vs ().
+ONLY report fix_text when actual characters are wrong (e.g., 混疑土→混凝土, f_nd→f_sd).
 
 You MUST respond with this exact JSON format:
 {{"corrections": [...], "page_quality": "ok" or "needs_correction"}}
@@ -135,6 +142,45 @@ class Correction:
     content_type: str | None = None
     heading_level: int | None = None
     insert_after_index: int | None = None
+
+
+# ── Format-only change guard ─────────────────────────────────────────────
+
+_FORMAT_NORM_TABLE = str.maketrans({
+    "\uFF0C": ",",   # ，→,
+    "\u3002": ".",   # 。→.
+    "\uFF1A": ":",   # ：→:
+    "\uFF1B": ";",   # ；→;
+    "\uFF08": "(",   # （→(
+    "\uFF09": ")",   # ）→)
+    "\uFF01": "!",   # ！→!
+    "\uFF1F": "?",   # ？→?
+    "\u3001": ",",   # 、→,
+    "\u201C": '"',   # "→"
+    "\u201D": '"',   # "→"
+    "\u2018": "'",   # '→'
+    "\u2019": "'",   # '→'
+})
+
+_RE_LATEX_DELIM = re.compile(r"\$|\\[()]|[{}]")
+_RE_ALL_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalize_for_format_check(text: str) -> str:
+    """Normalize formatting-only features for comparison.
+
+    Strips punctuation width differences, LaTeX delimiters, and whitespace
+    so we can detect corrections that change only formatting, not content.
+    """
+    text = text.translate(_FORMAT_NORM_TABLE)
+    text = _RE_LATEX_DELIM.sub("", text)
+    text = _RE_ALL_WHITESPACE.sub("", text)
+    return text
+
+
+def _is_format_only_change(original: str, corrected: str) -> bool:
+    """Return True if original and corrected differ only in formatting."""
+    return _normalize_for_format_check(original) == _normalize_for_format_check(corrected)
 
 
 # ── Processor ─────────────────────────────────────────────────────────────
@@ -419,6 +465,17 @@ class VLMReviewProcessor:
                     corr.original[:50], corr.element_index,
                 )
                 return False
+
+        # Format-only guard: reject corrections that only change punctuation
+        # width, LaTeX delimiters, or whitespace — not actual content.
+        if corr.original and corr.corrected and _is_format_only_change(corr.original, corr.corrected):
+            log.debug(
+                "VLM review: rejecting format-only %s on element %d: "
+                "%r → %r",
+                corr.type, corr.element_index,
+                corr.original[:50], corr.corrected[:50],
+            )
+            return False
 
         # Record original for traceability.
         elem.metadata["vlm_review_original"] = elem.content

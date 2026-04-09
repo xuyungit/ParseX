@@ -14,6 +14,7 @@ from parserx.processors.vlm_review import (
     Correction,
     VLMReviewProcessor,
     _extract_json,
+    _is_format_only_change,
 )
 
 
@@ -389,3 +390,69 @@ def test_e2e_fix_text_on_scanned_page(tmp_path: Path):
     # No VLM calls should be made.
     assert vlm.calls == []
     assert result.pages[0].elements[0].content == "混疑土强度"  # Unchanged
+
+
+# ── Format-only change guard tests ───────────────────────────────────────
+
+
+class TestIsFormatOnlyChange:
+    """Unit tests for _is_format_only_change."""
+
+    def test_punctuation_width_only(self):
+        assert _is_format_only_change("强度,设计值", "强度，设计值")
+
+    def test_multiple_punctuation_changes(self):
+        assert _is_format_only_change("项目(A):结果", "项目（A）：结果")
+
+    def test_latex_delimiter_only(self):
+        assert _is_format_only_change("f_ck", "$f_{ck}$")
+
+    def test_whitespace_only(self):
+        assert _is_format_only_change("混凝土 强度", "混凝土强度")
+
+    def test_real_ocr_fix(self):
+        assert not _is_format_only_change("混疑土", "混凝土")
+
+    def test_real_fix_with_format_change(self):
+        # Real OCR fix + punctuation change → NOT format-only
+        assert not _is_format_only_change("混疑土,强度", "混凝土，强度")
+
+    def test_identical_strings(self):
+        assert _is_format_only_change("完全一样", "完全一样")
+
+    def test_quote_style_change(self):
+        assert _is_format_only_change('"测试"', "\u201c测试\u201d")
+
+
+def test_format_guard_rejects_punctuation_fix(tmp_path):
+    """fix_text that only changes punctuation width should be rejected."""
+    page = _make_scanned_page(1, texts=["强度,设计值"])
+    corr = Correction(
+        type="fix_text", element_index=0,
+        original="强度,设计值", corrected="强度，设计值",
+    )
+    proc = VLMReviewProcessor(
+        config=VLMReviewConfig(),
+        vlm_service=FakeVLMService(),
+        source_path=tmp_path / "test.pdf",
+    )
+    applied = proc._apply_fix(page, corr)
+    assert not applied
+    assert page.elements[0].content == "强度,设计值"  # Unchanged
+
+
+def test_format_guard_allows_real_ocr_fix(tmp_path):
+    """fix_text with real character changes should be applied."""
+    page = _make_scanned_page(1, texts=["混疑土强度"])
+    corr = Correction(
+        type="fix_text", element_index=0,
+        original="混疑土", corrected="混凝土",
+    )
+    proc = VLMReviewProcessor(
+        config=VLMReviewConfig(),
+        vlm_service=FakeVLMService(),
+        source_path=tmp_path / "test.pdf",
+    )
+    applied = proc._apply_fix(page, corr)
+    assert applied
+    assert page.elements[0].content == "混凝土强度"
