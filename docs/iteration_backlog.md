@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (VLM format guard + zero-signal heading fallback)
+Updated: 2026-04-10 (rawdict word space recovery + multi-column propagation + CJK continuation)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
@@ -36,7 +36,75 @@ re-deriving priorities each time.
   - Where should we draw the line between "quick conversion" and
     "high-fidelity parsing" in the product surface?
 
-## Latest Iteration: VLM Format Guard + Zero-Signal Heading Fallback (2026-04-09)
+## Latest Iteration: Rawdict Word Space Recovery + Multi-Column Propagation (2026-04-10)
+
+### What Was Done
+
+**1. Character-level gap detection for word space recovery** (`providers/pdf.py`)
+
+- Problem: PDF text extraction via `get_text("dict")` lost inter-word spaces.
+  English text like "JOURNAL OF SOUTHWEST JIAOTONG UNIVERSITY" became
+  "JOURNALOFSOUTHWESTJIAOTONGUNIVERSITY". PDFs encode word boundaries as
+  physical gaps between character positions, not explicit space characters.
+- Fix: switched to `get_text("rawdict")` which returns per-character bounding
+  boxes. Added `_reconstruct_line_from_chars()` that measures gaps between
+  consecutive character bboxes and inserts a space when
+  `gap > font_size * 0.25`.
+- CJK-aware: `_is_cjk_or_fullwidth_punct()` suppresses space insertion between
+  CJK ideographs and fullwidth punctuation (：，；！), but NOT between fullwidth
+  ASCII letters (Ａ-Ｚ) which need word spacing.
+- Verified: receipt improved (edit_distance 0.030 vs 0.031 baseline).
+
+**2. Multi-column hint detection for mixed-layout pages** (`builders/reading_order.py`)
+
+- Problem: page 1 of Chinese academic papers has mixed layout (single-column
+  title + two-column body). Only 2 column-width elements remained after
+  filtering full-width title/abstract. `detect_columns_with_hint()` blocked
+  on `col_sized < 4` and `left_edges < 2`.
+- Fix: relaxed thresholds to `col_sized < 2` and `left_edges < 1`.
+  With a reliable hint gutter from pages 2+, even 1 element per side
+  validates the column layout. Hint-based confidence remains 0.5.
+
+**3. CJK continuation signals for line unwrap** (`processors/line_unwrap.py`)
+
+- Problem: within-element CJK line breaks from narrow columns were not merged
+  when lines were short (< 80% of average). Lines like `.早期研究...` (starting
+  with orphan punctuation) or `[2]、简支梁` (bracketed reference) are clearly
+  mid-sentence but failed the length check.
+- Fix: added `_CJK_CONTINUATION_RE` regex that recognizes orphaned punctuation
+  and bracketed references (`[1]`, `[2,3]`, `[11-15]`) at line start as
+  continuation signals that override the length threshold.
+- Scope limited: removed the overly broad 1-2 CJK char orphan pattern that
+  caused false merges of legitimate short lines like `吞服`, `重启`.
+
+### Measured Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| paper_chn02 (new) | English spaces | missing | recovered | fixed |
+| paper_chn02 (new) | CJK line merge | fragmented | mostly merged | improved |
+| receipt | edit_distance | 0.031 | 0.030 | -0.001 (improved) |
+| receipt | char_f1 | 0.984 | 0.985 | +0.001 (improved) |
+| paper01 | edit_distance | 0.328 | 0.325 | -0.003 (improved) |
+| paper_chn01 | edit_distance | 0.506 | 0.503 | -0.003 (improved) |
+
+No regressions attributable to these changes (all flagged regressions in
+regression test were confirmed pre-existing via baseline comparison).
+
+### Key Design Decisions
+
+- Gap threshold `0.25 * font_size` chosen based on empirical measurement:
+  word gaps in test PDF were ~3.69pt (font 10.3pt), intra-word gaps ≤0.
+  Threshold of 2.57 cleanly separates them.
+- Fullwidth ASCII letters (FF10-FF5A) excluded from CJK suppression because
+  they are Latin text rendered wide — word space detection must still apply.
+- Column hint relaxation is safe because the hint gutter is validated from
+  other pages with high confidence (1.0). The `element-must-not-span-gutter`
+  check still applies.
+
+---
+
+## Previous Iteration: VLM Format Guard + Zero-Signal Heading Fallback (2026-04-09)
 
 ### What Was Done
 
