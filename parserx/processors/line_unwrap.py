@@ -28,6 +28,7 @@ _CJK_CONTINUATION_RE = re.compile(
     r"^(?:"
     r"[.\uff0c\u3001\uff1b\uff1a\uff09\]\u3011\u300b\u300d\u300f\u201d\u2019\u3002]"  # orphan punct
     r"|\[[\d,\u002d\uff0c ]+\]"  # bracketed reference [1], [2,3], [11-15]
+    r"|\d+[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"  # digit + CJK (e.g. "3种", "2中")
     r")"
 )
 
@@ -126,6 +127,11 @@ def _should_merge_lines(
         if _CJK_CONTINUATION_RE.match(stripped_next):
             return True
 
+        # Very short next line (≤2 CJK chars) is almost certainly an orphan
+        # fragment from a mid-word break, not a standalone paragraph.
+        if len(stripped_next) <= 2:
+            return True
+
         # Fallback 24 approximates a typical short Chinese body line when we
         # cannot infer a body-font median from document metadata.
         effective_avg = average_line_length if average_line_length > 0 else 24
@@ -184,7 +190,12 @@ def _unwrap_text_block(text: str, average_line_length: float) -> str:
 
         if _should_merge_lines(current, line, effective_avg, last_raw_len=last_raw_len):
             current = _join_lines(current, line)
-            last_raw_len = len(line)
+            # When a continuation signal forced the merge (short line ≤2
+            # chars, bracketed ref, digit+CJK, etc.), keep the previous
+            # last_raw_len so the next merge check uses a representative
+            # line length rather than the tiny continuation fragment.
+            if len(line) > 5:
+                last_raw_len = len(line)
         else:
             result.append(current)
             current = line
