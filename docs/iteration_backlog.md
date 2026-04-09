@@ -1,12 +1,50 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (Heading detection: numbering coherence)
+Updated: 2026-04-09 (OCR graceful degradation + heading coherence)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: Heading Detection — Numbering Coherence (2026-04-09)
+## Latest Iteration: OCR Graceful Degradation (2026-04-09)
+
+### What Was Done
+
+**OCR 三层降级容错** (`services/ocr.py`, `builders/ocr.py`)
+
+- Root cause: PaddleOCR 服务端对特定图片（ocr01 page 7: 绿色背景+表格,
+  1240x1754px）启用 Layout Detection 时返回 500。同一图片关闭 Layout Detection
+  或降低 DPI 均可成功。这是服务端 bug，非客户端问题。
+- 新增三层降级策略:
+  1. **指数退避重试** (5 次, 2s→4s→8s→16s→30s)：处理临时性网络/服务故障
+  2. **关闭 Layout Detection 重试** (2 次)：绕过服务端对特定图片的处理崩溃
+  3. **跳过失败页面继续处理**：OCRBuilder 捕获页面级异常，记录错误日志但不中断
+     整个文档解析流程
+- 重构 `recognize()` 方法，抽取 `_post_with_retries()` 复用重试逻辑
+- ocr01 从解析失败 → 完整解析成功，page 7 走降级路径（无 Layout Detection）
+
+### Measured Impact
+
+| Document | Metric | Before | After | Notes |
+|----------|--------|--------|-------|-------|
+| ocr01 | status | FAILED (500) | **SUCCESS** | 文档不再因单页 OCR 失败而中断 |
+| ocr01 | heading_F1 | 0.714 | 0.833 | 受益于 numbering coherence |
+| ocr01 | char_F1 | 0.970 (best) | 0.822 | page 7 降级 OCR 质量下降 |
+
+**回归检查**: 其他文档无影响（OCR 降级仅在重试耗尽后触发）。
+
+### Key Insights
+
+1. **服务端 bug 不可控，客户端必须容错。** PaddleOCR 对特定图片+参数组合会崩溃，
+   且不同时间表现可能不同。客户端不能假设 OCR 服务永远可用。
+
+2. **降级优于失败。** 关闭 Layout Detection 的 OCR 结果质量较低（丢失表格结构、
+   版面分析），但仍优于完全丢失该页。最终兜底（跳过页面）确保文档解析流程永不中断。
+
+3. **ocr01 page 7 的 500 是确定性可复现的。** 不是临时故障——同一请求在所有重试中
+   都返回 500。触发条件：1240x1754px PNG + Layout Detection + 绿色背景+表格。
+
+## Previous Iteration: Heading Detection — Numbering Coherence (2026-04-09)
 
 ### What Was Done
 
