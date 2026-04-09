@@ -71,7 +71,13 @@ class PaddleOCRService:
         self._timeout = 600
 
     def recognize(self, image_path: Path) -> OCRResult:
-        """Send image to PaddleOCR sync API and parse response."""
+        """Send image to PaddleOCR sync API and parse response.
+
+        Retry strategy:
+        1. Up to ``_max_retries`` attempts with exponential backoff.
+        2. If all fail, retry once with layout detection disabled (works
+           around server-side crashes on certain images).
+        """
         with open(image_path, "rb") as f:
             file_base64 = base64.b64encode(f.read()).decode("ascii")
 
@@ -85,15 +91,45 @@ class PaddleOCRService:
             "useOcrForImageBlock": True,
             "useChartRecognition": False,
         }
+
+        result = self._post_with_retries(body, image_path.name)
+        if result is not None:
+            return result
+
+        # Fallback: disable layout detection (works around server-side 500
+        # errors on certain images with complex backgrounds/tables).
+        log.warning(
+            "OCR retries exhausted for %s, retrying without layout detection",
+            image_path.name,
+        )
+        body["useLayoutDetection"] = False
+        body["useOcrForImageBlock"] = False
+        result = self._post_with_retries(body, image_path.name, max_retries=2)
+        if result is not None:
+            return result
+
+        raise RuntimeError(
+            f"OCR failed for {image_path.name} after retries "
+            f"(including fallback without layout detection)"
+        )
+
+    def _post_with_retries(
+        self,
+        body: dict,
+        label: str,
+        max_retries: int | None = None,
+    ) -> OCRResult | None:
+        """POST to OCR endpoint with retries. Returns None if all fail."""
         headers = {
             "Authorization": f"token {self._token}",
             "Content-Type": "application/json",
         }
-
+        retries = max_retries if max_retries is not None else self._max_retries
         last_error: Exception | None = None
-        for attempt in range(1, self._max_retries + 1):
+
+        for attempt in range(1, retries + 1):
             try:
-                log.debug("OCR request: %s (attempt %d)", image_path.name, attempt)
+                log.debug("OCR request: %s (attempt %d)", label, attempt)
                 resp = requests.post(
                     self._url,
                     headers=headers,
@@ -110,12 +146,12 @@ class PaddleOCRService:
 
             except Exception as exc:
                 last_error = exc
-                if attempt < self._max_retries:
-                    wait = min(2 ** attempt, 30)  # exponential backoff, cap 30s
+                if attempt < retries:
+                    wait = min(2 ** attempt, 30)
                     log.warning("OCR retry %d: %s (wait %ds)", attempt, exc, wait)
                     time.sleep(wait)
 
-        raise RuntimeError(f"OCR failed after {self._max_retries} attempts: {last_error}")
+        return None
 
     def _parse_result(self, result: dict) -> OCRResult:
         """Parse PaddleOCR response into OCRResult."""
