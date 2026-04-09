@@ -565,7 +565,7 @@ VLM 输出优先级高于 OCR。
     - 垂直间距 ≤ 2× 页面典型行间距（间距大 → 段落间隔，不合并）
     合并后 bbox 取并集，content 用语言感知拼接（CJK 无空格，英文加空格）
 
-  Pass 2 — 元素内换行修复（原有逻辑）：
+  Pass 2 — 元素内换行修复（原有逻辑 + 自适应窄栏增强）：
     遍历 Document 中所有 text 元素，检查内部的 \\n 硬换行：
 
     规则判断（覆盖 80-90% 场景）：
@@ -576,6 +576,18 @@ VLM 输出优先级高于 OCR。
       - 行尾是连字符(-) 且 下一行首字母小写 → 合并去连字符
       - 列表项检测：下一行匹配 bullet/编号模式 → 不合并
       - heading 元素跳过：不处理标题类元素
+
+  自适应窄栏增强（2026-04-09）：
+    混合栏宽文档中（如专利首页双栏 + 正文单栏），全局 average_line_length
+    被宽栏主导，导致窄栏 CJK 行达不到合并阈值。
+
+    - 块内局部列宽估计：计算每个 text block 中 CJK 行长度的 P75（75th
+      percentile），当 P75 < 全局均值 × 0.8 时，用 P75 作为该块的
+      effective_avg。仅统计 CJK 行，因为 ASCII 行不参与 CJK 合并逻辑。
+    - 原始行长度追踪：合并后 current 变长，可能误触发下一次合并。
+      新增 last_raw_len 参数，CJK 合并判断使用最后一行的原始长度，
+      而非累积合并后的长度。跨元素合并调用时 last_raw_len=None，
+      退化为原有行为。
 
   正文行平均长度：统计全文正文字体行的长度中位数（在两遍之前一次性计算）
 
@@ -601,18 +613,37 @@ VLM 输出优先级高于 OCR。
   4. 多余空白规范化
 ```
 
-#### 3.3.8 ReadingOrderProcessor — ❌ 待实现（低优先级）
+#### 3.3.8 ReadingOrderBuilder — ✅ 已实现 (`builders/reading_order.py`)
 
 ```
-文件：processors/reading_order.py
+文件：builders/reading_order.py
 
-大多数中文文档是单列布局，自然从上到下的阅读顺序即可。
-仅当处理多栏 PDF（报纸、杂志）时才需要。
+策略：几何 gutter 检测（无 LLM，纯确定性）
 
-实现方案（简单版）：
-  - 同一页面内的元素已按 bbox.y0 排序（PDFProvider 提取顺序）
-  - 检测多栏：同一 y 位置有多个不重叠的 text 元素 → 多栏
-  - 多栏时按列分组，列内按 y 排序，列间按 x 排序
+作为 Builder 在处理层之前运行（仅 PDF，DOCX 跳过）。
+
+核心算法 — 物理 gutter 检测：
+  1. 收集"栏体元素"：text 元素中宽度在 15%–60% 页宽之间的（排除全宽标题
+     和极小片段如页码、图注）
+  2. 在页面中央 30%–70% 区域扫描 ~200 个采样点，找到被最少元素 bbox 覆盖
+     的 x 位置（best_x）。允许最多 2 个元素重叠。
+  3. Gutter 边界精化：从 col_body 中收集 left/right 边缘，跳过跨越 best_x
+     的元素（居中标题等），计算 gutter_left = max(左栏右边缘),
+     gutter_right = min(右栏左边缘)
+  4. 置信度评分：gutter 偏离中心 > 15% → ×0.7, gutter 宽度 < 5pt → ×0.5,
+     有元素重叠 → ×0.7。阈值 0.6。
+
+文档级传播（2026-04-09）：
+  - Pass 1: 每页独立检测
+  - Pass 2: 当 ≥40% 页面检测成功时，计算中位 gutter 位置，对未检测页面
+    用 detect_columns_with_hint() 以更宽松阈值重试（relaxed: min 2 elements,
+    min 1 per side）
+  - 防护：内容稀疏页（col_sized < 4）和图注密集页（tiny > col_sized×1.5）跳过
+
+元素重排（reorder_elements）：
+  - 分类：left / right / full_width（>60% 页宽 或跨 gutter）
+  - full_width 元素作为 zone 边界，zone 内先左栏（按 y）再右栏（按 y）
+  - 存储 metadata: column, column_right_margin（供 LineUnwrap 宽度守卫使用）
 ```
 
 #### 3.3.9 结构角色识别 — 设计讨论（跨 ChapterProcessor / LineUnwrapProcessor）

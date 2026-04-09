@@ -68,8 +68,21 @@ def _join_lines(current: str, next_line: str) -> str:
     return current + " " + next_line
 
 
-def _should_merge_lines(current: str, next_line: str, average_line_length: float) -> bool:
-    """Decide whether a visual line break should be removed."""
+def _should_merge_lines(
+    current: str,
+    next_line: str,
+    average_line_length: float,
+    *,
+    last_raw_len: int | None = None,
+) -> bool:
+    """Decide whether a visual line break should be removed.
+
+    *last_raw_len* is the length of the last *original* line appended to
+    *current* (before any previous merges lengthened it).  When provided,
+    the CJK merge check uses this instead of ``len(current)`` so that a
+    short original line (intentional break) is not masked by accumulated
+    merge length.
+    """
     current = current.rstrip()
     next_line = next_line.lstrip()
 
@@ -96,7 +109,8 @@ def _should_merge_lines(current: str, next_line: str, average_line_length: float
         # Fallback 24 approximates a typical short Chinese body line when we
         # cannot infer a body-font median from document metadata.
         effective_avg = average_line_length if average_line_length > 0 else 24
-        return len(current.strip()) >= max(10, effective_avg * 0.8)
+        check_len = last_raw_len if last_raw_len is not None else len(current.strip())
+        return check_len >= max(10, effective_avg * 0.8)
 
     return False
 
@@ -110,8 +124,27 @@ def _unwrap_text_block(text: str, average_line_length: float) -> str:
     if not lines:
         return text
 
+    # Adaptive average: when this block's CJK lines are consistently
+    # narrower than the document-wide average (e.g. text in a narrow
+    # column while the rest of the document is single-column), use the
+    # block-local column width as reference so that wrapped lines are
+    # still detected.  Only CJK lines are considered because ASCII
+    # lines do not participate in CJK merge logic and would skew the
+    # estimate.  We use the 75th percentile rather than the max because
+    # lines mixing CJK and ASCII characters have inflated character
+    # counts relative to their physical width.
+    effective_avg = average_line_length
+    cjk_lengths = sorted(
+        len(l.strip()) for l in lines if l.strip() and _contains_cjk(l)
+    )
+    if len(cjk_lengths) >= 3:
+        local_col_width = cjk_lengths[int(len(cjk_lengths) * 0.75)]
+        if average_line_length > 0 and local_col_width < average_line_length * 0.8:
+            effective_avg = float(local_col_width)
+
     result: list[str] = []
     current: str | None = None
+    last_raw_len: int = 0  # length of the last original line in *current*
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -126,13 +159,16 @@ def _unwrap_text_block(text: str, average_line_length: float) -> str:
 
         if current is None:
             current = line
+            last_raw_len = len(line)
             continue
 
-        if _should_merge_lines(current, line, average_line_length):
+        if _should_merge_lines(current, line, effective_avg, last_raw_len=last_raw_len):
             current = _join_lines(current, line)
+            last_raw_len = len(line)
         else:
             result.append(current)
             current = line
+            last_raw_len = len(line)
 
     if current is not None:
         result.append(current)
