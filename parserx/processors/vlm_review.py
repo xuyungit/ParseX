@@ -3,9 +3,9 @@
 Renders selected pages as images, sends them alongside current extraction
 results to a VLM "reviewer", and applies structured corrections in-place.
 
-Currently scoped to SCANNED/MIXED pages only (OCR error correction).
-NATIVE page review (vector-rendered text recovery) is not yet reliable
-enough with current VLM models — see iteration backlog for details.
+Scoped to SCANNED/MIXED pages (OCR error correction).  NATIVE pages with
+outlined text are reclassified to SCANNED by the pipeline quality check
+before this processor runs.
 """
 
 from __future__ import annotations
@@ -217,10 +217,9 @@ class VLMReviewProcessor:
     def _needs_review(self, page: Page) -> bool:
         """Determine whether a page needs VLM review.
 
-        Currently only SCANNED/MIXED pages are reviewed — OCR errors are
-        expected on these pages.  NATIVE page review is deferred until VLM
-        models are reliable enough to avoid introducing more errors than
-        they fix (see iteration backlog).
+        Selects SCANNED/MIXED pages where OCR errors are expected.
+        NATIVE pages with outlined text are reclassified to SCANNED
+        by the pipeline quality check, so they arrive here automatically.
         """
         return page.page_type in (PageType.SCANNED, PageType.MIXED)
 
@@ -406,11 +405,13 @@ class VLMReviewProcessor:
 
         # Sanity check: if original is provided, verify it matches.
         # Strip trailing "..." that VLM may echo from the truncated summary.
+        truncated = False
         if corr.original:
             original = corr.original
             if original.endswith("..."):
                 original = original[:-3]
                 corr.original = original
+                truncated = True
             if original not in elem.content:
                 log.debug(
                     "VLM review: original text %r not found in element %d, "
@@ -421,7 +422,23 @@ class VLMReviewProcessor:
 
         # Record original for traceability.
         elem.metadata["vlm_review_original"] = elem.content
-        if corr.original and corr.original in elem.content:
+
+        if corr.type == "fix_table":
+            # For table fixes, replace entire element content — VLM rewrites
+            # the full table structure.  However, for cross-page merged tables
+            # VLM only sees one page and may return a partial table.  Guard
+            # against this by rejecting replacements much shorter than the
+            # original.
+            if len(corr.corrected) < len(elem.content) * 0.5:
+                log.debug(
+                    "VLM review: fix_table corrected (%d chars) much shorter "
+                    "than original (%d chars) on element %d — likely partial "
+                    "table, skipping",
+                    len(corr.corrected), len(elem.content), corr.element_index,
+                )
+                return False
+            elem.content = corr.corrected
+        elif corr.original and corr.original in elem.content:
             elem.content = elem.content.replace(corr.original, corr.corrected, 1)
         else:
             # No original provided — full replacement (e.g. fully garbled text).
