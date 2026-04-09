@@ -466,7 +466,14 @@ class OCRBuilder:
                     "OCR page %d/%d (page %d, %s)",
                     ocr_count + 1, total_ocr, page.number, page.page_type.value,
                 )
-                ocr_elements = self._ocr_page(fitz_doc, page)
+                try:
+                    ocr_elements = self._ocr_page(fitz_doc, page)
+                except Exception as exc:
+                    log.error(
+                        "OCR failed on page %d, skipping: %s", page.number, exc,
+                    )
+                    ocr_count += 1
+                    continue
                 if ocr_elements:
                     if page.page_type == PageType.SCANNED:
                         # Scanned page: replace any pre-existing text/table
