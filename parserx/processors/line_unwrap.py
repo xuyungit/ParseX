@@ -58,6 +58,11 @@ def _join_lines(current: str, next_line: str) -> str:
         return current + next_line
 
     if _contains_cjk(current) or _contains_cjk(next_line):
+        # Add space at CJK↔Latin boundary (e.g. "研究方法" + "The method")
+        left_is_cjk = bool(_CJK_RE.search(current[-1])) if current else False
+        right_is_cjk = bool(_CJK_RE.search(next_line[0])) if next_line else False
+        if left_is_cjk != right_is_cjk:
+            return current + " " + next_line
         return current + next_line
 
     return current + " " + next_line

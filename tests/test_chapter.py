@@ -348,3 +348,104 @@ def test_real_pdf_chapter_detection():
 
     # The procurement doc should have chapter headings (第X章)
     assert "# " in result or "## " in result, "Expected heading markers in output"
+
+
+# ── Numbering coherence tests ─────────────────────────────────────────
+
+
+def test_coherence_sequential_arabic_root():
+    """Sequential arabic root numbers (0-6) should be promoted to H2 without font signal."""
+    body = "正文内容" * 30
+    elements = [_text_elem(body)]
+    for i in range(7):
+        elements.append(_text_elem(f"{i} 第{i}节内容标题"))
+        elements.append(_text_elem(body))
+
+    doc = _build_doc(elements)
+    ChapterProcessor().process(doc)
+
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 7
+    for h in headings:
+        assert h.metadata["heading_level"] == 2
+        assert h.metadata.get("numbering_coherence") is True
+
+
+def test_coherence_nested_subsections():
+    """Nested subsections (2.1, 2.2, 3.1, 3.2, 3.3) should be promoted to H3."""
+    body = "正文内容" * 30
+    elements = [_text_elem(body)]
+    for label in ["2.1 损伤情形一", "2.2 损伤情形二", "3.1 分析方法", "3.2 实验结果", "3.3 讨论"]:
+        elements.append(_text_elem(label))
+        elements.append(_text_elem(body))
+
+    doc = _build_doc(elements)
+    ChapterProcessor().process(doc)
+
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 5
+    for h in headings:
+        assert h.metadata["heading_level"] == 3
+        assert h.metadata.get("numbering_coherence") is True
+
+
+def test_coherence_not_triggered_for_isolated_numbers():
+    """Isolated arabic numbers (non-sequential) should NOT be promoted."""
+    body = "正文内容" * 30
+    elements = [
+        _text_elem(body),
+        _text_elem("1 某段落开头"),
+        _text_elem(body),
+        _text_elem("5 另一段落开头"),
+        _text_elem(body),
+    ]
+
+    doc = _build_doc(elements)
+    ChapterProcessor().process(doc)
+
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 0
+
+
+def test_coherence_coexists_with_strong_signals():
+    """Chinese chapter headings (strong) and arabic coherence should both work."""
+    body = "正文内容" * 30
+    elements = [
+        _text_elem(body),
+        _text_elem("第一章 总则", 14.0, bold=True),
+        _text_elem(body),
+        _text_elem("1 范围"),
+        _text_elem(body),
+        _text_elem("2 术语"),
+        _text_elem(body),
+        _text_elem("3 材料"),
+        _text_elem(body),
+    ]
+
+    doc = _build_doc(elements)
+    ChapterProcessor().process(doc)
+
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 4  # 1 chapter_cn + 3 coherence
+
+
+def test_is_coherent_sequence():
+    """Unit test for _is_coherent_sequence helper."""
+    from parserx.processors.chapter import _is_coherent_sequence
+
+    assert _is_coherent_sequence([0, 1, 2, 3, 4, 5, 6]) is True
+    assert _is_coherent_sequence([1, 2, 3]) is True
+    assert _is_coherent_sequence([0, 1, 3, 4, 5]) is True  # gap of 2 ok
+    assert _is_coherent_sequence([1, 5]) is False  # too few
+    assert _is_coherent_sequence([1, 2]) is False  # min_count=3
+    assert _is_coherent_sequence([1, 2], min_count=2) is True
+    assert _is_coherent_sequence([1, 4, 8]) is False  # gaps too large
+
+
+def test_section_arabic_spaced_includes_zero():
+    """Regex should match section 0 (e.g., '0 引 言')."""
+    from parserx.builders.metadata import detect_numbering_signal
+
+    result = detect_numbering_signal("0 引 言")
+    assert result is not None
+    assert result[0] == "section_arabic_spaced"

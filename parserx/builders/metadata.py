@@ -33,7 +33,7 @@ _NUMBERING_PATTERNS: list[tuple[str, str, str]] = [
     ("section_cn_paren", r"^[（(][一二三四五六七八九十百千万]+[）)]", "H2"),
     ("section_arabic_nested", r"^\d+\.\d+(?:\.\d+)*[\s、.．)]", "H3"),
     ("section_arabic_paren", r"^(?:[（(]\d+[）)]|\d+[）)])", "H3"),
-    ("section_arabic_spaced", r"^[1-9]\d{0,2}\s+[\u4e00-\u9fffA-Za-z]", "H2"),  # max 3 digits, excludes years like 2026
+    ("section_arabic_spaced", r"^\d{1,3}\s+[\u4e00-\u9fffA-Za-z]", "H2"),  # max 3 digits, excludes years like 2026
     ("section_arabic_root", r"^\d+\.[\s]+", "H2"),
 ]
 
@@ -83,7 +83,7 @@ class MetadataBuilder:
 
     def _build_font_statistics(self, doc: Document) -> None:
         """Count font usage across all text elements to find body font."""
-        font_char_counts: Counter[str, int] = Counter()
+        font_char_counts: Counter[str] = Counter()
 
         for page in doc.pages:
             for elem in page.elements:
@@ -179,7 +179,7 @@ class MetadataBuilder:
 
     def _detect_numbering_patterns(self, doc: Document) -> None:
         """Scan text elements for chapter/section numbering patterns."""
-        pattern_counts: Counter[str, int] = Counter()
+        pattern_counts: Counter[str] = Counter()
 
         for page in doc.pages:
             for elem in page.elements:

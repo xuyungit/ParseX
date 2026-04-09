@@ -725,9 +725,13 @@ def _render_formula_crop(
             return None
 
         pix = page.get_pixmap(matrix=fitz.Matrix(220 / 72, 220 / 72), clip=clip)
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        try:
             pix.save(tmp.name)
             return Path(tmp.name)
+        except Exception:
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
     finally:
         fitz_doc.close()
 
