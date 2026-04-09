@@ -280,23 +280,31 @@ class ChapterProcessor:
                 if elem.metadata.get("retained_page_identity"):
                     continue
 
-                # Skip elements with heading_level already set (e.g. from DOCX styles)
+                # Elements with heading_level already set (e.g. from DOCX styles, OCR layout)
                 if elem.metadata.get("heading_level"):
+                    original_ocr_level = elem.metadata.get("heading_level")
                     if not self._keep_existing_ocr_heading(page.width, elem):
+                        # heading_level was popped; preserve OCR's original level
+                        # hint so fallback can use it for level assignment
+                        elem.metadata["ocr_level_hint"] = original_ocr_level
+                        pass
+                    elif elem.source == "ocr":
+                        first_line = _resolve_heading_text(elem.content)
+                        if _looks_like_body_text(first_line) or _ends_with_colon(first_line):
+                            elem.metadata.pop("heading_level", None)
+                            continue
+                        numbering_level = _heading_level_from_numbering(first_line)
+                        if numbering_level is not None and numbering_level != elem.metadata["heading_level"]:
+                            elem.metadata["heading_level"] = numbering_level
+                        detected_count += 1
                         continue
-                    first_line = _resolve_heading_text(elem.content)
-                    # Suppress OCR headings that look like body text
-                    if elem.source == "ocr" and (
-                        _looks_like_body_text(first_line) or _ends_with_colon(first_line)
-                    ):
-                        elem.metadata.pop("heading_level", None)
+                    else:
+                        first_line = _resolve_heading_text(elem.content)
+                        numbering_level = _heading_level_from_numbering(first_line)
+                        if numbering_level is not None and numbering_level != elem.metadata["heading_level"]:
+                            elem.metadata["heading_level"] = numbering_level
+                        detected_count += 1
                         continue
-                    # Correct OCR-assigned level using numbering signal when available
-                    numbering_level = _heading_level_from_numbering(first_line)
-                    if numbering_level is not None and numbering_level != elem.metadata["heading_level"]:
-                        elem.metadata["heading_level"] = numbering_level
-                    detected_count += 1
-                    continue
 
                 inferred_level = self._infer_sidebar_heading_level(page.width, elem)
                 if inferred_level is not None:
@@ -646,8 +654,24 @@ class ChapterProcessor:
         numbering = detect_numbering_signal(first_line)
         numbering_level = _heading_level_from_numbering(first_line)
 
+        zero_signal = False
         if font_level is None and numbering_level is None:
-            return None
+            # When real font info is available (size > 0) and the font is
+            # NOT a heading candidate, the font actively indicates body text
+            # — do not promote to fallback. Zero-signal is only appropriate
+            # when font info is genuinely unavailable (OCR default font).
+            if elem.font.size > 0:
+                return None
+            # Allow short standalone text as zero-signal candidate for LLM.
+            # Catches unnumbered section titles (前言, 附录, 专家评审组名单, etc.)
+            if (
+                len(first_line) > 30
+                or _looks_like_body_text(first_line)
+                or _is_metadata_or_cover_line(first_line)
+                or _ends_with_colon(first_line)
+            ):
+                return None
+            zero_signal = True
 
         signal_strength = 0
         if font_level is not None:
@@ -661,6 +685,8 @@ class ChapterProcessor:
         prev_text = self._neighbor_text(page_elements, elem_idx, direction=-1)
         next_text = self._neighbor_text(page_elements, elem_idx, direction=1)
 
+        ocr_level_hint = elem.metadata.get("ocr_level_hint", 0)
+
         return {
             "element": elem,
             "page": elem.page_number,
@@ -672,6 +698,8 @@ class ChapterProcessor:
             "numbering_level_hint": numbering_level or 0,
             "prev_text": prev_text,
             "next_text": next_text,
+            "zero_signal": zero_signal,
+            "ocr_level_hint": ocr_level_hint,
         }
 
     def _neighbor_text(
@@ -784,6 +812,10 @@ class ChapterProcessor:
                 f"   prev={json.dumps(candidate['prev_text'], ensure_ascii=False)}",
                 f"   next={json.dumps(candidate['next_text'], ensure_ascii=False)}",
             ])
+            if candidate.get("zero_signal"):
+                prompt_lines.append("   [无字体/编号信号，仅根据文本内容和上下文判断]")
+            if candidate.get("ocr_level_hint"):
+                prompt_lines.append(f"   [OCR布局检测建议层级: H{candidate['ocr_level_hint']}]")
 
         prompt_lines.append('仅返回 JSON 数组，例如: [{"idx":1,"level":2},{"idx":2,"level":0}]')
         user_prompt = "\n".join(prompt_lines)

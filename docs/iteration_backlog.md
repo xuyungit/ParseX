@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (VLM review eval + outlined text OCR + fix_table bug fix)
+Updated: 2026-04-09 (VLM format guard + zero-signal heading fallback)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
@@ -36,7 +36,97 @@ re-deriving priorities each time.
   - Where should we draw the line between "quick conversion" and
     "high-fidelity parsing" in the product surface?
 
-## Latest Iteration: VLM Review Eval + Outlined Text Detection (2026-04-09)
+## Latest Iteration: VLM Format Guard + Zero-Signal Heading Fallback (2026-04-09)
+
+### What Was Done
+
+**0. VLM review prompt optimization + format guard** (`processors/vlm_review.py`)
+
+- Problem: VLM review fix_text accurately corrects OCR character errors but
+  also introduces formatting drift — changing punctuation width (`,`↔`，`),
+  adding/removing LaTeX delimiters, modifying whitespace. Net effect was
+  negative (baseline char_f1=0.902, with VLM=0.895).
+- Prompt fix: replaced vague "don't normalize formatting" with explicit
+  FORBIDDEN block listing specific disallowed changes (punctuation width,
+  LaTeX delimiters, empty table cells, spacing).
+- Code guard: added `_is_format_only_change()` that normalizes both original
+  and corrected strings (punctuation width, LaTeX `${}`, whitespace) and
+  rejects corrections where normalized strings are identical.
+- Guard placement: in `_apply_fix()`, after original validation and before
+  mutation. Applies to both fix_text and fix_table with original provided.
+- ocr_scan_jtg3362: 12 format-only corrections rejected per run.
+  char_f1 improved from 0.881 to 0.885 (+0.004) on best run.
+
+**1. Zero-signal LLM fallback for short headings** (`processors/chapter.py`)
+
+- Root cause: `_build_fallback_candidate()` required at least one signal
+  (font or numbering) to send a candidate to LLM. Short unnumbered section
+  titles like "前言", "专家评审组名单", "附录" had zero signals (especially
+  from OCR where font=default) and were silently dropped.
+- Fix: allow OCR elements (font.size=0) with short text (≤30 chars) into
+  the LLM fallback pool when they pass all existing false-positive filters.
+  Native PDF elements (font.size > 0) with known body-size fonts are still
+  correctly rejected — their font actively indicates "not a heading".
+- Added `zero_signal` flag and `[无字体/编号信号]` LLM prompt annotation so
+  LLM applies appropriate scrutiny to these candidates.
+
+**2. OCR heading suppression fall-through** (`processors/chapter.py`)
+
+- Root cause: when `_keep_existing_ocr_heading()` suppressed an OCR heading
+  (e.g. "前言" labeled paragraph_title but in sidebar position), the element
+  was skipped entirely via `continue` — never reaching `_detect_heading()` or
+  `_build_fallback_candidate()`.
+- Fix: changed `continue` to `pass` so suppressed OCR headings fall through
+  to the standard detection pipeline. Preserved original OCR heading level as
+  `ocr_level_hint` metadata, passed to LLM prompt as `[OCR布局检测建议层级]`.
+- This is generic: any suppressed OCR heading gets a second chance via the
+  normal detection pipeline, with the OCR's original level suggestion as context.
+
+### Measured Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| text_table_word | heading_f1 | 0.667 | 1.000 | +0.333 |
+| ocr_scan_jtg3362 | heading_f1 | 0.000 | 0.100 | +0.100 |
+
+- text_table_word: "专家评审组名单" now detected as H2 (correct level via
+  OCR level hint). All expected headings now matched.
+- ocr_scan_jtg3362: "前言" now detected via LLM fallback. Level assignment
+  varies due to LLM non-determinism (H1 vs expected H2).
+- deepseek: 0 false positives (font.size > 0 guard prevents native PDF
+  short text from entering zero-signal path).
+
+### Key Design Decisions
+
+1. **Font.size > 0 guard for zero-signal path.** Native PDF elements have
+   real font information. When the font is NOT a heading candidate, that's
+   an active negative signal ("this is body text"), not absence of signal.
+   Only OCR elements (font.size=0) truly lack font information and qualify
+   for zero-signal LLM evaluation.
+
+2. **OCR level hint preservation.** When PaddleOCR labels an element as
+   `paragraph_title` (H2) but the sidebar suppression removes it, the
+   original level is saved as `ocr_level_hint` and passed to LLM. This
+   helps LLM assign the correct heading level without hardcoding rules.
+
+3. **Fallthrough instead of skip.** The suppression logic was correct in
+   removing heading_level for sidebar labels, but the `continue` was too
+   aggressive — it prevented any further evaluation. The fallthrough
+   preserves the original suppression intent while giving the element a
+   second chance through the standard pipeline.
+
+### Remaining Issues
+
+- ocr_scan_jtg3362 heading_f1=0.100 is still low. Expected headings
+  "中华人民共和国行业标准" (H1) and "公路钢筋混凝土..." (H2) are detected
+  as H3 by VLM elements. OCR text quality is poor ("混疑土" for "混凝土").
+- LLM heading level assignment is non-deterministic for zero-signal
+  candidates without OCR level hint (e.g. "前言" gets H1 or H2 depending
+  on run).
+- text_table_word improvement requires OCR to be configured (outlined text
+  recovery extracts the heading).
+
+## Previous Iteration: VLM Review Eval + Outlined Text Detection (2026-04-09)
 
 ### What Was Done
 
@@ -1214,10 +1304,17 @@ VLM path simplification (2026-04-08).
 
 **Near-term (next 1-2 iterations):**
 
-1. **VLM Review Processor end-to-end eval** — run on ocr_scan_jtg3362
-   (target: char_F1 >> 0.562) and text_table_word (target: heading_F1 >> 0.667).
-   Tune VLM prompt based on real correction quality. May need to adjust
-   structured output schema or add fallback parsing.
+1. ~~**VLM Review Processor end-to-end eval**~~ ✅ (2026-04-09): evaluated on
+   ocr_scan_jtg3362 and text_table_word. VLM review fix_text accurate but
+   fix_table/formatting drift causes net negative. See previous iteration.
+
+1b. ~~**VLM review prompt optimization (format preservation)**~~ ✅ (2026-04-09):
+    explicit FORBIDDEN block in prompt + `_is_format_only_change()` code guard.
+    12 format-only corrections rejected per run on ocr_scan. char_f1 +0.004.
+
+1c. ~~**ChapterProcessor short heading detection**~~ ✅ (2026-04-09): zero-signal
+    LLM fallback + OCR heading suppression fall-through. text_table_word
+    heading_f1 0.667→1.000, ocr_scan heading_f1 0.000→0.100.
 
 2. **Multi-column reading order — Tier 2 (PaddleOCR fallback)** — for the
    4/19 pages of paper01 where document-level propagation is still blocked

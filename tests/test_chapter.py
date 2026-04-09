@@ -510,3 +510,97 @@ def test_multiline_number_detected_as_heading():
     sec5 = [e for e in headings if "算例分析" in e.content]
     assert len(sec5) == 1
     assert sec5[0].metadata["heading_level"] == 2
+
+
+# ── Zero-signal fallback tests ────────────────────────────────────────
+
+
+def _ocr_elem(content: str) -> PageElement:
+    """Create an OCR-sourced element with default font (size=0)."""
+    return PageElement(
+        type="text",
+        content=content,
+        font=FontInfo(),
+        source="ocr",
+    )
+
+
+def test_zero_signal_short_text_enters_llm_fallback():
+    """Short unnumbered OCR text with no font signal should reach LLM fallback."""
+    doc = Document(pages=[Page(number=1, elements=[
+        _ocr_elem("正文" * 50),
+        _ocr_elem("前言"),  # no numbering, no font info (OCR default)
+        _ocr_elem("正文内容后续" * 30),
+    ])])
+    MetadataBuilder().build(doc)
+    llm = FakeLLMService('[{"idx": 1, "level": 2}]')
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert target.metadata.get("heading_level") == 2
+    assert target.metadata.get("llm_fallback_used") is True
+    assert len(llm.calls) == 1
+
+
+def test_zero_signal_long_text_rejected():
+    """OCR text longer than 30 chars with no signal should NOT enter fallback."""
+    doc = Document(pages=[Page(number=1, elements=[
+        _ocr_elem("正文" * 50),
+        _ocr_elem("这是一段比较长的文本它不是标题而是正文内容描述用来测试需要超过三十个字符才行"),
+        _ocr_elem("正文内容后续" * 30),
+    ])])
+    MetadataBuilder().build(doc)
+    llm = FakeLLMService('[{"idx": 1, "level": 2}]')
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert "heading_level" not in target.metadata
+
+
+def test_zero_signal_colon_ending_rejected():
+    """Zero-signal OCR text ending with colon should NOT enter fallback."""
+    doc = Document(pages=[Page(number=1, elements=[
+        _ocr_elem("正文" * 50),
+        _ocr_elem("编制单位："),
+        _ocr_elem("正文内容后续" * 30),
+    ])])
+    MetadataBuilder().build(doc)
+    llm = FakeLLMService('[{"idx": 1, "level": 2}]')
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert "heading_level" not in target.metadata
+    assert len(llm.calls) == 0
+
+
+def test_zero_signal_native_pdf_rejected():
+    """Native PDF elements with real font info (size > 0) should NOT enter zero-signal fallback."""
+    doc = _build_doc([
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("前言", 10.0, bold=False),  # has font info → not zero-signal eligible
+        _text_elem("正文内容后续" * 30, 10.0),
+    ])
+    llm = FakeLLMService('[{"idx": 1, "level": 2}]')
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert "heading_level" not in target.metadata
+
+
+def test_zero_signal_no_llm_graceful():
+    """Without LLM, zero-signal headings are simply missed (no crash)."""
+    doc = Document(pages=[Page(number=1, elements=[
+        _ocr_elem("正文" * 50),
+        _ocr_elem("前言"),
+        _ocr_elem("正文内容后续" * 30),
+    ])])
+    MetadataBuilder().build(doc)
+    processor = ChapterProcessor()
+    processor.process(doc)
+
+    target = doc.pages[0].elements[1]
+    assert "heading_level" not in target.metadata
