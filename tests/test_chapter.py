@@ -449,3 +449,64 @@ def test_section_arabic_spaced_includes_zero():
     result = detect_numbering_signal("0 引 言")
     assert result is not None
     assert result[0] == "section_arabic_spaced"
+
+
+# ── Multiline heading number resolution ──────────────────────────────
+
+
+def test_resolve_heading_text_joins_number_and_title():
+    """'5\\n算例分析' should be resolved to '5 算例分析' and detected as heading."""
+    from parserx.processors.chapter import _resolve_heading_text
+
+    assert _resolve_heading_text("5\n算例分析") == "5 算例分析"
+    assert _resolve_heading_text("6\n结语") == "6 结语"
+    # Multi-digit
+    assert _resolve_heading_text("12\nConclusion") == "12 Conclusion"
+
+
+def test_resolve_heading_text_ignores_body_second_line():
+    """Pure number followed by long body text should NOT be joined."""
+    from parserx.processors.chapter import _resolve_heading_text
+
+    # Body text on second line — should return just the number
+    long_body = "5\n某两跨连续梁桥的跨度为2×50m，桥面宽度为12.5m，横向设置5片T梁。"
+    assert _resolve_heading_text(long_body) == "5"
+
+
+def test_resolve_heading_text_passthrough_normal():
+    """Non-pure-number first lines should be returned as-is."""
+    from parserx.processors.chapter import _resolve_heading_text
+
+    assert _resolve_heading_text("3.2 方法") == "3.2 方法"
+    assert _resolve_heading_text("第一章 总则") == "第一章 总则"
+    assert _resolve_heading_text("Introduction") == "Introduction"
+
+
+def test_multiline_number_detected_as_heading():
+    """Element with '5\\n算例分析' at heading font should be H2."""
+    doc = _build_doc([
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("1\n引言", 13.0, bold=True),
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("2\n方法", 13.0, bold=True),
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("3\n结果", 13.0, bold=True),
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("4\n讨论", 13.0, bold=True),
+        _text_elem("正文" * 50, 10.0),
+        _text_elem("5\n算例分析", 13.0, bold=True),
+        _text_elem("正文" * 50, 10.0),
+    ])
+    proc = ChapterProcessor()
+    doc = proc.process(doc)
+
+    headings = [
+        e for e in doc.pages[0].elements
+        if e.metadata.get("heading_level")
+    ]
+    # All 5 numbered sections should be detected
+    assert len(headings) >= 5
+    # Section 5 specifically
+    sec5 = [e for e in headings if "算例分析" in e.content]
+    assert len(sec5) == 1
+    assert sec5[0].metadata["heading_level"] == 2

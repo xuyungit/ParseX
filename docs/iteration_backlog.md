@@ -1,12 +1,139 @@
 # Iteration Backlog
 
-Updated: 2026-04-09 (OCR graceful degradation + heading coherence)
+Updated: 2026-04-09 (heading fix + two-column + layout complexity + GT fix)
 
 This file records concrete follow-up tasks after the current baseline
 assessment, so we can choose the next iteration from a shared list instead of
 re-deriving priorities each time.
 
-## Latest Iteration: OCR Graceful Degradation (2026-04-09)
+## Latest Iteration: Heading Fix + Two-Column + Layout Complexity (2026-04-09)
+
+### What Was Done
+
+**0. Layout complexity detection — OCR fallback gate** (`pipeline.py`, `config/schema.py`)
+
+- Deterministic check in `_check_page_quality()`: detects NATIVE pages where
+  PyMuPDF extraction struggles due to complex visual layout (figure-heavy pages
+  with many tiny text fragments or single-char heading-font elements).
+- Two signals: `tiny_ratio > 0.5` (more than half of elements are tiny fragments)
+  and `single_char_big > 2` (graph node labels at heading-size font).
+- Validated on 12-doc ground truth: triggers only on paper01 pages 3, 5, 7, 11.
+  Zero false positives on all other documents.
+- **Default OFF** (`layout_complexity_check: false`). When enabled, reclassifies
+  flagged pages to SCANNED → OCR replaces text + provides layout structure.
+- Current OCR+VLM quality is insufficient: enabling causes heading_F1 regression
+  (0.312→0.233) because OCR text quality is lower than PyMuPDF native extraction
+  on these pages. Architecture is ready; awaiting better OCR/VLM models.
+- Config: `builders.quality_check.layout_complexity_check: true` to enable.
+
+**1. Multiline heading number resolution** (`processors/chapter.py`)
+
+- Root cause: Chinese academic papers often have section number and title on
+  separate lines within one text block (e.g., `"5\n算例分析"`). The existing
+  code extracted only the first line (`"5"`), which matched `_PURE_NUMBER_RE`
+  and was rejected as a false positive (intended to filter page numbers).
+- Fix: new `_resolve_heading_text(content)` helper joins pure-number first
+  line with short heading-like second line → `"5 算例分析"`, which passes
+  all existing filters and matches `section_arabic_spaced` numbering pattern.
+- Applied in 6 call sites: `_detect_heading()`, `_promote_coherent_numbering()`
+  (collection + root promotion + nested promotion), OCR heading correction,
+  and LLM fallback candidate building.
+- Generic rule: activates only when first line is a pure number; zero behavior
+  change for all other heading detection paths.
+
+**2. Document-level two-column propagation** (`builders/reading_order.py`)
+
+- Root cause: paper01 (19-page two-column academic paper) had geometric column
+  detection succeed on only 11/19 pages. The 8 failed pages had different
+  failure modes: too few elements (pages 14-16), side imbalance (pages 3, 13),
+  gutter obstruction from figures (pages 5, 11), and title page sparsity (page 1).
+- Fix: two-pass approach in `ReadingOrderBuilder.build()`:
+  1. Pass 1: per-page independent detection (existing logic, unchanged)
+  2. Pass 2: if ≥40% of pages detected, compute median gutter position and
+     attempt `detect_columns_with_hint()` on undetected pages using the
+     known gutter as a hint.
+- `detect_columns_with_hint()`: relaxed detection that skips gutter scanning
+  and uses the hint directly. Guards against false propagation:
+  - `col_sized < 4`: skip content-sparse pages
+  - `tiny_count > col_sized * 1.5`: skip figure-dominated pages
+  - `left_edges < 2 or right_edges < 2`: require elements on both sides
+- Generic approach: applies to any multi-column document, not paper01-specific.
+
+### Additional Changes
+
+**3. VLM Review truncation fix** (`processors/vlm_review.py`)
+
+- Bug: when element text > 200 chars, the extraction summary sent to VLM
+  was truncated with `...`. VLM echoed the `...` back in `original` field,
+  causing `_apply_fix()` substring match to fail → corrections silently
+  dropped.
+- Fix: strip trailing `...` from `corr.original` before matching.
+- Generic fix: affects any VLM correction on elements > 200 chars.
+
+**4. paper01 ground truth heading level correction** (`ground_truth/paper01/expected.md`)
+
+- Previous GT had inconsistent heading levels (e.g., `# 2 Programming Model`
+  as H1, `## 3.1` as H2, `## 3.2.2` as H2 same level as `## 3.2`).
+- Corrected to follow standard academic hierarchy:
+  H1=title, H2=top sections (1-12), H3=subsections (3.1, 4.1...), H4=sub-sub (3.2.1).
+
+### Measured Impact
+
+**Internal ground truth (10 docs, deterministic):**
+
+| Document | Metric | Before iteration | After | Delta |
+|----------|--------|------------------|-------|-------|
+| paper01 | heading_F1 | 0.167 | **0.667** | **+0.500** |
+| paper01 | edit_distance | 0.313 | 0.330 | +0.017 |
+| paper_chn01 | heading_F1 | 0.690 | **0.774** | **+0.084** |
+| paper_chn01 | edit_distance | 0.520 | 0.506 | -0.014 |
+
+paper01 heading_F1 improvement breakdown:
+- +0.145 from multiline heading number resolution (code fix)
+- +0.355 from ground truth level correction (GT fix)
+
+Other documents unchanged. 384 tests passed, 4 skipped.
+
+**Public ground truth (1 doc):** No regressions.
+
+### Key Design Decisions
+
+1. **`_resolve_heading_text` is conservative by design.** Only activates when
+   first line is a pure number. Falls back to original behavior for everything
+   else. The `_looks_like_body_text` guard prevents joining with paragraph text.
+
+2. **Propagation requires strong document-level evidence.** The 40% threshold
+   means at least ~40% of pages must independently confirm two-column layout
+   before propagation kicks in. This prevents false positives on single-column
+   documents with occasional wide figures.
+
+3. **Figure-dominated pages are skipped.** The `tiny_count > col_sized * 1.5`
+   guard prevents reordering pages where figure labels outnumber body text,
+   which caused edit_distance regressions in initial testing.
+
+4. **Hint-based detection uses lower confidence (0.5).** This signals to
+   downstream consumers that the column layout is less certain than
+   independently-detected layouts.
+
+### Remaining Issues
+
+- paper01 heading_F1 = 0.667: remaining gap is from bold-only sub-headings
+  (Operations and Kernels, Sessions, Fault Tolerance, etc.) which have no
+  font-size signal — only bold. Current heading detection requires size
+  difference or numbering pattern. OCR `block_label: title` can detect these
+  but OCR text quality tradeoff makes `layout_complexity_check` net negative
+  for now.
+- paper01 OCR fallback quality: when `layout_complexity_check: true`, heading
+  structure improves (F1 0.667→0.721) but text quality drops (char_f1
+  0.975→0.950). Main culprit: page 5 OCR hallucinates GPU0-GPU99 from a
+  diagram. VLM Review (gpt-5.4-mini) fails to catch this hallucination.
+- paper_chn01 heading_F1 = 0.774 (not 1.0): VLM non-determinism on
+  SCANNED/MIXED pages.
+- VLM Review correction matching: fixed the `...` truncation bug, but VLM
+  model still returns `"page_quality": "ok"` for obviously hallucinated
+  content (page 5 GPU list). Model capability bottleneck.
+
+## Previous Iteration: OCR Graceful Degradation (2026-04-09)
 
 ### What Was Done
 
@@ -853,6 +980,10 @@ VLM path simplification (2026-04-08).
     paper01: edit_dist 0.530→0.319 (↓40%), 11/19 pages reordered.
 18. **Multi-column reading order — Tier 2** (PaddleOCR layout fallback for
     pages where geometric detection fails, e.g. large cross-column figures)
+19. **Multiline heading number resolution** ✅ (2026-04-09): `_resolve_heading_text`
+    joins split number+title lines. paper_chn01 heading_F1 0.690→0.774.
+20. **Document-level two-column propagation** ✅ (2026-04-09): median gutter
+    hint for undetected pages. paper01 15/19 pages reordered (was 11/19).
 
 ### Next Priorities
 
@@ -864,9 +995,14 @@ VLM path simplification (2026-04-08).
    structured output schema or add fallback parsing.
 
 2. **Multi-column reading order — Tier 2 (PaddleOCR fallback)** — for the
-   8/19 pages of paper01 where geometric detection fails (large cross-column
-   figures break gutter continuity). Render page as image → PaddleOCR layout
-   API → use `block_order` for reading order. Need "layout-only" API path.
+   4/19 pages of paper01 where document-level propagation is still blocked
+   (pages 3, 13, 15, 16 — too sparse or figure-dominated). Render page as
+   image → PaddleOCR layout API → use `block_order` for reading order.
+
+2b. **Cross-element heading fragment merging** — paper01 headings split across
+    columns into separate PageElements (not multiline within one element).
+    Current `_merge_cover_heading_fragments` only works on page 1. Generalize
+    to merge heading fragments on any page where column layout is detected.
 
 3. **`vlm_refine_merged_tables=true` quality evaluation** — now implemented but
    default off. Test on ocr01 to compare VLM-refined merged tables vs OCR-only.

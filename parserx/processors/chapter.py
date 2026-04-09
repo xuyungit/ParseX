@@ -62,6 +62,32 @@ _PRICE_RE = re.compile(r"^[$¥€£₽]\s*[\d,]+(?:\.\d+)?$")
 _NAV_LINK_RE = re.compile(r"[›»>]\s*$")
 
 
+def _resolve_heading_text(content: str) -> str:
+    """Extract heading candidate text, joining split number+title lines.
+
+    Chinese academic papers often have the section number and title on
+    separate lines within one text block (e.g. ``"5\\n算例分析"``).
+    When the first line is a pure number, check if the next line contains
+    short heading-like text and return the combined form (``"5 算例分析"``).
+    """
+    lines = content.split("\n")
+    first = lines[0].strip()
+    if not first or not _PURE_NUMBER_RE.match(first):
+        return first
+    # First line is a pure number — check next 1-2 lines for heading text
+    for i in range(1, min(len(lines), 3)):
+        candidate = lines[i].strip()
+        if not candidate:
+            continue
+        if _looks_like_body_text(candidate):
+            break
+        combined = f"{first} {candidate}"
+        if len(combined) <= 80:
+            return combined
+        break
+    return first
+
+
 def _is_false_positive(text: str) -> bool:
     """Filter out text that looks like a heading due to numbering but isn't.
 
@@ -258,7 +284,7 @@ class ChapterProcessor:
                 if elem.metadata.get("heading_level"):
                     if not self._keep_existing_ocr_heading(page.width, elem):
                         continue
-                    first_line = elem.content.split("\n")[0].strip()
+                    first_line = _resolve_heading_text(elem.content)
                     # Suppress OCR headings that look like body text
                     if elem.source == "ocr" and (
                         _looks_like_body_text(first_line) or _ends_with_colon(first_line)
@@ -330,7 +356,7 @@ class ChapterProcessor:
         Applies false-positive filters to catch:
         - Date lines, TOC entries, metadata fields, cover page lines
         """
-        first_line = elem.content.split("\n")[0].strip()
+        first_line = _resolve_heading_text(elem.content)
 
         # ── Hard filters: definitely not a heading ──
         if _looks_like_body_text(first_line):
@@ -396,7 +422,7 @@ class ChapterProcessor:
             for elem in page.elements:
                 if elem.type != "text":
                     continue
-                first_line = elem.content.split("\n")[0].strip()
+                first_line = _resolve_heading_text(elem.content)
                 if not first_line:
                     continue
                 if (_looks_like_body_text(first_line) or _is_false_positive(first_line)
@@ -432,7 +458,7 @@ class ChapterProcessor:
             if _is_coherent_sequence(numbers, min_count=3):
                 for _, elem in root_entries:
                     if not elem.metadata.get("heading_level"):
-                        first_line = elem.content.split("\n")[0].strip()
+                        first_line = _resolve_heading_text(elem.content)
                         if _is_short_heading_text(first_line):
                             elem.metadata["heading_level"] = 2
                             elem.metadata["numbering_coherence"] = True
@@ -445,7 +471,7 @@ class ChapterProcessor:
                 if _is_coherent_sequence(sub_numbers, min_count=2):
                     for _, elem in entries:
                         if not elem.metadata.get("heading_level"):
-                            first_line = elem.content.split("\n")[0].strip()
+                            first_line = _resolve_heading_text(elem.content)
                             if _is_short_heading_text(first_line):
                                 elem.metadata["heading_level"] = 3
                                 elem.metadata["numbering_coherence"] = True
@@ -610,7 +636,7 @@ class ChapterProcessor:
         if not self._config.llm_fallback or self._llm is None:
             return None
 
-        first_line = elem.content.split("\n")[0].strip()
+        first_line = _resolve_heading_text(elem.content)
         if not first_line or _is_false_positive(first_line):
             return None
         if len(first_line) > 120:

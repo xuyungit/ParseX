@@ -405,8 +405,13 @@ class VLMReviewProcessor:
         elem = page.elements[corr.element_index]
 
         # Sanity check: if original is provided, verify it matches.
+        # Strip trailing "..." that VLM may echo from the truncated summary.
         if corr.original:
-            if corr.original not in elem.content:
+            original = corr.original
+            if original.endswith("..."):
+                original = original[:-3]
+                corr.original = original
+            if original not in elem.content:
                 log.debug(
                     "VLM review: original text %r not found in element %d, "
                     "skipping correction",
