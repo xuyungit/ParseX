@@ -283,3 +283,156 @@ def test_quality_check_skips_without_llm():
     pipeline._check_page_quality(doc)
 
     assert doc.pages[0].page_type == PageType.NATIVE
+
+
+# ── Layout complexity check ──────────────────────────────────────────
+
+
+def _pipeline_layout_check():
+    """Pipeline with layout complexity check enabled, OCR disabled."""
+    cfg = ParserXConfig()
+    cfg.builders.ocr.engine = "none"
+    cfg.builders.quality_check.layout_complexity_check = True
+    return Pipeline(cfg)
+
+
+def test_layout_complexity_flags_tiny_dominated_page():
+    """Page with >50% tiny elements should be reclassified to SCANNED."""
+    from parserx.models.elements import (
+        Document, DocumentMetadata, FontInfo, FontStatistics,
+        Page, PageElement, PageType,
+    )
+
+    pw = 612.0
+    # 4 tiny elements (< 15% of page width = 91.8pt)
+    tiny_elems = [
+        PageElement(type="text", content="C", bbox=(300, 70+i*30, 310, 85+i*30),
+                    font=FontInfo(name="F", size=12.0))
+        for i in range(4)
+    ]
+    # 3 normal column-body elements
+    body_elems = [
+        PageElement(type="text", content="Normal body text " * 5,
+                    bbox=(72, 400+i*50, 297, 440+i*50),
+                    font=FontInfo(name="F", size=10.0))
+        for i in range(3)
+    ]
+    page = Page(number=1, width=pw, height=792, elements=tiny_elems + body_elems,
+                page_type=PageType.NATIVE)
+    doc = Document(
+        pages=[page],
+        metadata=DocumentMetadata(
+            font_stats=FontStatistics(body_font=FontInfo(name="F", size=10.0)),
+        ),
+    )
+
+    pipeline = _pipeline_layout_check()
+    pipeline._check_page_quality(doc)
+
+    # tiny_ratio = 4/7 ≈ 0.57 > 0.5 → should be reclassified
+    assert doc.pages[0].page_type == PageType.SCANNED
+
+
+def test_layout_complexity_flags_single_char_big_font():
+    """Page with >2 single-char heading-font elements should be reclassified."""
+    from parserx.models.elements import (
+        Document, DocumentMetadata, FontInfo, FontStatistics,
+        Page, PageElement, PageType,
+    )
+
+    pw = 612.0
+    # 3 single-char elements at bigger-than-body font (graph node labels)
+    big_char_elems = [
+        PageElement(type="text", content=c, bbox=(280+i*30, 300, 295+i*30, 315),
+                    font=FontInfo(name="F", size=12.0))
+        for i, c in enumerate(["W", "b", "x"])
+    ]
+    # 5 normal body elements
+    body_elems = [
+        PageElement(type="text", content="Normal body text " * 5,
+                    bbox=(72, 400+i*50, 297, 440+i*50),
+                    font=FontInfo(name="F", size=10.0))
+        for i in range(5)
+    ]
+    page = Page(number=1, width=pw, height=792, elements=big_char_elems + body_elems,
+                page_type=PageType.NATIVE)
+    doc = Document(
+        pages=[page],
+        metadata=DocumentMetadata(
+            font_stats=FontStatistics(body_font=FontInfo(name="F", size=10.0)),
+        ),
+    )
+
+    pipeline = _pipeline_layout_check()
+    pipeline._check_page_quality(doc)
+
+    # single_char_big = 3 > 2 → should be reclassified
+    assert doc.pages[0].page_type == PageType.SCANNED
+
+
+def test_layout_complexity_keeps_clean_page():
+    """Normal single-column page should NOT be reclassified."""
+    from parserx.models.elements import (
+        Document, DocumentMetadata, FontInfo, FontStatistics,
+        Page, PageElement, PageType,
+    )
+
+    pw = 612.0
+    elems = [
+        PageElement(type="text", content="Normal body text " * 10,
+                    bbox=(72, 50+i*60, 540, 90+i*60),
+                    font=FontInfo(name="F", size=10.0))
+        for i in range(8)
+    ]
+    page = Page(number=1, width=pw, height=792, elements=elems,
+                page_type=PageType.NATIVE)
+    doc = Document(
+        pages=[page],
+        metadata=DocumentMetadata(
+            font_stats=FontStatistics(body_font=FontInfo(name="F", size=10.0)),
+        ),
+    )
+
+    pipeline = _pipeline_layout_check()
+    pipeline._check_page_quality(doc)
+
+    assert doc.pages[0].page_type == PageType.NATIVE
+
+
+def test_layout_complexity_respects_config_toggle():
+    """layout_complexity_check=False should skip the check."""
+    from parserx.models.elements import (
+        Document, DocumentMetadata, FontInfo, FontStatistics,
+        Page, PageElement, PageType,
+    )
+
+    pw = 612.0
+    # Same as test_layout_complexity_flags_single_char_big_font
+    big_char_elems = [
+        PageElement(type="text", content=c, bbox=(280+i*30, 300, 295+i*30, 315),
+                    font=FontInfo(name="F", size=12.0))
+        for i, c in enumerate(["W", "b", "x"])
+    ]
+    body_elems = [
+        PageElement(type="text", content="Normal body text " * 5,
+                    bbox=(72, 400+i*50, 297, 440+i*50),
+                    font=FontInfo(name="F", size=10.0))
+        for i in range(5)
+    ]
+    page = Page(number=1, width=pw, height=792, elements=big_char_elems + body_elems,
+                page_type=PageType.NATIVE)
+    doc = Document(
+        pages=[page],
+        metadata=DocumentMetadata(
+            font_stats=FontStatistics(body_font=FontInfo(name="F", size=10.0)),
+        ),
+    )
+
+    cfg = ParserXConfig()
+    cfg.builders.quality_check.layout_complexity_check = False
+    cfg.builders.ocr.engine = "none"
+    pipeline = Pipeline(cfg)
+    pipeline._check_page_quality(doc)
+
+    # Should NOT be reclassified because check is disabled
+    assert doc.pages[0].page_type == PageType.NATIVE

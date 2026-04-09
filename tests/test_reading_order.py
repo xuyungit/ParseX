@@ -208,3 +208,102 @@ def test_builder_two_column_reordered():
     ReadingOrderBuilder().build(doc)
     contents = [e.content for e in doc.pages[0].elements]
     assert contents == ["L1", "L2", "L3", "R1", "R2", "R3"]
+
+
+# ── Document-level column propagation ────────────────────────────────
+
+
+def _two_col_page(page_num: int) -> Page:
+    """Create a page with clear two-column layout (6 elements, 3 per side)."""
+    return Page(
+        number=page_num,
+        width=_PAGE_WIDTH,
+        height=_PAGE_HEIGHT,
+        elements=[
+            _elem(f"p{page_num}L1", 72, 74, 297, 120),
+            _elem(f"p{page_num}R1", 315, 74, 540, 120),
+            _elem(f"p{page_num}L2", 72, 130, 297, 180),
+            _elem(f"p{page_num}R2", 315, 130, 540, 180),
+            _elem(f"p{page_num}L3", 72, 190, 297, 240),
+            _elem(f"p{page_num}R3", 315, 190, 540, 240),
+        ],
+    )
+
+
+def _sparse_two_col_page(page_num: int) -> Page:
+    """Page with only 4 text elements — too few for independent detection,
+    but enough for hint-based (≥2 on each side)."""
+    return Page(
+        number=page_num,
+        width=_PAGE_WIDTH,
+        height=_PAGE_HEIGHT,
+        elements=[
+            _elem(f"p{page_num}L1", 72, 300, 297, 350),
+            _elem(f"p{page_num}R1", 315, 300, 540, 350),
+            _elem(f"p{page_num}L2", 72, 360, 297, 410),
+            _elem(f"p{page_num}R2", 315, 360, 540, 410),
+        ],
+    )
+
+
+def test_propagation_reorders_sparse_page():
+    """Sparse page should be reordered via propagation from detected pages."""
+    doc = Document(pages=[
+        _two_col_page(1),
+        _two_col_page(2),
+        _two_col_page(3),
+        _sparse_two_col_page(4),  # Too few for independent detection
+    ])
+    # Verify page 4 fails independent detection
+    assert detect_columns(doc.pages[3].elements, _PAGE_WIDTH) is None
+
+    ReadingOrderBuilder().build(doc)
+
+    # Page 4 should now have column metadata from propagation
+    p4_cols = [e.metadata.get("column") for e in doc.pages[3].elements]
+    assert "left" in p4_cols
+    assert "right" in p4_cols
+
+
+def test_propagation_not_triggered_for_single_column_doc():
+    """Single-column document should not trigger propagation."""
+    pages = []
+    for i in range(1, 5):
+        pages.append(Page(
+            number=i,
+            width=_PAGE_WIDTH,
+            height=_PAGE_HEIGHT,
+            elements=[
+                _elem(f"p{i}e1", 72, 74, 540, 120),
+                _elem(f"p{i}e2", 72, 130, 540, 180),
+                _elem(f"p{i}e3", 72, 190, 540, 240),
+                _elem(f"p{i}e4", 72, 250, 540, 300),
+                _elem(f"p{i}e5", 72, 310, 540, 360),
+                _elem(f"p{i}e6", 72, 370, 540, 420),
+            ],
+        ))
+    doc = Document(pages=pages)
+    ReadingOrderBuilder().build(doc)
+    # No column metadata should be set
+    for page in doc.pages:
+        for elem in page.elements:
+            assert "column" not in elem.metadata
+
+
+def test_detect_columns_with_hint():
+    """Hint-based detection should work with fewer elements."""
+    from parserx.builders.reading_order import detect_columns_with_hint
+
+    # 4 elements — too few for normal detection, enough for hint (≥2 each side)
+    elems = [
+        _elem("L1", 72, 300, 297, 350),
+        _elem("R1", 315, 300, 540, 350),
+        _elem("L2", 72, 360, 297, 410),
+        _elem("R2", 315, 360, 540, 410),
+    ]
+    assert detect_columns(elems, _PAGE_WIDTH) is None
+
+    layout = detect_columns_with_hint(elems, _PAGE_WIDTH, hint_gutter_x=306.0)
+    assert layout is not None
+    assert layout.gutter_x == 306.0
+    assert layout.confidence == 0.5

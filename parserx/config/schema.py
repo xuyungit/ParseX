@@ -53,9 +53,10 @@ class OCRBuilderConfig(BaseModel):
 
 
 class QualityCheckConfig(BaseModel):
-    """LLM-based page quality check for formula fragmentation detection."""
+    """Page quality check: deterministic layout analysis + LLM formula detection."""
 
     enabled: bool = True
+    layout_complexity_check: bool = False  # Deterministic: reclassify complex-layout pages for OCR
     pre_filter_short_ratio: float = 0.25
     max_text_chars: int = 2000
 

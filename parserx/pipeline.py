@@ -402,14 +402,60 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
 """
 
     def _check_page_quality(self, doc: Document) -> None:
-        """Check NATIVE pages for formula fragmentation via LLM.
+        """Check NATIVE pages for quality issues and reclassify for OCR.
 
-        Pages flagged as fragmented are reclassified to SCANNED so the
+        Two checks run in order:
+        1. Deterministic layout complexity — pages with many tiny fragments
+           or single-char heading-font elements are likely figure-heavy and
+           benefit from OCR layout detection over font-based analysis.
+        2. LLM formula fragmentation — pages with many short lines that
+           look like split formulas.
+
+        Pages flagged by either check are reclassified to SCANNED so the
         OCR builder will fully replace their text.
         """
         cfg = self._config.builders.quality_check
         flagged = 0
 
+        # ── Deterministic: layout complexity check ──
+        if cfg.layout_complexity_check:
+            body_size = doc.metadata.font_stats.body_font.size or 10.0
+            for page in doc.pages:
+                if page.page_type != PageType.NATIVE:
+                    continue
+                text_elems = [
+                    e for e in page.elements
+                    if e.type == "text" and e.bbox != (0.0, 0.0, 0.0, 0.0)
+                ]
+                if len(text_elems) < 6:
+                    continue
+
+                pw = page.width
+                tiny = sum(
+                    1 for e in text_elems
+                    if (e.bbox[2] - e.bbox[0]) < pw * 0.15
+                )
+                tiny_ratio = tiny / len(text_elems)
+
+                single_char_big = sum(
+                    1 for e in text_elems
+                    if len(e.content.strip()) <= 2
+                    and e.font
+                    and e.font.size > body_size * 1.05
+                )
+
+                if tiny_ratio > 0.5 or single_char_big > 2:
+                    page.page_type = PageType.SCANNED
+                    flagged += 1
+                    log.info(
+                        "Quality check: page %d layout complexity → OCR"
+                        " (tiny=%.0f%%, single_char_big=%d)",
+                        page.number,
+                        tiny_ratio * 100,
+                        single_char_big,
+                    )
+
+        # ── LLM: formula fragmentation check ──
         for page in doc.pages:
             if page.page_type != PageType.NATIVE:
                 continue
