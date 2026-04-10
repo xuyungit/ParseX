@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,11 +224,17 @@ class VLMReviewProcessor:
         log.info("VLM review: %d page(s) selected for review", len(pages))
 
         total_corrections = 0
+        max_retries = 3
         if len(pages) == 1:
-            total_corrections = self._review_page(pages[0])
+            total_corrections = self._review_page_with_retries(
+                pages[0], max_retries,
+            )
         else:
             with ThreadPoolExecutor(max_workers=self._max_concurrent) as pool:
-                futures = {pool.submit(self._review_page, page): page for page in pages}
+                futures = {
+                    pool.submit(self._review_page_with_retries, page, max_retries): page
+                    for page in pages
+                }
                 for future in as_completed(futures):
                     page = futures[future]
                     try:
@@ -235,7 +242,8 @@ class VLMReviewProcessor:
                         total_corrections += n
                     except Exception:
                         log.warning(
-                            "VLM review failed on page %d", page.number, exc_info=True,
+                            "VLM review failed on page %d after %d attempts",
+                            page.number, max_retries, exc_info=True,
                         )
 
         log.info("VLM review: applied %d correction(s)", total_corrections)
@@ -270,6 +278,22 @@ class VLMReviewProcessor:
         return page.page_type in (PageType.SCANNED, PageType.MIXED)
 
     # ── Single-page review ────────────────────────────────────────────────
+
+    def _review_page_with_retries(self, page: Page, max_retries: int) -> int:
+        """Call _review_page with exponential-backoff retries."""
+        for attempt in range(1, max_retries + 1):
+            try:
+                return self._review_page(page)
+            except Exception:
+                if attempt == max_retries:
+                    raise
+                delay = 2 ** (attempt - 1)
+                log.warning(
+                    "VLM review page %d failed (attempt %d/%d), retrying in %ds",
+                    page.number, attempt, max_retries, delay, exc_info=True,
+                )
+                time.sleep(delay)
+        return 0  # unreachable, but keeps type checker happy
 
     def _review_page(self, page: Page) -> int:
         """Review one page: render → summarize → VLM call → apply corrections."""
