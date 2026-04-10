@@ -109,6 +109,11 @@ def _is_false_positive(text: str) -> bool:
         return True
     if _NAV_LINK_RE.search(stripped):
         return True
+    # Single-character text is never a heading — catches diagram node labels
+    # (e.g., "C", "b", "W", "x" from computation graphs) that happen to be
+    # rendered in a large or bold font.
+    if len(stripped) <= 1:
+        return True
     return False
 
 
@@ -402,6 +407,7 @@ class ChapterProcessor:
 
         if font_level is not None:
             # Font alone — stricter: must be short, not body, not cover/metadata.
+            # Also reject numbered list items (e.g., bold "1. Build tools...")
             if (_is_short_heading_text(first_line)
                     and not _looks_like_body_text(first_line)
                     and not _is_metadata_or_cover_line(first_line)):
@@ -446,10 +452,12 @@ class ChapterProcessor:
                     m = re.match(r"^(\d{1,3})\s+", first_line)
                     if m:
                         root_entries.append((int(m.group(1)), elem))
-                elif signal == "section_arabic_root":
-                    m = re.match(r"^(\d+)\.", first_line)
-                    if m:
-                        root_entries.append((int(m.group(1)), elem))
+                # Note: section_arabic_root ("N.") is NOT collected for
+                # coherence promotion.  The "N." format is ambiguous —
+                # it matches both section headings and ordered list items.
+                # Without font differentiation, coherence alone cannot
+                # distinguish them.  Heading detection for "N." format
+                # requires font signal (handled in _detect_heading).
                 elif signal == "section_arabic_nested":
                     m = re.match(r"^(\d+)\.(\d+)", first_line)
                     if m:
@@ -647,7 +655,9 @@ class ChapterProcessor:
         first_line = _resolve_heading_text(elem.content)
         if not first_line or _is_false_positive(first_line):
             return None
-        if len(first_line) > 120:
+        # Same short-text requirement as _detect_heading — long text is body,
+        # not a heading.  The threshold is consistent with _is_short_heading_text.
+        if not _is_short_heading_text(first_line):
             return None
 
         font_level = _heading_level_from_font(elem.font, heading_candidates)
@@ -681,6 +691,16 @@ class ChapterProcessor:
 
         if signal_strength >= 2:
             return None
+
+        # "N." numbering (section_arabic_root) without font support is too
+        # ambiguous — it matches both section headings and ordered list items.
+        # When real font info is present and the font is NOT a heading
+        # candidate, the element is body text with a numbered prefix — skip.
+        # When font info is absent (OCR, size=0), allow LLM to decide.
+        if signal_strength == 1 and font_level is None and numbering_level is not None:
+            result = detect_numbering_signal(first_line)
+            if result and result[0] == "section_arabic_root" and elem.font.size > 0:
+                return None
 
         prev_text = self._neighbor_text(page_elements, elem_idx, direction=-1)
         next_text = self._neighbor_text(page_elements, elem_idx, direction=1)

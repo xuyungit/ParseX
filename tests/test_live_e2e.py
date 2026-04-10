@@ -118,7 +118,7 @@ def _make_pdf_for_llm_fallback(pdf_path: Path) -> Path:
     )
     page.insert_text(
         (72, 160),
-        "1. Procurement Scope",
+        "1 Procurement Scope",
         fontsize=11,
         fontname="helv",
     )
