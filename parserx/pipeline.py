@@ -116,7 +116,7 @@ class Pipeline:
     ) -> ParseResult:
         """Parse a document, write to output_dir, and return stats.
 
-        Writes output.md + images/ (and optionally index.md + chapters/
+        Writes content.md + images/ (and optionally index.md + chapters/
         when chapter_split is enabled in config).
 
         The returned ParseResult includes the markdown text and all
@@ -175,6 +175,7 @@ class Pipeline:
     _GEOMETRY_PROCESSORS = (
         HeaderFooterProcessor,
         CodeBlockProcessor,
+        LineUnwrapProcessor,
         ContentValueProcessor,
         VLMReviewProcessor,
     )
@@ -661,7 +662,10 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
             ))
 
         if self._config.processors.line_unwrap.enabled:
-            processors.append(LineUnwrapProcessor(self._config.processors.line_unwrap))
+            processors.append(LineUnwrapProcessor(
+                self._config.processors.line_unwrap,
+                llm_service=self._llm_service,
+            ))
 
         if self._config.processors.text_clean.enabled:
             processors.append(TextCleanProcessor(self._config.processors.text_clean))

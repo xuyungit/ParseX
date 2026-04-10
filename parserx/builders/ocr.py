@@ -445,27 +445,46 @@ class OCRBuilder:
         self._skip_scan_image_marking = skip_scan_image_marking
 
     def build(self, doc: Document, source_path: Path) -> Document:
-        """Run selective OCR and add results to document."""
+        """Run selective OCR and add results to document.
+
+        When multiple pages need OCR, uses batch mode: extracts the
+        relevant pages from the original PDF into a temporary PDF and
+        sends it in a single API call.  Falls back to per-page mode
+        if batch fails.
+        """
         if self._ocr is None:
             return doc
         if not self._config.selective and not self._config.force_full_page:
             return doc
 
-        ocr_count = 0
-        skip_count = 0
-        dedup_count = 0
-
         fitz_doc = fitz.open(str(source_path))
-
         pages_to_ocr = [p for p in doc.pages if self._should_ocr_page(p)]
         total_ocr = len(pages_to_ocr)
+        skip_count = len(doc.pages) - total_ocr
 
-        for page in doc.pages:
-            if self._should_ocr_page(page):
-                log.info(
-                    "OCR page %d/%d (page %d, %s)",
-                    ocr_count + 1, total_ocr, page.number, page.page_type.value,
-                )
+        if total_ocr == 0:
+            fitz_doc.close()
+            return doc
+
+        # Try batch mode for multiple pages.
+        batch_results: dict[int, list[PageElement]] | None = None
+        if total_ocr > 1 and self._config.batch and hasattr(self._ocr, "recognize_pdf"):
+            batch_results = self._ocr_batch(fitz_doc, pages_to_ocr)
+
+        # Apply results (batch or per-page fallback).
+        ocr_count = 0
+        dedup_count = 0
+
+        for page in pages_to_ocr:
+            log.info(
+                "OCR page %d/%d (page %d, %s)",
+                ocr_count + 1, total_ocr, page.number, page.page_type.value,
+            )
+
+            # Get OCR elements from batch or per-page.
+            if batch_results is not None and page.number in batch_results:
+                ocr_elements = batch_results[page.number]
+            else:
                 try:
                     ocr_elements = self._ocr_page(fitz_doc, page)
                 except Exception as exc:
@@ -474,39 +493,10 @@ class OCRBuilder:
                     )
                     ocr_count += 1
                     continue
-                if ocr_elements:
-                    if page.page_type == PageType.SCANNED:
-                        # Scanned page: replace any pre-existing text/table
-                        # elements with fresh OCR results.  Pre-existing text
-                        # may come from an embedded OCR text layer (common in
-                        # "searchable scan" PDFs) whose quality can be poor.
-                        # Image elements are preserved for downstream VLM.
-                        existing_text = [
-                            e for e in page.elements
-                            if e.type in {"text", "table"} and e.source == "native"
-                        ]
-                        if existing_text:
-                            page.elements = [
-                                e for e in page.elements
-                                if not (e.type in {"text", "table"} and e.source == "native")
-                            ]
-                            log.debug(
-                                "Replaced %d native text/table elements with OCR on scanned page %d",
-                                len(existing_text), page.number,
-                            )
-                        page.elements.extend(ocr_elements)
-                        if not self._skip_scan_image_marking:
-                            self._mark_fullpage_scan_images(page)
-                    else:
-                        # Mixed / sparse native: deduplicate against existing
-                        new, dropped = self._deduplicate(
-                            page.elements, ocr_elements,
-                        )
-                        page.elements.extend(new)
-                        dedup_count += dropped
-                    ocr_count += 1
-            else:
-                skip_count += 1
+
+            if ocr_elements:
+                dedup_count += self._integrate_ocr_results(page, ocr_elements)
+            ocr_count += 1
 
         fitz_doc.close()
 
@@ -515,6 +505,119 @@ class OCRBuilder:
             ocr_count, skip_count, dedup_count,
         )
         return doc
+
+    # PaddleOCR sync API rejects PDFs with more than 100 pages.
+    _BATCH_MAX_PAGES = 100
+
+    def _ocr_batch(
+        self,
+        fitz_doc: fitz.Document,
+        pages: list[Page],
+    ) -> dict[int, list[PageElement]] | None:
+        """Extract pages into temp PDF(s) and OCR in batch.
+
+        If more than ``_BATCH_MAX_PAGES`` pages need OCR, they are
+        split into chunks and each chunk is sent separately.
+
+        Returns a dict mapping page.number → OCR elements, or None if
+        batch OCR fails (caller will fall back to per-page).
+        """
+        result_map: dict[int, list[PageElement]] = {}
+
+        for chunk_start in range(0, len(pages), self._BATCH_MAX_PAGES):
+            chunk = pages[chunk_start : chunk_start + self._BATCH_MAX_PAGES]
+            chunk_results = self._ocr_batch_chunk(fitz_doc, chunk)
+            if chunk_results is None:
+                # If any chunk fails, fall back to per-page for all
+                # remaining pages.
+                return result_map if result_map else None
+            result_map.update(chunk_results)
+
+        return result_map
+
+    def _ocr_batch_chunk(
+        self,
+        fitz_doc: fitz.Document,
+        pages: list[Page],
+    ) -> dict[int, list[PageElement]] | None:
+        """OCR a single chunk of pages (≤ _BATCH_MAX_PAGES).
+
+        Returns a dict mapping page.number → OCR elements, or None on failure.
+        """
+        # Build a temporary PDF with only the pages that need OCR.
+        temp_pdf = fitz.open()
+        page_map: list[int] = []  # temp_pdf page index → original page number
+        for page in pages:
+            src_idx = page.number - 1  # fitz uses 0-based
+            if 0 <= src_idx < len(fitz_doc):
+                temp_pdf.insert_pdf(fitz_doc, from_page=src_idx, to_page=src_idx)
+                page_map.append(page.number)
+
+        if not page_map:
+            temp_pdf.close()
+            return None
+
+        pdf_bytes = temp_pdf.tobytes()
+        temp_pdf.close()
+        log.info(
+            "Batch OCR: assembled %d pages (%.1f KB)",
+            len(page_map), len(pdf_bytes) / 1024,
+        )
+
+        try:
+            results = self._ocr.recognize_pdf(pdf_bytes)
+        except Exception as exc:
+            log.warning("Batch OCR failed, falling back to per-page: %s", exc)
+            return None
+
+        if len(results) != len(page_map):
+            log.warning(
+                "Batch OCR returned %d pages, expected %d — falling back to per-page",
+                len(results), len(page_map),
+            )
+            return None
+
+        # Map results back to original page numbers.
+        chunk_map: dict[int, list[PageElement]] = {}
+        for i, ocr_result in enumerate(results):
+            page_number = page_map[i]
+            chunk_map[page_number] = self._result_to_elements(ocr_result, page_number)
+
+        return chunk_map
+
+    def _integrate_ocr_results(
+        self,
+        page: Page,
+        ocr_elements: list[PageElement],
+    ) -> int:
+        """Integrate OCR elements into a page. Returns dedup drop count."""
+        if page.page_type == PageType.SCANNED:
+            # Scanned page: replace any pre-existing text/table
+            # elements with fresh OCR results.
+            existing_text = [
+                e for e in page.elements
+                if e.type in {"text", "table"} and e.source == "native"
+            ]
+            if existing_text:
+                page.elements = [
+                    e for e in page.elements
+                    if not (e.type in {"text", "table"} and e.source == "native")
+                ]
+                log.debug(
+                    "Replaced %d native text/table elements with OCR on scanned page %d",
+                    len(existing_text), page.number,
+                )
+            page.elements.extend(ocr_elements)
+            if not self._skip_scan_image_marking:
+                self._mark_fullpage_scan_images(page)
+            return 0
+        else:
+            # Mixed / sparse native: deduplicate against existing.
+            new, dropped = self._deduplicate(
+                page.elements, ocr_elements,
+            )
+            page.elements.extend(new)
+            return dropped
 
     @staticmethod
     def _mark_fullpage_scan_images(page: Page) -> int:
