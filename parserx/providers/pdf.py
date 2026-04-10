@@ -154,8 +154,47 @@ class PDFProvider:
             text_elements, table_elements
         )
 
-        # Extract images
+        # Extract images (raster XObjects)
         image_elements = self._extract_images(fitz_page, page_number)
+
+        # Detect vector figure regions (paths/curves that form diagrams).
+        # Suppress text inside these regions and create image elements
+        # with rendered pixmap data for downstream extraction.
+        # Exclude table regions to avoid confusing table borders with figures.
+        table_bboxes = [t.bbox for t in table_elements]
+        vector_bboxes = self._detect_vector_figures(
+            fitz_page, page_number,
+            exclude_bboxes=table_bboxes,
+            text_elements=text_elements,
+        )
+        if vector_bboxes:
+            text_elements = self._remove_region_overlapping_text(
+                text_elements, vector_bboxes, "vector figures"
+            )
+            for vbbox in vector_bboxes:
+                try:
+                    clip = fitz.Rect(vbbox)
+                    pix = fitz_page.get_pixmap(clip=clip, dpi=200)
+                    image_elements.append(
+                        PageElement(
+                            type="image",
+                            content="",
+                            bbox=vbbox,
+                            page_number=page_number,
+                            source="native",
+                            metadata={
+                                "vector_figure": True,
+                                "width": pix.width,
+                                "height": pix.height,
+                                "pixmap_png": pix.tobytes("png"),
+                            },
+                        )
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Page %d: failed to render vector figure at %s: %s",
+                        page_number, vbbox, exc,
+                    )
 
         # Merge all elements and sort by visual position (top-to-bottom,
         # left-to-right) so mid-page tables/images stay in reading order.
@@ -446,21 +485,206 @@ class PDFProvider:
         """Drop text blocks whose bbox is mostly inside a table region."""
         if not table_elements:
             return text_elements
-
-        _OVERLAP_THRESHOLD = 0.5
         table_bboxes = [t.bbox for t in table_elements]
-        kept: list[PageElement] = []
+        return self._remove_region_overlapping_text(text_elements, table_bboxes, "tables")
 
+    def _remove_region_overlapping_text(
+        self,
+        text_elements: list[PageElement],
+        region_bboxes: list[tuple],
+        region_label: str = "regions",
+        threshold: float = 0.5,
+    ) -> list[PageElement]:
+        """Drop text blocks whose bbox is mostly inside any of the given regions."""
+        if not region_bboxes:
+            return text_elements
+
+        kept: list[PageElement] = []
         for te in text_elements:
             overlaps = any(
-                self._bbox_overlap_ratio(te.bbox, tb) >= _OVERLAP_THRESHOLD
-                for tb in table_bboxes
+                self._bbox_overlap_ratio(te.bbox, rb) >= threshold
+                for rb in region_bboxes
             )
             if not overlaps:
                 kept.append(te)
 
         dropped = len(text_elements) - len(kept)
         if dropped:
-            log.debug("Dropped %d text blocks overlapping with tables", dropped)
+            log.debug("Dropped %d text blocks overlapping with %s", dropped, region_label)
 
         return kept
+
+    # ── Vector figure detection ────────────────────────────────────────
+
+    # Minimum area (pt²) for a drawing to be considered non-decorative.
+    _VEC_MIN_DRAWING_AREA = 30
+    # Maximum area (pt²) for an individual drawing to be a figure element.
+    # Real diagram elements (nodes, arrows, shapes) are small; large drawings
+    # are decorative backgrounds (rounded-corner cards, code block fills).
+    _VEC_MAX_SINGLE_DRAWING_AREA = 5000
+    # Margin (pt) to expand each drawing rect before clustering.
+    # Keep small to avoid merging scattered decorative backgrounds
+    # (inline code tags, button backgrounds) which are spread across
+    # text lines with ~20pt gaps.  Figure elements are spatially compact.
+    _VEC_CLUSTER_MARGIN = 10
+    # Minimum number of significant drawings in a cluster to qualify as a figure.
+    _VEC_MIN_DRAWINGS = 3
+    # Minimum area (pt²) of the merged cluster to qualify as a figure.
+    _VEC_MIN_FIGURE_AREA = 2000
+    # Padding (pt) around the detected figure region.
+    _VEC_PADDING = 5
+
+    def _detect_vector_figures(
+        self,
+        fitz_page: fitz.Page,
+        page_number: int,
+        exclude_bboxes: list[tuple] | None = None,
+        text_elements: list[PageElement] | None = None,
+    ) -> list[tuple[float, float, float, float]]:
+        """Detect vector figure regions by clustering drawing objects.
+
+        PDF vector drawings (paths, curves, shapes) are invisible to
+        ``get_image_info()`` but can be retrieved via ``get_drawings()``.
+        We cluster nearby significant drawings into regions and return
+        their bounding boxes for text suppression and image rendering.
+        """
+        try:
+            drawings = fitz_page.get_drawings()
+        except Exception:
+            return []
+
+        if not drawings:
+            return []
+
+        exclude = exclude_bboxes or []
+
+        # Keep only drawings that are:
+        # 1. Large enough (skip decorative lines)
+        # 2. Not inside already-detected table regions
+        # 3. Contain curves — pure rectangles ('re') and lines ('l') are
+        #    table borders or decorative rules, not diagram elements.
+        #    Curves ('c') indicate circles, arrows, bezier paths — figure content.
+        significant: list[tuple[float, float, float, float]] = []
+        for d in drawings:
+            r = d.get("rect")
+            if r is None:
+                continue
+            w = abs(r[2] - r[0])
+            h = abs(r[3] - r[1])
+            area = w * h
+            if area < self._VEC_MIN_DRAWING_AREA:
+                continue
+            # Skip large decorative backgrounds (rounded-corner cards,
+            # code block fills).  Real figure elements are individually small.
+            if area > self._VEC_MAX_SINGLE_DRAWING_AREA:
+                continue
+            # Require at least one curve item — pure rect/line drawings
+            # are table borders, not figure elements.
+            items = d.get("items", [])
+            has_curve = any(it[0] == "c" for it in items)
+            if not has_curve:
+                continue
+            rect = (r[0], r[1], r[2], r[3])
+            # Skip drawings inside excluded regions (tables).
+            if any(self._bbox_overlap_ratio(rect, eb) >= 0.5 for eb in exclude):
+                continue
+            significant.append(rect)
+
+        if len(significant) < self._VEC_MIN_DRAWINGS:
+            return []
+
+        # Cluster by expanding rects and merging overlaps iteratively.
+        clusters = self._cluster_rects(significant, self._VEC_CLUSTER_MARGIN)
+
+        # Filter: enough drawings and large enough area.
+        page_area = fitz_page.rect.width * fitz_page.rect.height
+        text_elems = text_elements or []
+        result: list[tuple[float, float, float, float]] = []
+        for bbox, count in clusters:
+            area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+            if count < self._VEC_MIN_DRAWINGS:
+                continue
+            if area < self._VEC_MIN_FIGURE_AREA:
+                continue
+            # Skip if figure covers most of the page (likely decorative border).
+            if page_area > 0 and area > page_area * 0.7:
+                continue
+            # Text overlap check: if body-text elements (>10 chars) have
+            # their center inside the figure region, the drawings are
+            # decorative backgrounds (code tag fills, button backgrounds),
+            # not standalone figures.  Short labels ("W", "MatMul") inside
+            # a figure are expected — only long text indicates body content.
+            body_text_inside = sum(
+                1 for e in text_elems
+                if len(e.content) > 10
+                and bbox[0] <= (e.bbox[0] + e.bbox[2]) / 2 <= bbox[2]
+                and bbox[1] <= (e.bbox[1] + e.bbox[3]) / 2 <= bbox[3]
+            )
+            if body_text_inside > 0:
+                continue
+            # Add padding, clamp to page bounds.
+            padded = (
+                max(0, bbox[0] - self._VEC_PADDING),
+                max(0, bbox[1] - self._VEC_PADDING),
+                min(fitz_page.rect.width, bbox[2] + self._VEC_PADDING),
+                min(fitz_page.rect.height, bbox[3] + self._VEC_PADDING),
+            )
+            result.append(padded)
+
+        if result:
+            log.debug(
+                "Page %d: detected %d vector figure region(s)", page_number, len(result)
+            )
+        return result
+
+    @staticmethod
+    def _cluster_rects(
+        rects: list[tuple[float, float, float, float]],
+        margin: float,
+    ) -> list[tuple[tuple[float, float, float, float], int]]:
+        """Cluster rectangles by expanding and merging overlaps.
+
+        Returns list of (merged_bbox, original_drawing_count) tuples.
+        """
+        if not rects:
+            return []
+
+        # Expand each rect by margin; track count of originals per entry.
+        entries: list[tuple[tuple, int]] = [
+            ((r[0] - margin, r[1] - margin, r[2] + margin, r[3] + margin), 1)
+            for r in rects
+        ]
+
+        # Simple iterative merge: keep merging until stable.
+        changed = True
+        while changed:
+            changed = False
+            merged: list[tuple[tuple, int]] = []
+            used = [False] * len(entries)
+
+            for i in range(len(entries)):
+                if used[i]:
+                    continue
+                cur_bbox, cur_count = entries[i]
+                for j in range(i + 1, len(entries)):
+                    if used[j]:
+                        continue
+                    other_bbox, other_count = entries[j]
+                    # Check overlap.
+                    if (cur_bbox[0] <= other_bbox[2] and other_bbox[0] <= cur_bbox[2]
+                            and cur_bbox[1] <= other_bbox[3] and other_bbox[1] <= cur_bbox[3]):
+                        cur_bbox = (
+                            min(cur_bbox[0], other_bbox[0]),
+                            min(cur_bbox[1], other_bbox[1]),
+                            max(cur_bbox[2], other_bbox[2]),
+                            max(cur_bbox[3], other_bbox[3]),
+                        )
+                        cur_count += other_count
+                        used[j] = True
+                        changed = True
+
+                merged.append((cur_bbox, cur_count))
+
+            entries = merged
+
+        return entries
