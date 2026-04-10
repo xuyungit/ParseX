@@ -540,14 +540,44 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
                     has_fragments = False
 
                 if has_fragments:
-                    page.page_type = PageType.SCANNED
+                    short_ratio = short_lines / total_lines
+                    # High fragmentation (>50% short lines): native text is
+                    # heavily broken, OCR full replacement is better.
+                    # Low fragmentation: native text is mostly intact (e.g.
+                    # patent claims with equation numbers), use MIXED to
+                    # preserve native elements (especially header-area text
+                    # that OCR may miss).
+                    if short_ratio > 0.50:
+                        page.page_type = PageType.SCANNED
+                        mode = "SCANNED"
+                    else:
+                        page.page_type = PageType.MIXED
+                        mode = "MIXED"
                     flagged += 1
                     log.info(
-                        "Quality check: page %d flagged as formula-fragmented → OCR",
-                        page.number,
+                        "Quality check: page %d flagged as formula-fragmented"
+                        " → OCR (%s, short_ratio=%.0f%%)",
+                        page.number, mode, short_ratio * 100,
                     )
             except Exception as exc:
                 log.debug("Quality check LLM call failed for page %d: %s", page.number, exc)
+
+        # ── Deterministic: vector drawing detection ──
+        # Pages with significant vector drawings (diagrams, flow charts)
+        # need OCR layout detection to identify figure regions precisely.
+        # Reclassify to MIXED so OCR runs while preserving native text.
+        for page in doc.pages:
+            if page.page_type != PageType.NATIVE:
+                continue
+            if page.metadata.get("has_vector_drawings"):
+                page.page_type = PageType.MIXED
+                page.metadata["ocr_reason_vector_figures"] = True
+                flagged += 1
+                log.info(
+                    "Quality check: page %d has vector drawings → OCR MIXED"
+                    " (for layout detection)",
+                    page.number,
+                )
 
         if flagged:
             log.info("Quality check: %d page(s) reclassified for OCR", flagged)
