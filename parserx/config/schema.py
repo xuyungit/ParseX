@@ -50,6 +50,7 @@ class OCRBuilderConfig(BaseModel):
     model: str = "PaddleOCR-VL-1.5"
     selective: bool = True
     force_full_page: bool = False
+    batch: bool = True  # Batch OCR: assemble pages into temp PDF, one API call
 
 
 class QualityCheckConfig(BaseModel):
@@ -112,6 +113,7 @@ class CodeBlockConfig(BaseModel):
 class LineUnwrapConfig(BaseModel):
     enabled: bool = True
     llm_fallback: bool = False
+    llm_batch_size: int = 30
 
 
 class TextCleanConfig(BaseModel):
