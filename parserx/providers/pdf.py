@@ -42,6 +42,32 @@ def _is_cjk_or_fullwidth_punct(ch: str) -> bool:
     )
 
 
+def _join_block_lines(line_entries: list[tuple[str, tuple]]) -> str:
+    """Join text lines within a block, merging same-visual-row segments.
+
+    PyMuPDF sometimes splits a single visual line into multiple ``line``
+    objects when there is a large horizontal gap between text segments
+    (e.g., ``"1"`` and ``"Introduction"`` rendered with a wide space).
+    Both lines share the same y-coordinate range, so we detect overlap
+    and join them with a space instead of a newline.
+    """
+    if not line_entries:
+        return ""
+    parts: list[str] = [line_entries[0][0]]
+    for i in range(1, len(line_entries)):
+        _text, bbox = line_entries[i]
+        prev_bbox = line_entries[i - 1][1]
+        # Vertical overlap ratio: if the y-ranges overlap by >50% of
+        # the shorter line's height, the two lines are on the same row.
+        overlap = min(prev_bbox[3], bbox[3]) - max(prev_bbox[1], bbox[1])
+        min_height = min(prev_bbox[3] - prev_bbox[1], bbox[3] - bbox[1])
+        if min_height > 0 and overlap / min_height > 0.5:
+            parts.append(" " + _text)
+        else:
+            parts.append("\n" + _text)
+    return "".join(parts)
+
+
 def _reconstruct_line_from_chars(line_spans: list[dict]) -> str:
     """Rebuild a text line from rawdict spans, inserting spaces at gaps.
 
@@ -167,8 +193,11 @@ class PDFProvider:
                 block["bbox"][3],
             )
 
-            # Collect all lines in this block
-            lines_text: list[str] = []
+            # Collect all lines in this block, with their bounding boxes
+            # so we can detect same-visual-row lines that PyMuPDF splits
+            # due to horizontal gaps (e.g., "1" and "Introduction" on the
+            # same line but with a wide space between them).
+            line_entries: list[tuple[str, tuple]] = []  # (text, line_bbox)
             dominant_font = FontInfo()
             max_font_chars = 0
 
@@ -191,9 +220,13 @@ class PDFProvider:
                         )
 
                 if line_text.strip():
-                    lines_text.append(line_text)
+                    line_entries.append((line_text, tuple(line["bbox"])))
 
-            content = "\n".join(lines_text)
+            # Join lines: same visual row → space, different row → newline.
+            # PyMuPDF sometimes splits a single visual line into multiple
+            # "line" objects when there is a large horizontal gap between
+            # text segments.  We detect this by checking y-coordinate overlap.
+            content = _join_block_lines(line_entries)
             if not content.strip():
                 continue
 

@@ -126,17 +126,25 @@ class MetadataBuilder:
         body_key = _font_key(body)
         body_chars = font_counts.get(body_key, 1)
 
-        # Pre-compute char counts grouped by font size (rounded to 0.5pt)
-        # to catch fonts that appear under different names at the same size.
-        size_group_chars: dict[float, int] = {}
+        # Pre-compute char counts grouped by (size, bold) to catch fonts
+        # that appear under different names at the same size.  Bold and
+        # regular variants are counted separately because a bold variant
+        # at the same size as body text is a heading signal, not body text.
+        # Grouping them together would cause the large body-text count to
+        # mask the small bold-heading count.
+        size_bold_group_chars: dict[tuple[float, bool], int] = {}
         for key, count in font_counts.items():
             # Key format: "name_size_bold"
             parts = key.rsplit("_", 2)
-            if len(parts) >= 2:
+            if len(parts) >= 3:
                 try:
                     size = float(parts[-2])
+                    bold = parts[-1] == "True"
                     rounded = round(size * 2) / 2  # round to 0.5pt
-                    size_group_chars[rounded] = size_group_chars.get(rounded, 0) + count
+                    group_key = (rounded, bold)
+                    size_bold_group_chars[group_key] = (
+                        size_bold_group_chars.get(group_key, 0) + count
+                    )
                 except ValueError:
                     pass
 
@@ -163,11 +171,12 @@ class MetadataBuilder:
                 if not is_heading:
                     continue
 
-                # Frequency filter: fonts whose SIZE GROUP appears too
-                # often relative to body text are likely secondary body
+                # Frequency filter: fonts whose (size, bold) group appears
+                # too often relative to body text are likely secondary body
                 # fonts (labels, nav links on receipts/emails).
                 rounded_size = round(elem.font.size * 2) / 2
-                group_chars = size_group_chars.get(rounded_size, 0)
+                group_key = (rounded_size, elem.font.bold)
+                group_chars = size_bold_group_chars.get(group_key, 0)
                 if body_chars > 0 and group_chars > body_chars * self._config.heading_max_char_ratio:
                     continue
 

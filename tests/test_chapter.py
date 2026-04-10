@@ -132,9 +132,11 @@ def test_disabled():
 
 
 def test_llm_fallback_confirms_weak_numbering_candidate():
+    # Use font.size=0 (OCR default) for the heading candidate — "N." format
+    # with real body font is too ambiguous and is now filtered before fallback.
     doc = _build_doc([
         _text_elem("这是正文内容" * 20, 10.0),
-        _text_elem("1. 项目概况", 10.0, bold=False),
+        _text_elem("1. 项目概况", 0.0, bold=False),
         _text_elem("这是后续正文内容" * 20, 10.0),
     ])
     llm = FakeLLMService('[{"idx": 1, "level": 2}]')
@@ -150,10 +152,12 @@ def test_llm_fallback_confirms_weak_numbering_candidate():
 
 
 def test_llm_fallback_tracks_api_calls_separately_from_hits():
+    # Use font.size=0 (OCR default) for heading candidates —
+    # "N." format with body font is filtered before LLM fallback.
     doc = _build_doc([
         _text_elem("这是正文内容" * 20, 10.0),
-        _text_elem("1. 项目概况", 10.0, bold=False),
-        _text_elem("1.1 适用范围", 10.0, bold=False),
+        _text_elem("1. 项目概况", 0.0, bold=False),
+        _text_elem("1.1 适用范围", 0.0, bold=False),
         _text_elem("这是后续正文内容" * 20, 10.0),
     ])
     llm = FakeLLMService('[{"idx": 1, "level": 2}, {"idx": 2, "level": 3}]')
@@ -170,7 +174,7 @@ def test_llm_fallback_tracks_api_calls_separately_from_hits():
 def test_llm_fallback_ignores_invalid_json():
     doc = _build_doc([
         _text_elem("这是正文内容" * 20, 10.0),
-        _text_elem("1. 项目概况", 10.0, bold=False),
+        _text_elem("1. 项目概况", 0.0, bold=False),
     ])
     llm = FakeLLMService("not-json")
 
