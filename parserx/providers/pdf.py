@@ -609,14 +609,15 @@ class PDFProvider:
             # Skip if figure covers most of the page (likely decorative border).
             if page_area > 0 and area > page_area * 0.7:
                 continue
-            # Text overlap check: if body-text elements (>10 chars) have
-            # their center inside the figure region, the drawings are
-            # decorative backgrounds (code tag fills, button backgrounds),
-            # not standalone figures.  Short labels ("W", "MatMul") inside
-            # a figure are expected — only long text indicates body content.
+            # Text overlap check: if body-sized text elements (large font,
+            # long content) have their center inside the figure region,
+            # the drawings are decorative backgrounds (code tag fills,
+            # button backgrounds), not standalone figures.  Figure labels
+            # use small fonts (6-9pt) with short text — they don't trigger
+            # this check.
             body_text_inside = sum(
                 1 for e in text_elems
-                if len(e.content) > 10
+                if e.font.size >= 9.0 and len(e.content) > 20
                 and bbox[0] <= (e.bbox[0] + e.bbox[2]) / 2 <= bbox[2]
                 and bbox[1] <= (e.bbox[1] + e.bbox[3]) / 2 <= bbox[3]
             )
