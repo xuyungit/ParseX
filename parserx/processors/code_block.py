@@ -41,11 +41,11 @@ _NON_CODE_START_RE = re.compile(
 _MONO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
+        # Specific well-known monospace font families
         r"monaco",
         r"menlo",
         r"courier",
         r"consolas",
-        r"monospace",
         r"source\s*code\s*pro",
         r"fira\s*code",
         r"fira\s*mono",
@@ -60,8 +60,14 @@ _MONO_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"andale\s*mono",
         r"noto\s*sans\s*mono",
         r"ibm\s*plex\s*mono",
-        r"hack(?!ney)",  # Hack font, but not Hackney
+        r"nimbus\s*mon",           # URW/TeX Nimbus Mono (NimbusMonL etc.)
+        r"hack(?!ney)",            # Hack font, but not Hackney
         r"inconsolata",
+        # Generic fallback: font names containing "mono", "fixed", or
+        # "monospace" as a word/segment — catches unlisted monospace fonts.
+        r"monospace",
+        r"\bmono\b",               # "Mono" as a standalone word
+        r"\bfixed\b",              # "Fixed" as a standalone word
     )
 )
 
