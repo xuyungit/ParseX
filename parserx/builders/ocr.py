@@ -588,7 +588,13 @@ class OCRBuilder:
         chunk_map: dict[int, list[PageElement]] = {}
         for i, ocr_result in enumerate(results):
             page_number = page_map[i]
-            chunk_map[page_number] = self._result_to_elements(ocr_result, page_number)
+            elements = self._result_to_elements(ocr_result, page_number)
+            # Propagate render dimensions for coordinate conversion.
+            if ocr_result.render_width:
+                for e in elements:
+                    e.metadata["ocr_render_width"] = ocr_result.render_width
+                    e.metadata["ocr_render_height"] = ocr_result.render_height
+            chunk_map[page_number] = elements
 
         return chunk_map
 
@@ -641,11 +647,22 @@ class OCRBuilder:
         3. Suppress native text elements inside the figure region.
         4. Remove the OCR text element (figure text is in the image).
 
-        The OCR coordinate system uses the rendering DPI (200).  We convert
-        back to PDF points (72 DPI) for bbox matching.
+        OCR coordinates are in the server's rendering pixel space.
+        We compute the scale from the page's PDF dimensions and the
+        max OCR coordinate extent, since the rendering size varies
+        between per-page image mode and batch PDF mode.
         """
-        dpi = 200
-        scale = 72.0 / dpi
+        # Compute scale from OCR pixel coordinates → PDF points.
+        # OCR render dimensions vary between batch PDF mode and per-page
+        # image mode.  Use stored render dimensions from the OCR response.
+        render_w = 0
+        for e in ocr_elements:
+            render_w = e.metadata.get("ocr_render_width", 0)
+            if render_w:
+                break
+        if render_w == 0 or page.width == 0:
+            return
+        scale = page.width / render_w
 
         # Find figure regions from OCR results.
         figure_elements: list[PageElement] = []
@@ -670,7 +687,7 @@ class OCRBuilder:
                 try:
                     fitz_page = fitz_doc[page.number - 1]
                     clip = fitz.Rect(pdf_bbox)
-                    pix = fitz_page.get_pixmap(clip=clip, dpi=dpi)
+                    pix = fitz_page.get_pixmap(clip=clip, dpi=200)
                     figure_elements.append(PageElement(
                         type="image",
                         content="",
@@ -834,7 +851,18 @@ class OCRBuilder:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        return self._result_to_elements(result, page.number)
+        elements = self._result_to_elements(result, page.number)
+        # Per-page mode: render dimensions come from the rendered image.
+        if result.render_width:
+            for e in elements:
+                e.metadata["ocr_render_width"] = result.render_width
+                e.metadata["ocr_render_height"] = result.render_height
+        else:
+            # Fallback: use the pixmap dimensions (150 DPI rendering).
+            for e in elements:
+                e.metadata["ocr_render_width"] = pix.width
+                e.metadata["ocr_render_height"] = pix.height
+        return elements
 
     # ── Deduplication ───────────────────────────────────────────────────
 
