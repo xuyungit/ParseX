@@ -8,6 +8,65 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 14: Paper01 Quality — Heading + Code + Bold Detection (2026-04-11)
+
+Target document: paper01 (TensorFlow whitepaper, 19 pages, two-column layout).
+
+### What Was Done
+
+**1. PDF same-row line joining** (`providers/pdf.py`)
+- Root cause: PyMuPDF splits same-visual-row text into separate `line` objects
+  when there's a large horizontal gap (e.g., "1" and "Introduction").
+- Fix: `_join_block_lines()` checks y-coordinate overlap (>50%) and joins
+  with space instead of newline.
+- Impact: headings, body text, inline references all benefit.
+
+**2. Heading false positive filters** (`processors/chapter.py`)
+- Single-character text (diagram labels C, b, W, x) → false positive filter.
+- `section_arabic_root` ("N.") excluded from coherence promotion (ambiguous
+  with ordered lists). Also excluded from LLM fallback when font matches body.
+- LLM fallback length threshold aligned with `_detect_heading` (80 chars
+  via `_is_short_heading_text`, was inconsistent at 120).
+
+**3. Bold heading candidate detection** (`builders/metadata.py`)
+- Frequency filter changed from grouping by size to (size, bold).
+  Bold 10pt (278 chars) no longer masked by Regular 10pt (58000 chars).
+- Enables detection of bold-only sub-headings: Operations and Kernels,
+  Sessions, Variables, Devices, Tensors, Data Parallel Training.
+
+**4. Code block detection** (`processors/code_block.py`)
+- Added `nimbus\s*mon` pattern for NimbusMonL (URW/TeX Nimbus Mono).
+- Added generic `\bmono\b` and `\bfixed\b` fallback patterns.
+- Paper01 Figure 1 Python code now properly fenced.
+
+**5. Vector figure detection** (attempted, reverted)
+- Tried rule-based drawing clustering → too many parameters, poor generalization.
+- Tried OCR layout detection → correct figure bboxes but coordinate conversion,
+  image referencing, and text suppression had multiple unresolved issues.
+- Reverted all vector figure code. Detailed lessons recorded in backlog.
+
+### Measured Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| paper01 | edit_distance | 0.328 | ~0.300 | -0.028 |
+| paper01 | heading_f1 | 0.667 | ~0.725 | +0.058 |
+
+No regressions on deterministic ground truth documents.
+
+### Key Lessons
+
+- **Font frequency filter 需要按 (size, bold) 分组**，不是仅按 size。
+  否则 body font 的大字符量会掩盖低频的 bold heading 候选。
+- **`section_arabic_root` ("N.") 是最易产生误判的编号格式**，
+  因为它同时匹配 section heading 和 ordered list。需要额外的 font
+  或上下文信号才能区分。
+- **矢量图检测不适合纯规则方案**。核心困难是精确聚类（不多不少地
+  把一个图的所有元素聚在一起）。OCR layout detection 能解决聚类问题，
+  但与现有 pipeline 的集成（坐标转换、图片引用流程）需要更系统的设计。
+
+---
+
 ## Iteration 13: LLM Line Unwrap Fallback + Batch OCR (2026-04-10)
 
 ### What Was Done

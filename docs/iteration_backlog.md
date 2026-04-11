@@ -113,15 +113,40 @@ records, see [iteration_history.md](iteration_history.md).
 
 - **矢量图未提取**：paper01 Figure 2-9 是矢量图（无独立 image object），
   PyMuPDF 无法提取为图片文件。只有 page 13/15/16 的位图 figure 被提取。
-  需要：检测矢量图区域 → 渲染为图片 → 提取并引用。
 - **图内文字泄露为正文**：
-  - paper01 Figure 2 的节点标签 `C`, `b`, `W`, `x` 被提取为正文文本，
-    且被 ChapterProcessor 误判为 H2 heading（单字符大字号）。
-  - patent01 pages 10-14 附图页的 axis tick、图例标签作为正文输出。
-- 可能的方向：
-  - 检测文本元素是否在图片/矢量图 bbox 内 → 标记为图注而非正文
-  - 检测"纯附图页"（文本量极少 + 图片覆盖面积大）→ 跳过文本提取
-  - 矢量图区域渲染：page rendering + 区域裁剪 → 图片提取
+  - paper01 节点标签 `C`, `b`, `W`, `x`, `MatMul`, `ReLU` 等
+  - patent01 pages 10-14 附图页的 axis tick、图例标签
+- **2026-04-11 尝试过的方案及踩坑记录**：
+  1. **规则聚类方案**（已回退）：用 `page.get_drawings()` 获取矢量路径，
+     按空间距离聚类，渲染聚类区域为图片。
+     - 困难：需要 5 层过滤规则（面积/曲线/单元素上限/表格排除/文本密度）
+       才能区分图表 vs 表格边框 vs 装饰背景。规则调参困难，泛化性差。
+     - 结论：纯规则方案不可行，需要 VLM 或 OCR 辅助判断。
+  2. **OCR layout 方案**（已回退）：将有 drawings 的页面送 OCR，用
+     PaddleOCR layout detection 的 `image` 标签定位矢量图区域。
+     - 验证：OCR 确实能准确返回 figure 区域的 bbox（手动测试 OK）。
+     - 困难：
+       - **坐标系不统一**：batch PDF 模式（144 DPI, 1224×1584）和
+         per-page 图片模式（200 DPI, 1700×2200）返回不同分辨率的坐标。
+         需要从 OCR 响应的 `prunedResult.width/height` 获取渲染尺寸
+         来计算正确的 scale。
+       - **渲染图片未被 Markdown 引用**：ImageProcessor 的分类和 VLM
+         描述流程未正确处理 `vector_figure` 类型的图片元素，导致图片
+         存盘但不出现在输出中。需要确保 `saved_abs_path` 设置正确，
+         且 ImageProcessor 能识别并 VLM-describe 这些元素。
+       - **文字抑制不完整**：text suppression 用中心点判断，但部分
+         figure 标签的 bbox 中心在 figure region 边界外。
+       - **与现有 OCR 框架的集成复杂**：MIXED 模式下 OCR 去重逻辑
+         会影响 figure 元素，且 batch 模式的坐标传递链较长。
+  3. **推荐的下一步方案**：
+     - 整体架构：简单规则判断页面是否有 drawings → OCR layout 获取
+       figure bbox → 渲染 figure 区域 → VLM 描述（一次调用同时确认+描述）
+     - 关键前置：先统一 OCR 坐标系（在 OCRResult 中保存 render_width/height），
+       确保 batch 和 per-page 模式返回一致的 PDF 点坐标。
+     - 关键前置：确保 ImageProcessor 能处理 vector_figure 元素
+       （分类、VLM 描述、Markdown 引用的完整流程）。
+     - 可考虑与 `_check_page_quality` 统一框架，避免多个独立的 OCR
+       触发机制。
 
 ### Smart Routing for Fast / Broad-Coverage Document Conversion
 
@@ -158,13 +183,25 @@ records, see [iteration_history.md](iteration_history.md).
   仍受限于 LineUnwrapProcessor 的条件（可能因列宽/字体不匹配）。
 - 优先级中低，待后续 LineUnwrap 改进。
 
-### Code Block Fence Detection (text_code_block, paper01)
+### Heading Title Cross-Element Truncation (paper01)
+
+- `### 5.2 Controlling Data Communication and` — 标题太长，后半部分
+  (`Memory Usage`) 在下一个 PageElement 中。
+- `### 5.4 Optimized Libraries for Kernel Imple-` — 同上，带连字符断词。
+- 需要跨元素 heading 片段合并（类似 `_merge_cover_heading_fragments`
+  但适用于任意页面的 numbered heading）。
+
+### LLM Heading Fallback 提示词改进
+
+- 当前提示词传递 `font_level_hint`，引导 LLM 倾向于将候选判断为 heading。
+- 应强调让 LLM 根据语义和上下文判断，弱化 font hint 引导。
+- 作者行（82 chars, font 12pt）曾被 LLM 判断为 H1 的案例表明提示词有误导性。
+- 已通过阈值对齐修复（`_is_short_heading_text` 统一），但提示词仍可改进。
+
+### Code Block Fence Detection (text_code_block)
 
 - text_code_block: Code fence 识别不完整，代码块内容与正文混淆，heading_f1=0.500
-- **paper01 page 3 (Figure 1)**：Python 代码用 Courier 等宽字体渲染，
-  未被 CodeBlockProcessor 识别。代码行与行内注释被 line unwrap 合并，
-  输出完全混乱（`W = tf.Variable(...) # 784x100 matrix w/rnd vals x = tf.placeholder(...)`）。
-  需要 CodeBlockProcessor 在双栏 figure 区域也能检测等宽字体代码块。
+- paper01 page 3 代码块已修复（NimbusMonL 等宽字体识别）。
 
 ### Multi-Column Tier 2: PaddleOCR Layout Fallback
 
