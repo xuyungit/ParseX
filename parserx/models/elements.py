@@ -55,7 +55,6 @@ class Page(BaseModel):
     page_type: PageType = PageType.NATIVE
     elements: list[PageElement] = Field(default_factory=list)
     image_path: Path | None = None  # Rendered page image (for OCR/VLM)
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class NumberingPattern(BaseModel):

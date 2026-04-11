@@ -154,7 +154,7 @@ class PDFProvider:
             text_elements, table_elements
         )
 
-        # Extract images (raster XObjects)
+        # Extract images
         image_elements = self._extract_images(fitz_page, page_number)
 
         # Merge all elements and sort by visual position (top-to-bottom,
@@ -165,11 +165,6 @@ class PDFProvider:
 
         # Classify page type
         page.page_type = self._classify_page(fitz_page, text_elements, image_elements)
-
-        # Flag pages with significant vector drawings for downstream
-        # OCR layout detection (figure region identification).
-        if self._has_significant_drawings(fitz_page):
-            page.metadata["has_vector_drawings"] = True
 
         return page
 
@@ -451,61 +446,21 @@ class PDFProvider:
         """Drop text blocks whose bbox is mostly inside a table region."""
         if not table_elements:
             return text_elements
+
+        _OVERLAP_THRESHOLD = 0.5
         table_bboxes = [t.bbox for t in table_elements]
-        return self._remove_region_overlapping_text(text_elements, table_bboxes, "tables")
-
-    def _remove_region_overlapping_text(
-        self,
-        text_elements: list[PageElement],
-        region_bboxes: list[tuple],
-        region_label: str = "regions",
-        threshold: float = 0.5,
-    ) -> list[PageElement]:
-        """Drop text blocks whose bbox is mostly inside any of the given regions."""
-        if not region_bboxes:
-            return text_elements
-
         kept: list[PageElement] = []
+
         for te in text_elements:
             overlaps = any(
-                self._bbox_overlap_ratio(te.bbox, rb) >= threshold
-                for rb in region_bboxes
+                self._bbox_overlap_ratio(te.bbox, tb) >= _OVERLAP_THRESHOLD
+                for tb in table_bboxes
             )
             if not overlaps:
                 kept.append(te)
 
         dropped = len(text_elements) - len(kept)
         if dropped:
-            log.debug("Dropped %d text blocks overlapping with %s", dropped, region_label)
+            log.debug("Dropped %d text blocks overlapping with tables", dropped)
 
         return kept
-
-    # ── Vector drawing detection (page-level flag) ──────────────────────
-
-    # Minimum number of non-trivial drawings to flag a page.
-    _VEC_MIN_DRAWINGS_FOR_FLAG = 5
-    # Minimum area (pt²) for a drawing to count.
-    _VEC_MIN_DRAWING_AREA = 30
-
-    def _has_significant_drawings(self, fitz_page: fitz.Page) -> bool:
-        """Check if a page has enough non-trivial vector drawings.
-
-        This is a lightweight page-level check (no clustering, no rendering).
-        Pages flagged here will be sent to OCR layout detection downstream
-        to identify figure regions precisely.
-        """
-        try:
-            drawings = fitz_page.get_drawings()
-        except Exception:
-            return False
-
-        count = 0
-        for d in drawings:
-            r = d.get("rect")
-            if r is None:
-                continue
-            if abs(r[2] - r[0]) * abs(r[3] - r[1]) >= self._VEC_MIN_DRAWING_AREA:
-                count += 1
-                if count >= self._VEC_MIN_DRAWINGS_FOR_FLAG:
-                    return True
-        return False

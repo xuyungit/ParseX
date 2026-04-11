@@ -494,13 +494,6 @@ class OCRBuilder:
                     ocr_count += 1
                     continue
 
-            # Handle OCR-detected figure regions: render figure areas from
-            # the original PDF page and suppress overlapping native text.
-            if page.metadata.get("ocr_reason_vector_figures"):
-                self._handle_ocr_figure_regions(
-                    fitz_doc, page, ocr_elements,
-                )
-
             if ocr_elements:
                 dedup_count += self._integrate_ocr_results(page, ocr_elements)
             ocr_count += 1
@@ -588,13 +581,7 @@ class OCRBuilder:
         chunk_map: dict[int, list[PageElement]] = {}
         for i, ocr_result in enumerate(results):
             page_number = page_map[i]
-            elements = self._result_to_elements(ocr_result, page_number)
-            # Propagate render dimensions for coordinate conversion.
-            if ocr_result.render_width:
-                for e in elements:
-                    e.metadata["ocr_render_width"] = ocr_result.render_width
-                    e.metadata["ocr_render_height"] = ocr_result.render_height
-            chunk_map[page_number] = elements
+            chunk_map[page_number] = self._result_to_elements(ocr_result, page_number)
 
         return chunk_map
 
@@ -631,118 +618,6 @@ class OCRBuilder:
             )
             page.elements.extend(new)
             return dropped
-
-    @staticmethod
-    def _handle_ocr_figure_regions(
-        fitz_doc: fitz.Document,
-        page: Page,
-        ocr_elements: list[PageElement],
-    ) -> None:
-        """Use OCR layout detection to identify figure regions.
-
-        When OCR returns blocks with ``layout_type="image"``, these are
-        figure regions identified by layout analysis.  For each:
-        1. Render the region from the original PDF page as a PNG image.
-        2. Create an image-type PageElement with the rendered data.
-        3. Suppress native text elements inside the figure region.
-        4. Remove the OCR text element (figure text is in the image).
-
-        OCR coordinates are in the server's rendering pixel space.
-        We compute the scale from the page's PDF dimensions and the
-        max OCR coordinate extent, since the rendering size varies
-        between per-page image mode and batch PDF mode.
-        """
-        # Compute scale from OCR pixel coordinates → PDF points.
-        # OCR render dimensions vary between batch PDF mode and per-page
-        # image mode.  Use stored render dimensions from the OCR response.
-        render_w = 0
-        for e in ocr_elements:
-            render_w = e.metadata.get("ocr_render_width", 0)
-            if render_w:
-                break
-        if render_w == 0 or page.width == 0:
-            return
-        scale = page.width / render_w
-
-        # Find figure regions from OCR results.
-        figure_elements: list[PageElement] = []
-        remaining_ocr: list[PageElement] = []
-
-        for elem in ocr_elements:
-            if elem.layout_type == "image" and elem.bbox:
-                # Convert OCR pixel coords → PDF points.
-                pdf_bbox = (
-                    elem.bbox[0] * scale,
-                    elem.bbox[1] * scale,
-                    elem.bbox[2] * scale,
-                    elem.bbox[3] * scale,
-                )
-                area = (pdf_bbox[2] - pdf_bbox[0]) * (pdf_bbox[3] - pdf_bbox[1])
-                # Skip tiny regions.
-                if area < 1000:
-                    remaining_ocr.append(elem)
-                    continue
-
-                # Render the figure region from the original PDF.
-                try:
-                    fitz_page = fitz_doc[page.number - 1]
-                    clip = fitz.Rect(pdf_bbox)
-                    pix = fitz_page.get_pixmap(clip=clip, dpi=200)
-                    figure_elements.append(PageElement(
-                        type="image",
-                        content="",
-                        bbox=pdf_bbox,
-                        page_number=page.number,
-                        source="native",
-                        metadata={
-                            "vector_figure": True,
-                            "width": pix.width,
-                            "height": pix.height,
-                            "pixmap_png": pix.tobytes("png"),
-                        },
-                    ))
-                    log.debug(
-                        "Page %d: rendered OCR figure region %s",
-                        page.number, [round(x) for x in pdf_bbox],
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "Page %d: failed to render figure region: %s",
-                        page.number, exc,
-                    )
-                    remaining_ocr.append(elem)
-            else:
-                remaining_ocr.append(elem)
-
-        if not figure_elements:
-            return
-
-        # Suppress native text elements inside figure regions.
-        figure_bboxes = [e.bbox for e in figure_elements]
-        suppressed = 0
-        for elem in page.elements:
-            if elem.type != "text":
-                continue
-            cx = (elem.bbox[0] + elem.bbox[2]) / 2
-            cy = (elem.bbox[1] + elem.bbox[3]) / 2
-            for fb in figure_bboxes:
-                if fb[0] <= cx <= fb[2] and fb[1] <= cy <= fb[3]:
-                    elem.metadata["skip_render"] = True
-                    elem.metadata["suppressed_by_vector_figure"] = True
-                    suppressed += 1
-                    break
-
-        # Add figure image elements to the page.
-        page.elements.extend(figure_elements)
-
-        # Replace ocr_elements in-place with remaining (non-figure) elements.
-        ocr_elements.clear()
-        ocr_elements.extend(remaining_ocr)
-
-        log.info(
-            "Page %d: %d figure region(s) from OCR layout, %d text elements suppressed",
-            page.number, len(figure_elements), suppressed,
-        )
 
     @staticmethod
     def _mark_fullpage_scan_images(page: Page) -> int:
@@ -851,18 +726,7 @@ class OCRBuilder:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        elements = self._result_to_elements(result, page.number)
-        # Per-page mode: render dimensions come from the rendered image.
-        if result.render_width:
-            for e in elements:
-                e.metadata["ocr_render_width"] = result.render_width
-                e.metadata["ocr_render_height"] = result.render_height
-        else:
-            # Fallback: use the pixmap dimensions (150 DPI rendering).
-            for e in elements:
-                e.metadata["ocr_render_width"] = pix.width
-                e.metadata["ocr_render_height"] = pix.height
-        return elements
+        return self._result_to_elements(result, page.number)
 
     # ── Deduplication ───────────────────────────────────────────────────
 
@@ -921,12 +785,10 @@ class OCRBuilder:
         elements: list[PageElement] = []
 
         for block in result.blocks:
-            label = block.label or ""
-
-            # Image blocks may have no text but still need layout info
-            # for downstream figure region detection.
-            if not block.text.strip() and label != "image":
+            if not block.text.strip():
                 continue
+
+            label = block.label or ""
 
             # Skip noise elements
             if label in _SKIP_LABELS:

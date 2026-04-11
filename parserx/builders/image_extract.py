@@ -42,17 +42,6 @@ class ImageExtractor:
                     skipped_count += 1
                     continue
 
-                # Vector figures carry pre-rendered PNG data.
-                if elem.metadata.get("vector_figure"):
-                    saved_path = self._save_vector_figure(
-                        elem, page.number, images_dir
-                    )
-                    if saved_path:
-                        elem.metadata["saved_path"] = f"images/{saved_path.name}"
-                        elem.metadata["saved_abs_path"] = str(saved_path)
-                        extracted_count += 1
-                    continue
-
                 xref = elem.metadata.get("xref", 0)
                 if xref == 0:
                     continue
@@ -64,8 +53,6 @@ class ImageExtractor:
                     extracted_count += 1
 
         fitz_doc.close()
-        if images_dir.exists() and not any(images_dir.iterdir()):
-            images_dir.rmdir()
         log.info("Extracted %d images, skipped %d", extracted_count, skipped_count)
         return doc
 
@@ -124,30 +111,8 @@ class ImageExtractor:
 
                 extracted_count += 1
 
-        if images_dir.exists() and not any(images_dir.iterdir()):
-            images_dir.rmdir()
         log.info("Extracted %d DOCX images, skipped %d", extracted_count, skipped_count)
         return doc
-
-    _vector_counter = 0  # class-level counter for unique filenames
-
-    def _save_vector_figure(
-        self, elem, page_number: int, output_dir: Path
-    ) -> Path | None:
-        """Save a pre-rendered vector figure PNG to disk."""
-        png_data = elem.metadata.get("pixmap_png")
-        if not png_data:
-            return None
-
-        ImageExtractor._vector_counter += 1
-        filename = f"p{page_number}_vec{ImageExtractor._vector_counter}.png"
-        output_path = output_dir / filename
-        output_path.write_bytes(png_data)
-
-        # Free the PNG bytes from metadata (no longer needed after saving).
-        del elem.metadata["pixmap_png"]
-
-        return output_path
 
     def _extract_image(
         self, fitz_doc: fitz.Document, xref: int, page_number: int, output_dir: Path
