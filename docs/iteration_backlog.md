@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-10
+Updated: 2026-04-12
 
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
@@ -21,7 +21,7 @@ records, see [iteration_history.md](iteration_history.md).
 | ocr_scan_jtg3362 | 0.207 | 0.886 | 0.091 | 0.839 | Heading 几乎全失 |
 | text_pic02 | 0.277 | 0.911 | 0.250 | 0.224 | DOCX 表格/图片 |
 | paper01 | 0.327 | 0.975 | 0.640 | — | Unicode 字符损坏 |
-| paper_chn01 | 0.456 | 0.902 | 0.667 | 1.000 | 图表描述/LaTeX |
+| paper_chn01 | 0.456 | 0.902 | 0.667 | 1.000 | 图片描述已修复(Iter15) |
 | paper_chn02 | 0.650 | 0.776 | 0.182 | — | HTML 表头丢失 |
 | **patent01** | **0.955** | **0.159** | **0.000** | — | **灾难性失败** |
 | **Average** | **0.224** | **0.893** | **0.501** | **0.463** | |
@@ -116,37 +116,28 @@ records, see [iteration_history.md](iteration_history.md).
 - **图内文字泄露为正文**：
   - paper01 节点标签 `C`, `b`, `W`, `x`, `MatMul`, `ReLU` 等
   - patent01 pages 10-14 附图页的 axis tick、图例标签
-- **2026-04-11 尝试过的方案及踩坑记录**：
-  1. **规则聚类方案**（已回退）：用 `page.get_drawings()` 获取矢量路径，
-     按空间距离聚类，渲染聚类区域为图片。
-     - 困难：需要 5 层过滤规则（面积/曲线/单元素上限/表格排除/文本密度）
-       才能区分图表 vs 表格边框 vs 装饰背景。规则调参困难，泛化性差。
-     - 结论：纯规则方案不可行，需要 VLM 或 OCR 辅助判断。
-  2. **OCR layout 方案**（已回退）：将有 drawings 的页面送 OCR，用
-     PaddleOCR layout detection 的 `image` 标签定位矢量图区域。
-     - 验证：OCR 确实能准确返回 figure 区域的 bbox（手动测试 OK）。
-     - 困难：
-       - **坐标系不统一**：batch PDF 模式（144 DPI, 1224×1584）和
-         per-page 图片模式（200 DPI, 1700×2200）返回不同分辨率的坐标。
-         需要从 OCR 响应的 `prunedResult.width/height` 获取渲染尺寸
-         来计算正确的 scale。
-       - **渲染图片未被 Markdown 引用**：ImageProcessor 的分类和 VLM
-         描述流程未正确处理 `vector_figure` 类型的图片元素，导致图片
-         存盘但不出现在输出中。需要确保 `saved_abs_path` 设置正确，
-         且 ImageProcessor 能识别并 VLM-describe 这些元素。
-       - **文字抑制不完整**：text suppression 用中心点判断，但部分
-         figure 标签的 bbox 中心在 figure region 边界外。
-       - **与现有 OCR 框架的集成复杂**：MIXED 模式下 OCR 去重逻辑
-         会影响 figure 元素，且 batch 模式的坐标传递链较长。
-  3. **推荐的下一步方案**：
-     - 整体架构：简单规则判断页面是否有 drawings → OCR layout 获取
-       figure bbox → 渲染 figure 区域 → VLM 描述（一次调用同时确认+描述）
-     - 关键前置：先统一 OCR 坐标系（在 OCRResult 中保存 render_width/height），
-       确保 batch 和 per-page 模式返回一致的 PDF 点坐标。
-     - 关键前置：确保 ImageProcessor 能处理 vector_figure 元素
-       （分类、VLM 描述、Markdown 引用的完整流程）。
-     - 可考虑与 `_check_page_quality` 统一框架，避免多个独立的 OCR
-       触发机制。
+- **2026-04-12 已完成的修复**（Iteration 15）：
+  - **OCR layout figure detection**：OCR builder 检测 `image`/`figure` 标签，
+    创建 `vector_figure=True` 元素，渲染区域为 PNG。
+  - **vfig/native 去重**：当 OCR 检测的 figure 区域与原生 PDF 图片重叠 >50%
+    时，抑制 vfig，优先使用原生图片。
+  - **ImageMask 反色修正**：检测 `/ImageMask true` 并用 PIL 反转。
+  - **VLM 描述始终保留**：summary 不再被 visible_text/evidence 替代。
+  - **Pipeline 默认加载配置**：`Pipeline()` 自动加载 `parserx.yaml`。
+- **仍未解决**：
+  - paper01 矢量图（无任何 image object 的页面）仍无法提取
+  - 图内文字泄露仍需文字抑制逻辑改进
+  - vfig 文件去重后残留在磁盘上（可清理）
+
+### Image Description Language Consistency
+
+- VLM 生成的图片描述语言不一致：同一文档中部分图片中文描述，部分英文描述。
+- 原因：语言检测是逐图片基于上下文文本做的，而非文档级。system prompt
+  也未明确要求 summary 使用特定语言。
+- 改进方向：
+  - 文档级语言检测：扫描全文 CJK vs Latin 比例，确定主语言
+  - 在 system prompt 中明确要求 summary 使用文档主语言
+  - 可选配置参数 `vlm_description_language` 作为覆盖
 
 ### Smart Routing for Fast / Broad-Coverage Document Conversion
 

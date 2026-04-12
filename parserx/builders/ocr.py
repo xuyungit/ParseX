@@ -36,6 +36,9 @@ _HEADING_LABELS = {"doc_title", "paragraph_title", "title"}
 
 # PaddleOCR layout labels to skip (noise in output)
 _SKIP_LABELS = {"header", "footer", "number", "header_image", "aside_text"}
+
+# PaddleOCR layout labels that indicate figures/images
+_FIGURE_LABELS = {"image", "figure"}
 _SENTENCE_ENDING_RE = re.compile(r"[。！？!?.;；]$")
 _ASCII_CHEMISTRY_RE = re.compile(r"^[A-Za-z0-9,\-\[\]()]+$")
 
@@ -43,6 +46,15 @@ _ASCII_CHEMISTRY_RE = re.compile(r"^[A-Za-z0-9,\-\[\]()]+$")
 def _normalize_dedup(text: str) -> str:
     """Collapse whitespace and strip for dedup comparison."""
     return re.sub(r"\s+", "", text)
+
+
+def _count_table_columns(md_table: str) -> int:
+    """Count columns in a Markdown table by inspecting the first data row."""
+    for line in md_table.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and not re.fullmatch(r"[|\s\-:]+", stripped):
+            return stripped.count("|") - 1
+    return 1
 
 
 def _looks_like_ocr_heading(text: str, label: str) -> bool:
@@ -68,6 +80,102 @@ def _looks_like_ocr_heading(text: str, label: str) -> bool:
         return False
 
     return True
+
+
+def _pad_bbox(
+    bbox: tuple[float, float, float, float],
+    ratio: float = 0.10,
+) -> tuple[float, float, float, float]:
+    """Expand a bbox by *ratio* on each side."""
+    x0, y0, x1, y1 = bbox
+    pw = (x1 - x0) * ratio
+    ph = (y1 - y0) * ratio
+    return (x0 - pw, y0 - ph, x1 + pw, y1 + ph)
+
+
+# Pattern matching figure/table captions like "Figure 1:", "Table 2:",
+# "Fig. 3:", "图 4:" etc.  These should never be suppressed.
+_CAPTION_RE = re.compile(
+    r"^(?:Figure|Fig\.|Table|Tab\.|图|表)\s*\d+",
+    re.IGNORECASE,
+)
+
+
+def _is_caption_text(content: str) -> bool:
+    """Return True if *content* looks like a figure/table caption."""
+    return bool(_CAPTION_RE.match(content.strip()))
+
+
+def _suppress_text_inside_figures(elements: list[PageElement]) -> None:
+    """Mark OCR text elements as skip_render if inside a figure bbox.
+
+    When PaddleOCR detects a figure region, it often *also* returns text
+    blocks for labels, axis ticks, and legends within that region.  These
+    should not appear as body text in the final output.
+
+    A 10% padding is added to figure bboxes because OCR layout detection
+    often returns slightly tight bounding boxes that miss edge labels.
+    """
+    figures = [e for e in elements if e.metadata.get("vector_figure")]
+    if not figures:
+        return
+
+    for elem in elements:
+        if elem.type != "text" or elem.metadata.get("skip_render"):
+            continue
+        # Preserve figure/table captions (e.g. "Figure 1: ...")
+        if _is_caption_text(elem.content):
+            continue
+        # Check if element center is inside any figure bbox (with padding)
+        cx = (elem.bbox[0] + elem.bbox[2]) / 2
+        cy = (elem.bbox[1] + elem.bbox[3]) / 2
+        for fig in figures:
+            fx0, fy0, fx1, fy1 = _pad_bbox(fig.bbox)
+            if fx0 <= cx <= fx1 and fy0 <= cy <= fy1:
+                elem.metadata["skip_render"] = True
+                elem.metadata["suppressed_by_vector_figure"] = True
+                break
+
+
+def _attach_figure_captions(elements: list[PageElement]) -> None:
+    """Attach ``figure_title`` OCR elements as captions on vector figures.
+
+    PaddleOCR layout detection returns ``figure_title`` labels for
+    captions like "Figure 5: Gradients computed for graph in Figure 2".
+    We find the nearest vector figure element (by vertical distance)
+    and store the caption text in its metadata.  The caption element
+    itself is marked ``skip_render`` to avoid double output — the
+    caption will be rendered by the crossref/renderer via the figure's
+    ``caption`` metadata.
+    """
+    figures = [e for e in elements if e.metadata.get("vector_figure")]
+    captions = [e for e in elements if e.layout_type == "figure_title"]
+    if not figures or not captions:
+        return
+
+    for cap in captions:
+        cap_top = cap.bbox[1]
+        cap_cx = (cap.bbox[0] + cap.bbox[2]) / 2
+        best_fig = None
+        best_dist = float("inf")
+        for fig in figures:
+            fig_bottom = fig.bbox[3]
+            fig_cx = (fig.bbox[0] + fig.bbox[2]) / 2
+            # Caption typically appears below the figure.  Prefer
+            # figures whose bottom edge is above the caption top.
+            if fig_bottom <= cap_top + 20:  # small tolerance
+                vert_dist = cap_top - fig_bottom
+            else:
+                # Figure below caption — penalise heavily
+                vert_dist = abs(cap_top - fig_bottom) + 500
+            dist = vert_dist + abs(cap_cx - fig_cx) * 0.3
+            if dist < best_dist:
+                best_dist = dist
+                best_fig = fig
+        if best_fig is not None:
+            best_fig.metadata["ocr_caption"] = cap.content.strip()
+            cap.metadata["skip_render"] = True
+            cap.metadata["suppressed_by_vector_figure"] = True
 
 
 def _char_overlap_ratio(ocr_text: str, native_bag: Counter) -> float:
@@ -458,6 +566,12 @@ class OCRBuilder:
             return doc
 
         fitz_doc = fitz.open(str(source_path))
+
+        # Pre-scan: detect NATIVE pages with vector drawings so they
+        # get sent to OCR for layout-based figure detection.
+        if self._config.vector_figure_extraction:
+            self._detect_vector_drawing_pages(fitz_doc, doc)
+
         pages_to_ocr = [p for p in doc.pages if self._should_ocr_page(p)]
         total_ocr = len(pages_to_ocr)
         skip_count = len(doc.pages) - total_ocr
@@ -578,10 +692,15 @@ class OCRBuilder:
             return None
 
         # Map results back to original page numbers.
+        page_dims = {p.number: (p.width, p.height) for p in pages}
         chunk_map: dict[int, list[PageElement]] = {}
         for i, ocr_result in enumerate(results):
             page_number = page_map[i]
-            chunk_map[page_number] = self._result_to_elements(ocr_result, page_number)
+            pw, ph = page_dims.get(page_number, (0.0, 0.0))
+            chunk_map[page_number] = self._result_to_elements(
+                ocr_result, page_number,
+                page_width=pw, page_height=ph,
+            )
 
         return chunk_map
 
@@ -611,12 +730,28 @@ class OCRBuilder:
             if not self._skip_scan_image_marking:
                 self._mark_fullpage_scan_images(page)
             return 0
+        elif page.metadata.get("has_vector_drawings"):
+            # NATIVE page with drawings: keep only figure image
+            # elements from OCR — discard OCR text/table to avoid
+            # introducing duplicates or garbled text.
+            figure_elems = [
+                e for e in ocr_elements
+                if e.type == "image" and e.metadata.get("vector_figure")
+            ]
+            page.elements.extend(figure_elems)
+            self._suppress_native_text_in_figures(page)
+            return 0
         else:
             # Mixed / sparse native: deduplicate against existing.
             new, dropped = self._deduplicate(
                 page.elements, ocr_elements,
             )
             page.elements.extend(new)
+
+            # Suppress native text elements that fall inside vector
+            # figure regions detected by OCR layout analysis.
+            self._suppress_native_text_in_figures(page)
+
             return dropped
 
     @staticmethod
@@ -685,6 +820,99 @@ class OCRBuilder:
             )
         return marked
 
+    @staticmethod
+    def _suppress_native_text_in_figures(page: Page) -> int:
+        """Suppress native text elements inside figure/image regions.
+
+        Two cases handled:
+
+        1. **Vector figures** (OCR-detected): axis labels, node labels,
+           etc. that PDFProvider extracts as native text.
+        2. **Embedded raster images**: some PDFs overlay native text
+           (labels, annotations) on top of raster screenshots. Text
+           whose center falls inside a large image bbox is suppressed.
+
+        A 10% padding is added to figure bboxes to account for OCR
+        layout detection returning slightly tight bounding boxes.
+        """
+        # Collect vector figures (padded).  Raster images are NOT
+        # included: they often sit adjacent to body text or headings,
+        # and a bbox-overlap test produces too many false suppressions.
+        # Text inside raster screenshots is handled downstream by the
+        # renderer's VLM correction skip for diagram/chart images.
+        suppress_regions: list[tuple[float, float, float, float]] = []
+        for e in page.elements:
+            if e.metadata.get("vector_figure"):
+                suppress_regions.append(_pad_bbox(e.bbox))
+
+        if not suppress_regions:
+            return 0
+
+        suppressed = 0
+        for elem in page.elements:
+            if elem.type != "text":
+                continue
+            if elem.metadata.get("skip_render"):
+                continue
+            # Preserve figure/table captions (e.g. "Figure 7: ...")
+            if _is_caption_text(elem.content):
+                continue
+            cx = (elem.bbox[0] + elem.bbox[2]) / 2
+            cy = (elem.bbox[1] + elem.bbox[3]) / 2
+            for fx0, fy0, fx1, fy1 in suppress_regions:
+                if fx0 <= cx <= fx1 and fy0 <= cy <= fy1:
+                    elem.metadata["skip_render"] = True
+                    elem.metadata["suppressed_by_vector_figure"] = True
+                    suppressed += 1
+                    break
+
+        if suppressed:
+            log.debug(
+                "Suppressed %d native text element(s) inside figure/image regions on page %d",
+                suppressed, page.number,
+            )
+        return suppressed
+
+    def _detect_vector_drawing_pages(
+        self, fitz_doc: fitz.Document, doc: Document,
+    ) -> None:
+        """Flag NATIVE pages that contain vector drawings.
+
+        Pages with a significant number of drawing commands AND at
+        least one curve (cubic bezier) likely contain vector figures.
+        The curve requirement filters out pages that only have table
+        borders or decorative straight lines — those consist entirely
+        of line segments (``l``) with no curves (``c``).
+        """
+        min_drawings = self._config.vector_figure_min_drawings
+        flagged = 0
+        for page in doc.pages:
+            if page.page_type != PageType.NATIVE:
+                continue
+            idx = page.number - 1
+            if idx < 0 or idx >= len(fitz_doc):
+                continue
+            drawings = fitz_doc[idx].get_drawings()
+            if len(drawings) < min_drawings:
+                continue
+            # Require at least one curve — table borders and straight
+            # decorative lines have zero curves.
+            has_curves = any(
+                item[0] == "c"
+                for d in drawings
+                for item in d["items"]
+            )
+            if not has_curves:
+                continue
+            page.metadata["has_vector_drawings"] = True
+            page.metadata["drawing_count"] = len(drawings)
+            flagged += 1
+        if flagged:
+            log.info(
+                "Vector drawing pre-scan: %d NATIVE page(s) flagged for OCR",
+                flagged,
+            )
+
     def _should_ocr_page(self, page: Page) -> bool:
         """Decide if a page needs OCR."""
         if self._config.force_full_page:
@@ -694,6 +922,10 @@ class OCRBuilder:
             return True
 
         if page.page_type == PageType.MIXED:
+            return True
+
+        # NATIVE page with vector drawings — needs OCR for figure detection
+        if page.metadata.get("has_vector_drawings"):
             return True
 
         # Native page — skip unless text is suspiciously sparse
@@ -726,7 +958,10 @@ class OCRBuilder:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        return self._result_to_elements(result, page.number)
+        return self._result_to_elements(
+            result, page.number,
+            page_width=page.width, page_height=page.height,
+        )
 
     # ── Deduplication ───────────────────────────────────────────────────
 
@@ -754,10 +989,66 @@ class OCRBuilder:
 
         native_bag = Counter(native_text)
 
+        # Pre-collect native tables for table-to-table dedup.
+        native_tables = [
+            e for e in native_elements
+            if e.type == "table" and e.content.strip()
+        ]
+
         kept: list[PageElement] = []
         dropped = 0
 
         for elem in ocr_elements:
+            # Table dedup: only compare against native table elements
+            # to avoid dropping a well-structured OCR table when native
+            # extraction scattered the same content across text blocks.
+            if elem.type == "table":
+                if not native_tables:
+                    kept.append(elem)
+                    continue
+                table_norm = _normalize_dedup(elem.content)
+                if not table_norm:
+                    continue
+                ocr_cols = _count_table_columns(elem.content)
+                is_dup = False
+                for nt in native_tables:
+                    nt_norm = _normalize_dedup(nt.content)
+                    if not nt_norm:
+                        continue
+                    ratio = _char_overlap_ratio(table_norm, Counter(nt_norm))
+                    if ratio < 0.85:
+                        continue
+                    # High character overlap — but only treat as duplicate
+                    # if both tables have similar structure.  When the OCR
+                    # table has significantly more columns, it is likely a
+                    # better-structured version of a broken native table
+                    # (single-column text dump).  In that case, replace the
+                    # native table with the OCR version instead of dropping.
+                    native_cols = _count_table_columns(nt.content)
+                    if ocr_cols >= native_cols + 2:
+                        log.debug(
+                            "Dedup replace native table (%d cols) with OCR table (%d cols, %.0f%% overlap)",
+                            native_cols, ocr_cols, ratio * 100,
+                        )
+                        nt.metadata["skip_render"] = True
+                        is_dup = False
+                        break
+                    log.debug(
+                        "Dedup drop table (%.0f%% overlap, %d vs %d cols): %.40s…",
+                        ratio * 100, ocr_cols, native_cols, elem.content,
+                    )
+                    is_dup = True
+                    break
+                if is_dup:
+                    dropped += 1
+                else:
+                    kept.append(elem)
+                continue
+
+            # Non-text elements (e.g. vector figure images) always kept
+            if elem.type != "text":
+                kept.append(elem)
+                continue
             ocr_norm = _normalize_dedup(elem.content)
             if not ocr_norm:
                 continue
@@ -774,24 +1065,78 @@ class OCRBuilder:
 
         return kept, dropped
 
-    def _result_to_elements(self, result: OCRResult, page_number: int) -> list[PageElement]:
+    def _result_to_elements(
+        self,
+        result: OCRResult,
+        page_number: int,
+        page_width: float = 0.0,
+        page_height: float = 0.0,
+    ) -> list[PageElement]:
         """Convert OCR result blocks to PageElements.
 
         Uses PaddleOCR layout labels to infer element types:
         - doc_title / paragraph_title / title → text with heading_level
         - table → table (HTML content converted to Markdown)
+        - image → image with vector_figure metadata
         - header / footer / number → skipped
+
+        When *page_width*/*page_height* (PDF points) and
+        ``result.render_width``/``render_height`` (OCR pixels) are both
+        available, all bboxes are scaled from OCR pixel space to PDF
+        point space so they are consistent with native elements.
         """
+        # ── Coordinate scale factors ────────────────────────────────
+        scale_x = scale_y = 1.0
+        if (
+            page_width > 0
+            and page_height > 0
+            and result.render_width > 0
+            and result.render_height > 0
+        ):
+            scale_x = page_width / result.render_width
+            scale_y = page_height / result.render_height
+
         elements: list[PageElement] = []
 
         for block in result.blocks:
-            if not block.text.strip():
-                continue
-
             label = block.label or ""
+
+            # Scale bbox to PDF points
+            bbox = (
+                block.bbox[0] * scale_x,
+                block.bbox[1] * scale_y,
+                block.bbox[2] * scale_x,
+                block.bbox[3] * scale_y,
+            )
 
             # Skip noise elements
             if label in _SKIP_LABELS:
+                continue
+
+            # ── Figure / image blocks ───────────────────────────────
+            if label in _FIGURE_LABELS:
+                fig_w = bbox[2] - bbox[0]
+                fig_h = bbox[3] - bbox[1]
+                if fig_w < 30 or fig_h < 30:
+                    continue  # too small — likely noise
+                elements.append(PageElement(
+                    type="image",
+                    content="",
+                    bbox=bbox,
+                    page_number=page_number,
+                    font=FontInfo(),
+                    source="ocr",
+                    confidence=block.confidence,
+                    layout_type=label,
+                    metadata={
+                        "vector_figure": True,
+                        "width": fig_w,
+                        "height": fig_h,
+                    },
+                ))
+                continue
+
+            if not block.text.strip():
                 continue
 
             metadata: dict = {}
@@ -806,7 +1151,7 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="table",
                     content=content,
-                    bbox=block.bbox,
+                    bbox=bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",
@@ -821,7 +1166,7 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="text",
                     content=block.text,
-                    bbox=block.bbox,
+                    bbox=bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",
@@ -833,12 +1178,18 @@ class OCRBuilder:
                 elements.append(PageElement(
                     type="text",
                     content=block.text,
-                    bbox=block.bbox,
+                    bbox=bbox,
                     page_number=page_number,
                     font=FontInfo(),
                     source="ocr",
                     confidence=block.confidence,
                     layout_type=label or None,
                 ))
+
+        # ── Suppress OCR text blocks inside figure regions ──────────
+        _suppress_text_inside_figures(elements)
+
+        # ── Attach figure_title captions to nearest vector figures ──
+        _attach_figure_captions(elements)
 
         return elements

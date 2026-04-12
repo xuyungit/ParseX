@@ -51,6 +51,9 @@ class OCRBuilderConfig(BaseModel):
     selective: bool = True
     force_full_page: bool = False
     batch: bool = True  # Batch OCR: assemble pages into temp PDF, one API call
+    vector_figure_extraction: bool = True  # Detect vector figures via OCR layout
+    vector_figure_render_dpi: int = 200    # DPI for rendering vector figure regions
+    vector_figure_min_drawings: int = 5    # Min drawing commands to trigger OCR on NATIVE pages
 
 
 class QualityCheckConfig(BaseModel):

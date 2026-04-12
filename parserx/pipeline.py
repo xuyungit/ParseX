@@ -17,7 +17,7 @@ from parserx.builders.image_extract import ImageExtractor
 from parserx.builders.metadata import MetadataBuilder
 from parserx.builders.reading_order import ReadingOrderBuilder
 from parserx.builders.ocr import OCRBuilder
-from parserx.config.schema import ParserXConfig
+from parserx.config.schema import ParserXConfig, load_config
 from parserx.models.elements import Document, PageType
 from parserx.models.results import ParseResult
 from parserx.processors.base import Processor
@@ -54,13 +54,15 @@ class Pipeline:
     """
 
     def __init__(self, config: ParserXConfig | None = None):
-        self._config = config or ParserXConfig()
+        self._config = config if config is not None else load_config()
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
         self._reading_order_builder = ReadingOrderBuilder(
             self._config.processors.reading_order,
         )
         self._ocr_builder = self._create_ocr_builder()
-        self._image_extractor = ImageExtractor()
+        self._image_extractor = ImageExtractor(
+            vector_figure_render_dpi=self._config.builders.ocr.vector_figure_render_dpi,
+        )
         self._llm_service = self._create_llm_service()
         self._vlm_service = self._create_vlm_service()
         self._processors: list[Processor] = self._build_processors()
@@ -213,16 +215,13 @@ class Pipeline:
 
         # Step 3: OCR (PDF only)
         if self._ocr_builder and not is_docx:
-            scanned_pages = sum(
-                1 for p in doc.pages if p.page_type.value in ("scanned", "mixed")
-            )
-            if scanned_pages > 0:
-                log.info("Running selective OCR (%d pages need it)", scanned_pages)
-                t0 = time.monotonic()
-                doc = self._ocr_builder.build(doc, path)
-                log.info("OCR done (%.1fs)", time.monotonic() - t0)
-            else:
-                log.info("OCR: all pages native, skipping")
+            # Always run OCR builder — it handles its own page filtering
+            # via _should_ocr_page(), which considers scanned/mixed pages
+            # AND native pages with vector drawings.
+            log.info("Running OCR builder")
+            t0 = time.monotonic()
+            doc = self._ocr_builder.build(doc, path)
+            log.info("OCR done (%.1fs)", time.monotonic() - t0)
 
         # Step 3.5: Reading order — column detection uses geometry (PDF only)
         if self._reading_order_builder and not is_docx:

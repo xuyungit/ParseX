@@ -8,6 +8,96 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 15: Image Pipeline — Dedup, ImageMask, Description, Config (2026-04-12)
+
+Target document: paper_chn01 (中文学术论文, 7 pages, two-column layout).
+
+### What Was Done
+
+**1. Vector figure / native image deduplication** (`builders/image_extract.py`)
+- Problem: OCR layout detection creates `vector_figure=True` elements for figure
+  regions, while PyMuPDF separately extracts native embedded images by xref.
+  Both appeared in output as duplicate figures.
+- Fix: `_dedup_vfig_native()` checks bbox overlap between vfig and native img
+  elements on each page. When overlap >50%, the vfig is suppressed in favor of
+  the native image (higher resolution, original encoding).
+
+**2. ImageMask color inversion** (`builders/image_extract.py`)
+- Problem: PDF images stored as ImageMask (stencil masks) have inverted colors
+  when raw-extracted. PDF readers apply the mask correctly, but `extract_image()`
+  gives black-on-white inverted output.
+- Fix: After extracting image bytes, check `fitz_doc.xref_object(xref)` for
+  `/ImageMask true`. If found, invert via PIL `ImageOps.invert()` and save as
+  1-bit PNG. Ported from legacy codebase (`doc-refine/scripts/pdf_extract.py`).
+
+**3. Image description always preserved** (`processors/image.py`)
+- Problem: VLM summary (the actual image description) was suppressed in multiple
+  code paths:
+  - `_apply_vlm_corrections()` suppressed summary when >60% char overlap with
+    corrections, and `_normalize_vlm_output()` returned empty description.
+  - `_select_vlm_description()` had complex routing that replaced summary with
+    visible_text labels (e.g., "F a b c d1 d2") or OCR evidence when overlap
+    was strong.
+- Fix:
+  - `_normalize_vlm_output()`: when correction path returns empty `remaining_desc`
+    but `summary` is non-empty, preserve summary as description
+    (`description_source = "vlm_summary_after_correction"`).
+  - `_select_vlm_description()`: simplified to always use summary as description
+    when available. visible_text/evidence are for OCR correction, not description.
+- Design principle: OCR correction and image description are independent outputs.
+  Corrections fix OCR text/tables; description describes the image. They should
+  never suppress each other.
+
+**4. Description rendered as visible text** (`assembly/markdown.py`)
+- Problem: Short descriptions were placed only in alt text (`![desc](path)`),
+  invisible in rendered markdown.
+- Fix: Always render description as a visible blockquote below the image:
+  `![desc](path)\n\n> desc`.
+
+**5. Pipeline default config loading** (`pipeline.py`)
+- Problem: `Pipeline()` without explicit config used empty `ParserXConfig()`
+  instead of loading from `parserx.yaml` / `~/.config/parserx/config.yaml`.
+  This caused VLM/LLM/OCR services to be `None` when called programmatically.
+- Fix: Changed `config or ParserXConfig()` to `config if config is not None else load_config()`.
+
+**6. OCR vector figure detection + caption attachment** (`builders/ocr.py`)
+- Enhanced OCR builder to detect figure regions via PaddleOCR layout labels
+  (`image`, `figure`) and create `vector_figure=True` elements.
+- Added `_attach_figure_captions()`: attaches nearby `figure_title` labels
+  as captions to detected vector figures by vertical proximity.
+- Added table column dedup and improved table/text deduplication logic.
+
+**7. Cross-reference caption improvements** (`assembly/crossref.py`)
+- Pre-populate captions from OCR `figure_title` labels (`ocr_caption` metadata).
+- Relaxed caption length check to allow longer captions to be classified.
+
+### Measured Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| paper_chn01 | Duplicate figures | 3 pairs (6 images) | 5 unique images | Fixed |
+| paper_chn01 | Inverted images | 5 inverted | 0 inverted | Fixed |
+| paper_chn01 | Images with description | 0/5 | 5/5 | Fixed |
+| paper_chn01 | VLM calls | 0 (service was None) | 5 | Fixed |
+
+### Key Lessons
+
+- **VLM summary 是图片描述，不可替代**：visible_text 是标签文字转录，不是描述。
+  两者服务不同目的，不应互相抑制。
+- **Pipeline 配置加载需要防御性设计**：`Pipeline()` 无参调用应该自动加载配置文件，
+  否则所有 AI 服务都是 None，且没有明确的错误提示。
+- **ImageMask 是 PDF 图片反色的常见原因**：PDF 用 stencil mask 表示二值图像，
+  `extract_image()` 返回的原始字节是反色的。检查 xref object 的 `/ImageMask` 属性即可。
+
+### Remaining Issues
+
+- **图片描述语言不一致**：VLM 有时返回中文描述，有时返回英文描述。
+  需要文档级语言检测 + system prompt 中指定 summary 输出语言。
+- **vfig 文件残留**：去重后 vfig 文件仍在磁盘上但未被引用，触发 verification warning。
+  可以在去重时跳过渲染，或在提取后清理未引用的文件。
+
+---
+
 ## Iteration 14: Paper01 Quality — Heading + Code + Bold Detection (2026-04-11)
 
 Target document: paper01 (TensorFlow whitepaper, 19 pages, two-column layout).

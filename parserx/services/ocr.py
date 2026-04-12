@@ -41,6 +41,8 @@ class OCRResult:
     markdown: str = ""
     has_tables: bool = False
     raw: dict = field(default_factory=dict)
+    render_width: float = 0.0   # Width (px) of the image the OCR server analysed
+    render_height: float = 0.0  # Height (px) — used to convert bbox → PDF points
 
     @property
     def text_content(self) -> str:
@@ -251,9 +253,20 @@ class PaddleOCRService:
         """Parse PaddleOCR response into OCRResult."""
         blocks: list[OCRBlock] = []
         has_tables = False
+        render_width = 0.0
+        render_height = 0.0
 
         for page in result.get("layoutParsingResults", []):
             pruned = page.get("prunedResult") or {}
+
+            # Extract render dimensions (px) used by the OCR server.
+            # Needed to convert OCR bbox coordinates → PDF points.
+            rw = pruned.get("width", 0)
+            rh = pruned.get("height", 0)
+            if rw and rh:
+                render_width = float(rw)
+                render_height = float(rh)
+
             for block_data in pruned.get("parsing_res_list", []):
                 label = block_data.get("block_label", "")
                 content = block_data.get("block_content", "")
@@ -279,6 +292,8 @@ class PaddleOCRService:
             markdown=markdown,
             has_tables=has_tables,
             raw=result,
+            render_width=render_width,
+            render_height=render_height,
         )
 
 
