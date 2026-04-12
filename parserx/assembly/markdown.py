@@ -89,7 +89,67 @@ class MarkdownRenderer:
         if heading_level:
             prefix = "#" * heading_level
             return f"{prefix} {element.content}"
+
+        # Apply inline formatting from merged DOCX spans
+        inline_spans = element.metadata.get("inline_spans")
+        if inline_spans:
+            return self._render_inline_spans(inline_spans)
+
+        # Single-element underline — the only formatting that's meaningful
+        # for non-merged elements.  Bold/italic on whole paragraphs is
+        # noisy and would regress PDF metrics (where bold comes from font
+        # analysis).  Mixed bold/italic/underline within a paragraph is
+        # handled by the inline_spans path above.
+        if element.metadata.get("underline"):
+            return f"<u>{element.content}</u>"
         return element.content
+
+    def _render_inline_spans(self, spans: list[dict]) -> str:
+        """Render merged text spans with per-span formatting.
+
+        Consolidates adjacent spans with the same bold/italic state to
+        avoid redundant marker pairs like ``**a****b**`` → ``**ab**``.
+        Underline uses HTML ``<u>`` tags which nest cleanly inside bold/italic,
+        so underline differences don't break consolidation.
+        """
+        # Group consecutive spans by (bold, italic) to reduce marker noise
+        groups: list[tuple[bool, bool, list[tuple[str, bool]]]] = []
+        for span in spans:
+            text = span.get("text", "")
+            if not text:
+                continue
+            bold = span.get("bold", False)
+            italic = span.get("italic", False)
+            underline = span.get("underline", False)
+            if groups and groups[-1][0] == bold and groups[-1][1] == italic:
+                groups[-1][2].append((text, underline))
+            else:
+                groups.append((bold, italic, [(text, underline)]))
+
+        parts: list[str] = []
+        for bold, italic, sub_spans in groups:
+            inner = "".join(
+                f"<u>{t}</u>" if ul else t for t, ul in sub_spans
+            )
+            parts.append(self._apply_inline_format(inner, bold, italic, False))
+        return "".join(parts)
+
+    @staticmethod
+    def _apply_inline_format(
+        text: str, bold: bool, italic: bool, underline: bool
+    ) -> str:
+        """Wrap text with markdown/HTML inline formatting markers."""
+        if not text:
+            return text
+        if underline:
+            text = f"<u>{text}</u>"
+        if bold and italic:
+            text = f"***{text}***"
+        elif bold:
+            text = f"**{text}**"
+        elif italic:
+            text = f"*{text}*"
+        return text
 
     def _render_image(self, element: PageElement) -> str:
         """Render image with description.
