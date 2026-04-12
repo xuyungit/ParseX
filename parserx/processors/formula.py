@@ -133,6 +133,13 @@ _REFUSAL_RE = re.compile(
     re.IGNORECASE,
 )
 _INLINE_MATH_CANDIDATE_RE = re.compile(r"\$[^$\n]{1,120}\$")
+# Match inline math with leading/trailing spaces: $ content $ → $content$
+# Negative lookbehind/ahead ensures we don't match $$ display math.
+# Content must contain at least one LaTeX indicator (\ ^ _ { }) to avoid
+# false matches on prose between two unrelated $ signs (e.g. "$ and $").
+_INLINE_MATH_SPACE_RE = re.compile(
+    r"(?<!\$)\$(\s+[^$\n]*?[\\^_{}][^$\n]*?\s+)\$(?!\$)",
+)
 _LATEX_FRAGMENT_CANDIDATE_RE = re.compile(
     r"(?:\\[A-Za-z]+(?:\{[^{}]{0,40}\})?|\^\{[^{}]{1,20}\}|_\{[^{}]{1,20}\})"
 )
@@ -736,6 +743,22 @@ def _render_formula_crop(
         fitz_doc.close()
 
 
+def _tighten_inline_math(text: str) -> str:
+    """Remove leading/trailing spaces inside inline math delimiters.
+
+    ``$ \\delta_{ik} $`` → ``$\\delta_{ik}$``
+
+    Many Markdown renderers (e.g. Typora) require no spaces at the
+    ``$`` boundaries to recognise inline math.
+    """
+    if "$" not in text:
+        return text
+    return _INLINE_MATH_SPACE_RE.sub(
+        lambda m: f"${m.group(1).strip()}$",
+        text,
+    )
+
+
 def normalize_formulas(text: str) -> str:
     """Apply formula normalization transforms to a text string.
 
@@ -743,7 +766,8 @@ def normalize_formulas(text: str) -> str:
     to avoid conflicts between patterns.
     """
     if not _has_formula_indicators(text):
-        return text
+        # Still tighten inline math delimiters even without indicators.
+        return _tighten_inline_math(text)
 
     # 1. Temperature: ℃ → LaTeX
     text = _TEMPERATURE_RE.sub(
@@ -794,6 +818,9 @@ def normalize_formulas(text: str) -> str:
     )
 
     text = _merge_adjacent_chemical_fragments(text)
+
+    # Final: tighten inline math delimiters for renderer compatibility.
+    text = _tighten_inline_math(text)
 
     return text
 
