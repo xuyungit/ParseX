@@ -415,6 +415,21 @@ class ChapterProcessor:
                     and not _is_metadata_or_cover_line(first_line)):
                 return font_level
 
+        # ── DOCX fallback: bold + numbering heading detection ──
+        # When font stats are unavailable (DOCX mode: heading_candidates is
+        # empty, all sizes are 0), promote bold text ONLY when it also has
+        # a numbering pattern.  Bold alone is too ambiguous — it matches
+        # cover page text, emphasized body text, and table headers.
+        if (
+            not heading_candidates
+            and elem.font.bold
+            and numbering_level is not None
+            and _is_short_heading_text(first_line)
+            and not _is_metadata_or_cover_line(first_line)
+            and not _ends_with_colon(first_line)
+        ):
+            return numbering_level
+
         return None
 
     # ── Numbering coherence pass ────────────────────────────────────────

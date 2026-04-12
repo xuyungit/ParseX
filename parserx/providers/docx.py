@@ -32,32 +32,49 @@ class DOCXProvider:
         result = converter.convert(str(path))
         docling_doc = result.document
 
-        pages: list[Page] = []
+        # Phase 1: convert all items, tracking parent group refs
+        raw_items: list[tuple[int, PageElement, str]] = []  # (page, element, parent_ref)
         current_page = 1
-        page_elements: list[PageElement] = []
 
         for item, _level in docling_doc.iterate_items(with_groups=False):
-            # Determine page number from provenance
             item_page = current_page
             if hasattr(item, "prov") and item.prov:
                 item_page = item.prov[0].page_no
-
-            # Start a new page if needed
             if item_page > current_page:
-                pages.append(self._make_page(current_page, page_elements))
-                # Fill gaps (empty pages between)
-                for gap_page in range(current_page + 1, item_page):
-                    pages.append(self._make_page(gap_page, []))
-                page_elements = []
                 current_page = item_page
 
             element = self._convert_item(item, item_page, docling_doc)
             if element is not None:
-                page_elements.append(element)
+                parent_ref = ""
+                parent = getattr(item, "parent", None)
+                if parent is not None:
+                    ref_str = str(parent)
+                    # Group refs look like "cref='#/groups/N'"
+                    if "#/groups/" in ref_str:
+                        parent_ref = ref_str
+                raw_items.append((item_page, element, parent_ref))
 
-        # Flush last page
+        # Phase 2: merge consecutive elements sharing the same group parent
+        merged = self._merge_group_fragments(raw_items)
+
+        # Phase 3: paginate
+        pages: list[Page] = []
+        current_page_num = 0
+        page_elements: list[PageElement] = []
+
+        for page_num, element in merged:
+            if page_num != current_page_num:
+                if page_elements or pages:
+                    pages.append(self._make_page(current_page_num, page_elements))
+                # Fill gaps
+                for gap in range(current_page_num + 1, page_num):
+                    pages.append(self._make_page(gap, []))
+                page_elements = []
+                current_page_num = page_num
+            page_elements.append(element)
+
         if page_elements or not pages:
-            pages.append(self._make_page(current_page, page_elements))
+            pages.append(self._make_page(current_page_num or 1, page_elements))
 
         metadata = DocumentMetadata(
             page_count=len(pages),
@@ -67,9 +84,79 @@ class DOCXProvider:
 
         return Document(pages=pages, metadata=metadata)
 
+    def _merge_group_fragments(
+        self,
+        raw_items: list[tuple[int, PageElement, str]],
+    ) -> list[tuple[int, PageElement]]:
+        """Merge consecutive text elements that share the same Docling group parent.
+
+        Docling splits a single DOCX paragraph into multiple TextItems at
+        formatting boundaries (e.g. underline on/off).  We rejoin them into
+        one PageElement so the renderer produces a single paragraph.
+
+        Each merged element records per-span formatting in metadata so the
+        renderer can reconstruct inline markup (bold, italic, underline).
+        """
+        result: list[tuple[int, PageElement]] = []
+        i = 0
+        while i < len(raw_items):
+            page, elem, parent_ref = raw_items[i]
+            # Only merge text elements with a group parent.
+            # List items are separate paragraphs even within the same group.
+            if not parent_ref or elem.type != "text" or elem.metadata.get("docling_list_item"):
+                result.append((page, elem))
+                i += 1
+                continue
+
+            # Collect consecutive items with the same group parent
+            # Each span: (text, font, underline)
+            ul0 = bool(elem.metadata.get("underline"))
+            spans: list[tuple[str, FontInfo, bool]] = [(elem.content, elem.font, ul0)]
+            j = i + 1
+            while j < len(raw_items):
+                p2, e2, pr2 = raw_items[j]
+                if pr2 != parent_ref or e2.type != "text" or e2.metadata.get("docling_list_item"):
+                    break
+                ul2 = bool(e2.metadata.get("underline"))
+                spans.append((e2.content, e2.font, ul2))
+                j += 1
+
+            if len(spans) == 1:
+                result.append((page, elem))
+                i += 1
+                continue
+
+            # Build merged content and per-span formatting records
+            merged_text = "".join(text for text, _, _ in spans)
+            span_records: list[dict] = []
+            for text, font, ul in spans:
+                if text:  # skip empty spans
+                    span_records.append({
+                        "text": text,
+                        "bold": font.bold,
+                        "italic": font.italic,
+                        "underline": ul,
+                    })
+
+            # Use the first element's font as the "dominant" font
+            merged_elem = PageElement(
+                type="text",
+                content=merged_text,
+                bbox=elem.bbox,
+                page_number=page,
+                font=elem.font,
+                source="native",
+                metadata={**elem.metadata, "inline_spans": span_records},
+            )
+            result.append((page, merged_elem))
+            i = j
+
+        return result
+
     def _convert_item(self, item, page_number: int, docling_doc) -> PageElement | None:
         """Convert a Docling item to a PageElement."""
         from docling_core.types.doc.document import (
+            ListItem,
             PictureItem,
             SectionHeaderItem,
             TableItem,
@@ -94,13 +181,25 @@ class DOCXProvider:
                 metadata={"heading_level": item.level},
             )
 
-        if isinstance(item, TextItem):
+        # ListItem must be checked BEFORE TextItem because ListItem
+        # inherits from TextItem — isinstance(list_item, TextItem) is True.
+        if isinstance(item, ListItem):
             font = FontInfo()
+            underline = False
             if hasattr(item, "formatting") and item.formatting:
                 font = FontInfo(
                     bold=item.formatting.bold,
                     italic=item.formatting.italic,
                 )
+                underline = bool(getattr(item.formatting, "underline", False))
+            # Note: Docling's ListItem.marker is internal list ordering,
+            # NOT the document's actual section numbering.  Do not prepend
+            # it — the original numbering (if any) is typically already
+            # embedded in item.text or handled by DOCX auto-numbering
+            # which Docling does not expose.
+            meta: dict = {"docling_list_item": True}
+            if underline:
+                meta["underline"] = True
             return PageElement(
                 type="text",
                 content=item.text,
@@ -108,6 +207,29 @@ class DOCXProvider:
                 page_number=page_number,
                 font=font,
                 source="native",
+                metadata=meta,
+            )
+
+        if isinstance(item, TextItem):
+            font = FontInfo()
+            underline = False
+            if hasattr(item, "formatting") and item.formatting:
+                font = FontInfo(
+                    bold=item.formatting.bold,
+                    italic=item.formatting.italic,
+                )
+                underline = bool(getattr(item.formatting, "underline", False))
+            meta: dict = {}
+            if underline:
+                meta["underline"] = True
+            return PageElement(
+                type="text",
+                content=item.text,
+                bbox=bbox,
+                page_number=page_number,
+                font=font,
+                source="native",
+                metadata=meta,
             )
 
         if isinstance(item, TableItem):
