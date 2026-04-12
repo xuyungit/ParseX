@@ -41,6 +41,7 @@ _FIGURE_MAX_GAP = 140.0
 _TABLE_MAX_GAP = 110.0
 
 
+
 @dataclass(frozen=True)
 class _CaptionCandidate:
     element: PageElement
@@ -59,6 +60,14 @@ class CrossReferenceResolver:
     def _resolve_page(self, page: Page) -> None:
         for index, element in enumerate(page.elements):
             element.metadata.setdefault("_page_order", index)
+
+        # Pre-populate captions from OCR figure_title labels (set by
+        # _attach_figure_captions in the OCR builder).
+        for elem in page.elements:
+            ocr_cap = elem.metadata.get("ocr_caption")
+            if ocr_cap and not elem.metadata.get("caption"):
+                elem.metadata["caption"] = ocr_cap
+                elem.metadata["caption_kind"] = "figure"
 
         captions = self._find_caption_candidates(page.elements)
         if not captions:
@@ -108,16 +117,18 @@ class CrossReferenceResolver:
                 continue
 
             text = " ".join(part.strip() for part in elem.content.splitlines() if part.strip()).strip()
-            if not text or len(text) > _CAPTION_MAX_LEN:
+            if not text:
                 continue
 
-            kind = self._classify_caption(text)
-            if kind is None:
+            if len(text) <= _CAPTION_MAX_LEN:
+                kind = self._classify_caption(text)
+                if kind is not None:
+                    candidates.append(_CaptionCandidate(element=elem, kind=kind, text=text))
                 continue
 
-            candidates.append(_CaptionCandidate(element=elem, kind=kind, text=text))
 
         return candidates
+
 
     def _classify_caption(self, text: str) -> str | None:
         if self._match_caption(text, _NUMBERED_FIGURE_RE, _FIGURE_LABELS):

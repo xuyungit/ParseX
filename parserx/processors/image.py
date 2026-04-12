@@ -423,6 +423,11 @@ def _collect_overlapping_evidence(
             "has_table": False,
         }
 
+    # For vector figures, elements spatially inside the figure are
+    # the figure's own internal content (axis labels, legends, etc.),
+    # not external evidence that the content is "already covered".
+    is_vector_fig = bool(image.metadata.get("vector_figure"))
+
     for elem in page_elements:
         if elem is image or elem.type not in {"text", "table"}:
             continue
@@ -430,6 +435,17 @@ def _collect_overlapping_evidence(
             continue
         if not elem.content.strip() or not _has_bbox(elem):
             continue
+        # Skip elements already suppressed (e.g. text inside vector figures)
+        if elem.metadata.get("skip_render"):
+            continue
+        # For vector figures: ignore elements whose center is inside
+        # the figure bbox — they are the figure's own content.
+        if is_vector_fig:
+            ecx = (elem.bbox[0] + elem.bbox[2]) / 2
+            ecy = (elem.bbox[1] + elem.bbox[3]) / 2
+            ix0, iy0, ix1, iy1 = image.bbox
+            if ix0 <= ecx <= ix1 and iy0 <= ecy <= iy1:
+                continue
 
         overlap = _bbox_overlap_ratio(image.bbox, elem.bbox)
         if overlap > 0:
@@ -467,11 +483,15 @@ def _select_vlm_description(
     evidence: dict[str, object],
     max_chars: int,
 ) -> tuple[str, dict[str, object]]:
+    """Select image description from VLM output.
+
+    The summary is the image description — it is always preferred when
+    available.  visible_text/markdown/evidence are transcription outputs
+    used by the correction path and should not replace the description.
+    """
     updates: dict[str, object] = {}
     evidence_text = str(evidence.get("text", "")).strip()
-    evidence_table = str(evidence.get("table_text", "")).strip()
     best_overlap = float(evidence.get("best_overlap", 0.0) or 0.0)
-    strong_overlap = _is_strong_overlap(best_overlap, evidence_text)
 
     image_class = str(elem.metadata.get("image_class", ""))
     text_heavy = _looks_text_heavy(
@@ -492,58 +512,21 @@ def _select_vlm_description(
     if text_heavy:
         updates["text_heavy_image"] = True
 
-    if markdown:
-        if evidence_table and _has_number_mismatch(markdown, evidence_table):
-            updates["description_source"] = "ocr_table_evidence"
-            updates["vlm_number_mismatch"] = True
-            return _truncate_description(evidence_table, max_chars), updates
-        updates["description_source"] = "vlm_markdown"
-        if summary:
-            updates["vlm_summary_suppressed"] = True
-        return _truncate_description(markdown, max_chars), updates
-
-    if strong_overlap and visible_text:
-        if _has_number_mismatch(visible_text, evidence_text):
-            if evidence_text:
-                updates["description_source"] = "ocr_overlap_evidence"
-                updates["vlm_number_mismatch"] = True
-                return _truncate_description(evidence_text, max_chars), updates
-        updates["description_source"] = "vlm_visible_text"
-        if summary:
-            updates["vlm_summary_suppressed"] = True
-        return _truncate_description(visible_text, max_chars), updates
-
-    if strong_overlap and text_heavy and evidence_text:
-        updates["description_source"] = "ocr_overlap_evidence"
-        if summary:
-            updates["vlm_summary_suppressed"] = True
-        return _truncate_description(evidence_text, max_chars), updates
-
+    # Summary is always the description when available.
     if summary:
-        if _has_number_mismatch(summary, evidence_text):
-            updates["vlm_number_mismatch"] = True
-            if visible_text:
-                updates["description_source"] = "vlm_visible_text"
-                updates["vlm_summary_suppressed"] = True
-                return _truncate_description(visible_text, max_chars), updates
-            if evidence_text:
-                updates["description_source"] = "ocr_overlap_evidence"
-                updates["vlm_summary_suppressed"] = True
-                return _truncate_description(evidence_text, max_chars), updates
-            updates["vlm_summary_suppressed"] = True
-        elif visible_text and text_heavy:
-            updates["description_source"] = "vlm_visible_text"
-            updates["vlm_summary_suppressed"] = True
-            return _truncate_description(visible_text, max_chars), updates
-        else:
-            updates["description_source"] = "vlm_summary"
-            return _truncate_description(summary, max_chars), updates
+        updates["description_source"] = "vlm_summary"
+        return _truncate_description(summary, max_chars), updates
 
+    # Fallback: no summary — use best available transcription.
     if visible_text:
         updates["description_source"] = "vlm_visible_text"
         return _truncate_description(visible_text, max_chars), updates
 
-    if evidence_text and strong_overlap:
+    if markdown:
+        updates["description_source"] = "vlm_markdown"
+        return _truncate_description(markdown, max_chars), updates
+
+    if evidence_text and _is_strong_overlap(best_overlap, evidence_text):
         updates["description_source"] = "ocr_overlap_evidence"
         return _truncate_description(evidence_text, max_chars), updates
 
@@ -849,6 +832,12 @@ def _normalize_vlm_output(
         if remaining_desc:
             updates["description_source"] = "vlm_summary"
             return remaining_desc, True, updates
+        # Corrections fix OCR text/tables; the summary describes the image.
+        # These are independent — always preserve the summary as description.
+        if summary:
+            desc = _truncate_description(summary, min(max_chars, 400))
+            updates["description_source"] = "vlm_summary_after_correction"
+            return desc, True, updates
         return "", True, updates
 
     # ── Fallback: original description-selection path ──────────────────

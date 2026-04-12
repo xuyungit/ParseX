@@ -105,9 +105,27 @@ class MarkdownRenderer:
         # VLM correction takes priority: even if the image is "skipped"
         # (no image file to render), corrected text/table content from
         # VLM still needs to appear in the output.
+        # Exception: vector figures should always render as images with
+        # descriptions, not as transcribed text — VLM often reads the
+        # diagram labels and routes them as "correction", which would
+        # re-introduce the same text we suppressed from native elements.
+        is_vector_figure = element.metadata.get("vector_figure", False)
+        vlm_image_type = element.metadata.get("vlm_image_type", "")
+        if not description:
+            # VLM correction route doesn't populate description — use
+            # the raw summary instead.
+            vlm_raw = element.metadata.get("vlm_raw") or {}
+            description = vlm_raw.get("summary", "")
         corrected_table = str(element.metadata.get("vlm_corrected_table", "")).strip()
         corrected_text = str(element.metadata.get("vlm_corrected_text", "")).strip()
-        if corrected_table or corrected_text:
+        # Skip correction for diagrams/charts/vector figures — VLM reads
+        # visible text labels and transcribes them, which duplicates
+        # already-suppressed native text or produces noisy output.
+        # Correction is only useful for table/text images.
+        skip_correction = is_vector_figure or vlm_image_type in (
+            "diagram", "chart",
+        )
+        if (corrected_table or corrected_text) and not skip_correction:
             parts: list[str] = []
             if corrected_text:
                 parts.append(corrected_text)
@@ -128,26 +146,22 @@ class MarkdownRenderer:
 
         # Normalize description for embedding
         desc_oneline = description.replace("\n", " ").strip() if description else ""
-        reference_text = get_image_reference_text(element)
+        # When description came from vlm_raw fallback (not stored in
+        # metadata), pass it through the reference-text filter manually.
+        if desc_oneline and not element.metadata.get("description"):
+            reference_text = desc_oneline
+        else:
+            reference_text = get_image_reference_text(element)
         body = ""
 
         if image_path and description:
-            if not reference_text:
-                # Description was suppressed (e.g. text-heavy OCR overlap
-                # already rendered in body) — keep image link only.
-                body = f"![]({image_path})"
-            elif reference_text != desc_oneline:
-                body = f"![{reference_text}]({image_path})"
-            # Short description → alt text; long → separate block
-            elif len(desc_oneline) <= 120:
-                body = f"![{desc_oneline}]({image_path})"
-            else:
-                body = f"![]({image_path})\n\n> {desc_oneline}"
+            # Always render description as visible text below the image.
+            ref = reference_text or desc_oneline
+            body = f"![{ref}]({image_path})\n\n> {desc_oneline}"
         elif image_path:
             body = f"![]({image_path})"
         elif description:
             if not reference_text:
-                # No path and description suppressed — skip entirely.
                 body = ""
             else:
                 body = f"> [图片] {reference_text or desc_oneline}"
