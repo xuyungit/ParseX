@@ -341,12 +341,14 @@ class ChapterProcessor:
         detected_count += fallback_hits
         self._normalize_ocr_title_subtitle_pair(doc)
         self._merge_cover_heading_fragments(doc)
+        split_count = self._split_heading_body_elements(doc)
 
         log.info(
-            "Detected %d headings (%d via coherence, %d via fallback)",
+            "Detected %d headings (%d via coherence, %d via fallback, %d split)",
             detected_count,
             coherence_hits,
             fallback_hits,
+            split_count,
         )
         return doc
 
@@ -604,6 +606,76 @@ class ChapterProcessor:
         if first.bbox[0] > second.bbox[2] or second.bbox[0] > first.bbox[2]:
             return False
         return True
+
+    @staticmethod
+    def _split_heading_body_elements(doc: Document) -> int:
+        """Split elements that contain both heading text and body text.
+
+        When heading detection marks a multi-line element as a heading,
+        only the first line(s) are the actual heading — the rest is body
+        text that needs to flow through downstream processors (e.g.
+        LineUnwrap).  This method splits such elements into a heading
+        element and a body-text element.
+        """
+        split_count = 0
+        for page in doc.pages:
+            new_elements: list[PageElement] = []
+            for elem in page.elements:
+                if (
+                    elem.type != "text"
+                    or not elem.metadata.get("heading_level")
+                    or "\n" not in elem.content
+                ):
+                    new_elements.append(elem)
+                    continue
+
+                # Determine how many lines belong to the heading.
+                # _resolve_heading_text may join a pure-number first line
+                # with the next line, so we need to account for that.
+                lines = elem.content.split("\n")
+                heading_lines = 1
+                if _PURE_NUMBER_RE.match(lines[0].strip()) and len(lines) > 1:
+                    # Number-only first line + title on next line
+                    heading_lines = 2
+
+                # Check whether there is actual body text after the heading.
+                body_lines = [
+                    l for l in lines[heading_lines:] if l.strip()
+                ]
+                if not body_lines:
+                    new_elements.append(elem)
+                    continue
+
+                # Split: heading element keeps heading lines.
+                heading_text = "\n".join(lines[:heading_lines]).strip()
+                # Replace number-only + title with combined form for cleaner output.
+                if heading_lines == 2:
+                    heading_text = " ".join(l.strip() for l in lines[:2] if l.strip())
+                elem.content = heading_text
+
+                # Body element gets remaining lines.
+                body_text = "\n".join(lines[heading_lines:])
+                body_elem = PageElement(
+                    type="text",
+                    content=body_text,
+                    bbox=elem.bbox,
+                    page_number=elem.page_number,
+                    font=elem.font,
+                    metadata={
+                        k: v for k, v in elem.metadata.items()
+                        if k != "heading_level"
+                    },
+                    confidence=elem.confidence,
+                    source=elem.source,
+                    layout_type=elem.layout_type,
+                )
+
+                new_elements.append(elem)
+                new_elements.append(body_elem)
+                split_count += 1
+
+            page.elements = new_elements
+        return split_count
 
     def _keep_existing_ocr_heading(self, page_width: float, elem: PageElement) -> bool:
         """Suppress OCR sidebar labels that are visually prominent but not structural headings."""

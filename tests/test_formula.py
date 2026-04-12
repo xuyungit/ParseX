@@ -389,7 +389,7 @@ def test_formula_processor_ignores_format_only_vlm_result(tmp_path: Path):
 
     processor.process(doc)
 
-    assert elem.content == r"The signal is $ \delta $ = 7.2."
+    assert elem.content == r"The signal is $\delta$ = 7.2."
     assert "formula_vlm_correction_used" not in elem.metadata
     assert len(vlm.calls) == 1
 
