@@ -8,6 +8,77 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 16: DOCX Parsing — ListItem, Fragment Merge, Inline Formatting (2026-04-12)
+
+Target document: chn_doc01 (竞争性谈判文件, 40+ pages, complex structure).
+
+### What Was Done
+
+**1. ListItem handling** (`providers/docx.py`)
+- Problem: Docling's `ListItem` type (58 items in chn_doc01) was silently dropped
+  by `_convert_item()` because only `SectionHeaderItem`, `TextItem`, `TableItem`,
+  `PictureItem` were handled. ListItems contain contract clause headings, numbered
+  sub-items, and compliance section titles.
+- Fix: Added `ListItem` check BEFORE `TextItem` (critical: `ListItem` inherits
+  from `TextItem`, so `isinstance(item, TextItem)` matches ListItems too).
+  Docling's internal `marker` is NOT used (it's list-level ordering, not document
+  section numbering).
+
+**2. Formatting-boundary fragment merge** (`providers/docx.py`)
+- Problem: Docling splits a single DOCX paragraph into multiple TextItems at each
+  formatting change (underline on/off, bold on/off). "2025年9月10日" became 6
+  fragments; "投标物资中支座计量方式为点件计量。" became 4.
+- Fix: Two-phase extraction: first collect all items with their Docling `parent`
+  group refs, then merge consecutive elements sharing the same `#/groups/N` parent
+  into a single PageElement. Per-span formatting (bold/italic/underline) is
+  recorded in `metadata["inline_spans"]` for the renderer.
+- ListItems are excluded from merging (each is a separate paragraph even within
+  the same group).
+
+**3. Inline formatting rendering** (`assembly/markdown.py`)
+- Added `_render_inline_spans()` to output per-span `**bold**`, `*italic*`,
+  `<u>underline</u>` from merged DOCX spans.
+- Adjacent spans with same bold/italic state are consolidated to avoid
+  `**a****b**` → produces `**ab**` instead.
+- Single (non-merged) elements only render underline; bold/italic on whole
+  paragraphs is skipped to avoid PDF metric regression.
+
+**4. DOCX bold+numbering heading detection** (`processors/chapter.py`)
+- Problem: MetadataBuilder is skipped for DOCX, so `heading_candidates` is empty
+  and `_heading_level_from_font()` always returns None. DOCX headings with
+  numbering patterns were missed.
+- Fix: Fallback detection when `heading_candidates` is empty: bold + numbering
+  pattern → heading. Bold alone is NOT sufficient (too many false positives from
+  cover pages, table headers, emphasized text).
+
+**5. Underline extraction** (`providers/docx.py`)
+- Docling's `formatting.underline` is now extracted and stored in element metadata.
+  Previously only bold/italic were captured.
+
+### Impact
+
+| Document | Metric | Before | After | Change |
+|----------|--------|--------|-------|--------|
+| text_table01 | edit_distance | 0.003 | 0.000 | -0.003 ✅ |
+| text_table01 | char_f1 | — | 1.000 | ✅ Perfect |
+| chn_doc01 | Content coverage | 58 items lost | Recovered | ✅ |
+| chn_doc01 | Text fragmentation | 6+ fragments | Single paragraph | ✅ |
+| chn_doc01 | Inline formatting | None | bold/italic/underline | ✅ |
+
+All deterministic documents pass or improve. No PDF regressions.
+
+### Remaining DOCX Issues
+
+- Docling's SectionHeaderItem is unreliable for DOCX (only 7 empty H3 headers
+  in a 40-page document). Real headings come as TextItem/ListItem.
+- Docling sometimes loses fill-in field content (e.g., "采购资金来自<u>项目工程
+  计量款</u>" → "采购资金来自。") — upstream Docling limitation.
+- Table header cells extracted as duplicate standalone TextItems alongside the
+  table → potential false heading detection.
+- best_scores.json baselines for text_report01 and paper_chn01 are stale.
+
+---
+
 ## Iteration 15: Image Pipeline — Dedup, ImageMask, Description, Config (2026-04-12)
 
 Target document: paper_chn01 (中文学术论文, 7 pages, two-column layout).
