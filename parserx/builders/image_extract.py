@@ -109,63 +109,211 @@ class ImageExtractor:
                         break
         return suppressed
 
+    # ── DOCX image extraction ──────────────────────────────────────────
+
+    _MIME_TO_EXT: dict[str, str] = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif",
+        "image/bmp": "bmp",
+        "image/tiff": "tiff",
+        "image/x-emf": "emf",
+        "image/x-wmf": "wmf",
+        "image/svg+xml": "svg",
+    }
+    _VECTOR_MIMES: set[str] = {"image/x-emf", "image/x-wmf", "image/svg+xml"}
+
     def extract_docx(self, doc: Document, source_path: Path, output_dir: Path) -> Document:
-        """Extract images from DOCX via Docling and save them.
+        """Extract images from DOCX preserving original format.
 
-        Uses Docling's PictureItem.get_image() to obtain PIL images.
+        Uses python-docx to access raw image bytes (preserves JPEG/PNG
+        quality) and the cached Docling document for picture-to-element
+        mapping.  Vector formats (EMF/WMF) are converted to PNG when
+        possible; otherwise saved as-is with a ``vector_format`` flag.
         """
-        from docling.document_converter import DocumentConverter
-
         images_dir = output_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        converter = DocumentConverter()
-        result = converter.convert(str(source_path))
-        docling_doc = result.document
+        # Collect raw images from python-docx (preserves original format)
+        docx_images = self._collect_docx_images(source_path)
 
-        extracted_count = 0
-        skipped_count = 0
-        img_counter = 0
+        # Get Docling document from cache (or re-parse as fallback)
+        docling_doc = doc._cache.get("docling_doc")
+        docling_pictures = list(docling_doc.pictures) if docling_doc else []
+
+        # Build index map: self_ref → docx_images index
+        # Docling pictures and python-docx image rels are in document order.
+        use_index_map = len(docling_pictures) == len(docx_images)
+        if not use_index_map and docx_images:
+            log.warning(
+                "DOCX image count mismatch: Docling %d vs python-docx %d; "
+                "falling back to Docling extraction",
+                len(docling_pictures), len(docx_images),
+            )
+
+        extracted = 0
+        skipped = 0
 
         for page in doc.pages:
             for elem in page.elements:
                 if elem.type != "image":
                     continue
                 if elem.metadata.get("skipped"):
-                    skipped_count += 1
+                    skipped += 1
                     continue
 
                 self_ref = elem.metadata.get("docling_self_ref")
                 if not self_ref:
                     continue
 
-                # Look up the PictureItem in the Docling document
-                try:
-                    picture_item = docling_doc.get_ref(self_ref)
-                    pil_image = picture_item.get_image(docling_doc)
-                except Exception:
-                    pil_image = None
-
-                if pil_image is None:
+                # Parse picture index from "#/pictures/N"
+                pic_idx = self._parse_picture_index(self_ref)
+                if pic_idx is None:
                     continue
 
-                img_counter += 1
-                filename = f"p{page.number}_img{img_counter}.png"
-                output_path = images_dir / filename
-                pil_image.save(output_path, format="PNG")
+                saved = False
 
-                elem.metadata["saved_path"] = f"images/{filename}"
-                elem.metadata["saved_abs_path"] = str(output_path)
+                # Primary path: python-docx raw bytes (format-preserving)
+                if use_index_map and 0 <= pic_idx < len(docx_images):
+                    content_type, blob, partname = docx_images[pic_idx]
+                    saved = self._save_docx_image(
+                        elem, blob, content_type, page.number,
+                        pic_idx, images_dir,
+                    )
 
-                # Update dimensions from actual image if not already set
-                if not elem.metadata.get("width"):
-                    elem.metadata["width"] = pil_image.width
-                    elem.metadata["height"] = pil_image.height
+                # Fallback: Docling get_image() (returns PNG)
+                if not saved and docling_doc and 0 <= pic_idx < len(docling_pictures):
+                    try:
+                        pil_img = docling_pictures[pic_idx].get_image(docling_doc)
+                    except Exception:
+                        pil_img = None
+                    if pil_img:
+                        filename = f"p{page.number}_img{pic_idx}.png"
+                        out = images_dir / filename
+                        pil_img.save(out, format="PNG")
+                        elem.metadata["saved_path"] = f"images/{filename}"
+                        elem.metadata["saved_abs_path"] = str(out)
+                        elem.metadata.setdefault("width", pil_img.width)
+                        elem.metadata.setdefault("height", pil_img.height)
+                        saved = True
 
-                extracted_count += 1
+                if saved:
+                    extracted += 1
 
-        log.info("Extracted %d DOCX images, skipped %d", extracted_count, skipped_count)
+        log.info("Extracted %d DOCX images, skipped %d", extracted, skipped)
         return doc
+
+    @staticmethod
+    def _collect_docx_images(
+        source_path: Path,
+    ) -> list[tuple[str, bytes, str]]:
+        """Collect all image relationships from a DOCX via python-docx.
+
+        Returns a list of (content_type, blob, partname) tuples sorted
+        by partname to ensure stable ordering.
+        """
+        from docx import Document as DocxDocument
+
+        try:
+            docx_doc = DocxDocument(str(source_path))
+        except Exception as exc:
+            log.warning("Failed to open DOCX with python-docx: %s", exc)
+            return []
+
+        images: list[tuple[str, bytes, str]] = []
+        for rel in docx_doc.part.rels.values():
+            if "image" not in rel.reltype:
+                continue
+            try:
+                ct = rel.target_part.content_type
+                blob = rel.target_part.blob
+                name = str(rel.target_part.partname)
+                images.append((ct, blob, name))
+            except Exception:
+                continue
+
+        # Sort by partname for stable ordering (/word/media/image1.png, image2.png, ...)
+        images.sort(key=lambda x: x[2])
+        return images
+
+    def _save_docx_image(
+        self,
+        elem: "PageElement",  # noqa: F821
+        blob: bytes,
+        content_type: str,
+        page_number: int,
+        pic_idx: int,
+        images_dir: Path,
+    ) -> bool:
+        """Save a single DOCX image to disk, preserving original format.
+
+        For vector formats (EMF/WMF), attempts PIL conversion to PNG.
+        Returns True if the image was saved successfully.
+        """
+        ext = self._MIME_TO_EXT.get(content_type, "png")
+        is_vector = content_type in self._VECTOR_MIMES
+
+        if is_vector:
+            # Try converting vector image to PNG via PIL
+            converted = self._try_vector_to_png(blob)
+            if converted is not None:
+                blob = converted
+                ext = "png"
+                is_vector = False  # successfully converted
+            else:
+                # Save original vector format; mark for renderer fallback
+                elem.metadata["vector_format"] = True
+                log.info(
+                    "Vector image %s on page %d saved as .%s (no conversion)",
+                    content_type, page_number, ext,
+                )
+
+        filename = f"p{page_number}_img{pic_idx}.{ext}"
+        output_path = images_dir / filename
+
+        try:
+            output_path.write_bytes(blob)
+        except Exception as exc:
+            log.warning("Failed to save DOCX image %s: %s", filename, exc)
+            return False
+
+        elem.metadata["saved_path"] = f"images/{filename}"
+        elem.metadata["saved_abs_path"] = str(output_path)
+
+        # Read actual dimensions from raster images
+        if not is_vector:
+            try:
+                with Image.open(output_path) as img:
+                    elem.metadata.setdefault("width", img.width)
+                    elem.metadata.setdefault("height", img.height)
+            except Exception:
+                pass
+
+        return True
+
+    @staticmethod
+    def _try_vector_to_png(blob: bytes) -> bytes | None:
+        """Attempt to convert vector image bytes (EMF/WMF) to PNG.
+
+        Returns PNG bytes on success, None if conversion is not supported.
+        """
+        try:
+            img = Image.open(io.BytesIO(blob))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_picture_index(self_ref: str) -> int | None:
+        """Parse picture index from Docling self_ref like '#/pictures/0'."""
+        if not self_ref or not self_ref.startswith("#/pictures/"):
+            return None
+        try:
+            return int(self_ref.rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            return None
 
     def _render_vector_figure(
         self,
