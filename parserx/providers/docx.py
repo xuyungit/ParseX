@@ -82,7 +82,11 @@ class DOCXProvider:
             source_path=str(path),
         )
 
-        return Document(pages=pages, metadata=metadata)
+        doc = Document(pages=pages, metadata=metadata)
+        # Cache the Docling document for downstream image extraction
+        # (avoids re-parsing the DOCX in ImageExtractor.extract_docx).
+        doc._cache["docling_doc"] = docling_doc
+        return doc
 
     def _merge_group_fragments(
         self,

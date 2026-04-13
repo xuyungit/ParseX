@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class PageType(str, Enum):
@@ -94,6 +94,10 @@ class Document(BaseModel):
 
     pages: list[Page] = Field(default_factory=list)
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
+
+    # Transient cache for passing objects between pipeline stages (e.g.
+    # Docling document reference).  Never serialized or included in copies.
+    _cache: dict = PrivateAttr(default_factory=dict)
 
     @property
     def all_elements(self) -> list[PageElement]:
