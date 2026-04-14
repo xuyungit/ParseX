@@ -120,7 +120,7 @@ class MarkdownRenderer:
         so underline differences don't break consolidation.
         """
         # Group consecutive spans by (bold, italic) to reduce marker noise
-        groups: list[tuple[bool, bool, list[tuple[str, bool]]]] = []
+        groups: list[tuple[bool, bool, list[tuple[str, bool, bool]]]] = []
         for span in spans:
             text = span.get("text", "")
             if not text:
@@ -128,16 +128,23 @@ class MarkdownRenderer:
             bold = span.get("bold", False)
             italic = span.get("italic", False)
             underline = span.get("underline", False)
+            sup = span.get("sup", False)
             if groups and groups[-1][0] == bold and groups[-1][1] == italic:
-                groups[-1][2].append((text, underline))
+                groups[-1][2].append((text, underline, sup))
             else:
-                groups.append((bold, italic, [(text, underline)]))
+                groups.append((bold, italic, [(text, underline, sup)]))
 
         parts: list[str] = []
         for bold, italic, sub_spans in groups:
-            inner = "".join(
-                f"<u>{t}</u>" if ul else t for t, ul in sub_spans
-            )
+            inner_parts: list[str] = []
+            for t, ul, sp in sub_spans:
+                seg = t
+                if ul:
+                    seg = f"<u>{seg}</u>"
+                if sp:
+                    seg = f"<sup>{seg}</sup>"
+                inner_parts.append(seg)
+            inner = "".join(inner_parts)
             parts.append(self._apply_inline_format(inner, bold, italic, False))
         return "".join(parts)
 
