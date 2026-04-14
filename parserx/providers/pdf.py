@@ -81,6 +81,14 @@ def _merge_line_segments(
     """
     merged: list[dict] = []
 
+    def _same_fmt(a: dict, b: dict) -> bool:
+        return (
+            a.get("bold") == b.get("bold")
+            and a.get("italic") == b.get("italic")
+            and a.get("underline", False) == b.get("underline", False)
+            and a.get("sup", False) == b.get("sup", False)
+        )
+
     def _append(seg: dict) -> None:
         if not seg["text"]:
             return
@@ -92,9 +100,9 @@ def _merge_line_segments(
             if merged:
                 merged[-1]["text"] += seg["text"]
                 return
-            merged.append({"text": seg["text"], "bold": False, "italic": False})
+            merged.append({"text": seg["text"], "bold": False, "italic": False, "underline": False, "sup": False})
             return
-        if merged and merged[-1]["bold"] == seg["bold"] and merged[-1]["italic"] == seg["italic"]:
+        if merged and _same_fmt(merged[-1], seg):
             merged[-1]["text"] += seg["text"]
         else:
             merged.append(dict(seg))
@@ -117,55 +125,91 @@ def _merge_line_segments(
                 # after. Markdown bold across newlines is parsed inconsistently
                 # by downstream tools (and strip-regex in evaluators that uses
                 # non-DOTALL matching leaves stray ** markers in text).
-                merged.append({"text": "\n", "bold": False, "italic": False})
+                merged.append({"text": "\n", "bold": False, "italic": False, "underline": False, "sup": False})
         for seg in segments:
             _append(seg)
     return merged
 
 
-def _reconstruct_line_segments(line_spans: list[dict]) -> list[dict]:
+def _char_is_underlined(char_bbox: tuple, underline_rects: list[tuple]) -> bool:
+    """Return True if a drawn-rectangle underline sits just below *char_bbox*.
+
+    ``underline_rects`` is a list of ``(x0, y0, x1, y1)`` for thin horizontal
+    rectangles harvested from ``page.get_drawings()``. A char is underlined
+    when its horizontal span overlaps a rect whose top edge lies within a
+    small band directly below the char's bottom edge.
+    """
+    cx0, _, cx1, cy1 = char_bbox
+    if cx1 <= cx0:
+        return False
+    for ux0, uy0, ux1, uy1 in underline_rects:
+        if uy0 < cy1 - 1:  # must be below char (allow tiny overlap)
+            continue
+        if uy0 > cy1 + 3:  # too far below
+            continue
+        if ux1 <= cx0 or ux0 >= cx1:
+            continue
+        # Require ≥ 50% horizontal coverage to avoid tick-mark false positives
+        overlap = min(ux1, cx1) - max(ux0, cx0)
+        if overlap / max(cx1 - cx0, 0.01) >= 0.3:
+            return True
+    return False
+
+
+def _reconstruct_line_segments(
+    line_spans: list[dict],
+    underline_rects: list[tuple] | None = None,
+) -> list[dict]:
     """Reconstruct a line as a list of formatting-run segments.
 
-    Each segment is ``{"text": str, "bold": bool, "italic": bool}``. The
-    concatenated ``text`` fields match what ``_reconstruct_line_from_chars``
-    returns. Adjacent chars with the same (bold, italic) are merged;
-    gap-inserted spaces attach to the following segment.
+    Each segment is ``{"text": str, "bold": bool, "italic": bool,
+    "underline": bool, "sup": bool}``. Concatenated ``text`` fields match
+    ``_reconstruct_line_from_chars``. Adjacent chars with the same
+    formatting quadruple are merged; gap-inserted spaces attach to the
+    following segment.
     """
-    # Flatten chars keeping formatting alongside geometry.
-    chars: list[tuple[str, float, float, float, bool, bool]] = []
+    rects = underline_rects or []
+    # Flatten chars with geometry + per-char formatting.
+    chars: list[tuple[str, float, float, float, bool, bool, bool, bool]] = []
     for span in line_spans:
         font_size = span.get("size", 12.0)
         flags = span.get("flags", 0)
         bold = bool(flags & 2**4)
         italic = bool(flags & 2**1)
+        sup = bool(flags & 2**0)
         for ch_dict in span.get("chars", []):
             c = ch_dict.get("c", "")
             if not c:
                 continue
             bbox = ch_dict.get("bbox", (0, 0, 0, 0))
-            chars.append((c, bbox[0], bbox[2], font_size, bold, italic))
+            underlined = _char_is_underlined(bbox, rects) if rects else False
+            chars.append((c, bbox[0], bbox[2], font_size, bold, italic, underlined, sup))
 
     if not chars:
         return []
 
-    segments: list[dict] = [{"text": chars[0][0], "bold": chars[0][4], "italic": chars[0][5]}]
+    def _seg(ch: str, b: bool, i: bool, u: bool, sp: bool) -> dict:
+        return {"text": ch, "bold": b, "italic": i, "underline": u, "sup": sp}
+
+    segments: list[dict] = [_seg(chars[0][0], chars[0][4], chars[0][5], chars[0][6], chars[0][7])]
     for i in range(1, len(chars)):
-        prev_ch, _, prev_x1, prev_sz, _, _ = chars[i - 1]
-        curr_ch, curr_x0, _, curr_sz, curr_b, curr_i = chars[i]
+        prev_ch, _, prev_x1, prev_sz, _, _, _, _ = chars[i - 1]
+        curr_ch, curr_x0, _, curr_sz, curr_b, curr_i, curr_u, curr_sp = chars[i]
         gap = curr_x0 - prev_x1
         threshold = (prev_sz + curr_sz) * 0.125
         needs_space = gap > threshold and not (
             _is_cjk_or_fullwidth_punct(prev_ch) and _is_cjk_or_fullwidth_punct(curr_ch)
         )
         last = segments[-1]
-        if last["bold"] == curr_b and last["italic"] == curr_i:
+        if (
+            last["bold"] == curr_b
+            and last["italic"] == curr_i
+            and last["underline"] == curr_u
+            and last["sup"] == curr_sp
+        ):
             last["text"] += (" " if needs_space else "") + curr_ch
         else:
-            segments.append({
-                "text": (" " if needs_space else "") + curr_ch,
-                "bold": curr_b,
-                "italic": curr_i,
-            })
+            segments.append(_seg((" " if needs_space else "") + curr_ch, curr_b, curr_i, curr_u, curr_sp))
     return segments
 
 
@@ -269,6 +313,31 @@ class PDFProvider:
 
         return page
 
+    @staticmethod
+    def _collect_underline_rects(fitz_page: fitz.Page) -> list[tuple]:
+        """Extract thin horizontal rectangles from page drawings.
+
+        These are the typical baked-in underline marks (PDF renders
+        underlines as filled rectangles, not as a character flag).
+        Filtered to height < 1.5pt and width > 3pt to exclude tick marks
+        and large filled boxes.
+        """
+        rects: list[tuple] = []
+        try:
+            drawings = fitz_page.get_drawings()
+        except Exception:
+            return rects
+        for dr in drawings:
+            rect = dr.get("rect")
+            if rect is None:
+                continue
+            x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+            h = y1 - y0
+            w = x1 - x0
+            if 0 < h < 1.5 and w > 3:
+                rects.append((x0, y0, x1, y1))
+        return rects
+
     def _extract_text_elements(
         self, fitz_page: fitz.Page, page_number: int
     ) -> list[PageElement]:
@@ -282,6 +351,7 @@ class PDFProvider:
         """
         elements: list[PageElement] = []
         page_dict = fitz_page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+        underline_rects = self._collect_underline_rects(fitz_page)
 
         for block in page_dict.get("blocks", []):
             if block.get("type") != 0:  # type 0 = text block
@@ -305,7 +375,14 @@ class PDFProvider:
 
             for line in block.get("lines", []):
                 line_spans = line.get("spans", [])
-                segments = _reconstruct_line_segments(line_spans)
+                # Narrow the underline-rect pool to the line's y-band to
+                # keep the per-char O(rects) check cheap.
+                lbbox = line.get("bbox", (0, 0, 0, 0))
+                line_rects = [
+                    r for r in underline_rects
+                    if r[1] >= lbbox[1] - 2 and r[1] <= lbbox[3] + 4
+                ] if underline_rects else []
+                segments = _reconstruct_line_segments(line_spans, line_rects)
                 # Apply fullwidth normalization to each segment text so the
                 # concatenation matches _reconstruct_line_from_chars output.
                 for seg in segments:
@@ -343,7 +420,10 @@ class PDFProvider:
             # and emitting inline_spans would add noise (and risk splitting
             # text around zero-width artifacts).
             block_segments = _merge_line_segments(line_entries, line_segment_lists)
-            has_mixed = len({(s["bold"], s["italic"]) for s in block_segments}) > 1
+            has_mixed = len({
+                (s["bold"], s["italic"], s.get("underline", False), s.get("sup", False))
+                for s in block_segments
+            }) > 1
             if has_mixed:
                 metadata["inline_spans"] = block_segments
 

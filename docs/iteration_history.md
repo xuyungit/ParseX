@@ -8,6 +8,60 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 22 — PDF Superscript + Underline (2026-04-14)
+
+**范围**: ParserX 端，在 Iter 21 的 inline_spans 基础上扩展 sup/underline
+两类格式信号。详见 [parsebench_baseline.md](parsebench_baseline.md)。
+
+### What Was Done
+
+- `parserx/providers/pdf.py`：
+  - `_reconstruct_line_segments`：segment 扩展两个字段 `underline`
+    和 `sup`；sup 来自 PyMuPDF span flag bit 0。
+  - `_collect_underline_rects`：从 `page.get_drawings()` 提取细长横向
+    矩形（h<1.5pt, w>3pt）作为 baked-in 下划线候选。
+  - `_char_is_underlined`：字符底边附近 1-3pt 内若存在候选矩形且横向
+    重叠 ≥30%，标记为下划线。
+  - `_merge_line_segments`：格式分组扩展到 (bold, italic, underline, sup)
+    四元组。
+- `parserx/assembly/markdown.py`：`_render_inline_spans` 为 underline
+  包 `<u>…</u>`，为 sup 包 `<sup>…</sup>`；嵌套在 bold/italic 外层内部，
+  保留正确的 marker 顺序。
+
+### 评测结果（full）
+
+| Sub-rule | Iter 21 | Iter 22 | Δ |
+|---|---|---|---|
+| **`is_sup`** | 4.98% | **36.99%** | **+32.01pt** |
+| `is_bold` | 61.55% | 62.30% | +0.75pt |
+| `is_title` | 53.30% | 53.91% | +0.61pt |
+| `title_hierarchy_percent` | 43.94% | 44.34% | +0.40pt |
+| `is_latex` | 35.29% | 36.85% | +1.56pt |
+| `is_underline` | 0.00% | 0.34% | +0.34pt（基本未动）|
+| **text_formatting 整体** | 43.22% | **45.36%** | **+2.14pt** |
+| text_content 整体 | 86.38% | 86.59% | +0.21pt |
+
+### Decisions
+
+- **is_sup** 单点暴涨：PyMuPDF 直接给出 flag，rule 只需包短文本
+  (`<sup>44</sup>`)，评估器 regex 命中率极高。接受。
+- **is_underline** 未起：评估器强制 `<u>exact_text</u>` 连续命中，但
+  中文长句被我们的 line-joiner 和 gap-based 空格插入打断（例如 rule
+  要 `1万人超`，我们输出 `1 万人超`；rule 要 `,` 我们输出 `、`）。
+  需要跨行 underline 合并 + CJK 标点归一化才能真正拿分；相对收益低
+  于 Iter 21 的 bold/italic，不在本次迭代内继续。
+- 其余 `is_sub` / `is_strikeout` / `is_mark` / `is_code_block` 均仍为
+  0 或接近 0，规则数量较小 (14 / 44 / 88 / 10)，放入后续迭代。
+
+### Remaining Issues / Next
+
+- 探索 underline 跨行合并 + CJK 标点归一化的可行性（或评估器 fork）。
+- `is_mark` (高亮) 需要读取 PDF 注释 / color fill，范围不同。
+- text_content 长尾文档（`paper_cn_trad`, `reverRo`, `caldera`）仍是
+  最大剩余机会。
+
+---
+
 ## Iteration 21 — PDF Inline Formatting (Bold/Italic) (2026-04-14)
 
 **范围**: ParserX 端，PDF 解析路径加入 inline 格式提取。详见

@@ -37,6 +37,15 @@ Each dimension reports ParseBench's **primary metric**:
 | `iter18-full` | 2026-04-14 | a470a84 (evaluator fork) | **41.33%** ³ | — | — | — | — |
 | `iter20a-full` | 2026-04-14 | a470a84 (evaluator fork) | 41.33% | 1.11% | **86.89%** ⁴ | 34.33% | N/A |
 | `iter21-full` | 2026-04-14 | 86a61b4+dirty | 41.33% | 1.11% | 86.38% | **43.22%** ⁵ | N/A |
+| `iter22-full` | 2026-04-14 | e89f535+dirty | 41.33% | 1.11% | 86.59% | **45.36%** ⁶ | N/A |
+
+⁶ Iter 22: PDF superscript (PyMuPDF flag bit 0) + underline detection
+from drawing rectangles. text_formatting +2.14pt. `is_sup` 4.98 → 36.99
+(+32pt, primary win). `is_underline` infrastructure landed but only
+moves 0 → 0.34% — evaluator's strict `<u>exact_text</u>` pattern
+requires (a) continuous underline groups across line breaks and
+(b) exact punctuation/whitespace match, both broken by our per-line
+segmentation + gap-based space insertion. Defer further underline work.
 
 ⁵ Iter 21: PDF inline-formatting extraction. text_formatting +8.89pt overall
 (`is_bold` 54→61.55, `is_italic` 6→31.65, `is_title` 45→53.30,
@@ -173,6 +182,20 @@ smaller structural losses. Three tracks ordered by ROI:
   `<page_header>…</page_header>` / `<page_footer>…</page_footer>` tags.
 - Deferred per user priority call (2026-04-14): sentence-level losses
   outweigh the is_header/is_footer sub-rules.
+
+**Iter 22 — PDF superscript + underline — DONE 2026-04-14**
+- Superscript via PyMuPDF span flag bit 0: emit `<sup>…</sup>`. Clean
+  win (is_sup **4.98 → 36.99%**, +32pt).
+- Underline via baked-in drawing rectangles (height < 1.5pt, width > 3pt,
+  ≥30% horizontal overlap with char bbox): emit `<u>…</u>`.
+  Infrastructure in, but evaluator's `<u>exact_text</u>` regex is too
+  strict for multi-line CJK phrases (our line-joiner breaks the `<u>`
+  group, and `\s+` markup-tolerance doesn't paper over gap-inserted
+  spaces vs. rule-text no-space positions). Score moved only
+  0 → 0.34%. Deferred: punctuation normalization and cross-line
+  underline merge if we revisit.
+- text_formatting 43.22 → **45.36%** (+2.14pt); text_content essentially
+  flat (86.38 → 86.59, +0.21).
 
 **Iter 21 — PDF inline formatting (bold/italic) — DONE 2026-04-14**
 - PDF provider now emits `inline_spans` metadata at text-block level,
