@@ -364,7 +364,56 @@ def _should_merge_elements(
 
 def _merge_element_into(target: PageElement, source: PageElement) -> None:
     """Merge *source* content into *target* in-place."""
-    target.content = _join_lines(target.content, source.content)
+    t_content = target.content
+    s_content = source.content
+    new_content = _join_lines(t_content, s_content)
+    target.content = new_content
+
+    # Preserve inline formatting across the merge when the join is a
+    # simple concatenation (possibly with a single-character joiner like
+    # a space). When _join_lines applies non-trivial transforms (e.g. the
+    # "-" hyphen-join drops a char, or _trim_join_boundary strips
+    # whitespace), we can't faithfully stitch per-span text, so drop the
+    # spans and let the renderer fall back to plain content.
+    t_spans = target.metadata.get("inline_spans")
+    s_spans = source.metadata.get("inline_spans")
+    if not t_spans and not s_spans:
+        return
+
+    def _as_spans(elem: PageElement, content: str) -> list[dict]:
+        spans = elem.metadata.get("inline_spans")
+        if spans:
+            return [dict(s) for s in spans]
+        return [{"text": content, "bold": elem.font.bold, "italic": elem.font.italic}]
+
+    # Determine joiner: new_content[len(t_content):len(t_content)+k] for
+    # some k in {0, 1}. Anything else (negative length, substring
+    # mismatch) means the join rewrote boundary characters.
+    joiner_len = len(new_content) - len(t_content) - len(s_content)
+    if (
+        joiner_len < 0
+        or joiner_len > 1
+        or not new_content.startswith(t_content)
+        or not new_content.endswith(s_content)
+    ):
+        target.metadata.pop("inline_spans", None)
+        return
+
+    merged = _as_spans(target, t_content)
+    if joiner_len == 1:
+        joiner = new_content[len(t_content)]
+        merged.append({"text": joiner, "bold": False, "italic": False})
+    merged.extend(_as_spans(source, s_content))
+    # Coalesce adjacent same-format spans
+    coalesced: list[dict] = []
+    for span in merged:
+        if not span["text"]:
+            continue
+        if coalesced and coalesced[-1]["bold"] == span["bold"] and coalesced[-1]["italic"] == span["italic"]:
+            coalesced[-1]["text"] += span["text"]
+        else:
+            coalesced.append(span)
+    target.metadata["inline_spans"] = coalesced
     # Expand bbox to encompass both elements.
     if _has_bbox(target) and _has_bbox(source):
         target.bbox = (

@@ -36,6 +36,13 @@ Each dimension reports ParseBench's **primary metric**:
 | `iter18-lite` | 2026-04-14 | a470a84 (evaluator fork) | **56.13%** ² | — | — | — | — |
 | `iter18-full` | 2026-04-14 | a470a84 (evaluator fork) | **41.33%** ³ | — | — | — | — |
 | `iter20a-full` | 2026-04-14 | a470a84 (evaluator fork) | 41.33% | 1.11% | **86.89%** ⁴ | 34.33% | N/A |
+| `iter21-full` | 2026-04-14 | 86a61b4+dirty | 41.33% | 1.11% | 86.38% | **43.22%** ⁵ | N/A |
+
+⁵ Iter 21: PDF inline-formatting extraction. text_formatting +8.89pt overall
+(`is_bold` 54→61.55, `is_italic` 6→31.65, `is_title` 45→53.30,
+`title_hierarchy_percent` 36→43.94). text_content -0.51pt vs Iter 20A
+(still +0.95pt vs baseline) — `**` markers introduce minor friction in
+sentence-match evaluators; accepted trade-off.
 
 ⁴ Iter 20 Track A, `--skip_inference` re-score. text_content +1.46pt overall. Per-subrule: `missing_specific_sentence` 66.97% → **76.70%** (+9.73pt), `missing_sentence_percent` 66.81% → **76.52%** (+9.71pt), `unexpected_sentence_percent` flat (78.97% → 78.74%, within noise), others unchanged.
 
@@ -167,10 +174,21 @@ smaller structural losses. Three tracks ordered by ROI:
 - Deferred per user priority call (2026-04-14): sentence-level losses
   outweigh the is_header/is_footer sub-rules.
 
-**Iter 21 — PDF bold + title hierarchy (ParserX, ~2-3 days)**
-- Bold-only headings in PDFs (backlog B); title level coherence
-  (`title_hierarchy_percent` 36%).
-- Expected: `is_bold` 54→80%, `is_title` 45→70%, `title_hierarchy` 36→60%.
+**Iter 21 — PDF inline formatting (bold/italic) — DONE 2026-04-14**
+- PDF provider now emits `inline_spans` metadata at text-block level,
+  grouped by (bold, italic) flags from PyMuPDF span records. Newline
+  joiners break format runs so `**` markers never cross line boundaries
+  (which evaluators handle inconsistently).
+- Renderer (`assembly/markdown.py`) validates span concat matches content
+  before using spans; falls back to plain content on mismatch.
+- `line_unwrap._merge_element_into` and `text_clean.process` preserve
+  spans across their content mutations when safe; drop otherwise.
+- **Delta**: text_formatting **34.33% → 43.22%** (+8.89pt). Per-rule:
+  `is_bold` +7.55, `is_italic` +25.65 (6 → 31.65), `is_title` +8.30,
+  `title_hierarchy_percent` +7.94, `is_latex` +6.
+- Trade-off: text_content -0.51pt vs Iter 20A (86.89 → 86.38), still
+  +0.95pt above baseline. `**` markers introduce minor friction in some
+  sentence-match paths; chased it but returns-per-effort is low.
 
 **Iter 22+ — Italic / sup / sub / strike / underline preservation**
 - Backlog I, PDF font-flag infra shared with Iter 21.

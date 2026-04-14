@@ -146,10 +146,53 @@ class TextCleanProcessor:
         for page in doc.pages:
             for element in page.elements:
                 if element.type in ("text", "header", "footer"):
-                    element.content = self._clean(element.content)
+                    spans = element.metadata.get("inline_spans")
+                    if spans:
+                        # Clean each span without end-stripping (whitespace
+                        # between format runs is significant); do a final
+                        # element-level strip on the concatenation.
+                        cleaned_spans = []
+                        for span in spans:
+                            txt = self._clean(span.get("text", ""), strip=False)
+                            if not txt:
+                                continue
+                            cleaned_spans.append({**span, "text": txt})
+                        if cleaned_spans:
+                            content = "".join(s["text"] for s in cleaned_spans).strip()
+                            # Align span boundaries to the stripped content
+                            # so concat equality with content holds.
+                            raw = "".join(s["text"] for s in cleaned_spans)
+                            lstrip_n = len(raw) - len(raw.lstrip())
+                            rstrip_n = len(raw) - len(raw.rstrip())
+                            if lstrip_n:
+                                while cleaned_spans and lstrip_n > 0:
+                                    head = cleaned_spans[0]
+                                    take = min(len(head["text"]), lstrip_n)
+                                    head["text"] = head["text"][take:]
+                                    lstrip_n -= take
+                                    if not head["text"]:
+                                        cleaned_spans.pop(0)
+                            if rstrip_n:
+                                while cleaned_spans and rstrip_n > 0:
+                                    tail = cleaned_spans[-1]
+                                    take = min(len(tail["text"]), rstrip_n)
+                                    tail["text"] = tail["text"][:-take] if take else tail["text"]
+                                    rstrip_n -= take
+                                    if not tail["text"]:
+                                        cleaned_spans.pop()
+                            element.content = content
+                            if cleaned_spans:
+                                element.metadata["inline_spans"] = cleaned_spans
+                            else:
+                                element.metadata.pop("inline_spans", None)
+                        else:
+                            element.metadata.pop("inline_spans", None)
+                            element.content = ""
+                    else:
+                        element.content = self._clean(element.content)
         return doc
 
-    def _clean(self, text: str) -> str:
+    def _clean(self, text: str, *, strip: bool = True) -> str:
         text = clean_control_chars(text)
         if self._config.fix_encoding:
             text = fix_c1_encoding(text)
@@ -159,4 +202,4 @@ class TextCleanProcessor:
             text = fix_chinese_spaces(text)
         text = simplify_latex_primes(text)
         text = normalize_whitespace(text)
-        return text.strip()
+        return text.strip() if strip else text

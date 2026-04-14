@@ -68,6 +68,107 @@ def _join_block_lines(line_entries: list[tuple[str, tuple]]) -> str:
     return "".join(parts)
 
 
+def _merge_line_segments(
+    line_entries: list[tuple[str, tuple]],
+    line_segment_lists: list[list[dict]],
+) -> list[dict]:
+    """Merge per-line segments into block-level segments.
+
+    Mirrors ``_join_block_lines`` (same-row → " ", different-row → "\\n")
+    but at formatting-segment granularity. Adjacent segments with the same
+    (bold, italic) merge, so a uniform-format block collapses to a single
+    segment.
+    """
+    merged: list[dict] = []
+
+    def _append(seg: dict) -> None:
+        if not seg["text"]:
+            return
+        # Whitespace-only formatted segments render as noise (** **) and
+        # can be absorbed into either neighbor without changing formatting
+        # semantics. Attach to the previous segment if present, else keep
+        # as plain so the next meaningful segment opens a clean run.
+        if seg["text"].strip() == "":
+            if merged:
+                merged[-1]["text"] += seg["text"]
+                return
+            merged.append({"text": seg["text"], "bold": False, "italic": False})
+            return
+        if merged and merged[-1]["bold"] == seg["bold"] and merged[-1]["italic"] == seg["italic"]:
+            merged[-1]["text"] += seg["text"]
+        else:
+            merged.append(dict(seg))
+
+    for i, segments in enumerate(line_segment_lists):
+        if not segments:
+            continue
+        if merged:
+            prev_bbox = line_entries[i - 1][1]
+            curr_bbox = line_entries[i][1]
+            overlap = min(prev_bbox[3], curr_bbox[3]) - max(prev_bbox[1], curr_bbox[1])
+            min_height = min(prev_bbox[3] - prev_bbox[1], curr_bbox[3] - curr_bbox[1])
+            same_row = min_height > 0 and overlap / min_height > 0.5
+            if same_row:
+                # Same visual row: space can merge into adjacent formatted segment
+                merged[-1]["text"] += " "
+            else:
+                # Newline joiner: emit as a plain (unformatted) segment so
+                # bold/italic markers close before the newline and reopen
+                # after. Markdown bold across newlines is parsed inconsistently
+                # by downstream tools (and strip-regex in evaluators that uses
+                # non-DOTALL matching leaves stray ** markers in text).
+                merged.append({"text": "\n", "bold": False, "italic": False})
+        for seg in segments:
+            _append(seg)
+    return merged
+
+
+def _reconstruct_line_segments(line_spans: list[dict]) -> list[dict]:
+    """Reconstruct a line as a list of formatting-run segments.
+
+    Each segment is ``{"text": str, "bold": bool, "italic": bool}``. The
+    concatenated ``text`` fields match what ``_reconstruct_line_from_chars``
+    returns. Adjacent chars with the same (bold, italic) are merged;
+    gap-inserted spaces attach to the following segment.
+    """
+    # Flatten chars keeping formatting alongside geometry.
+    chars: list[tuple[str, float, float, float, bool, bool]] = []
+    for span in line_spans:
+        font_size = span.get("size", 12.0)
+        flags = span.get("flags", 0)
+        bold = bool(flags & 2**4)
+        italic = bool(flags & 2**1)
+        for ch_dict in span.get("chars", []):
+            c = ch_dict.get("c", "")
+            if not c:
+                continue
+            bbox = ch_dict.get("bbox", (0, 0, 0, 0))
+            chars.append((c, bbox[0], bbox[2], font_size, bold, italic))
+
+    if not chars:
+        return []
+
+    segments: list[dict] = [{"text": chars[0][0], "bold": chars[0][4], "italic": chars[0][5]}]
+    for i in range(1, len(chars)):
+        prev_ch, _, prev_x1, prev_sz, _, _ = chars[i - 1]
+        curr_ch, curr_x0, _, curr_sz, curr_b, curr_i = chars[i]
+        gap = curr_x0 - prev_x1
+        threshold = (prev_sz + curr_sz) * 0.125
+        needs_space = gap > threshold and not (
+            _is_cjk_or_fullwidth_punct(prev_ch) and _is_cjk_or_fullwidth_punct(curr_ch)
+        )
+        last = segments[-1]
+        if last["bold"] == curr_b and last["italic"] == curr_i:
+            last["text"] += (" " if needs_space else "") + curr_ch
+        else:
+            segments.append({
+                "text": (" " if needs_space else "") + curr_ch,
+                "bold": curr_b,
+                "italic": curr_i,
+            })
+    return segments
+
+
 def _reconstruct_line_from_chars(line_spans: list[dict]) -> str:
     """Rebuild a text line from rawdict spans, inserting spaces at gaps.
 
@@ -198,16 +299,21 @@ class PDFProvider:
             # due to horizontal gaps (e.g., "1" and "Introduction" on the
             # same line but with a wide space between them).
             line_entries: list[tuple[str, tuple]] = []  # (text, line_bbox)
+            line_segment_lists: list[list[dict]] = []  # per-line formatting runs
             dominant_font = FontInfo()
             max_font_chars = 0
 
             for line in block.get("lines", []):
-                line_text = normalize_fullwidth_ascii(
-                    _reconstruct_line_from_chars(line.get("spans", []))
-                )
+                line_spans = line.get("spans", [])
+                segments = _reconstruct_line_segments(line_spans)
+                # Apply fullwidth normalization to each segment text so the
+                # concatenation matches _reconstruct_line_from_chars output.
+                for seg in segments:
+                    seg["text"] = normalize_fullwidth_ascii(seg["text"])
+                line_text = "".join(seg["text"] for seg in segments)
 
                 # Track dominant font (by character count)
-                for span in line.get("spans", []):
+                for span in line_spans:
                     char_count = len(span.get("chars", []))
                     if char_count > max_font_chars:
                         max_font_chars = char_count
@@ -221,6 +327,7 @@ class PDFProvider:
 
                 if line_text.strip():
                     line_entries.append((line_text, tuple(line["bbox"])))
+                    line_segment_lists.append(segments)
 
             # Join lines: same visual row → space, different row → newline.
             # PyMuPDF sometimes splits a single visual line into multiple
@@ -230,6 +337,16 @@ class PDFProvider:
             if not content.strip():
                 continue
 
+            metadata: dict = {}
+            # Emit per-span formatting only when the block actually has mixed
+            # bold/italic. Uniform-format blocks are captured by dominant_font
+            # and emitting inline_spans would add noise (and risk splitting
+            # text around zero-width artifacts).
+            block_segments = _merge_line_segments(line_entries, line_segment_lists)
+            has_mixed = len({(s["bold"], s["italic"]) for s in block_segments}) > 1
+            if has_mixed:
+                metadata["inline_spans"] = block_segments
+
             elements.append(
                 PageElement(
                     type="text",
@@ -238,6 +355,7 @@ class PDFProvider:
                     page_number=page_number,
                     font=dominant_font,
                     source="native",
+                    metadata=metadata,
                 )
             )
 
