@@ -32,11 +32,26 @@ class DOCXProvider:
         result = converter.convert(str(path))
         docling_doc = result.document
 
+        # Pre-pass: collect group refs that are children of tables.
+        # Docling emits table cell content both inside the TableItem (as
+        # structured grid data) AND as standalone TextItems whose parent
+        # is a group owned by the table.  We must suppress these ghosts.
+        table_cell_groups = self._collect_table_cell_groups(docling_doc)
+
         # Phase 1: convert all items, tracking parent group refs
         raw_items: list[tuple[int, PageElement, str]] = []  # (page, element, parent_ref)
         current_page = 1
 
         for item, _level in docling_doc.iterate_items(with_groups=False):
+            # Skip text items that are ghost duplicates of table cell content
+            parent = getattr(item, "parent", None)
+            if (
+                table_cell_groups
+                and parent is not None
+                and hasattr(parent, "cref")
+                and parent.cref in table_cell_groups
+            ):
+                continue
             item_page = current_page
             if hasattr(item, "prov") and item.prov:
                 item_page = item.prov[0].page_no
@@ -87,6 +102,26 @@ class DOCXProvider:
         # (avoids re-parsing the DOCX in ImageExtractor.extract_docx).
         doc._cache["docling_doc"] = docling_doc
         return doc
+
+    @staticmethod
+    def _collect_table_cell_groups(docling_doc) -> set[str]:
+        """Return self_ref strings of groups that are direct children of tables.
+
+        Docling duplicates table cell content as standalone TextItems parented
+        by these groups.  Callers use this set to suppress those ghosts.
+        """
+        table_cell_groups: set[str] = set()
+        for item, _level in docling_doc.iterate_items(with_groups=True):
+            type_name = type(item).__name__
+            if type_name in ("GroupItem", "InlineGroup"):
+                parent = getattr(item, "parent", None)
+                if (
+                    parent is not None
+                    and hasattr(parent, "cref")
+                    and "#/tables/" in parent.cref
+                ):
+                    table_cell_groups.add(item.self_ref)
+        return table_cell_groups
 
     def _merge_group_fragments(
         self,
