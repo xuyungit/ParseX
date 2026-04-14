@@ -38,6 +38,17 @@ Each dimension reports ParseBench's **primary metric**:
 | `iter20a-full` | 2026-04-14 | a470a84 (evaluator fork) | 41.33% | 1.11% | **86.89%** ⁴ | 34.33% | N/A |
 | `iter21-full` | 2026-04-14 | 86a61b4+dirty | 41.33% | 1.11% | 86.38% | **43.22%** ⁵ | N/A |
 | `iter22-full` | 2026-04-14 | e89f535+dirty | 41.33% | 1.11% | 86.59% | **45.36%** ⁶ | N/A |
+| `iter23-full` | 2026-04-14 | e138dce+dirty | 41.33% | 1.11% | **86.83%** ⁷ | 45.64% | N/A |
+
+⁷ Iter 23: Hybrid column-aware extraction via PaddleOCR layout. For
+multi-column native pages (heuristic: ≥3 text elements both L & R of
+page center), render + call PaddleOCR, use region `block_order` to
+reassign reading order over flattened native PDF lines. text_content
++0.24pt; text_formatting +0.28pt (multi-col docs now emit clean
+paragraphs/headings instead of scrambled interleave). Runtime +~20min
+(extra OCR calls on ~20% of native pages). Caldera/gridofimages remain
+problematic — their layouts have lines that physically overflow column
+boundaries, ambiguous even to the layout model.
 
 ⁶ Iter 22: PDF superscript (PyMuPDF flag bit 0) + underline detection
 from drawing rectangles. text_formatting +2.14pt. `is_sup` 4.98 → 36.99
@@ -183,7 +194,25 @@ smaller structural losses. Three tracks ordered by ROI:
 - Deferred per user priority call (2026-04-14): sentence-level losses
   outweigh the is_header/is_footer sub-rules.
 
-**Iter 23 — Hybrid column-aware extraction via PaddleOCR layout (ParserX, ~1 day) ← NEXT**
+**Iter 23 — Hybrid column-aware extraction via PaddleOCR layout — DONE 2026-04-14**
+
+- `OCRBuilder` now detects layout-ambiguous native pages (≥3 text
+  elements both L & R of page center) and runs a layout-only OCR pass
+  on them. PaddleOCR's `block_order` field provides the reading order.
+- Integration: for each flagged page we flatten all PyMuPDF lines and
+  assign each line to the OCR region containing its center; one
+  PageElement per region, tagged with `metadata["reading_order"]`
+  and re-sorted globally. Iter 21/22 font-flag extraction
+  (bold/italic/sup/underline) is preserved via `_reconstruct_line_segments`.
+- Result: **text_content 86.59 → 86.83%** (+0.24pt), **text_formatting
+  45.36 → 45.64%** (+0.28pt). Target multi-column docs (paper_cn_trad,
+  atlantic, strikeUnderline, reverRo) now render clean paragraphs.
+  Caldera / gridofimages remain hard — their layouts have visual
+  overflow past column boundaries that confuses even PaddleOCR's
+  layout engine.
+- Cost: extra OCR on ~20% of native pages → +~20 min full-run time.
+
+**Original Iter 23 scoping notes (for history):**
 
 **Triage (2026-04-14)** of the three biggest-fail docs showed the
 original "one-bug-per-doc" premise doesn't hold:

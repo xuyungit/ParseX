@@ -577,6 +577,13 @@ class OCRBuilder:
         skip_count = len(doc.pages) - total_ocr
 
         if total_ocr == 0:
+            # Even with no content-OCR pages, we may still need layout-only
+            # OCR for multi-column native pages (Iter 23).
+            if self._config.use_layout_reading_order:
+                layout_pages = [p for p in doc.pages if self._is_layout_ambiguous(p)]
+                if layout_pages:
+                    log.info("Layout-only OCR: %d native pages", len(layout_pages))
+                    self._apply_layout_reading_order_batch(fitz_doc, layout_pages)
             fitz_doc.close()
             return doc
 
@@ -612,6 +619,21 @@ class OCRBuilder:
                 dedup_count += self._integrate_ocr_results(page, ocr_elements)
             ocr_count += 1
 
+        # Layout-only OCR pass: run OCR on NATIVE pages with multi-column
+        # layout to get reading-order regions from the layout model.
+        # Content stays native (PyMuPDF font info preserved from Iter 21/22);
+        # OCR's block order drives element sort.
+        if self._config.use_layout_reading_order:
+            already_ocrd = {p.number for p in pages_to_ocr}
+            layout_pages = [
+                p for p in doc.pages
+                if p.number not in already_ocrd and self._is_layout_ambiguous(p)
+            ]
+            if layout_pages:
+                log.info("Layout-only OCR: %d native pages", len(layout_pages))
+                applied = self._apply_layout_reading_order_batch(fitz_doc, layout_pages)
+                log.info("Layout reading-order applied to %d pages", applied)
+
         fitz_doc.close()
 
         log.info(
@@ -619,6 +641,279 @@ class OCRBuilder:
             ocr_count, skip_count, dedup_count,
         )
         return doc
+
+    def _is_layout_ambiguous(self, page: Page) -> bool:
+        """Detect NATIVE pages that likely have multi-column layout.
+
+        Uses x-midpoint distribution of text elements: when at least 3
+        elements cluster left-of-center and 3 right-of-center, we assume
+        multi-column and worth calling the layout engine. Pure single-column
+        pages, very sparse pages, and tiny pages are skipped.
+        """
+        from parserx.models.elements import PageType
+        if page.page_type != PageType.NATIVE:
+            return False
+        if page.width <= 0 or page.height <= 0:
+            return False
+        text_elems = [
+            e for e in page.elements
+            if e.type == "text" and e.bbox != (0.0, 0.0, 0.0, 0.0)
+        ]
+        if len(text_elems) < 6:
+            return False
+        mid_page = page.width / 2
+        left = right = 0
+        for e in text_elems:
+            w = e.bbox[2] - e.bbox[0]
+            # Skip full-width elements (headlines, page banners)
+            if w > page.width * 0.55:
+                continue
+            m = (e.bbox[0] + e.bbox[2]) / 2
+            if m < mid_page:
+                left += 1
+            else:
+                right += 1
+        return left >= 3 and right >= 3
+
+    def _apply_layout_reading_order_batch(
+        self,
+        fitz_doc: fitz.Document,
+        pages: list[Page],
+    ) -> int:
+        """Run OCR on *pages* to get layout regions, apply reading order.
+
+        Content remains native; we only consume OCR block (bbox, order)
+        to assign each native element a reading_order and resort.
+        Returns the number of pages where ordering was applied.
+        """
+        # Build temp PDF with just these pages
+        temp_pdf = fitz.open()
+        page_map: list[int] = []
+        for page in pages:
+            src_idx = page.number - 1
+            if 0 <= src_idx < len(fitz_doc):
+                temp_pdf.insert_pdf(fitz_doc, from_page=src_idx, to_page=src_idx)
+                page_map.append(page.number)
+        if not page_map:
+            temp_pdf.close()
+            return 0
+
+        pdf_bytes = temp_pdf.tobytes()
+        temp_pdf.close()
+
+        try:
+            results = self._ocr.recognize_pdf(pdf_bytes)
+        except Exception as exc:
+            log.warning("Layout-only OCR failed: %s", exc)
+            return 0
+        if len(results) != len(page_map):
+            log.warning(
+                "Layout OCR returned %d pages, expected %d", len(results), len(page_map)
+            )
+            return 0
+
+        page_by_num = {p.number: p for p in pages}
+        applied = 0
+        for i, ocr_result in enumerate(results):
+            page_number = page_map[i]
+            page = page_by_num.get(page_number)
+            if page is None:
+                continue
+            src_idx = page_number - 1
+            fitz_page = fitz_doc[src_idx] if 0 <= src_idx < len(fitz_doc) else None
+            if self._apply_layout_reading_order(page, ocr_result, fitz_page):
+                applied += 1
+        return applied
+
+    def _apply_layout_reading_order(
+        self,
+        page: Page,
+        ocr_result: OCRResult,
+        fitz_page: "fitz.Page | None" = None,
+    ) -> bool:
+        """Rebuild page.elements per OCR region, using native PDF text.
+
+        For each non-skipped OCR region, re-extract the PyMuPDF rawdict
+        inside that region's bbox clip. This yields one PageElement per
+        region, with font flags and per-span formatting preserved from
+        Iter 21/22. Reading order follows the OCR layout engine's
+        ``block_order`` — the whole point of this path.
+
+        Non-text elements (images, tables, previously-extracted elements
+        that weren't text) are preserved at the end; their reading_order
+        is inherited from the nearest OCR region if possible.
+        """
+        if fitz_page is None:
+            return False
+        if (
+            page.width <= 0 or page.height <= 0
+            or ocr_result.render_width <= 0 or ocr_result.render_height <= 0
+        ):
+            return False
+        scale_x = page.width / ocr_result.render_width
+        scale_y = page.height / ocr_result.render_height
+
+        regions: list[tuple[int, float, float, float, float, str]] = []
+        for blk in ocr_result.blocks:
+            if blk.label in _SKIP_LABELS:
+                continue
+            rx0 = blk.bbox[0] * scale_x
+            ry0 = blk.bbox[1] * scale_y
+            rx1 = blk.bbox[2] * scale_x
+            ry1 = blk.bbox[3] * scale_y
+            order = blk.order if blk.order is not None else 10_000
+            regions.append((order, rx0, ry0, rx1, ry1, blk.label or ""))
+        if len(regions) < 2:
+            return False
+
+        # Import lazily to avoid circular dependency on the provider side.
+        from parserx.providers.pdf import (
+            _merge_line_segments,
+            _reconstruct_line_segments,
+        )
+        from parserx.models.elements import FontInfo
+        import fitz
+
+        # Keep non-text elements (images, tables, etc.) as-is. Text elements
+        # get replaced from per-region clip extraction.
+        preserved_non_text = [
+            e for e in page.elements if e.type != "text"
+        ]
+        new_text_elements: list[PageElement] = []
+
+        # Line-level regrouping: flatten all PyMuPDF lines once, assign
+        # each line to an OCR region by center-in-region. This avoids the
+        # clip-truncation that happens when a native line physically
+        # extends past an OCR region boundary.
+        try:
+            full_dict = fitz_page.get_text(
+                "rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE,
+            )
+        except Exception:
+            return False
+
+        # Group: region_order → list of (line_bbox, line_spans)
+        region_lines: dict[int, list[tuple[tuple, list]]] = {}
+        for blk in full_dict.get("blocks", []):
+            if blk.get("type") != 0:
+                continue
+            for line in blk.get("lines", []):
+                lbbox = line.get("bbox", (0, 0, 0, 0))
+                if lbbox == (0, 0, 0, 0):
+                    continue
+                lcx = (lbbox[0] + lbbox[2]) / 2
+                lcy = (lbbox[1] + lbbox[3]) / 2
+                # Find region containing center; else nearest by center
+                chosen_order = None
+                for order, rx0, ry0, rx1, ry1, _lab in regions:
+                    if rx0 <= lcx <= rx1 and ry0 <= lcy <= ry1:
+                        chosen_order = order
+                        break
+                if chosen_order is None:
+                    best_order = regions[0][0]
+                    best_d2 = float("inf")
+                    for order, rx0, ry0, rx1, ry1, _lab in regions:
+                        rcx = (rx0 + rx1) / 2
+                        rcy = (ry0 + ry1) / 2
+                        d2 = (rcx - lcx) ** 2 + (rcy - lcy) ** 2
+                        if d2 < best_d2:
+                            best_d2 = d2
+                            best_order = order
+                    chosen_order = best_order
+                region_lines.setdefault(chosen_order, []).append((lbbox, line.get("spans", [])))
+
+        # Build one element per region from its assigned lines
+        label_by_order = {order: lab for order, *_, lab in regions}
+        region_bbox_by_order: dict[int, tuple[float, float, float, float]] = {}
+        for order, rx0, ry0, rx1, ry1, _lab in regions:
+            region_bbox_by_order[order] = (rx0, ry0, rx1, ry1)
+
+        for order, lines in sorted(region_lines.items(), key=lambda kv: kv[0]):
+            if False:  # placeholder to keep diff compact
+                pass
+            # Sort lines by y then x so intra-region reads top-down
+            lines.sort(key=lambda t: (t[0][1], t[0][0]))
+            line_entries: list[tuple[str, tuple]] = []
+            line_segment_lists: list[list[dict]] = []
+            dominant_font = FontInfo()
+            max_font_chars = 0
+            for lbbox, spans in lines:
+                segments = _reconstruct_line_segments(spans)
+                text = "".join(seg["text"] for seg in segments)
+                if not text.strip():
+                    continue
+                line_entries.append((text, lbbox))
+                line_segment_lists.append(segments)
+                for span in spans:
+                    char_count = len(span.get("chars", []))
+                    if char_count > max_font_chars:
+                        max_font_chars = char_count
+                        flags = span.get("flags", 0)
+                        dominant_font = FontInfo(
+                            name=span.get("font", ""),
+                            size=round(span.get("size", 0.0), 1),
+                            bold=bool(flags & 2**4),
+                            italic=bool(flags & 2**1),
+                        )
+            if not line_entries:
+                continue
+            content = "".join(
+                (joiner + text)
+                for i, (text, _) in enumerate(line_entries)
+                for joiner in ([""] if i == 0 else ["\n"])
+            )
+            block_segments = _merge_line_segments(line_entries, line_segment_lists)
+            metadata: dict = {"reading_order": order}
+            lab = label_by_order.get(order, "")
+            if lab:
+                metadata["ocr_layout_label"] = lab
+            has_mixed = len({
+                (s["bold"], s["italic"], s.get("underline", False), s.get("sup", False))
+                for s in block_segments
+            }) > 1
+            if has_mixed:
+                metadata["inline_spans"] = block_segments
+            new_text_elements.append(PageElement(
+                type="text",
+                content=content,
+                bbox=region_bbox_by_order.get(order, (0.0, 0.0, 0.0, 0.0)),
+                page_number=page.number,
+                font=dominant_font,
+                source="native",
+                metadata=metadata,
+            ))
+
+        if not new_text_elements:
+            return False
+
+        # Assign reading_order to preserved non-text elements by nearest
+        # region center. Tables/images after text at end of page.
+        for elem in preserved_non_text:
+            if elem.bbox == (0.0, 0.0, 0.0, 0.0):
+                continue
+            cx = (elem.bbox[0] + elem.bbox[2]) / 2
+            cy = (elem.bbox[1] + elem.bbox[3]) / 2
+            best = regions[0][0]
+            best_d2 = float("inf")
+            for order, x0, y0, x1, y1, _ in regions:
+                rcx = (x0 + x1) / 2
+                rcy = (y0 + y1) / 2
+                d2 = (rcx - cx) ** 2 + (rcy - cy) ** 2
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best = order
+            elem.metadata["reading_order"] = best
+
+        merged = new_text_elements + preserved_non_text
+        merged.sort(
+            key=lambda e: (
+                e.metadata.get("reading_order", 10_000),
+                e.bbox[1],
+                e.bbox[0],
+            )
+        )
+        page.elements = merged
+        return True
 
     # PaddleOCR sync API rejects PDFs with more than 100 pages.
     _BATCH_MAX_PAGES = 100
