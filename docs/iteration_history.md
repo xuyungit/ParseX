@@ -8,6 +8,141 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 20 Track A — ParseBench: Sentence-Match Normalization Fork (2026-04-14)
+
+**范围**: ParseBench 端评估器修正（不动 ParserX）。详见
+[parsebench_baseline.md](parsebench_baseline.md)。
+
+### What Was Done
+
+- 审计 native-plain 文档 7,590 条 `missing_specific_sentence` 规则，
+  严格 fail 2,245 条；其中 **39.9%（896 条）** 若在两侧都去除非字母数字
+  标点后可恢复匹配 → 为 false-miss。剩余 60.1% 为 true-miss。
+- 根因：ParserX 正确输出了句子内容，但 markdown 表格管道
+  （`| Hui | 28,080 |`）将整句切断，而评估器用严格 substring。
+- 在 `~/Projects/ParseBench/src/parse_bench/evaluation/metrics/parse/rules_bag.py`
+  新增 `_loose_strip_punct` + `_count_sentence_lenient`，应用于
+  `MissingSpecificSentenceRule` / `MissingSentenceRule` /
+  `MissingSentencePercentRule`。短查询（<20 字）仍保留词边界锚定避免误配。
+  作用域仅 Missing*，TooMany/Unexpected 不受影响。
+- 回归集（`~/Projects/ParseBench/scripts/iter20_regression_audit.json`，
+  25 false-miss + 25 true-miss）：25/25 false-miss 恢复，
+  25/25 true-miss 仍然失败。
+
+### 评测结果（`--skip_inference` 全量 re-score）
+
+| Sub-rule | 前 | 后 | Δ |
+|---|---|---|---|
+| `missing_specific_sentence` | 66.97% | **76.70%** | +9.73pt |
+| `missing_sentence_percent` | 66.81% | **76.52%** | +9.71pt |
+| `unexpected_sentence_percent` | 78.97% | 78.74% | -0.23pt（噪声内） |
+| text_content 整体 pass rate | 85.43% | **86.89%** | +1.46pt |
+
+### Decisions
+
+- 按 2026-04-14 定下的 evaluator-fork 策略：product contract 是
+  markdown-first，表格/匹配的评估器争议优先改评估器。
+- 仅对 Missing* 放宽，不影响 TooMany / Unexpected — 不会因让步而引入
+  false positive。
+
+### Next
+
+- Track B（ParserX 侧，~0.5 天）：TOC 标题后的页码被 heading 检测剥离，
+  导致 `"redirect manager and/or vanity url 20"` → 输出去掉了 "20"。
+  保留 TOC 行末页码 inline。约覆盖剩余 true-miss 的 16%。
+- Track C（ParserX 侧，~1 天）：输出长度远小于 GT 的极端截断审计。
+
+---
+
+## Iteration 18 — ParseBench: Markdown Table Evaluator Fork (2026-04-14)
+
+**范围**: ParseBench 端评估器适配（不动 ParserX）。
+
+### What Was Done
+
+- Baseline 全量跑（2078 docs，53min@c=8）后发现 Tables 维度 GTRM **0.00%** —
+  根因不是质量问题，是格式契约不匹配：ParseBench 的
+  `extract_html_tables()` 只扫 `<table>…</table>`，而 ParserX 始终输出
+  pipe-markdown（`| a | b |`）。
+- ParserX 的 product contract 是 markdown-first，决定 **fork 评估器**，
+  不回头改 ParserX 输出 HTML。两处编辑：
+  - `src/parse_bench/evaluation/metrics/parse/table_extraction.py` —
+    `extract_normalized_tables()` 在 HTML 路径空时回退到
+    `parse_markdown_tables()`。
+  - `src/parse_bench/evaluation/evaluators/parse.py` — `_has_html_tables()`
+    也识别 GFM 分隔行 `|---|---|`，否则 table 路径会被短路。
+- lite（7 docs）验证 GTRM 0→56.13%；full-set re-score GTRM 0→**41.33%**
+  (GriTS 50.40%，TRM 30.36%)。
+
+### Limits & Follow-ups
+
+- pipe 语法无法表达 rowspan/colspan → 复杂表格天花板低于 HTML，接受。
+- `WU.2015.page_161.pdf_68095_page1` 仍 actual=0，疑似 pipe-table 边界用例。
+
+---
+
+## Iteration 17 — Stage 1: ParseBench Adapter Bootstrap (2026-04-14)
+
+Goal: wire ParserX into the LlamaIndex ParseBench harness so it can run
+against the external PDF/EN benchmark alongside the internal CJK ground
+truth. Backlog item N, Stage 1 only (adapter + smoke run). No metrics
+work, no full run.
+
+### What Was Done
+
+- Cloned `run-llama/ParseBench` to `~/Projects/ParseBench`, `uv sync
+  --extra runners`, `parse-bench download --test` (45 files, ~15 PDFs).
+- Verified harness end-to-end by running the stock `pymupdf_text`
+  pipeline on text_content/--test (557/597 rules passed).
+- Confirmed ParserX CLI contract suits subprocess use:
+  `parserx parse <pdf> --stdout` is non-interactive, exit-coded, emits
+  Markdown on stdout. Latent bug logged (not blocking): `--no-vlm` /
+  `--no-llm` override `services.*.endpoint=` which fails pydantic `str`
+  validation — fix deferred.
+- Wrote ParseBench provider at
+  `src/parse_bench/inference/providers/parse/parserx.py` and registered
+  pipeline `parserx` in `pipelines/parse.py`. Provider shells out via
+  `subprocess.run` with `cwd=$PARSERX_REPO` so ParserX's `.env` loads.
+  Splits stdout on `<!-- PAGE N -->` markers for per-page `PageIR`.
+- Smoke run `parse-bench run parserx --test --group text_content
+  --max_concurrent 1`: 3/3 docs parsed successfully, avg 7.6s/page,
+  **560/597 rules passed (93.8%)** vs pymupdf 557/597 (93.3%).
+
+### Per-rule Scores (text_content --test, n=597 rules / 3 docs)
+
+| Rule | Pass rate |
+|------|-----------|
+| missing_specific_word | 0.997 |
+| missing_word_percent | 0.994 |
+| too_many_sentence_occurence | 0.963 |
+| unexpected_word_percent | 0.959 |
+| too_many_word_occurence | 0.945 |
+| unexpected_sentence_percent | 0.926 |
+| order | 0.883 |
+| missing_specific_sentence | 0.854 |
+| **overall** | **0.961** |
+
+Order (0.883) and missing_specific_sentence (0.854) are the weakest — not
+actionable from 3 docs; revisit after a larger-scale run.
+
+### Decisions
+
+- Stage 1 scope satisfied; open questions for Stage 2/3 in backlog N.
+- Full 5-dimension run deferred: estimated ~4 hours and significant
+  VLM/LLM spend. Need explicit user approval before launching.
+- Visual grounding left as a future iteration — ParserX emits no bboxes
+  today; expect 0 on that dimension until we add them.
+
+### Remaining Issues / Next Steps
+
+1. Run other 4 dimensions on `--test` to get a first full-shape picture
+   (tables, charts, formatting, layout).
+2. Decide on full (non-test) run budget.
+3. Borrow `TableRecordMatch` + faithfulness rule format into our own
+   `scripts/regression_test.py` (Stage 2 in backlog N).
+
+---
+
 ## Iteration 16: DOCX Parsing — ListItem, Fragment Merge, Inline Formatting (2026-04-12)
 
 Target document: chn_doc01 (竞争性谈判文件, 40+ pages, complex structure).

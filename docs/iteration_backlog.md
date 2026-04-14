@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-13 (post Iteration 16)
+Updated: 2026-04-14 (post Iteration 20 Track A)
 
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
@@ -116,6 +116,53 @@ text_code_block heading_f1=0.500。代码块边界识别不完整。
 #### M. Chart Extraction & Integration
 
 检测图表区域、保留标题/说明、生成简洁描述。
+
+### Tier 1: 高影响、可执行 (续)
+
+#### N. ParseBench 集成 (泛化评估主驱动) — Stage 1/2 DONE, Stage 3 IN PROGRESS
+
+**进度 (2026-04-14)**：详见
+[parsebench_baseline.md](parsebench_baseline.md) 及
+[iteration_history.md](iteration_history.md) Iter 17 / 18 / 20 Track A。
+
+- **Iter 17（Stage 1）**：Provider 适配器 ✅
+- **Iter 18**：markdown-table 评估器 fork → Tables GTRM **0 → 41.33%** ✅
+- **Iter 20 Track A**：句子匹配标点容忍 fork → text_content
+  **85.43% → 86.89%** ✅
+- **下一步候选（按 ROI 排序）**：
+  - **Iter 20 Track B**（ParserX 侧，~0.5 天）：TOC 行页码 inline 保留。
+    当前 heading 检测把 `"Redirect Manager and/or vanity URL 20"` 末尾
+    页码 `20` 剥离，约覆盖剩余 true-miss 失败的 16%。
+  - **Iter 20 Track C**（ParserX 侧，~1 天）：输出极端截断审计
+    （如 `text_misc__censored` 553 chars）。原因可能是去 redaction 启发式
+    过于激进，或整页视觉-only 误分类。
+  - **Iter 21**（ParserX 侧，~2-3 天）：PDF bold-only headings + title
+    hierarchy；对应 backlog B，text_formatting 维度从 34.3% 拉升的首发。
+
+#### N-OLD. (legacy Stage 描述 — 已归档到 Iter 17 history)
+
+LlamaIndex 的 ParseBench（Apache 2.0，`github.com/run-llama/ParseBench`，
+HF 数据集 `llamaindex/ParseBench`）~2000 页企业文档（保险 SERFF / 金融 /
+政府），~167k 条基于规则的测试，5 个维度：tables / charts / content
+faithfulness / semantic formatting / visual grounding。作为 **主要泛化
+驱动**，与真实 CJK docs/pdfs 并行。
+
+**分阶段落地**：
+1. **Stage 1 — Provider 适配器**：在其 `src/parse_bench/inference/providers/`
+   下写 ParserX adapter（CLI: `parserx` → markdown），跑 `--test` 小集先
+   打通链路；目标：在他们 leaderboard 上拿到初始分数。
+2. **Stage 2 — 指标对齐**：把 `TableRecordMatch`（表格按 header-keyed
+   record 集合比较）和 faithfulness 规则格式借鉴到 ParserX 自己的
+   `scripts/regression_test.py` / `docs/evaluation.md`；比现有文本相似度
+   更能反映语义正确性，特别适合 table 与 image/VLM 路径。
+3. **Stage 3 — 短板攻关**：Charts（行业普遍 <50%）和 semantic formatting
+   是我们目前几乎没覆盖的维度，对应 backlog M (Chart Extraction) 和 I
+   (Bold/Font Style Preservation)；ParseBench 分数可作为这两项的验收信号。
+
+**边界**：ParseBench 为 PDF + 英文企业文档，不覆盖 CJK line-unwrap /
+DOCX。作为现有 `ground_truth/` 的**补充**而非替代，两条评估流并行。
+
+**预估工作量**：Stage 1 小（~1 天），Stage 2 中，Stage 3 大（新能力）。
 
 ## Design Principles
 
