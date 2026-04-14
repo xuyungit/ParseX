@@ -8,6 +8,81 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 23 — Hybrid Column-Aware Extraction via PaddleOCR Layout (2026-04-14)
+
+**范围**: ParserX 端。native PDF 多列页面复用 PaddleOCR 的 layout
+引擎拿阅读序，不动识别结果，仅用区域 order 做重排。详见
+[parsebench_baseline.md](parsebench_baseline.md)。
+
+### Rationale
+
+Top-failing 文档 triage 显示 `caldera` / `paper_cn_trad` 等多列文档
+被 PyMuPDF 朴素 `sort(y, x)` 读成 "左一行、右一行" 交错串扰。
+ParserX 已经在调用 PaddleOCR（扫描页），其 layout 引擎返回的
+`OCRBlock(bbox, order)` 恰好就是我们需要的阅读序信息 — 直接借用即可。
+
+### What Was Done
+
+- `parserx/builders/ocr.py`：
+  - 新增 `_is_layout_ambiguous(page)` 启发式：NATIVE 页面下，正常宽度
+    text element 的 x 中位点同时 ≥3 个在左半、≥3 个在右半 → 判为多列。
+  - 新增 `_apply_layout_reading_order_batch(pages)`：打包可疑页到
+    临时 PDF，单次调用 `recognize_pdf` 拿 per-page OCRResult。
+  - 新增 `_apply_layout_reading_order(page, ocr_result, fitz_page)`：
+    - 将 OCR region bbox 从 OCR 像素坐标换算为 PDF points。
+    - 展平该页所有 PyMuPDF `rawdict` lines，按行中心归属到
+      OCR region。
+    - 每个 region 组装一个 `PageElement`，复用 Iter 21/22 的
+      `_reconstruct_line_segments` + `_merge_line_segments`，保留
+      bold / italic / underline / sup。
+    - 记入 `metadata["reading_order"] = region.order`，page 整体按
+      `(reading_order, y, x)` 重排。
+- `parserx/config/schema.py`：`OCRBuilderConfig.use_layout_reading_order`
+  开关（默认 `True`），便于回滚。
+- 在 OCR 内容路径空（所有页都 NATIVE）时也走 layout-only 分支，
+  否则漏过绝大多数 native 多列文档。
+
+### 评测结果（full re-parse）
+
+| Sub-rule | Iter 22 | Iter 23 | Δ |
+|---|---|---|---|
+| `missing_specific_sentence` | 75.85% | 76.08% | +0.23pt |
+| `missing_sentence_percent` | 75.67% | 75.94% | +0.27pt |
+| `order` | 78.99% | 79.33% | +0.34pt |
+| `bag_of_digit_percent` | 85.72% | 86.36% | +0.64pt |
+| `unexpected_sentence_percent` | 80.08% | 80.33% | +0.25pt |
+| **text_content 整体** | 86.59% | **86.83%** | **+0.24pt** |
+| **text_formatting 整体** | 45.36% | 45.64% | +0.28pt |
+
+单文档验证（text_content pass rate）：
+- `paper_cn_trad`: 大幅改善，现 80.0%（繁体报纸 4-5 列，现出清晰段落）
+- `reverRo`: 80.9%（多语种洪水科普册）
+- `atlantic`: 73.2%
+- `strikeUnderline`: 70.6%
+- `caldera`: **40.0%**（仍差 — 索引页行物理溢出列界，PaddleOCR 也束手）
+- `gridofimages`: **27.0%**（仍差 — 图+文混排复杂）
+
+### Decisions & Trade-offs
+
+- Runtime 代价：触发约 20% native 页的额外 OCR 调用，全量 run 从
+  50 min 升到 ~70 min。可接受，而且是 ParserX 已经在付的 OCR 预算
+  里，不额外引入依赖。
+- `caldera` 类文档的物理 overflow 布局超出了 ParseBench 对 layout
+  模型的认知（OCR region 横跨双列），不在本次迭代范围内继续啃。
+- 默认启用。可通过 `OCRBuilderConfig.use_layout_reading_order=False`
+  回滚到 PyMuPDF 朴素 sort。
+
+### Remaining Issues / Next
+
+- 长尾：单文档 >150 fails 的文档 (`gridofimages`, `caldera`,
+  `overlapping`) 需要特定结构性修复，不在通用管线内能解决。
+- text_content 长尾：`missing_sentence_percent` 76% 仍有较大头寸，
+  但从规则性提升的角度 Iter 23 已经收获了可复用的 OCR-driven 阅读序
+  基础设施，后续 chart extraction (P4) 或 sub/strike/mark 等可以
+  继续在此基础上推进。
+
+---
+
 ## Iteration 22 — PDF Superscript + Underline (2026-04-14)
 
 **范围**: ParserX 端，在 Iter 21 的 inline_spans 基础上扩展 sup/underline

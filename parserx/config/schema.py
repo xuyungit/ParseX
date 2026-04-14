@@ -54,6 +54,7 @@ class OCRBuilderConfig(BaseModel):
     vector_figure_extraction: bool = True  # Detect vector figures via OCR layout
     vector_figure_render_dpi: int = 200    # DPI for rendering vector figure regions
     vector_figure_min_drawings: int = 5    # Min drawing commands to trigger OCR on NATIVE pages
+    use_layout_reading_order: bool = True  # Use OCR layout engine for reading order on multi-column native pages
 
 
 class QualityCheckConfig(BaseModel):
