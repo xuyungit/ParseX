@@ -156,6 +156,12 @@ class MarkdownRenderer:
 
         If description is short (single line), use as alt text in ![alt](path).
         If description is multi-line, render as image link + blockquote description.
+
+        For DOCX embedded document images (scanned pages, certificates,
+        etc.) the rendering is always: **image + description first, then
+        extracted text/table content below**.  This mirrors the PDF
+        workflow where scanned pages show both the page image and the
+        OCR-extracted content.
         """
         description = element.metadata.get("description", "")
         image_path = element.metadata.get("saved_path", "")
@@ -185,6 +191,20 @@ class MarkdownRenderer:
         skip_correction = is_vector_figure or vlm_image_type in (
             "diagram", "chart",
         )
+
+        # ── DOCX embedded images: image-first, corrections-below ──────
+        # Embedded scanned documents in DOCX are standalone images —
+        # unlike PDF where corrections replace overlapping OCR text,
+        # here the image itself is the only visual evidence and must
+        # always be shown.  Extracted text/tables appear below as
+        # supplementary transcription.
+        is_embedded_doc_image = element.metadata.get("embedded_document_image", False)
+        if is_embedded_doc_image and image_path:
+            return self._render_embedded_doc_image(
+                element, image_path, description, caption,
+                corrected_text, corrected_table, skip_correction,
+            )
+
         if (corrected_table or corrected_text) and not skip_correction:
             parts: list[str] = []
             if corrected_text:
@@ -231,6 +251,56 @@ class MarkdownRenderer:
         if caption:
             return f"{body}\n\n*{caption}*"
         return body
+
+    @staticmethod
+    def _render_embedded_doc_image(
+        element: PageElement,
+        image_path: str,
+        description: str,
+        caption: str,
+        corrected_text: str,
+        corrected_table: str,
+        skip_correction: bool,
+    ) -> str:
+        """Render a DOCX-embedded scanned image: image first, then content.
+
+        Layout::
+
+            ![description](path)
+            > description
+
+            <extracted text>
+
+            <extracted table>
+        """
+        parts: list[str] = []
+
+        # 1. Image always comes first
+        desc_oneline = description.replace("\n", " ").strip() if description else ""
+        if desc_oneline:
+            parts.append(f"![{desc_oneline}]({image_path})")
+        else:
+            # Fallback: use VLM image_type as minimal alt text
+            vlm_type = element.metadata.get("vlm_image_type", "")
+            alt = vlm_type or "document image"
+            parts.append(f"![{alt}]({image_path})")
+
+        # 2. Description as blockquote (when available)
+        if desc_oneline:
+            parts.append(f"> {desc_oneline}")
+
+        # 3. Caption
+        if caption:
+            parts.append(f"*{caption}*")
+
+        # 4. Extracted content below the image
+        if not skip_correction:
+            if corrected_text:
+                parts.append(corrected_text)
+            if corrected_table:
+                parts.append(corrected_table)
+
+        return "\n\n".join(parts)
 
     def _render_table(self, element: PageElement) -> str:
         """Render table with an optional caption line above it."""

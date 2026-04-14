@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import io
 import logging
+import re
+import shutil
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -34,6 +36,10 @@ class ImageExtractor:
         Updates element.metadata["saved_path"] with relative path.
         """
         images_dir = output_dir / "images"
+        # Clean stale images from a previous run so the verification
+        # checker won't flag orphaned files.
+        if images_dir.exists():
+            shutil.rmtree(images_dir)
         images_dir.mkdir(parents=True, exist_ok=True)
 
         fitz_doc = fitz.open(str(source_path))
@@ -132,6 +138,8 @@ class ImageExtractor:
         possible; otherwise saved as-is with a ``vector_format`` flag.
         """
         images_dir = output_dir / "images"
+        if images_dir.exists():
+            shutil.rmtree(images_dir)
         images_dir.mkdir(parents=True, exist_ok=True)
 
         # Collect raw images from python-docx (preserves original format)
@@ -175,11 +183,13 @@ class ImageExtractor:
 
                 # Primary path: python-docx raw bytes (format-preserving)
                 if use_index_map and 0 <= pic_idx < len(docx_images):
-                    content_type, blob, partname = docx_images[pic_idx]
-                    saved = self._save_docx_image(
-                        elem, blob, content_type, page.number,
-                        pic_idx, images_dir,
-                    )
+                    content_type, blob, partname, rotation_deg = docx_images[pic_idx]
+                    if blob:  # skip placeholder entries (drawings without image blips)
+                        saved = self._save_docx_image(
+                            elem, blob, content_type, page.number,
+                            pic_idx, images_dir,
+                            rotation_deg=rotation_deg,
+                        )
 
                 # Fallback: Docling get_image() (returns PNG)
                 if not saved and docling_doc and 0 <= pic_idx < len(docling_pictures):
@@ -206,11 +216,16 @@ class ImageExtractor:
     @staticmethod
     def _collect_docx_images(
         source_path: Path,
-    ) -> list[tuple[str, bytes, str]]:
-        """Collect all image relationships from a DOCX via python-docx.
+    ) -> list[tuple[str, bytes, str, float]]:
+        """Collect images from a DOCX in **document body order**.
 
-        Returns a list of (content_type, blob, partname) tuples sorted
-        by partname to ensure stable ordering.
+        Walks ``<w:drawing>`` elements in the XML body to guarantee the
+        same ordering as Docling's PictureItem list.  For each drawing
+        the embedded image blob, content-type, partname **and rotation
+        angle** (degrees, from ``<a:xfrm rot="…">``) are returned.
+
+        Returns a list of ``(content_type, blob, partname, rotation_deg)``
+        tuples.
         """
         from docx import Document as DocxDocument
 
@@ -220,20 +235,53 @@ class ImageExtractor:
             log.warning("Failed to open DOCX with python-docx: %s", exc)
             return []
 
-        images: list[tuple[str, bytes, str]] = []
-        for rel in docx_doc.part.rels.values():
-            if "image" not in rel.reltype:
+        _NS = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+            "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        }
+
+        images: list[tuple[str, bytes, str, float]] = []
+        body = docx_doc.element.body
+
+        for drawing in body.iter("{%s}drawing" % _NS["w"]):
+            # ── Extract rotation from <a:xfrm rot="…"> ──────────
+            rotation_deg = 0.0
+            for xfrm in drawing.iter("{%s}xfrm" % _NS["a"]):
+                rot_attr = xfrm.get("rot")
+                if rot_attr:
+                    try:
+                        # OOXML stores rotation in 60,000ths of a degree
+                        rotation_deg = int(rot_attr) / 60_000
+                    except ValueError:
+                        pass
+                break  # only need the first xfrm
+
+            # ── Extract image rId from <a:blip r:embed="…"> ──────
+            r_embed = "{%s}embed" % _NS["r"]
+            blip = None
+            for b in drawing.iter("{%s}blip" % _NS["a"]):
+                blip = b
+                break
+
+            rId = blip.get(r_embed, "") if blip is not None else ""
+            if not rId:
+                # Drawing has no image — insert a placeholder to keep
+                # index alignment with Docling's PictureItem list (which
+                # includes vector-only drawings).
+                images.append(("", b"", "", rotation_deg))
                 continue
+
             try:
+                rel = docx_doc.part.rels[rId]
                 ct = rel.target_part.content_type
                 blob = rel.target_part.blob
                 name = str(rel.target_part.partname)
-                images.append((ct, blob, name))
+                images.append((ct, blob, name, rotation_deg))
             except Exception:
+                images.append(("", b"", "", rotation_deg))
                 continue
 
-        # Sort by partname for stable ordering (/word/media/image1.png, image2.png, ...)
-        images.sort(key=lambda x: x[2])
         return images
 
     def _save_docx_image(
@@ -244,8 +292,15 @@ class ImageExtractor:
         page_number: int,
         pic_idx: int,
         images_dir: Path,
+        *,
+        rotation_deg: float = 0.0,
     ) -> bool:
         """Save a single DOCX image to disk, preserving original format.
+
+        When *rotation_deg* is non-zero the image is rotated to match the
+        visual orientation specified in the DOCX ``<a:xfrm rot="…">``
+        attribute.  PIL ``Image.rotate`` uses counter-clockwise convention
+        while OOXML uses clockwise, so the angle is negated.
 
         For vector formats (EMF/WMF), attempts PIL conversion to PNG.
         Returns True if the image was saved successfully.
@@ -277,15 +332,37 @@ class ImageExtractor:
             log.warning("Failed to save DOCX image %s: %s", filename, exc)
             return False
 
+        # ── Apply rotation from DOCX metadata ─────────────────────
+        # OOXML rotation is clockwise; PIL rotate() is counter-clockwise,
+        # so we negate.  expand=True ensures the canvas fits the rotated
+        # image without cropping.
+        if rotation_deg and not is_vector:
+            try:
+                with Image.open(output_path) as img:
+                    # Normalize angle to simplify (only 0/90/180/270 matter)
+                    angle = round(rotation_deg) % 360
+                    if angle:
+                        rotated = img.rotate(-angle, expand=True)
+                        # Save in original format when possible
+                        save_fmt = img.format or ("JPEG" if ext in ("jpg", "jpeg") else "PNG")
+                        if save_fmt == "JPEG":
+                            rotated = rotated.convert("RGB")
+                        rotated.save(output_path, format=save_fmt)
+                        log.debug(
+                            "Rotated %s by %d° (OOXML xfrm)", filename, angle,
+                        )
+            except Exception as exc:
+                log.warning("Failed to rotate %s: %s", filename, exc)
+
         elem.metadata["saved_path"] = f"images/{filename}"
         elem.metadata["saved_abs_path"] = str(output_path)
 
-        # Read actual dimensions from raster images
+        # Read actual dimensions from raster images (after rotation)
         if not is_vector:
             try:
                 with Image.open(output_path) as img:
-                    elem.metadata.setdefault("width", img.width)
-                    elem.metadata.setdefault("height", img.height)
+                    elem.metadata["width"] = img.width
+                    elem.metadata["height"] = img.height
             except Exception:
                 pass
 

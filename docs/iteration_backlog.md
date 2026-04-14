@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-12 (post Iteration 16)
+Updated: 2026-04-13 (post Iteration 16)
 
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
@@ -116,16 +116,6 @@ text_code_block heading_f1=0.500。代码块边界识别不完整。
 #### M. Chart Extraction & Integration
 
 检测图表区域、保留标题/说明、生成简洁描述。
-
-## 已完成 / 已关闭
-
-- ~~Numbered List 误判为 Heading~~ — Iter14 修复
-- ~~DOCX ListItem 丢失~~ — Iter16 修复
-- ~~DOCX 文本碎片化~~ — Iter16 修复
-- ~~DOCX 内联格式丢失~~ — Iter16 修复
-- ~~ImageMask 反色~~ — Iter15 修复
-- ~~VLM 描述被抑制~~ — Iter15 修复
-- ~~vfig/native 重复~~ — Iter15 修复
 
 ## Design Principles
 

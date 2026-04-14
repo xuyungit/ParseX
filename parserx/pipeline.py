@@ -303,6 +303,21 @@ class Pipeline:
         elif suffix in (".docx", ".doc"):
             doc = self._image_extractor.extract_docx(doc, source, images_dir)
 
+        # Mark DOCX images BEFORE VLM so the prompt builder can
+        # request summaries (descriptions) for embedded document images.
+        # The renderer also uses this flag to always show the image
+        # alongside extracted content.
+        if suffix in (".docx", ".doc"):
+            for elem in doc.all_elements:
+                if elem.type == "image" and elem.metadata.get("docling_picture"):
+                    elem.metadata["embedded_document_image"] = True
+
+            # OCR each embedded image so that VLM has text/table evidence
+            # to correct — mirrors the PDF workflow where OCR runs before
+            # VLM on scanned pages.
+            if self._ocr_builder:
+                doc = self._ocr_docx_images(doc)
+
         if self._vlm_service and self._config.processors.image.vlm_description:
             vlm_processor = ImageProcessor(
                 config=self._config.processors.image,
@@ -311,6 +326,74 @@ class Pipeline:
                 table_config=self._config.processors.table,
             )
             doc = vlm_processor.process(doc)
+        return doc
+
+    def _ocr_docx_images(self, doc: Document) -> Document:
+        """Run OCR on each saved DOCX image and store results as evidence.
+
+        For PDF, OCR elements overlap spatially with image elements and
+        ``_collect_overlapping_evidence`` gathers them via bbox intersection.
+        DOCX images have no page-level bboxes, so we OCR each image file
+        individually and attach the results directly to the image element
+        as ``ocr_evidence_text`` and ``ocr_evidence_table``.  The VLM
+        prompt builder and correction logic read these fields as a
+        substitute for bbox-based overlap evidence.
+        """
+        ocr_service = self._ocr_builder._ocr  # type: ignore[union-attr]
+        if ocr_service is None:
+            return doc
+
+        ocr_count = 0
+        ocr_errors = 0
+
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "image":
+                    continue
+                if elem.metadata.get("skipped"):
+                    continue
+                abs_path = elem.metadata.get("saved_abs_path")
+                if not abs_path:
+                    continue
+
+                image_path = Path(abs_path)
+                if not image_path.exists():
+                    continue
+
+                try:
+                    result = ocr_service.recognize(image_path)
+                except Exception as exc:
+                    log.warning("OCR failed for DOCX image %s: %s", image_path.name, exc)
+                    ocr_errors += 1
+                    continue
+
+                # Separate text blocks from table blocks
+                text_parts: list[str] = []
+                table_parts: list[str] = []
+                for block in result.blocks:
+                    if not block.text.strip():
+                        continue
+                    if block.label == "table":
+                        table_parts.append(block.text.strip())
+                    else:
+                        text_parts.append(block.text.strip())
+
+                evidence_text = "\n".join(text_parts)
+                evidence_table = "\n\n".join(table_parts)
+
+                if evidence_text:
+                    elem.metadata["ocr_evidence_text"] = evidence_text
+                if evidence_table:
+                    elem.metadata["ocr_evidence_table"] = evidence_table
+                if result.has_tables:
+                    elem.metadata["ocr_has_tables"] = True
+
+                ocr_count += 1
+
+        log.info(
+            "OCR on DOCX images: %d processed, %d errors",
+            ocr_count, ocr_errors,
+        )
         return doc
 
     def _extract(self, path: Path) -> Document:

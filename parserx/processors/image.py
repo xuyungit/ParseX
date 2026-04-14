@@ -413,9 +413,27 @@ def _collect_overlapping_evidence(
     image: PageElement,
     page_elements: list[PageElement],
 ) -> dict[str, object]:
+    """Gather text/table evidence that overlaps an image region.
+
+    For PDF images with bounding boxes, this uses spatial overlap of
+    OCR/native text elements.  For DOCX embedded images (no bboxes),
+    it falls back to per-image OCR results stored in
+    ``ocr_evidence_text`` / ``ocr_evidence_table`` by the pipeline.
+    """
     overlaps: list[tuple[float, PageElement]] = []
 
     if not _has_bbox(image):
+        # ── Fallback: per-image OCR evidence (DOCX path) ────────
+        ocr_text = str(image.metadata.get("ocr_evidence_text", "")).strip()
+        ocr_table = str(image.metadata.get("ocr_evidence_table", "")).strip()
+        if ocr_text or ocr_table:
+            combined = f"{ocr_text}\n{ocr_table}".strip() if ocr_table else ocr_text
+            return {
+                "text": combined,
+                "table_text": ocr_table,
+                "best_overlap": 1.0,  # image IS the OCR source
+                "has_table": bool(ocr_table),
+            }
         return {
             "text": "",
             "table_text": "",
@@ -613,10 +631,14 @@ def _apply_vlm_corrections(
     suppressed = _suppress_ocr_covered_by_vlm(
         all_corrections, image, page_elements,
     )
+    is_embedded_doc = image.metadata.get("embedded_document_image", False)
     if suppressed:
         updates["ocr_elements_suppressed"] = suppressed
-    elif strong_overlap and _normalized_len(evidence_text) >= 40:
+    elif strong_overlap and _normalized_len(evidence_text) >= 40 and not is_embedded_doc:
         # No OCR elements, but native text covers the region.
+        # Skip only for PDF — DOCX embedded images always render the
+        # image alongside extracted content (the evidence came from
+        # OCR on the image itself, not from surrounding native text).
         image.metadata["skipped"] = True
         image.metadata["skip_reason"] = "content_covered_by_native_text"
         updates["native_text_overlap_skip"] = True
@@ -710,6 +732,11 @@ def _skip_vlm_for_large_text_overlap(
     if overlap_char_threshold <= 0:
         return None
 
+    # Never skip VLM for DOCX embedded images — VLM is needed to
+    # correct OCR text/tables and generate image descriptions.
+    if elem.metadata.get("embedded_document_image"):
+        return None
+
     evidence_text = str(evidence.get("text", "")).strip()
     evidence_table = str(evidence.get("table_text", "")).strip()
     if not evidence_text or evidence_table:
@@ -747,11 +774,23 @@ def _build_route_hint(
     evidence_table = str(evidence.get("table_text", "")).strip()
     image_class = str(elem.metadata.get("image_class", ""))
 
+    # DOCX embedded images (scanned documents) always need both a
+    # brief summary AND full content extraction — the image itself is
+    # displayed alongside the extracted text/tables, so the summary
+    # serves as the image description.
+    is_embedded = elem.metadata.get("embedded_document_image", False)
+    summary_policy = (
+        "Always provide a brief summary (1 sentence) describing what "
+        "kind of document or content this image shows."
+        if is_embedded
+        else "Keep summary empty unless the image has visual meaning "
+             "that text alone cannot convey."
+    )
+
     if evidence_table or image_class == ImageClassification.TABLE_IMAGE:
         return (
             "table-like: reproduce the full table in markdown. Put any non-table text "
-            "(titles, footnotes, labels) in visible_text. Keep summary empty unless "
-            "the table has a visual meaning that text alone cannot convey."
+            f"(titles, footnotes, labels) in visible_text. {summary_policy}"
         )
 
     if _looks_text_heavy(
@@ -761,8 +800,7 @@ def _build_route_hint(
     ):
         return (
             "text-heavy: transcribe ALL visible text in visible_text, including short "
-            "labels, icon text, and headings. Keep summary empty unless a brief "
-            "structural note is needed."
+            f"labels, icon text, and headings. {summary_policy}"
         )
 
     return (
