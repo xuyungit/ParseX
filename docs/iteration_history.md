@@ -8,6 +8,53 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 21 — PDF Inline Formatting (Bold/Italic) (2026-04-14)
+
+**范围**: ParserX 端，PDF 解析路径加入 inline 格式提取。详见
+[parsebench_baseline.md](parsebench_baseline.md)。
+
+### What Was Done
+
+- `parserx/providers/pdf.py`：新增 `_reconstruct_line_segments`（行内按
+  bold/italic 切段，空格按与 `_reconstruct_line_from_chars` 相同的 gap
+  策略归入后一段）+ `_merge_line_segments`（块内按行合并，不同行之间插入
+  一条 plain `\n` 段，避免 `**` 跨行；whitespace-only 格式段并入邻居）。
+  仅当块内存在混合 bold/italic 时写入 `inline_spans` 元数据。
+- `parserx/assembly/markdown.py`：渲染前校验 span concat == content，不
+  匹配则回退到 plain content（防止后续 processor 改写 content 后 span
+  陈旧导致截断）。
+- `parserx/processors/line_unwrap.py` / `processors/text_clean.py`：在
+  合并 / 清理时同步更新 inline_spans，保住段落间的 bold/italic 信号。
+
+### 评测结果（full re-parse）
+
+| Sub-rule | baseline | Iter 21 | Δ |
+|---|---|---|---|
+| `is_bold` | 54.00% | **61.55%** | +7.55pt |
+| `is_italic` | 5.85% | **31.65%** | +25.80pt |
+| `is_title` | 45.00% | **53.30%** | +8.30pt |
+| `title_hierarchy_percent` | 36.00% | **43.94%** | +7.94pt |
+| `is_latex` | 29.00% | 35.29% | +6.29pt |
+| **text_formatting 整体** | 34.33% | **43.22%** | **+8.89pt** |
+| text_content 整体 | 86.89% (20A) | 86.38% | -0.51pt |
+
+### Decisions & Trade-offs
+
+- text_content 小幅回落（-0.51pt vs 20A；仍 +0.95pt vs baseline）。
+  原因是 `**` 标记让部分句子匹配路径略敏感，深挖收益低，接受。
+- `is_sup` / `is_sub` / `is_underline` / `is_mark` / `is_strikeout`
+  / `is_code_block` 仍为 0 或接近 0，需要额外基础设施（HTML 标签
+  emission / Unicode 上下标映射 / 代码块识别），放入后续迭代。
+
+### Remaining Issues / Next
+
+- 考虑提取 text_formatting 中 sub/sup / underline / strikeout 特性。
+- text_content 长尾：top-failing docs (`paper_cn_trad`, `reverRo`,
+  `caldera` 等) 单文档 50+ 规则失败，结构性问题，可能需要 reading order
+  / layout 修复。
+
+---
+
 ## Iteration 20 Track A — ParseBench: Sentence-Match Normalization Fork (2026-04-14)
 
 **范围**: ParseBench 端评估器修正（不动 ParserX）。详见

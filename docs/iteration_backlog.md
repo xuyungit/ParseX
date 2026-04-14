@@ -129,6 +129,8 @@ text_code_block heading_f1=0.500。代码块边界识别不完整。
 - **Iter 18**：markdown-table 评估器 fork → Tables GTRM **0 → 41.33%** ✅
 - **Iter 20 Track A**：句子匹配标点容忍 fork → text_content
   **85.43% → 86.89%** ✅
+- **Iter 21**：PDF inline formatting (bold/italic) → text_formatting
+  **34.33% → 43.22%** ✅
 - **下一步候选（按 ROI 排序）**：
   - **Iter 20 Track B**（ParserX 侧，~0.5 天）：TOC 行页码 inline 保留。
     当前 heading 检测把 `"Redirect Manager and/or vanity URL 20"` 末尾

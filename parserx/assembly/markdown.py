@@ -90,10 +90,17 @@ class MarkdownRenderer:
             prefix = "#" * heading_level
             return f"{prefix} {element.content}"
 
-        # Apply inline formatting from merged DOCX spans
+        # Apply inline formatting from merged DOCX / PDF spans.
+        # Validate that spans still reflect current content — processors
+        # (e.g. line_unwrap) may have mutated element.content without
+        # updating the span records, in which case the spans are stale
+        # and would truncate the rendered text. Fall back to plain content
+        # when the concatenated span text no longer matches.
         inline_spans = element.metadata.get("inline_spans")
         if inline_spans:
-            return self._render_inline_spans(inline_spans)
+            concat = "".join(s.get("text", "") for s in inline_spans)
+            if concat == element.content:
+                return self._render_inline_spans(inline_spans)
 
         # Single-element underline — the only formatting that's meaningful
         # for non-merged elements.  Bold/italic on whole paragraphs is
