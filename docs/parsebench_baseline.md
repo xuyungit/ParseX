@@ -183,44 +183,62 @@ smaller structural losses. Three tracks ordered by ROI:
 - Deferred per user priority call (2026-04-14): sentence-level losses
   outweigh the is_header/is_footer sub-rules.
 
-**Iter 23 — text_content long-tail attack (ParserX, ~1-2 days) ← NEXT**
+**Iter 23 — Hybrid column-aware extraction via PaddleOCR layout (ParserX, ~1 day) ← NEXT**
 
-**Rationale (user call 2026-04-14 after Iter 22)**: user-value optimization
-moves from "add more formatting markers" to "stop dropping content". A
-sentence recovered shows up in the user's rendered document; a `**bold**`
-marker is cosmetic. text_content is the largest rule pool (141k rules),
-so per-point gains are worth ~1,400 rules — an order of magnitude bigger
-than text_formatting at the same Δ.
+**Triage (2026-04-14)** of the three biggest-fail docs showed the
+original "one-bug-per-doc" premise doesn't hold:
+- `text_simple__caldera` (66 fails): 2-column Python-docs index where
+  long names physically overflow past the column gutter — straight
+  clip extraction breaks words (`…Abili` / `ityApi`). Needs real
+  column-aware layout, not a threshold tweak.
+- `text_misc__reverRo` (67 fails): GT/PDF mismatch — expected
+  `"lolaan fideen"`, PDF has `"lolaanfideen"` with chars overlapping
+  by -0.08pt, i.e. no space was ever rendered. **Not a ParserX bug.**
+- `text_dense__paper_cn_trad` (78 fails): 4-5 column CJK newspaper —
+  same class as caldera, more extreme.
 
-**Target docs** (by post-Iter-22 `missing_specific_sentence` fail count,
-native-plain only, from Iter 20A audit):
-| Doc | fails | Suspected class |
-|---|---|---|
-| `text_dense__paper_cn_trad` | 78 | 繁体 CJK, possibly line-unwrap / simplification issue |
-| `text_misc__reverRo` | 78 | Reverse reading order (RTL or bottom-up layout) |
-| `text_simple__caldera` | 65 | Unknown — triage first |
-| `text_simple__strikeUnderline` | 54 | Strike/underline text dropping from output |
-| `text_misc__gridofimages` | 50 | Grid-of-images layout confusing reading order |
-| `text_misc__atlantic` | 49 | Unknown — triage |
-| `text_misc__overlapping` | 44 | Overlapping elements reading-order break |
-| `text_misc__marks` | 38 | `<mark>` (highlight) text may be filtered out |
+**Revised approach**: ParserX already pays for PaddleOCR, which has a
+production-grade layout engine returning `(bbox, label, order)` per
+region. Currently we only use it for SCANNED/MIXED pages; for NATIVE
+pages we fall back to `sort(y, x)` which breaks on any multi-column
+layout. Instead, do **hybrid layout+native**:
 
-**Approach**:
-1. **Triage phase** (half day): for each top-3 (`paper_cn_trad`, `reverRo`,
-   `caldera`), diff GT sentences vs ParserX output — identify the single
-   dominant failure class per doc.
-2. **Fix phase**: one structural fix per doc, preferring changes that
-   generalize (reading-order rules usually help >1 doc).
-3. **Validate**: `--skip_inference` only re-scores eval, useless here
-   (we're changing parse). Full `--force` run; watch text_content
-   overall + per-doc.
+1. Detect when a native page is "layout-ambiguous" (cheap heuristic:
+   does any PyMuPDF block span the horizontal center OR do narrow
+   block midpoints show bimodal distribution).
+2. Render that page, call PaddleOCR in **layout-only** mode (skip
+   recognition if supported) → get regions with reading order.
+3. For each region, extract PyMuPDF text via `get_text("rawdict",
+   clip=region_rect)` — keeps accurate chars + font flags (bold /
+   italic / sup from Iter 21-22 intact).
+4. Assign `element.metadata["reading_order"] = region.order` and
+   sort by that instead of `(y, x)`.
 
-**Success bar**: +0.3 pt text_content (~400 rules) from top-3 docs; any
-cross-doc generalization is upside. If a fix turns out to need deep
-reading-order rewrite (>1 day), bail to next doc.
+**Why this beats geometric column detection**:
+- Real layout model handles ≥2 columns, full-width headlines,
+  figure captions, and mixed-column pages.
+- Bbox-to-PDF-points math already solved in the scanned-page path
+  (`render_width`/`render_height` in `OCRResult`).
+- Region labels (`title` / `figure_title` / `table`) are free
+  additional signal for chapter processor.
 
-**Out of scope**: adding more formatting signals (`is_mark`, `is_sub`,
-`is_strikeout`). Explicitly deferred — aesthetic, not retention.
+**Gating**: only fire the extra OCR call when the heuristic flags a
+page. Budget: ~20% of native pages × few seconds each ≈ +5-10 min on
+the 50-min full run. Acceptable.
+
+**Risks / fallbacks**:
+- Layout model errors on dense CJK / handwriting → confidence check,
+  fall back to current y-sort path if region count looks wrong
+  (e.g. 1 region covering the whole page, or regions with no text).
+- OCR endpoint latency / timeout → treat as layout-undetected, use
+  current path.
+
+**Success bar**: recover meaningful fraction of `caldera` +
+`paper_cn_trad` concentrated fails (≥+0.3 pt text_content). Upside:
+any multi-column doc in the long tail starts working.
+
+**Out of scope**: extra formatting signals (`is_mark`, `is_sub`,
+`is_strikeout`, `is_code_block`). Deferred — aesthetic, not retention.
 
 ---
 

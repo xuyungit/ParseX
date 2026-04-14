@@ -133,13 +133,14 @@ text_code_block heading_f1=0.500。代码块边界识别不完整。
   **34.33% → 43.22%** ✅
 - **Iter 22**：PDF superscript + underline → text_formatting
   **43.22% → 45.36%** ✅（sup +32pt 主要贡献）
-- **Iter 23（下一步，用户指定 2026-04-14）**：text_content long-tail
-  攻关。关注 top-failing 文档（`paper_cn_trad` / `reverRo` / `caldera`
-  / `strikeUnderline` / `gridofimages` 等），单文档 50+ 规则失败，
-  通常对应一个结构性 bug（reading order、整区块误分类、截断启发式
-  过激等）。目标：一个 bug 修好 → 几十条规则回流 + 真正被用户看到。
-  详细规划见 [parsebench_baseline.md](parsebench_baseline.md) "Iter 23"
-  节。
+- **Iter 23（下一步，用户指定 2026-04-14）**：Hybrid column-aware
+  extraction via PaddleOCR layout。triage 发现 top-failing 文档
+  (`caldera` / `paper_cn_trad`) 的根因是多列布局被 PyMuPDF 的朴素
+  `sort(y, x)` 打乱；`reverRo` 则是 GT/PDF 字符级不一致（不可修）。
+  思路：native 页也复用 PaddleOCR 的 layout 引擎，取其 region 的
+  `(bbox, order)`，在 bbox 内再用 PyMuPDF clip 抽取原生文本，
+  保留 Iter 21/22 的 font flag；按 OCR 给的阅读序排版。
+  详见 [parsebench_baseline.md](parsebench_baseline.md) "Iter 23" 节。
 - **后续候选（按 ROI 排序）**：
   - **Iter 20 Track B**（ParserX 侧，~0.5 天）：TOC 行页码 inline 保留。
     当前 heading 检测把 `"Redirect Manager and/or vanity URL 20"` 末尾
