@@ -183,6 +183,47 @@ smaller structural losses. Three tracks ordered by ROI:
 - Deferred per user priority call (2026-04-14): sentence-level losses
   outweigh the is_header/is_footer sub-rules.
 
+**Iter 23 — text_content long-tail attack (ParserX, ~1-2 days) ← NEXT**
+
+**Rationale (user call 2026-04-14 after Iter 22)**: user-value optimization
+moves from "add more formatting markers" to "stop dropping content". A
+sentence recovered shows up in the user's rendered document; a `**bold**`
+marker is cosmetic. text_content is the largest rule pool (141k rules),
+so per-point gains are worth ~1,400 rules — an order of magnitude bigger
+than text_formatting at the same Δ.
+
+**Target docs** (by post-Iter-22 `missing_specific_sentence` fail count,
+native-plain only, from Iter 20A audit):
+| Doc | fails | Suspected class |
+|---|---|---|
+| `text_dense__paper_cn_trad` | 78 | 繁体 CJK, possibly line-unwrap / simplification issue |
+| `text_misc__reverRo` | 78 | Reverse reading order (RTL or bottom-up layout) |
+| `text_simple__caldera` | 65 | Unknown — triage first |
+| `text_simple__strikeUnderline` | 54 | Strike/underline text dropping from output |
+| `text_misc__gridofimages` | 50 | Grid-of-images layout confusing reading order |
+| `text_misc__atlantic` | 49 | Unknown — triage |
+| `text_misc__overlapping` | 44 | Overlapping elements reading-order break |
+| `text_misc__marks` | 38 | `<mark>` (highlight) text may be filtered out |
+
+**Approach**:
+1. **Triage phase** (half day): for each top-3 (`paper_cn_trad`, `reverRo`,
+   `caldera`), diff GT sentences vs ParserX output — identify the single
+   dominant failure class per doc.
+2. **Fix phase**: one structural fix per doc, preferring changes that
+   generalize (reading-order rules usually help >1 doc).
+3. **Validate**: `--skip_inference` only re-scores eval, useless here
+   (we're changing parse). Full `--force` run; watch text_content
+   overall + per-doc.
+
+**Success bar**: +0.3 pt text_content (~400 rules) from top-3 docs; any
+cross-doc generalization is upside. If a fix turns out to need deep
+reading-order rewrite (>1 day), bail to next doc.
+
+**Out of scope**: adding more formatting signals (`is_mark`, `is_sub`,
+`is_strikeout`). Explicitly deferred — aesthetic, not retention.
+
+---
+
 **Iter 22 — PDF superscript + underline — DONE 2026-04-14**
 - Superscript via PyMuPDF span flag bit 0: emit `<sup>…</sup>`. Clean
   win (is_sup **4.98 → 36.99%**, +32pt).
