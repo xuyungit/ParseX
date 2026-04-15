@@ -50,13 +50,32 @@ product-value (not leaderboard score):
    paper_chn01 heading_f1 0.774 → 0.867（+0.093）。
    glyph-only 候选过滤 + `:` 续行合并实验失败（级联降分）已回退。
 6. **Iter 28 — PDF heading hierarchy polish 续** (paper01 0.791
-   → 0.9+ 目标)：双行 H1 title（`TensorFlow:` + `Large-Scale…`）
-   需 renderer 保持分行而非 join；`### Variables/Devices/Tensors`
-   等 bold-only inline emphasis vs real sub-heading 的二次信号
-   （段落起始、独占一行、followed by body）；Code-block boundary
-   (backlog L) 覆盖 `# of Relu` 源自 Python 注释的伪 H1；
-   `is_sub` 保留（chemistry/math semantics）并入。
-7. Iter 29+ — DOCX table/image quality (C)，然后 Chart track。
+   → 0.9+ 目标)。按 ROI 排序子任务：
+
+   **Track A（确定性、无级联风险，首发）**：Bold-only inline
+   emphasis 的几何 gating。paper01 spurious `### Variables`,
+   `### Devices`, `### Tensors` 与真 H3 `### Operations and Kernels`,
+   `### Sessions`, `### Data Parallel Training` 同 font (10pt Medi
+   Bold)，但前者嵌在段落内部（上一元素底部与当前顶部 gap
+   < 1.2 line-height、下一元素紧邻同 y-range），后者段落起始且
+   独占一行。`_detect_heading` font-only 分支加二次几何判据：
+   要求前/后 vertical gap ≥ 1 line-height 且 bbox 独占行。
+
+   **Track B（renderer 分行）**：`_split_heading_body_elements` 识别
+   page-1 largest-font 多行 title（首行末尾 `:` / 全部同字号同样
+   bold / 总 ≤3 行），emit 多个 PageElement 保持 heading_level 而非
+   join。只触达 page-1 且命中 largest-candidate，风险受限。
+
+   **Track C（backlog L 并行）**：Code-block boundary 扩展，覆盖
+   paper01 `# of Relu`（Python `#` 注释被渲染成伪 H1）及
+   text_code_block heading_f1=0.500。
+
+   **Abstract heading** 视 Track A 副作用自然收敛（10pt Medi Bold
+   独占一行、后接正文）—— 若 Track A 上线后仍漏检再单独处理。
+
+7. **Iter 29 backlog**：`is_sub` preservation (chemistry/math)、
+   paper_chn02 HTML 表头 / Chinese doc class、DOCX table/image
+   quality (backlog C)，然后 Chart track (M)。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
 
