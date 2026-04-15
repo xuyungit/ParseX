@@ -266,6 +266,62 @@ def _is_right_sidebar(page_width: float, elem: PageElement) -> bool:
     return elem.bbox[0] >= page_width * 0.6
 
 
+def _has_heading_vertical_isolation(
+    elem: PageElement,
+    page_elements: list[PageElement],
+    elem_idx: int,
+    min_gap_ratio: float = 1.4,
+) -> bool:
+    """Geometric gating for bold-at-body-size heading candidates.
+
+    A true sub-heading sits on its own line with visible whitespace above.
+    Inline bold emphasis (e.g. a paragraph-opening term) is packed tight
+    against the preceding paragraph.  This checks whether the nearest
+    same-column preceding element leaves a gap of at least
+    ``min_gap_ratio × line_height`` above the candidate.
+
+    Returns ``True`` only if a same-column preceding element exists and
+    leaves gap ≥ ``min_gap_ratio × line_height`` above the candidate.
+    When no same-column predecessor is found (column/page top), the
+    element is conservatively rejected — a body-sized bold line at
+    column top is more likely a paragraph-continuation fragment than a
+    true heading (genuine page-top headings are usually larger font and
+    won't reach this gating branch).
+    """
+    x0, y0, x1, y1 = elem.bbox
+    line_h = max(y1 - y0, 1.0)
+    width = max(x1 - x0, 1.0)
+    min_overlap = width * 0.5
+
+    prev_bottom: float | None = None
+    for j in range(elem_idx - 1, -1, -1):
+        prev = page_elements[j]
+        if prev.type != "text":
+            continue
+        px0, py0, px1, py1 = prev.bbox
+        if py1 > y0:
+            # Not strictly above — skip (could be same line or below).
+            continue
+        overlap = min(x1, px1) - max(x0, px0)
+        if overlap < min_overlap:
+            continue
+        prev_bottom = py1
+        break
+
+    if prev_bottom is None:
+        # No same-column predecessor.  A body-sized bold line without any
+        # content above it in the same column is most often a paragraph
+        # continuation across a page or column break (e.g. a bold term
+        # leading the next column), not a true heading.  True page-top
+        # headings are generally rendered with a larger font and won't
+        # reach this branch (the gating only applies when font.size is
+        # at body size).  Conservatively reject.
+        return False
+
+    gap = y0 - prev_bottom
+    return gap >= min_gap_ratio * line_h
+
+
 class ChapterProcessor:
     """Detect chapter/section headings and assign heading levels.
 
@@ -339,7 +395,8 @@ class ChapterProcessor:
                     continue
 
                 level = self._detect_heading(
-                    elem, heading_candidates, body_font, numbering_patterns
+                    elem, heading_candidates, body_font, numbering_patterns,
+                    page.elements, elem_idx,
                 )
                 if level is not None:
                     elem.metadata["heading_level"] = level
@@ -380,6 +437,8 @@ class ChapterProcessor:
         heading_candidates: list[FontInfo],
         body_font: FontInfo,
         numbering_patterns: list,
+        page_elements: list[PageElement] | None = None,
+        elem_idx: int | None = None,
     ) -> int | None:
         """Detect if an element is a heading and determine its level.
 
@@ -435,6 +494,24 @@ class ChapterProcessor:
             if (_is_short_heading_text(first_line)
                     and not _looks_like_body_text(first_line)
                     and not _is_metadata_or_cover_line(first_line)):
+                # Geometric gating for bold-at-body-size candidates.
+                # When a heading-candidate font shares the body font size
+                # (distinguished only by bold/weight), the signal is weak —
+                # body-inline emphasis (e.g. `**Variables**` in a paragraph)
+                # produces the same font key.  Require clear vertical
+                # isolation from preceding content before promoting.
+                if (body_font.size > 0
+                        and elem.font.size <= body_font.size + 0.5
+                        and page_elements is not None
+                        and elem_idx is not None):
+                    if not _has_heading_vertical_isolation(
+                        elem, page_elements, elem_idx
+                    ):
+                        # Block later fallback/LLM paths from re-promoting
+                        # this element — geometric evidence says it's
+                        # inline emphasis, not a heading.
+                        elem.metadata["heading_geometric_reject"] = True
+                        return None
                 return font_level
 
         # ── DOCX fallback: bold + numbering heading detection ──
@@ -908,6 +985,10 @@ class ChapterProcessor:
         # Same short-text requirement as _detect_heading — long text is body,
         # not a heading.  The threshold is consistent with _is_short_heading_text.
         if not _is_short_heading_text(first_line):
+            return None
+        # Geometric gating rejected this element as inline emphasis —
+        # don't resurrect it via fallback / LLM.
+        if elem.metadata.get("heading_geometric_reject"):
             return None
 
         font_level = _heading_level_from_font(elem.font, heading_candidates)
