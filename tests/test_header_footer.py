@@ -320,3 +320,58 @@ def test_page_numbers_removed_even_with_high_limit():
             t.strip().replace("-", "").replace(" ", "").isdigit()
             for t in texts
         )
+
+
+# ── Section-opener page headers ──────────────────────────────────────────
+
+
+def _make_sectioned_doc() -> Document:
+    """Patent-style doc: section name + "N/M 页" at top of each page."""
+    pages = []
+    for i, (name, m) in enumerate(
+        [("权 利 要 求 书", 2), ("权 利 要 求 书", 2),
+         ("说 明 书", 3), ("说 明 书", 3), ("说 明 书", 3),
+         ("说 明 书 附 图", 1)],
+        start=1,
+    ):
+        elements = [
+            _text_elem(f"{name} {i}/{m} 页", 36, 50, i),
+            _text_elem(f"正文内容第{i}页" * 10, 100, 700, i),
+        ]
+        pages.append(Page(number=i, width=595, height=842, elements=elements))
+    return Document(pages=pages)
+
+
+def test_section_page_header_single_line_promoted():
+    doc = _make_sectioned_doc()
+    result = HeaderFooterProcessor().process(doc)
+    headings = [
+        e for page in result.pages for e in page.elements
+        if e.metadata.get("section_page_header_origin")
+    ]
+    names = [e.content for e in headings]
+    assert names == ["权 利 要 求 书", "说 明 书", "说 明 书 附 图"]
+    assert all(e.metadata.get("heading_level") == 1 for e in headings)
+
+
+def test_section_page_header_split_across_lines_promoted():
+    """Layout-only OCR can merge the section name and `N/M 页` via newline."""
+    page = Page(number=1, width=595, height=842, elements=[
+        _text_elem("说明书\n1/6 页\n一种基于静载试验识别的方法", 60, 120, 1),
+        _text_elem("正文" * 50, 200, 400, 1),
+    ])
+    doc = Document(pages=[
+        page,
+        Page(number=2, width=595, height=842, elements=[
+            _text_elem("说明书\n2/6 页", 60, 80, 2),
+            _text_elem("正文" * 50, 200, 400, 2),
+        ]),
+    ])
+    result = HeaderFooterProcessor().process(doc)
+    p1_texts = [e.content for e in result.pages[0].elements]
+    # Heading split out of merged element; trailing body kept
+    assert "说明书" in p1_texts
+    assert any("一种基于静载试验识别的方法" in t for t in p1_texts)
+    # Second occurrence dropped entirely
+    p2_texts = [e.content for e in result.pages[1].elements]
+    assert "说明书" not in p2_texts

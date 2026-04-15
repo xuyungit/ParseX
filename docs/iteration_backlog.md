@@ -30,11 +30,14 @@ product-value (not leaderboard score):
    `line_unwrap` 新增 `[\d+]` list marker + bare-marker 下吸规则。
    patent01 剩余（章节标题、首页 reading order、expected.md 补全）
    + Track C truncation audit 合并进 Iter 25。
-2. **Iter 25 — patent01 章节结构 + Track C truncation audit。**
-   章节结构要坚持**泛化启发式**（如 bold+孤立短行+位置信号），
-   禁止用 "权利要求书 / 说明书 / 附图" 这种关键词清单——
-   专利只是众多带分节文档类型之一，写死关键词无法迁移到法规、
-   标准、技术规范等同类文档。
+2. **Iter 25 Track 1 — 节页眉→H1 提升 — DONE 2026-04-15。**
+   `header_footer._promote_section_page_headers` 捕获 `<name> N/M 页`
+   惯例，首次出现提升 H1，后续去除。纯结构化（无关键词表），
+   迁移到法规/标准/技术规范同类文档。patent01 三节标题全部落位。
+3. **Iter 25 Track 2 — ParseBench Track C truncation audit。**
+   列出 output/GT 长度比 <0.2 的文档（如 `text_misc__censored`
+   553 chars），定位原因（redaction 启发式过激 / 整页视觉-only
+   误分类），收窄规则。尚未执行。
 3. Iter 26 — PDF bold-only heading (backlog B)。
 4. Iter 27 — code-block boundary (backlog L) + `is_sub`。
 5. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
