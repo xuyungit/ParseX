@@ -725,6 +725,9 @@ class ChapterProcessor:
                     elem.content = head_text[:-1] + next_text
                 else:
                     elem.content = f"{head_text} {next_text}"
+                # Invalidate stale inline_spans that still reflect the
+                # pre-merge (pre-rewrite) fragment text.
+                elem.metadata.pop("inline_spans", None)
                 nxt.metadata["skip_render"] = True
                 nxt.metadata["heading_fragment_merged_into"] = idx
                 merged += 1
@@ -809,9 +812,11 @@ class ChapterProcessor:
                     # heading + stray body line.
                     if elem.content != heading_text:
                         elem.content = heading_text
+                        elem.metadata.pop("inline_spans", None)
                     new_elements.append(elem)
                     continue
                 elem.content = heading_text
+                elem.metadata.pop("inline_spans", None)
 
                 # Body element gets remaining lines.
                 body_text = "\n".join(lines[heading_lines:])
