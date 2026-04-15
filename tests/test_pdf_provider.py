@@ -24,8 +24,12 @@ def _make_image_elem(bbox: tuple) -> PageElement:
 
 class _FakePage:
     """Minimal stand-in for fitz.Page with only the fields _classify_page reads."""
-    def __init__(self, w: float = 595, h: float = 842):
+    def __init__(self, w: float = 595, h: float = 842, drawings: int = 0):
         self.rect = type("R", (), {"width": w, "height": h})()
+        self._drawings = [{}] * drawings
+
+    def get_drawings(self):
+        return self._drawings
 
 
 def test_classify_native_page():
@@ -101,6 +105,27 @@ def test_classify_mixed_page():
     text = [_make_text_elem("短文" * 30, (50, 500, 400, 550))]  # 60 chars < 200
     result = provider._classify_page(_FakePage(), text, img)
     assert result == PageType.MIXED
+
+
+def test_classify_vector_drawn_page():
+    """Page with no images, ~no text, but dense vector drawings → SCANNED.
+
+    Vector-rendered PDFs (print-to-PDF from web, SVG-based reports) emit
+    text as path strokes. Without routing to OCR they produce empty output.
+    """
+    provider = _make_provider()
+    # 224 chars of chrome (URLs, footer) — below the 500 threshold
+    text = [_make_text_elem("https://example.com/foo " * 10, (50, 800, 500, 820))]
+    result = provider._classify_page(_FakePage(drawings=3000), text, [])
+    assert result == PageType.SCANNED
+
+
+def test_classify_native_page_with_drawings():
+    """Plenty of text + drawings (e.g. native PDF with charts) → NATIVE."""
+    provider = _make_provider()
+    text = [_make_text_elem("正文" * 400, (50, 50, 500, 700))]  # 800 chars
+    result = provider._classify_page(_FakePage(drawings=3000), text, [])
+    assert result == PageType.NATIVE
 
 
 # ── _count_chars_inside_bbox ─────────────────────────────────────────

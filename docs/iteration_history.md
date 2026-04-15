@@ -8,6 +8,53 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 25 Track 2 — Vector-Drawn Page Classification (2026-04-15)
+
+**Scope**: ParserX 端。修复 ParseBench Track C 文档截断：矢量渲染 PDF
+（print-to-PDF、SVG 报表）无图片、几乎无可提取文本，但有大量 drawing
+paths 绘制视觉文字。原分类器返回 NATIVE → 输出空。
+
+### Root cause
+
+`PDFProvider._classify_page` 仅在 `total_image_area / page_area > 0.5`
+时判 SCANNED。矢量页 image_coverage=0，文本字符<50，但 `get_drawings()`
+返回数千条路径。
+
+### Fix
+
+`parserx/providers/pdf.py:568-574`：新增判据
+```
+if total_text_chars < 500 and len(fitz_page.get_drawings()) > 200:
+    return PageType.SCANNED
+```
+纯视觉信号，无文档特定关键词。
+
+### Impact
+
+审计 ParseBench `text/` 输出/期望字符比 <0.5 的文档：
+
+| Doc | before | after |
+|-----|--------|-------|
+| text_simple__landfill | 1 | 3679 |
+| text_simple__finra    | 241 | 5853 |
+
+修复后两者均经 OCR 路径输出干净 markdown（含正确 H1/H2 标题）。
+
+### Tests
+
+`tests/test_pdf_provider.py`：
+- `test_classify_vector_drawn_page` — 低文本+dense drawings → SCANNED
+- `test_classify_native_page_with_drawings` — 充足文本+drawings → NATIVE
+  （防止误判含图表的原生 PDF）
+
+### Regression
+
+`scripts/regression_test.py --deterministic-only` 与 Track 2 无关的回归：
+`text_report01`（已知 VLM variance）、DOCX 两例 edit_distance ±0.006
+（TextClean variance）。均不经 PDFProvider，与本次改动无因果。
+
+---
+
 ## Iteration 25 Track 1 — Section-Opener Page Headers (2026-04-15)
 
 **Scope**: ParserX 端。为**任何使用 `N/M 页` 分节页眉惯例**的
