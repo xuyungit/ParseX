@@ -53,6 +53,13 @@ _METADATA_FIELD_RE = re.compile(
 
 # Pure number (page number, code, etc.)
 _PURE_NUMBER_RE = re.compile(r"^\d+$")
+# Dotted section numbering with no trailing text — e.g. ``3.1``, ``4.5.2``.
+# Used to recognise heading content where the section number landed on its
+# own line and the title text follows on the next line.
+_NUMBERING_ONLY_RE = re.compile(r"^\d+(?:\.\d+)*\.?$")
+# Trailing function word that signals the heading text continues on the
+# next line (e.g., "Controlling Data Communication and").
+_DANGLING_WORD_RE = re.compile(r"\b(and|or|of|the|for|to|in|with|on)$", re.I)
 _SUBTITLE_PREFIX_RE = re.compile(r"^[—–\-一]{2,}")
 _HEADING_COLON_END_RE = re.compile(r"[：:]$")
 
@@ -341,6 +348,8 @@ class ChapterProcessor:
         detected_count += fallback_hits
         self._normalize_ocr_title_subtitle_pair(doc)
         self._merge_cover_heading_fragments(doc)
+        merged_count = self._merge_split_section_headings(doc, heading_candidates)
+        detected_count += merged_count
         split_count = self._split_heading_body_elements(doc)
 
         log.info(
@@ -622,6 +631,105 @@ class ChapterProcessor:
             return False
         return True
 
+    def _merge_split_section_headings(
+        self,
+        doc: Document,
+        heading_candidates: list[FontInfo],
+    ) -> int:
+        """Merge heading element with the next sibling holding its title text.
+
+        Layout-based reading-order (Iter 23 PaddleOCR) sometimes splits one
+        printed heading like ``"3.1 Single-Device Execution"`` into two
+        adjacent PageElements: ``"3.1"`` and ``"Single-Device Execution"``,
+        which share an identical bbox.  Only the numbered fragment passes
+        heading detection, so the title is lost.
+
+        Two merge cases:
+        1. Heading content is numbering-only (``"3.1"``, ``"4.5"``) → join
+           the next short-title element with a single space.
+        2. Heading content ends with a soft hyphen (``"Imple-"``) or a
+           dangling conjunction (``"and"``, ``"or"``) → join the next
+           element to complete the title.
+
+        Both cases require: same page, identical or near-identical bbox /
+        same column with a tiny vertical gap, and the next element to
+        carry a heading-candidate font (so we don't swallow body text).
+        """
+        if not heading_candidates:
+            return 0
+
+        candidate_keys = {_font_key(c) for c in heading_candidates}
+        merged = 0
+        for page in doc.pages:
+            elems = page.elements
+            for idx, elem in enumerate(elems):
+                if elem.type != "text":
+                    continue
+                if not elem.metadata.get("heading_level"):
+                    continue
+                if elem.metadata.get("skip_render"):
+                    continue
+                head_text = elem.content.strip()
+                if not head_text:
+                    continue
+
+                trailing_hyphen = head_text.endswith("-")
+                numbering_only = bool(_NUMBERING_ONLY_RE.match(head_text))
+                dangling_word = bool(_DANGLING_WORD_RE.search(head_text))
+                if not (numbering_only or trailing_hyphen or dangling_word):
+                    continue
+
+                # Find next non-skip text element on same page.
+                nxt = None
+                for j in range(idx + 1, len(elems)):
+                    cand = elems[j]
+                    if cand.type != "text" or cand.metadata.get("skip_render"):
+                        continue
+                    nxt = cand
+                    break
+                if nxt is None:
+                    continue
+                if nxt.metadata.get("heading_level"):
+                    continue
+
+                next_text = nxt.content.strip()
+                if not next_text or len(next_text) > 80:
+                    continue
+                if "\n" in nxt.content.strip():
+                    continue
+                if _font_key(nxt.font) not in candidate_keys:
+                    continue
+                if _looks_like_body_text(next_text) or _is_metadata_or_cover_line(next_text):
+                    continue
+
+                # Geometry: same column, near-identical y-range OR small gap.
+                hb = elem.bbox
+                nb = nxt.bbox
+                same_box = (
+                    abs(hb[0] - nb[0]) < 5
+                    and abs(hb[1] - nb[1]) < 5
+                    and abs(hb[2] - nb[2]) < 5
+                    and abs(hb[3] - nb[3]) < 5
+                )
+                line_height = max(hb[3] - hb[1], 1.0)
+                vertical_gap = nb[1] - hb[3]
+                column_overlap = min(hb[2], nb[2]) - max(hb[0], nb[0])
+                near_below = (
+                    -line_height <= vertical_gap <= line_height * 1.2
+                    and column_overlap > 0
+                )
+                if not (same_box or near_below):
+                    continue
+
+                if trailing_hyphen:
+                    elem.content = head_text[:-1] + next_text
+                else:
+                    elem.content = f"{head_text} {next_text}"
+                nxt.metadata["skip_render"] = True
+                nxt.metadata["heading_fragment_merged_into"] = idx
+                merged += 1
+        return merged
+
     @staticmethod
     def _split_heading_body_elements(doc: Document) -> int:
         """Split elements that contain both heading text and body text.
@@ -649,23 +757,60 @@ class ChapterProcessor:
                 # with the next line, so we need to account for that.
                 lines = elem.content.split("\n")
                 heading_lines = 1
-                if _PURE_NUMBER_RE.match(lines[0].strip()) and len(lines) > 1:
-                    # Number-only first line + title on next line
-                    heading_lines = 2
+                if len(lines) > 1:
+                    first = lines[0].strip()
+                    is_numbering_first = bool(_NUMBERING_ONLY_RE.match(first))
+                    is_continuation_first = (
+                        first.endswith("-")
+                        or bool(_DANGLING_WORD_RE.search(first))
+                    )
+                    if is_numbering_first or is_continuation_first:
+                        # Greedily absorb continuation lines that complete
+                        # the heading text (short, non-body).  Stop once a
+                        # line no longer looks like a continuation (lacks a
+                        # trailing hyphen / dangling conjunction).  Bound at
+                        # 3 continuation lines so we never swallow a
+                        # following paragraph.
+                        for i in range(1, min(len(lines), 4)):
+                            line_i = lines[i].strip()
+                            if not line_i:
+                                break
+                            if len(line_i) > 60 or _looks_like_body_text(line_i):
+                                break
+                            heading_lines = i + 1
+                            if not (
+                                line_i.endswith("-")
+                                or _DANGLING_WORD_RE.search(line_i)
+                            ):
+                                break
 
                 # Check whether there is actual body text after the heading.
                 body_lines = [
                     l for l in lines[heading_lines:] if l.strip()
                 ]
+
+                # Heading element keeps heading lines (combined form for
+                # number-only + title on next line; hyphen-wrap joins
+                # without space).
+                if heading_lines >= 2:
+                    parts = [l.strip() for l in lines[:heading_lines] if l.strip()]
+                    combined = parts[0] if parts else ""
+                    for nxt_part in parts[1:]:
+                        if combined.endswith("-"):
+                            combined = combined[:-1] + nxt_part
+                        else:
+                            combined = f"{combined} {nxt_part}"
+                    heading_text = combined
+                else:
+                    heading_text = lines[0].strip()
                 if not body_lines:
+                    # No body to split off, but still rewrite to single-line
+                    # form so renderer doesn't emit "## 2\nProgramming..." as
+                    # heading + stray body line.
+                    if elem.content != heading_text:
+                        elem.content = heading_text
                     new_elements.append(elem)
                     continue
-
-                # Split: heading element keeps heading lines.
-                heading_text = "\n".join(lines[:heading_lines]).strip()
-                # Replace number-only + title with combined form for cleaner output.
-                if heading_lines == 2:
-                    heading_text = " ".join(l.strip() for l in lines[:2] if l.strip())
                 elem.content = heading_text
 
                 # Body element gets remaining lines.

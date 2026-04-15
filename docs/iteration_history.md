@@ -8,6 +8,49 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 26 — Cross-Element Heading Merge (2026-04-15)
+
+**Scope**: ParserX 端。Backlog B 子项——Iter 23 PaddleOCR layout reorder
+按 OCR 检测区域重排 PageElements 时，偶尔把一个印刷标题切成多段：
+`"3.1"` + `"Single-Device Execution"` 两个相邻 elements 共享同 bbox，
+或单 element 内嵌 `"5.2\nControlling Data Communication and\nMemory Usage"`
+多行。原 ChapterProcessor 只识别带数字的片段，标题文字丢失/被渲染为正文行。
+
+### Fix
+
+`parserx/processors/chapter.py`:
+- 新增 `_NUMBERING_ONLY_RE = ^\d+(?:\.\d+)*\.?$` 和
+  `_DANGLING_WORD_RE = \b(and|or|of|the|for|to|in|with|on)$`。
+- 新方法 `_merge_split_section_headings`: heading 元素内容为 numbering-only
+  / 末尾连字符 / 末尾悬挂虚词时，查找下一个相邻 text element，要求同页、
+  同字体族（heading candidate）、同 bbox 或同列 vertical_gap ≤
+  1.2×line_height、行内无换行、长度 ≤ 80。匹配则 join（hyphen 去 hyphen
+  无空格，否则空格连接），被吸入 element 标 skip_render=True。
+- 重写 `_split_heading_body_elements` 单 element 多行分支：支持 dotted
+  numbering / hyphen-wrap / dangling conjunction 触发，贪婪吸收最多 3
+  行。新增 "no body" 路径的 content rewrite，修复 `## 2\nProgramming Model`
+  渲染成 heading + 游离正文行。
+
+### Impact
+
+- paper01: heading_f1 0.667 → 0.725 (+0.058), char_f1 0.975 → 0.982,
+  edit_distance 0.328 → 0.252。
+- text_report01 标题碎片 `# 《四川...首版次\n\n推广应用指导目录》` 同步修复。
+- 遗留：5.2 / 5.4 renderer 端 inline_spans 仍覆盖单 element rewrite——
+  元素层已修正但 assembly 阶段 inline_spans 路径优先。需 LineUnwrap /
+  inline_spans 层后续清理。
+
+### Tests
+
+`tests/test_chapter.py::test_split_heading_dotted_numbering_combines_with_title`.
+
+### 泛化
+
+无关键词表。信号均为结构化：纯数字编号、连字符、英文虚词表（语法标记，
+跨领域稳定）、几何对齐（bbox / 列 / 字体族匹配）。
+
+---
+
 ## Iteration 25 Track 2 — Vector-Drawn Page Classification (2026-04-15)
 
 **Scope**: ParserX 端。修复 ParseBench Track C 文档截断：矢量渲染 PDF

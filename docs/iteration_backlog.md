@@ -38,8 +38,14 @@ product-value (not leaderboard score):
    `PDFProvider._classify_page` 新增矢量页判据：text<500 且
    drawings>200 → SCANNED。修复 landfill(1→3679 chars)、
    finra(241→5853 chars)。纯视觉信号。
-4. Iter 26 — PDF bold-only heading (backlog B)。
-5. Iter 27 — code-block boundary (backlog L) + `is_sub`。
+4. **Iter 26 — 跨元素标题合并 — DONE 2026-04-15。**
+   `chapter._merge_split_section_headings` + `_split_heading_body_elements`
+   rewrite：识别 numbering-only 行 / trailing hyphen / dangling conjunction
+   并吸收下一行/下一相邻元素（同列同 bbox）。paper01 heading_f1
+   0.667 → 0.725 (+0.058)，char_f1 0.975 → 0.982。原始 bold-only
+   频率过滤并非瓶颈（bold 10pt 已在候选内）——真正缺口是 Iter 23 layout
+   reorder 产生的 heading 碎片。
+5. Iter 27 — PDF bold-only title hierarchy (backlog B 续) + code-block boundary (backlog L) + `is_sub`。
 6. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
