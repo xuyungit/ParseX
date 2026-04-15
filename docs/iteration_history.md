@@ -47,9 +47,10 @@ patent01（14 页中文专利）：原来 `[0005] ... 具体过程如下：[0006
 - patent01 章节标题（权利要求书 / 说明书 / 附图）仍无结构标记 —
   PDF 原文把它们作为页眉格式呈现，提升为章节标题需要更具体的策略，
   留待后续迭代。
-- `ground_truth/patent01/expected.md` 目前只覆盖首页（53 行），
-  `char_f1` / `edit_distance` 评分暂不具参考价值，本次以输出目视
-  验证为准。
+- `ground_truth/patent01/expected.md` 已在本次迭代中补齐到全文
+  14 页（cover + 权利要求书 + 说明书 + 附图），可作为后续迭代的
+  完整 char_f1/edit_distance 参考。expected.md 中的图片条目采用
+  `page_N_figure_M` 形式的泛化文件名，不依赖当前实现。
 
 ---
 

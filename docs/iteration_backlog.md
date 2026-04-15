@@ -31,6 +31,10 @@ product-value (not leaderboard score):
    patent01 剩余（章节标题、首页 reading order、expected.md 补全）
    + Track C truncation audit 合并进 Iter 25。
 2. **Iter 25 — patent01 章节结构 + Track C truncation audit。**
+   章节结构要坚持**泛化启发式**（如 bold+孤立短行+位置信号），
+   禁止用 "权利要求书 / 说明书 / 附图" 这种关键词清单——
+   专利只是众多带分节文档类型之一，写死关键词无法迁移到法规、
+   标准、技术规范等同类文档。
 3. Iter 26 — PDF bold-only heading (backlog B)。
 4. Iter 27 — code-block boundary (backlog L) + `is_sub`。
 5. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
