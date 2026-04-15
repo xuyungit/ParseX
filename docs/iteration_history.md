@@ -8,6 +8,68 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 27 — Dotted-Numbering Heading Depth (2026-04-15)
+
+**Scope**: ParserX 端 PDF heading hierarchy polish（延续 Iter 26）。
+paper01 expected.md 把 `3.2.1 Node Placement` 标为 `#### `（H4），
+`3.2.2 Cross-Device Communication` 同理，但 `_heading_level_from_numbering`
+对所有 `section_arabic_nested` 匹配一律返回 H3——即 `3.2` 与 `3.2.1`
+同级。
+
+### Fix
+
+`parserx/processors/chapter.py::_heading_level_from_numbering`：
+section_arabic_nested 分支改为按点号深度计算层级。提取 leading
+dotted-number，`depth = dot_count + 1`，返回 `min(depth + 1, 6)`：
+
+- `3.` → H2（保持旧行为，走 section_arabic_root 分支）
+- `3.1` → depth 2 → H3（保持旧行为）
+- `3.2.1` → depth 3 → H4
+- `3.2.1.1` → depth 4 → H5
+- 封顶 H6
+
+当 font signal 与 numbering 同时存在时，`_detect_heading` 已有"prefer
+numbering level"逻辑，故该修改直接生效；其它数字模式（`section_arabic_root`
+`section_arabic_spaced` `chapter_cn` `section_cn` 等）走旧映射不变。
+
+### Impact (paper01, deterministic run)
+
+| Metric | Pre-Iter 27 | Post-Iter 27 | Δ |
+|--------|-------------|--------------|---|
+| heading_f1    | 0.667 | 0.791 | **+0.124** |
+| edit_distance | 0.328 | 0.264 | **−0.064** |
+| char_f1       | 0.975 | 0.979 | +0.004 |
+
+paper_chn01 heading_f1 0.774 → 0.867（+0.093，同类 `X.Y.Z` 深度结构）。
+其它文档 heading_f1 不变。OCR 相关 `ocr_scan_jtg3362` /
+`paper_chn01` 的 edit_distance / table_cell_f1 波动属 OCR 服务侧
+抖动，与本次改动无关（仅触达确定性 numbering 代码路径）。
+
+### Scope discipline
+
+Iter 27 原计划包含：首页 title 合并、glyph-only heading candidate 过滤
+（去除 `DejaVuSans 12.1pt` 等单字形伪标题）、bold-only spurious heading
+gating。实验发现：
+
+- `:` 继续吸收（`TensorFlow:` + `Large-Scale…`）导致标题合为一行，
+  与 expected.md 的两行 H1 形式不匹配，heading_f1 反降，已回退。
+- glyph-only 候选过滤的级联效应使 `3.1/3.2` 在 full config 下被判 H2
+  （LLM / OCR 回填路径受候选排名变化影响），heading_f1 反降，已回退。
+- bold-only gating（`Variables/Devices/Tensors` vs `Operations and
+  Kernels/Sessions`）两组同 font（10pt Medi Bold）短语视觉无差异，无
+  确定性信号可区分，推迟。
+
+### Deferred to next iteration
+
+- 首页 title 双行 H1 合并（`TensorFlow:` + `Large-Scale…`）需要
+  特殊 renderer 分行处理，不能一味 join。
+- `# of Relu` 等源自 Python `#` 行内注释的伪 H1 —— 属 backlog L
+  (code-block boundary)。
+- Bold-only inline emphasis vs sub-heading 的二次信号（段落起始、
+  独占一行、followed by body）。
+
+---
+
 ## Iteration 26 — Cross-Element Heading Merge (2026-04-15)
 
 **Scope**: ParserX 端。Backlog B 子项——Iter 23 PaddleOCR layout reorder
