@@ -608,3 +608,36 @@ def test_zero_signal_no_llm_graceful():
 
     target = doc.pages[0].elements[1]
     assert "heading_level" not in target.metadata
+
+
+# ── Iter 26: cross-element heading merging ──────────────────────────────
+
+
+def _bbox_elem(content: str, bbox: tuple, size: float = 12.0, bold: bool = True) -> PageElement:
+    return PageElement(
+        type="text",
+        content=content,
+        bbox=bbox,
+        font=FontInfo(name="NimbusRomNo9L-Medi", size=size, bold=bold),
+        source="native",
+    )
+
+
+def test_split_heading_dotted_numbering_combines_with_title():
+    """Heading with dotted-numbering line + title line on next line is combined.
+
+    Layout-based reading order can leave ``"3.1\\nSingle-Device Execution"``
+    in one element. Renderer must emit ``### 3.1 Single-Device Execution``
+    as a single heading, not heading + body line.
+    """
+    doc = _build_doc([
+        _bbox_elem("正文" * 60, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem("3.1\nSingle-Device Execution", (50, 250, 500, 280)),
+        _bbox_elem("Body paragraph " * 20, (50, 300, 500, 500), size=10.0, bold=False),
+    ])
+    ChapterProcessor().process(doc)
+    heading = doc.pages[0].elements[1]
+    assert heading.metadata.get("heading_level") is not None
+    assert heading.content == "3.1 Single-Device Execution"
+
+
