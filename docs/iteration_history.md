@@ -33,12 +33,17 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ### Impact
 
-- paper01: heading_f1 0.667 → 0.725 (+0.058), char_f1 0.975 → 0.982,
-  edit_distance 0.328 → 0.252。
+- paper01: heading_f1 0.667 → 0.747 (+0.080), char_f1 0.975 → 0.982,
+  edit_distance 0.328 → 0.250。
 - text_report01 标题碎片 `# 《四川...首版次\n\n推广应用指导目录》` 同步修复。
-- 遗留：5.2 / 5.4 renderer 端 inline_spans 仍覆盖单 element rewrite——
-  元素层已修正但 assembly 阶段 inline_spans 路径优先。需 LineUnwrap /
-  inline_spans 层后续清理。
+
+### Tail fix — inline_spans invalidation (commit `e37c87b`)
+
+`TextCleanProcessor` 在 `inline_spans` 存在时从 span 重建 content，
+撤销了 ChapterProcessor 的跨元素合并（5.2 / 5.4 在 renderer 输入端
+又回到 split 形态）。修复：`_merge_split_section_headings` 与
+`_split_heading_body_elements` 改写 content 时 `pop('inline_spans')`。
+paper01 heading_f1 0.725 → 0.747。
 
 ### Tests
 
