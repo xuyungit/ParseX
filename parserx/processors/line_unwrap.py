@@ -68,6 +68,7 @@ _LIST_MARKER_RE = re.compile(
     r"|[一二三四五六七八九十百千万]+[、.]"
     r"|第[一二三四五六七八九十百千万0-9]+[条款项目章节编]"
     r"|[（(](?:\d+|[A-Za-z一二三四五六七八九十百千万]+)[）)]"
+    r"|\[\d{1,6}\]"
     r")\s*"
 )
 
@@ -129,6 +130,12 @@ def _should_merge_lines_3way(
 
     if not current or not next_line:
         return "keep"
+
+    # A bare list marker line (e.g. "[0005]") should merge into the
+    # following content line — the marker opens a paragraph whose text
+    # starts on the next visual line.
+    if _LIST_MARKER_RE.fullmatch(current) and not _looks_like_list_item(next_line):
+        return "merge"
 
     # A new list item starting on next_line should not merge.
     if _looks_like_list_item(next_line):

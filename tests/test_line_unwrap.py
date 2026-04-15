@@ -64,6 +64,18 @@ def test_preserve_chinese_list_markers():
     assert _unwrap_text_block(text, average_line_length=20) == text
 
 
+def test_preserve_bracket_number_markers():
+    text = "[0005] 本发明的目的是解决实际刚度获取的问题，具体过程如下：\n[0006] 步骤一：建立桥梁有限元计算模型"
+    assert _unwrap_text_block(text, average_line_length=24) == text
+
+
+def test_bare_bracket_marker_joins_next_line():
+    # Bare "[0005]" line should absorb the content line below it.
+    text = "[0005]\n本发明的目的是解决实际刚度获取的问题\n[0006]\n步骤一：建立模型"
+    result = _unwrap_text_block(text, average_line_length=24)
+    assert result == "[0005] 本发明的目的是解决实际刚度获取的问题\n[0006] 步骤一：建立模型"
+
+
 def test_preserve_blank_line_between_paragraphs():
     text = "第一段前半句\n第一段后半句\n\n第二段"
     assert _unwrap_text_block(text, average_line_length=20) == "第一段前半句\n第一段后半句\n\n第二段"
