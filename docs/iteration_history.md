@@ -8,6 +8,51 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 24 — Bracket-Number Paragraph Segmentation (2026-04-15)
+
+**范围**: ParserX 端。`line_unwrap` 补充 `[NNNN]` 段落标记模式的
+识别与合并规则。目标场景：中国专利（`[0001]..[NNNN]`）以及任何
+使用方括号数字编号的文书。
+
+### What Was Done
+
+`parserx/processors/line_unwrap.py`:
+
+- `_LIST_MARKER_RE` 增加 `\[\d{1,6}\]` 分支 — 方括号数字段落标记
+  现在被视作 list item，后续行不会把它当成续接文本合并掉。
+- `_should_merge_lines_3way` 补一条前置规则：当前行如果是**纯粹
+  的** list marker（`fullmatch`），且下一行不是新的 list item，
+  则 `return "merge"`。处理 PDF 抽取把 `[0005]` 单独成行、正文在
+  下一行的常见情况。
+
+配套单元测试两条：
+- `test_preserve_bracket_number_markers` — 两段 `[NNNN]` 内容不合并。
+- `test_bare_bracket_marker_joins_next_line` — 光标记行下吸续行。
+
+### Impact
+
+patent01（14 页中文专利）：原来 `[0005] ... 具体过程如下：[0006]
+步骤一：...` 两段被合并到同一行（同样问题出现在 `[0026]+[0027]`,
+`[0045]+[0046]`）。修复后每个 `[NNNN]` 单独起段、正文跟随；输出
+`[NNNN]` 段落计数从 90 升至 93（3 对正确拆分）、0 条合并残留。
+
+确定性回归（deterministic-only）：纯文本 docs 均保持不变；text_report01
+等图片类 DOCX 的差异来自 VLM image-description 调用的非确定性，与
+本次改动无关。
+
+### Known Limits / Out of Scope
+
+- 表达式行内夹带 `[0016]` 这类公式后紧接标记仍会留在同一行（公式
+  提取阶段处理，不在本迭代范围）。
+- patent01 章节标题（权利要求书 / 说明书 / 附图）仍无结构标记 —
+  PDF 原文把它们作为页眉格式呈现，提升为章节标题需要更具体的策略，
+  留待后续迭代。
+- `ground_truth/patent01/expected.md` 目前只覆盖首页（53 行），
+  `char_f1` / `edit_distance` 评分暂不具参考价值，本次以输出目视
+  验证为准。
+
+---
+
 ## Iteration 23 — Hybrid Column-Aware Extraction via PaddleOCR Layout (2026-04-14)
 
 **范围**: ParserX 端。native PDF 多列页面复用 PaddleOCR 的 layout

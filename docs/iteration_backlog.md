@@ -1,9 +1,39 @@
 # Iteration Backlog
 
-Updated: 2026-04-14 (post Iteration 20 Track A)
+Updated: 2026-04-15 (post Iteration 23, re-prioritized)
 
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
+
+## Re-prioritization 2026-04-15
+
+After Iter 18–23, review of ParseBench remaining items by
+product-value (not leaderboard score):
+
+**Kept as valuable:**
+- Iter 20 Track C — document truncation audit (real content loss)
+- `is_sub` preservation (chemistry/math semantics; low cost, reuses
+  Iter 21/22 span infra)
+- `is_code_block` — fold into backlog L (code-block boundary)
+- Chart understanding (new capability, not leaderboard vanity)
+
+**Dropped as low-value:**
+- Iter 20 Track B (TOC trailing page number) — regex-only win, product
+  should strip page numbers anyway
+- Iter 19 (`<page_header>`/`<page_footer>` tag wrap) — format contract
+  only, no downstream use
+- `is_underline` regex chasing — Iter 22 proved poor ROI
+- `is_mark` / `is_strikeout` polishing — aesthetic
+
+**Execution order:**
+1. **Iter 24 — `[NNNN]` paragraph segmentation — DONE 2026-04-15.**
+   `line_unwrap` 新增 `[\d+]` list marker + bare-marker 下吸规则。
+   patent01 剩余（章节标题、首页 reading order、expected.md 补全）
+   + Track C truncation audit 合并进 Iter 25。
+2. **Iter 25 — patent01 章节结构 + Track C truncation audit。**
+3. Iter 26 — PDF bold-only heading (backlog B)。
+4. Iter 27 — code-block boundary (backlog L) + `is_sub`。
+5. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
 
