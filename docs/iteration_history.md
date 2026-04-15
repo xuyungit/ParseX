@@ -8,6 +8,62 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 25 Track 1 — Section-Opener Page Headers (2026-04-15)
+
+**Scope**: ParserX 端。为**任何使用 `N/M 页` 分节页眉惯例**的
+PDF（专利、法规、技术标准）自动提升首次出现的节标题到 `# H1`，
+并去除后续重复。
+
+### Design
+
+纯视觉+结构启发式（符合 `feedback_generalization.md`）：
+
+- 正则 `^\s*(?P<name>.+?)\s+\d{1,4}\s*/\s*\d{1,4}\s*页\s*$`
+  匹配单行形式 `"说明书 1/6 页"`。
+- Layout-only OCR 会把顶部节名和 `N/M 页` 合并成同一元素的多行
+  内容，再接正文；补充 Case B：首行是短文本（≤20 字）+ 次行
+  `N/M 页`。两种情形都提取 name。
+- 顶部区域宽容检查（≤15% 页高，2× 配置值），容忍 OCR 区域 bbox 偏移。
+- **首次出现**：新建 `heading_level=1`、`section_page_header_origin=True`
+  的元素插入页顶，原元素剩余正文保留。**后续出现**：剔除节名+页码行，
+  只保留正文（若有）。
+
+**没有**维护 `["权利要求书","说明书","附图"]` 这类关键词表——
+name 由匹配段动态捕获，可迁移到标准/法规/规范等同类文档。
+
+### Impact
+
+patent01（14 页）：
+
+- `# 权利要求书` / `# 说明书` / `# 说明书附图` 三个节标题现在全部
+  提升为 H1，不再作为页眉噪声泄漏到正文。
+- 修复前输出仍可见 `说明书\n1/6 页\n...` 在 4/6/8 页开头，修复后
+  彻底消失。
+
+`scripts/regression_test.py --gt-dir ground_truth --deterministic-only`：
+- paper01 edit_distance 0.328 → 0.250, heading_f1 0.667 → 0.725
+  (与本迭代无直接因果，OCR 变动顺带改善)。
+- paper_chn01 / text_report01 / ocr_scan_jtg3362 的偏差与 OCR 服务
+  和 VLM 描述非确定性一致（见 Iter 24 结论），非本改动引入。
+- patent01 仍未进入回归表（`ground_truth/patent01/expected.md`
+  gitignored）。
+
+### Files
+
+- `parserx/processors/header_footer.py`: `_SECTION_PAGE_HEADER_RE`,
+  `HeaderFooterProcessor._promote_section_page_headers` (step 0 before
+  frequency pass).
+- `tests/test_header_footer.py`: `test_section_page_header_single_line_promoted`,
+  `test_section_page_header_split_across_lines_promoted`.
+
+### Known Limits
+
+- 依赖 `N/M 页` 惯例，不覆盖纯字号/字体触发的节标题（paper01
+  bold-only headings 仍需 Iter 26/backlog B）。
+- Track 2（ParseBench Track C 截断审计）未纳入本迭代，留作下一步。
+
+---
+
 ## Iteration 24 — Bracket-Number Paragraph Segmentation (2026-04-15)
 
 **范围**: ParserX 端。`line_unwrap` 补充 `[NNNN]` 段落标记模式的
