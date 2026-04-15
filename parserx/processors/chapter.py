@@ -174,11 +174,24 @@ def _heading_level_from_font(
 
 
 def _heading_level_from_numbering(text: str) -> int | None:
-    """Infer heading level from numbering pattern."""
+    """Infer heading level from numbering pattern.
+
+    Dotted arabic numbering uses depth: ``N`` → H2, ``N.M`` → H3,
+    ``N.M.K`` → H4, etc. Non-arabic or fixed-level patterns fall back
+    to the table in ``_NUMBERING_PATTERNS``.
+    """
     result = detect_numbering_signal(text)
     if not result:
         return None
-    _, level_str = result
+    signal, level_str = result
+    if signal == "section_arabic_nested":
+        stripped = re.sub(r"^\s{0,3}#{1,6}\s*", "", text.strip())
+        stripped = stripped.replace("**", "").replace("*", "")
+        m = re.match(r"^(\d+(?:\.\d+)+)", stripped)
+        if m:
+            depth = m.group(1).count(".") + 1  # 3.2 → 2, 3.2.1 → 3
+            # Cap at H6; depth-2 → H3 (matches prior behavior for "3.2").
+            return min(depth + 1, 6)
     return {"H1": 1, "H2": 2, "H3": 3}.get(level_str)
 
 

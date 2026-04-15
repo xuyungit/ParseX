@@ -43,15 +43,20 @@ product-value (not leaderboard score):
    rewrite + inline_spans invalidation tail (commit `e37c87b`)。
    paper01 heading_f1 0.667 → 0.747 (+0.080)，char_f1 0.975 → 0.982，
    edit_distance 0.328 → 0.250。
-5. **Iter 27 — PDF heading hierarchy polish** (paper01 heading_f1 0.747
-   → 0.9+ 目标)：剩余缺口为层级错配（H4 被判 H3、H3 被判 H2），
-   首页 title/Abstract 漏检，若干 bold-only 单词被误判为 heading
-   (`Variables`/`Devices`/`Tensors`)。根因在 MetadataBuilder 字体
-   频率排名与 ChapterProcessor 的层级映射。候选工作：首页 title
-   anchor（page 1 最大字号独占一行）、层级基于 font-size 连续性而非
-   candidate 索引、bold-only 候选短语需有 numbering 或邻接 body 作为
-   二次信号。Code-block boundary (backlog L) + `is_sub` 合并其后。
-6. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
+5. **Iter 27 — Dotted-numbering heading depth — DONE 2026-04-15。**
+   `_heading_level_from_numbering` 的 section_arabic_nested 分支按
+   点号深度返回 H2/H3/H4/…（`3.2.1` → H4）。paper01 heading_f1
+   0.667 → 0.791（+0.124），edit_distance 0.328 → 0.264。
+   paper_chn01 heading_f1 0.774 → 0.867（+0.093）。
+   glyph-only 候选过滤 + `:` 续行合并实验失败（级联降分）已回退。
+6. **Iter 28 — PDF heading hierarchy polish 续** (paper01 0.791
+   → 0.9+ 目标)：双行 H1 title（`TensorFlow:` + `Large-Scale…`）
+   需 renderer 保持分行而非 join；`### Variables/Devices/Tensors`
+   等 bold-only inline emphasis vs real sub-heading 的二次信号
+   （段落起始、独占一行、followed by body）；Code-block boundary
+   (backlog L) 覆盖 `# of Relu` 源自 Python 注释的伪 H1；
+   `is_sub` 保留（chemistry/math semantics）并入。
+7. Iter 29+ — DOCX table/image quality (C)，然后 Chart track。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
 
