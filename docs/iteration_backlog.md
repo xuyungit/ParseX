@@ -40,12 +40,17 @@ product-value (not leaderboard score):
    finra(241→5853 chars)。纯视觉信号。
 4. **Iter 26 — 跨元素标题合并 — DONE 2026-04-15。**
    `chapter._merge_split_section_headings` + `_split_heading_body_elements`
-   rewrite：识别 numbering-only 行 / trailing hyphen / dangling conjunction
-   并吸收下一行/下一相邻元素（同列同 bbox）。paper01 heading_f1
-   0.667 → 0.725 (+0.058)，char_f1 0.975 → 0.982。原始 bold-only
-   频率过滤并非瓶颈（bold 10pt 已在候选内）——真正缺口是 Iter 23 layout
-   reorder 产生的 heading 碎片。
-5. Iter 27 — PDF bold-only title hierarchy (backlog B 续) + code-block boundary (backlog L) + `is_sub`。
+   rewrite + inline_spans invalidation tail (commit `e37c87b`)。
+   paper01 heading_f1 0.667 → 0.747 (+0.080)，char_f1 0.975 → 0.982，
+   edit_distance 0.328 → 0.250。
+5. **Iter 27 — PDF heading hierarchy polish** (paper01 heading_f1 0.747
+   → 0.9+ 目标)：剩余缺口为层级错配（H4 被判 H3、H3 被判 H2），
+   首页 title/Abstract 漏检，若干 bold-only 单词被误判为 heading
+   (`Variables`/`Devices`/`Tensors`)。根因在 MetadataBuilder 字体
+   频率排名与 ChapterProcessor 的层级映射。候选工作：首页 title
+   anchor（page 1 最大字号独占一行）、层级基于 font-size 连续性而非
+   candidate 索引、bold-only 候选短语需有 numbering 或邻接 body 作为
+   二次信号。Code-block boundary (backlog L) + `is_sub` 合并其后。
 6. Iter 28+ — DOCX table/image quality (C)，然后 Chart track。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
