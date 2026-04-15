@@ -8,6 +8,59 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 28 Track A — Bold-at-Body-Size Geometric Gating (2026-04-15)
+
+**Scope**: ParserX 端 PDF heading hierarchy polish（延续 Iter 27）。
+paper01 中 10pt Medi Bold 同时覆盖真 H3（`Operations and Kernels`、
+`Sessions`、`Data Parallel Training`）和段首加粗术语（`Variables`、
+`Devices`、`Tensors`）。纯 font signal 无法区分——二者 font_key 相同。
+
+### Fix
+
+`parserx/processors/chapter.py` 新增 `_has_heading_vertical_isolation()`，
+在 `_detect_heading` 的 font-only 分支做几何二次判据：
+当候选字号落在 `body_font.size + 0.5` 之内（即仅靠 bold 区分），
+要求同栏（bbox x 轴 ≥ 50% 重叠）最近的前驱元素上方留白
+≥ `1.4 × line_height`；否则置 `heading_geometric_reject=True` 并返回 `None`。
+
+同栏前驱不存在时保守拒绝——真正的页/栏顶标题通常字号更大（不会
+进入本分支），而 body-sized bold 出现在栏顶更多是跨页/跨栏的段落续行
+（如 `Variables` 在 p4 栏顶是 p3 最后一段的 bold 引语）。
+
+`_build_fallback_candidate` 读取 `heading_geometric_reject` 标记，
+阻止 LLM fallback 把已拒绝元素重新升级（否则被拒的 Devices/Tensors
+会经 LLM 路径反而升级为 H2）。
+
+### Impact (paper01, deterministic run)
+
+| Metric | Pre-Track A | Post-Track A | Δ |
+|--------|-------------|--------------|---|
+| heading_f1    | 0.791 | 0.818 | **+0.027** |
+| edit_distance | 0.264 | 0.255 | −0.009 |
+| char_f1       | 0.979 | 0.979 | — |
+
+确定性评估集其它文档 heading_f1 全部未变；文本相似度波动（paper_chn01
+OCR, text_report01 VLM image-description 中英混合）属既有 flakiness，
+`best_scores` 已标注 stale。DOCX 分支（`body_font.size == 0`）受 guard
+保护，未触达。
+
+### Scope discipline
+
+只上线 Track A。Track B（page-1 双行 H1 title 合并 / `TensorFlow:` +
+`Large-Scale…`）和 Track C（code-block boundary 扩展）按 backlog 顺序
+延后单独迭代，避免 Iter 27 那样的级联回归风险。
+
+### Remaining paper01 heading gaps
+
+- `## Model Parallel Training`、`## Concurrent Steps…`、`## Visualization of
+  Computation Graphs`、`## Visualization of Summary Data` 当前被 fallback
+  升级成 H2，GT 期望为 H3（或不作为 heading）。层级误判而非漏检，
+  留待后续 `_build_fallback_candidate` level-hint 校准。
+- 首页 `## Abstract` 缺失——原 PDF 文本流无字面 "Abstract" 词，
+  GT 合成。Track A 副作用未覆盖；需 Track B 或 abstract 专项。
+
+---
+
 ## Iteration 27 — Dotted-Numbering Heading Depth (2026-04-15)
 
 **Scope**: ParserX 端 PDF heading hierarchy polish（延续 Iter 26）。

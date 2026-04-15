@@ -49,31 +49,35 @@ product-value (not leaderboard score):
    0.667 → 0.791（+0.124），edit_distance 0.328 → 0.264。
    paper_chn01 heading_f1 0.774 → 0.867（+0.093）。
    glyph-only 候选过滤 + `:` 续行合并实验失败（级联降分）已回退。
-6. **Iter 28 — PDF heading hierarchy polish 续** (paper01 0.791
-   → 0.9+ 目标)。按 ROI 排序子任务：
+6. **Iter 28 Track A — Bold-at-body-size 几何 gating — DONE 2026-04-15**。
+   `_has_heading_vertical_isolation` + `heading_geometric_reject`
+   标记（commit `9fa78f9`）。paper01 heading_f1 0.791 → 0.818
+   (+0.027)；spurious `### Variables/Devices/Tensors` 去除。
+   Track B / C 延后单独迭代。
+   **未解决遗留**：
+   - paper01 `## Model Parallel Training` 等被 fallback 升级到 H2
+     （GT 为 H3/非 heading）——`_build_fallback_candidate` level
+     hint 校准。
+   - paper01 首页 `## Abstract` 漏检（PDF 无字面词）。
+   - Track B（page-1 双行 H1 `TensorFlow:` + `Large-Scale…` 合并）。
+   - Track C（code-block boundary，含 `# of Relu` 伪 H1）。
 
-   **Track A（确定性、无级联风险，首发）**：Bold-only inline
-   emphasis 的几何 gating。paper01 spurious `### Variables`,
-   `### Devices`, `### Tensors` 与真 H3 `### Operations and Kernels`,
-   `### Sessions`, `### Data Parallel Training` 同 font (10pt Medi
-   Bold)，但前者嵌在段落内部（上一元素底部与当前顶部 gap
-   < 1.2 line-height、下一元素紧邻同 y-range），后者段落起始且
-   独占一行。`_detect_heading` font-only 分支加二次几何判据：
-   要求前/后 vertical gap ≥ 1 line-height 且 bbox 独占行。
-
-   **Track B（renderer 分行）**：`_split_heading_body_elements` 识别
-   page-1 largest-font 多行 title（首行末尾 `:` / 全部同字号同样
-   bold / 总 ≤3 行），emit 多个 PageElement 保持 heading_level 而非
-   join。只触达 page-1 且命中 largest-candidate，风险受限。
-
-   **Track C（backlog L 并行）**：Code-block boundary 扩展，覆盖
-   paper01 `# of Relu`（Python `#` 注释被渲染成伪 H1）及
-   text_code_block heading_f1=0.500。
-
-   **Abstract heading** 视 Track A 副作用自然收敛（10pt Medi Bold
-   独占一行、后接正文）—— 若 Track A 上线后仍漏检再单独处理。
-
-7. **Iter 29 backlog**：`is_sub` preservation (chemistry/math)、
+7. **Iter 29 候选（按 ROI 排序）**：
+   a. **Fallback level-hint 校准**：`_build_fallback_candidate` 默认
+      把 body-sized bold 提到 H2，应根据 `heading_candidates` rank
+      对齐到 H3。影响 paper01 Model Parallel Training / Visualization
+      等 ≥4 处层级误判。确定性、低级联。
+   b. **Track B — page-1 双行 title 合并**：`_split_heading_body_elements`
+      识别 largest-font 多行 title（≤3 行，相同 font_key），emit
+      多 PageElement 保持 heading_level 而非 join。
+   c. **Track C — code-block boundary 扩展**（backlog L 归并）：
+      `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
+   d. **Abstract 页顶 heading 补插**：首页 body-sized Bold + 后接
+      大正文段落 + 距 title ≥ 2×line-height → 插入 virtual "Abstract"
+      heading。高风险需 guard。
+   e. **`is_sub` preservation**（chemistry/math 语义）、paper_chn02
+      HTML 表头 / Chinese doc class、DOCX table/image quality
+      (backlog C)，然后 Chart track (M)。
    paper_chn02 HTML 表头 / Chinese doc class、DOCX table/image
    quality (backlog C)，然后 Chart track (M)。
 
