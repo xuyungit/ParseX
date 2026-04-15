@@ -561,6 +561,18 @@ class PDFProvider:
         if total_text_chars < 50 and image_coverage > 0.5:
             return PageType.SCANNED
 
+        # Vector-drawn PDFs (e.g. print-to-PDF from web pages with embedded
+        # SVG, rasterized scans re-saved as vector paths). No images, little
+        # or no extractable text, but a dense set of drawing operations that
+        # visually render text. Without OCR these pages emit empty output.
+        if total_text_chars < 500:
+            try:
+                drawing_count = len(fitz_page.get_drawings())
+            except Exception:
+                drawing_count = 0
+            if drawing_count > 200:
+                return PageType.SCANNED
+
         # Detect OCR text layer on scanned pages: a dominant image
         # covers >50% of the page and >70% of text chars sit inside it.
         if (
