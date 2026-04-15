@@ -1095,9 +1095,24 @@ class ChapterProcessor:
                 if idx < 1 or idx > len(batch):
                     continue
 
-                elem = batch[idx - 1]["element"]
+                candidate = batch[idx - 1]
+                elem = candidate["element"]
                 if level == 0 or elem.metadata.get("heading_level"):
                     continue
+
+                # Level calibration: the font rank among heading_candidates
+                # is authoritative for depth (rank-3+ → H3). When the LLM
+                # returns a shallower level than the font hint, clamp down
+                # to the hint. Numbering hint, when present, takes
+                # precedence over font (handled similarly). This prevents
+                # the LLM's prior toward H2 from overriding clear visual
+                # evidence that a bold-at-body-size candidate is H3.
+                font_hint = candidate.get("font_level_hint") or 0
+                numbering_hint = candidate.get("numbering_level_hint") or 0
+                if numbering_hint and level < numbering_hint:
+                    level = numbering_hint
+                elif font_hint and level < font_hint:
+                    level = font_hint
 
                 pending.append((elem, level))
 
