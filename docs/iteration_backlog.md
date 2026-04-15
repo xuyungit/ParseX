@@ -62,14 +62,26 @@ product-value (not leaderboard score):
    - Track B（page-1 双行 H1 `TensorFlow:` + `Large-Scale…` 合并）。
    - Track C（code-block boundary，含 `# of Relu` 伪 H1）。
 
-7. **Iter 29 候选（按 ROI 排序）**：
-   a. **Fallback level-hint 校准**：`_build_fallback_candidate` 默认
-      把 body-sized bold 提到 H2，应根据 `heading_candidates` rank
-      对齐到 H3。影响 paper01 Model Parallel Training / Visualization
-      等 ≥4 处层级误判。确定性、低级联。
+7. **Iter 29a — Fallback level-hint 校准 — DONE 2026-04-16**
+   （commit `9618876`）。`_apply_llm_fallback` 在写入 `pending` 前把
+   LLM level clamp 到 `numbering_level_hint` / `font_level_hint` floor。
+   paper01 edit_distance 0.255 → 0.234。heading_f1 持平（fallback
+   影响层级而非 heading 判定）。详见 history Iter 29a 段。
+   OCR `paragraph_title` 层级二义性（两次 demote 方案均回退）未解决，
+   作为独立候选留在下方 (a')。
+
+8. **Iter 30 候选（按 ROI 重排）**：
+   a'. **OCR paragraph_title H2/H3 二义性**（`parserx/builders/ocr.py:1458`
+      把所有 paragraph_title 硬编码 H2）。paper01 4 处 `Model Parallel
+      Training` / `Visualization…` 仍为 H2。需要独立 iter：引入
+      文档级信号（字号 cluster、numbering scheme 深度、是否存在
+      真 H1）再决定默认层级；同时排查 paper_chn01 在 demote 后
+      edit_distance 剧烈回退的级联路径（怀疑 section 分段 → line_unwrap
+      输出差异）。
    b. **Track B — page-1 双行 title 合并**：`_split_heading_body_elements`
       识别 largest-font 多行 title（≤3 行，相同 font_key），emit
-      多 PageElement 保持 heading_level 而非 join。
+      多 PageElement 保持 heading_level 而非 join。paper01
+      `TensorFlow:` + `Large-Scale Machine Learning…`。
    c. **Track C — code-block boundary 扩展**（backlog L 归并）：
       `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
    d. **Abstract 页顶 heading 补插**：首页 body-sized Bold + 后接
@@ -78,8 +90,10 @@ product-value (not leaderboard score):
    e. **`is_sub` preservation**（chemistry/math 语义）、paper_chn02
       HTML 表头 / Chinese doc class、DOCX table/image quality
       (backlog C)，然后 Chart track (M)。
-   paper_chn02 HTML 表头 / Chinese doc class、DOCX table/image
-   quality (backlog C)，然后 Chart track (M)。
+
+**推荐下一步**: (b) Track B——单文件改动，仅 split/emit 逻辑，
+无 heading-level 级联风险；paper01 首页 H1 明确缺失可衡量。
+(a') 推迟直到能独立分析 paper_chn01 级联机制。
 
 ## Current Baseline (2026-04-12, 15 ground truth docs)
 

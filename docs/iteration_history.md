@@ -8,6 +8,59 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 29a — Fallback Level-Hint Calibration (2026-04-16)
+
+**Scope**: paper01 剩余 heading 层级误判——`_build_fallback_candidate`
+路径下 LLM 倾向给 body-sized bold 返回 H2，即使 font rank 指示 H3。
+`font_level_hint` / `numbering_level_hint` 此前只作为提示传给 LLM，
+未在结果侧校准。
+
+### Fix
+
+`parserx/processors/chapter.py::_apply_llm_fallback` 在把 LLM 预测
+写入 `pending` 前增加 level clamp：
+
+```python
+if numbering_hint and level < numbering_hint:
+    level = numbering_hint
+elif font_hint and level < font_hint:
+    level = font_hint
+```
+
+即编号提示优先（N.M 深度已由 `_heading_level_from_numbering` 精确
+给出），其次以字体在 `heading_candidates` 的 rank 为 floor。LLM 仍可
+把候选判为 "非 heading"（level=0）或上调层级，但不能比视觉/编号
+证据更浅。
+
+### Impact
+
+- paper01: `edit_distance` 0.255 → 0.234（−0.021），`heading_f1`
+  0.818 持平（fallback 路径影响的是层级而非是否为 heading）。
+- 其它文档 heading_f1 未变；VLM/OCR 翻译波动属既有 flakiness。
+
+### Remaining gap（未在本 iter 修复）
+
+paper01 `## Model Parallel Training` / `## Concurrent Steps…` /
+`## Visualization of Computation Graphs` / `## Visualization of
+Summary Data` 仍为 H2（GT 为 H3）。根因在 `parserx/builders/ocr.py:1458`
+对 PaddleOCR `paragraph_title` 硬编码 `level=2`——这些元素来自 OCR
+路径，不经 `_detect_heading` 也不经 `_apply_llm_fallback`，本 iter
+的 fallback 校准触达不到。
+
+尝试过两种 demote-to-H3 方案均回退：
+1. "前驱 heading 是 H2/H3 → 降级"：ocr01 heading_f1 0.833 → 0.706、
+   ocr_scan_jtg3362 heading_f1 0.105 → 0.000。
+2. "仅当 doc 有 ≥2 N.M 编号子节时降级"：paper01 heading_f1
+   0.818 → 0.841（+0.023）但 paper_chn01 edit_distance 0.506 →
+   0.724、char_f1 0.891 → 0.722（heading_f1 反而 +0.093）——层级
+   变化沿章节分段级联影响 markdown 输出。
+
+结论：OCR `paragraph_title` 的 H2/H3 二义性需要独立 iter，加入
+更多文档级信号（字号 cluster、doc 主结构层深）再统一决策；直接
+在 ChapterProcessor 做启发式 demote 风险过高。
+
+---
+
 ## Iteration 28 Track A — Bold-at-Body-Size Geometric Gating (2026-04-15)
 
 **Scope**: ParserX 端 PDF heading hierarchy polish（延续 Iter 27）。
