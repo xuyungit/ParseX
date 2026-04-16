@@ -50,10 +50,26 @@ largest font），括号行才是 body。
   + `test_split_heading_h1_multiline_no_colon_emits_separate_headings`)
   覆盖 colon + 无 colon + 长 subtitle + 括号 subtitle + 无 body 尾 行。
 
+### Full regression baseline (2026-04-16)
+
+Post-Iter 30 full eval: `eval_reports/iter30_baseline_2026-04-16.md`。
+16 docs, avg edit_distance=0.232, avg char_f1=0.903, avg heading_f1=0.542。
+
+Notable changes from prior baseline:
+- paper01 heading_f1 0.725 → **0.832** (Iter 26–30 累计)
+- patent01 edit_distance 0.955 → **0.425** (Iter 24–25)
+- ocr01 heading_f1 0.667 → **0.737** (Iter 27–29a)
+
+New finding: `simple_doc01`（未提交 DOCX GT）char_f1=0.458——Docling
+provider 对自动编号 heading 只提取编号不提取标题文本。非回退，
+作为 backlog 候选 f 记录。
+
 ### Open items
 
 - OCR `paragraph_title` 层级二义性（候选 a'）未触及，留给 Iter 31
   作为 document-level hierarchy recognition 主题单独推进。
+- Iter 31 前置诊断：确认 `vlm_review.py:388-389` heading_level
+  泄露是否为 paper_chn01 demote 级联回退的根因。
 
 ---
 
