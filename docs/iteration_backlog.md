@@ -79,16 +79,33 @@ product-value (not leaderboard score):
    非 body、非 metadata/括号），触发条件为 H1 或 colon-ended，无文档
    关键词。paper01 heading_f1 0.818 → 0.83 (+0.012)，其他文档无回退。
 
-9. **Iter 31 候选（按 ROI 重排）**：
-   a'. **OCR paragraph_title H2/H3 二义性**（`parserx/builders/ocr.py:1458`
-      把所有 paragraph_title 硬编码 H2）。paper01 4 处 `Model Parallel
-      Training` / `Visualization…` 仍为 H2。用户 explicitly 表示
-      **document-level hierarchy recognition is high priority**——阅读
-      体验 + 未来章节分割均依赖。需要独立 iter：引入文档级信号
-      （字号 cluster、numbering scheme 深度、是否存在真 H1、sibling
-      同级判定）再决定默认层级；同时排查 paper_chn01 在 demote 后
-      edit_distance 剧烈回退的级联路径（怀疑 section 分段 →
-      line_unwrap 输出差异）。**推荐下一步**。
+9. **Iter 31 — Document-level hierarchy recognition**。**推荐下一步**。
+
+   **核心问题**：`parserx/builders/ocr.py:1458` 硬编码 OCR
+   `paragraph_title` → H2。paper01 残留 4 处 `## Model Parallel
+   Training` 等应为 H3。用户标记 **高优先级**——影响阅读体验 + 未来
+   章节分割。
+
+   **前置诊断（级联隔离）**：此前两次 demote 尝试导致 paper_chn01
+   char_f1 0.891 → 0.722 剧烈回退。代码审计发现最大嫌疑为
+   `vlm_review.py:388-389` 把 `heading_level` 写入 VLM JSON 摘要——
+   heading level 变化导致 VLM 对周围 body text 的修正建议不同。
+   其他级别敏感消费者均为布尔用法（is heading or not），不应受层级
+   数值影响。
+
+   **计划**：
+   1. 诊断实验：throwaway patch 把 paragraph_title → H3，分别在
+      VLM review enabled / disabled 下跑 paper_chn01 eval；确认 VLM
+      是否为级联源。
+   2. 级联修复：把 VLM 摘要中 `heading_level` 改为布尔
+      `is_heading`（或 clamp 到 H2），使 VLM 输出对层级变化不敏感。
+   3. 安全上线层级推理：`_infer_ocr_heading_levels(doc)` 使用
+      文档级信号（numbering depth、font hierarchy rank、
+      bbox-height cluster）决定 paragraph_title 层级。
+   4. 验证门槛：paper01 heading_f1 ≥ 0.83；paper_chn01 char_f1 ≥ 0.71,
+      heading_f1 ≥ 0.81；其他无回退。
+
+   **其他候选（低优先级）**：
    c. **Track C — code-block boundary 扩展**（backlog L 归并）：
       `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
    d. **Abstract 页顶 heading 补插**：首页 body-sized Bold + 后接
@@ -97,28 +114,37 @@ product-value (not leaderboard score):
    e. **`is_sub` preservation**（chemistry/math 语义）、paper_chn02
       HTML 表头 / Chinese doc class、DOCX table/image quality
       (backlog C)，然后 Chart track (M)。
+   f. **simple_doc01 DOCX 编号标题修复**：Docling provider 对
+      auto-numbering heading 只提取到编号（`1.3.1`），丢失标题文本。
+      char_f1=0.458。需调查 Docling 对 `w:numPr` 的处理。
 
-## Current Baseline (2026-04-12, 15 ground truth docs)
+## Current Baseline (2026-04-16 post Iter 30, 16 ground truth docs)
+
+Full regression run: `eval_reports/iter30_baseline_2026-04-16.md`
 
 | Document | Edit Dist | Char F1 | Heading F1 | Table F1 | Notes |
 |----------|-----------|---------|------------|----------|-------|
-| text_table01 | 0.000 | 1.000 | 1.000 | — | Perfect (Iter16) |
-| text_table_libreoffice | 0.000 | 1.000 | 1.000 | 1.000 | Perfect |
-| text_table_word | 0.029 | 0.987 | 1.000 | 1.000 | Good |
-| receipt | 0.034 | 0.982 | 1.000 | — | Good |
+| text_table01 | 0.004 | 0.998 | 1.000 | — | Near-perfect |
+| text_table_libreoffice | 0.006 | 0.997 | 1.000 | 1.000 | Near-perfect |
+| text_table_word | 0.035 | 0.984 | 1.000 | 1.000 | Good |
 | pdf_text01_tables | 0.041 | 0.979 | 0.000 | 0.992 | Heading 缺失 |
 | text_code_block | 0.050 | 0.975 | 0.500 | — | Code fence 问题 |
 | deepseek | 0.077 | 0.939 | 0.000 | — | 繁体→简体 |
-| text_report01 | 0.101 | 0.949 | 0.625 | 1.000 | Heading 漏检; best_scores 过时 |
-| ocr01 | 0.157 | 0.964 | 0.667 | 0.897 | 表格对齐偏差 |
-| ocr_scan_jtg3362 | ~0.21 | ~0.89 | ~0.10 | ~0.86 | Heading 几乎全失; OCR 服务器不稳 |
-| text_pic02 | 0.277 | 0.911 | 0.250 | 0.224 | DOCX 表格/图片 |
-| paper01 | ~0.22 | 0.976 | 0.725 | — | Unicode 字符; heading 改善(Iter14) |
-| paper_chn01 | ~0.69 | ~0.76 | 0.867 | 1.000 | 需 OCR 服务; best_scores 过时 |
-| paper_chn02 | 0.650 | 0.776 | 0.182 | — | HTML 表头丢失 |
-| **patent01** | **0.955** | **0.159** | **0.000** | — | **灾难性失败** |
+| receipt | 0.089 | 0.958 | 1.000 | — | Good |
+| text_report01 | 0.122 | 0.937 | 0.526 | 1.000 | Heading 漏检 |
+| ocr01 | 0.139 | 0.960 | 0.737 | 0.903 | ocr01 heading 改善 |
+| text_pic02 | 0.182 | 0.975 | 0.250 | 0.195 | DOCX 表格/图片 |
+| ocr_scan_jtg3362 | 0.239 | 0.884 | 0.095 | 0.714 | OCR 服务器不稳 |
+| paper01 | 0.252 | 0.979 | **0.832** | — | Iter 30 title split 改善 |
+| patent01 | 0.425 | 0.908 | 0.500 | 1.000 | 大幅改善 (was 0.955/0.159) |
+| paper_chn02 | 0.633 | 0.807 | 0.129 | — | HTML 表头丢失 |
+| paper_chn01 | 0.707 | 0.714 | 0.812 | 1.000 | OCR 服务器波动 |
+| simple_doc01 | 0.711 | 0.458 | 0.286 | — | **新文档，未追踪**；DOCX 编号型 heading 提取丢失正文 |
+| **Average** | **0.232** | **0.903** | **0.542** | **0.488** | |
 
-Note: `~` 表示最近一次运行值，受 OCR 服务器稳定性影响。
+Note: simple_doc01 是本地未提交的 DOCX GT（2026-04-10 创建），
+DOCX 自动编号标题导致内容丢失（只提取到 `#### 1.3.1` 数字，无文字）。
+不属于 Iter 30 回退，是 Docling provider DOCX 编号样式问题。
 
 ## Next Iteration Candidates (优先级排序)
 
