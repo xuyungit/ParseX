@@ -641,3 +641,108 @@ def test_split_heading_dotted_numbering_combines_with_title():
     assert heading.content == "3.1 Single-Device Execution"
 
 
+# ── Iter 30: colon-ended multi-line title split ───────────────────────────
+
+
+def test_split_heading_colon_title_emits_separate_headings():
+    """Colon-ended title + subtitle become two separate heading elements.
+
+    Pattern: ``"TensorFlow:\\nLarge-Scale Machine Learning..."`` should emit
+    two H1 elements, not one H1 + body text.  Body lines (parenthetical)
+    after the subtitle stay as body text.
+    """
+    doc = _build_doc([
+        _bbox_elem("Body paragraph text. " * 40, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem(
+            "TensorFlow:\n"
+            "Large-Scale Machine Learning on Heterogeneous Systems\n"
+            "(Preliminary White Paper, November 9, 2015)",
+            (50, 220, 500, 280),
+        ),
+        _bbox_elem("More body paragraph text. " * 40, (50, 300, 500, 500), size=10.0, bold=False),
+    ])
+    ChapterProcessor().process(doc)
+    elems = doc.pages[0].elements
+    # First element: body text
+    assert "heading_level" not in elems[0].metadata
+    # Second element: main title heading
+    assert elems[1].metadata.get("heading_level") == 1
+    assert elems[1].content == "TensorFlow:"
+    # Third element: subtitle heading at same level
+    assert elems[2].metadata.get("heading_level") == 1
+    assert elems[2].content == "Large-Scale Machine Learning on Heterogeneous Systems"
+    # Fourth element: parenthetical as body text (no heading_level)
+    assert "heading_level" not in elems[3].metadata
+    assert "(Preliminary White Paper" in elems[3].content
+
+
+def test_split_heading_colon_no_body():
+    """Colon title + subtitle with no trailing body → two headings, no body element."""
+    doc = _build_doc([
+        _bbox_elem("Body paragraph text. " * 40, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem("Framework:\nArchitectural Overview", (50, 250, 500, 280)),
+    ])
+    ChapterProcessor().process(doc)
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 2
+    assert headings[0].content == "Framework:"
+    assert headings[1].content == "Architectural Overview"
+
+
+def test_split_heading_colon_long_subtitle_stays_body():
+    """Subtitle longer than 80 chars is not absorbed — stays as body text."""
+    long_subtitle = "A" * 81
+    doc = _build_doc([
+        _bbox_elem("Body paragraph text. " * 40, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem(f"Title:\n{long_subtitle}", (50, 250, 500, 280)),
+        _bbox_elem("More body paragraph text. " * 40, (50, 300, 500, 500), size=10.0, bold=False),
+    ])
+    ChapterProcessor().process(doc)
+    heading = doc.pages[0].elements[1]
+    assert heading.metadata.get("heading_level") is not None
+    assert heading.content == "Title:"
+    # Long subtitle becomes body
+    body = doc.pages[0].elements[2]
+    assert "heading_level" not in body.metadata
+    assert long_subtitle in body.content
+
+
+def test_split_heading_h1_multiline_no_colon_emits_separate_headings():
+    """H1 title without trailing colon: still split multi-line into separate headings.
+
+    Pattern: ``"Large-Scale Machine Learning\\non Heterogeneous Systems"``
+    (no colon on first line).  Both lines are short and title-like, so
+    each should emit as H1.  Tests generalization beyond colon-ended titles.
+    """
+    doc = _build_doc([
+        _bbox_elem("Body paragraph text. " * 40, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem(
+            "Large-Scale Machine Learning\non Heterogeneous Systems",
+            (50, 220, 500, 280),
+        ),
+        _bbox_elem("More body paragraph text. " * 40, (50, 300, 500, 500), size=10.0, bold=False),
+    ])
+    ChapterProcessor().process(doc)
+    headings = [e for e in doc.pages[0].elements if e.metadata.get("heading_level")]
+    assert len(headings) == 2
+    assert headings[0].content == "Large-Scale Machine Learning"
+    assert headings[1].content == "on Heterogeneous Systems"
+    assert headings[0].metadata["heading_level"] == 1
+    assert headings[1].metadata["heading_level"] == 1
+
+
+def test_split_heading_colon_parenthetical_subtitle_stays_body():
+    """Subtitle starting with '(' is not absorbed — treated as metadata."""
+    doc = _build_doc([
+        _bbox_elem("Body paragraph text. " * 40, (50, 50, 500, 200), size=10.0, bold=False),
+        _bbox_elem("Report:\n(Draft Version 2.0)", (50, 250, 500, 280)),
+        _bbox_elem("More body paragraph text. " * 40, (50, 300, 500, 500), size=10.0, bold=False),
+    ])
+    ChapterProcessor().process(doc)
+    heading = doc.pages[0].elements[1]
+    assert heading.content == "Report:"
+    body = doc.pages[0].elements[2]
+    assert "heading_level" not in body.metadata
+    assert "(Draft Version 2.0)" in body.content
+
+

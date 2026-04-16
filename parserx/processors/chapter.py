@@ -214,6 +214,56 @@ def _looks_like_body_text(text: str) -> bool:
     return False
 
 
+def _is_subtitle_line(text: str) -> bool:
+    """Check whether *text* looks like a title/subtitle fragment.
+
+    Rejects body-text openers, metadata annotations, and long lines.
+    Designed to be generic — no document-specific keywords.
+    """
+    s = text.strip()
+    if not s or len(s) > 80:
+        return False
+    if _looks_like_body_text(s):
+        return False
+    # Parenthetical / bracketed annotations are metadata, not subtitles
+    if s[0] in "(（[【":
+        return False
+    if _is_metadata_or_cover_line(s):
+        return False
+    return True
+
+
+def _is_multiline_title(lines: list[str], heading_level: int) -> bool:
+    """Detect multi-line title pattern worth splitting into separate headings.
+
+    Triggers when the first line is short and the next line is also
+    title-like.  Applies to H1 titles (where subtitles are common)
+    and to any heading whose first line ends with colon.
+    """
+    if len(lines) < 2:
+        return False
+    first = lines[0].strip()
+    if not first:
+        return False
+    # Two triggers: (1) document title (H1), (2) colon-ended heading
+    is_h1 = heading_level == 1
+    is_colon = bool(_HEADING_COLON_END_RE.search(first))
+    if not is_h1 and not is_colon:
+        return False
+    return _is_subtitle_line(lines[1])
+
+
+def _count_title_lines(lines: list[str]) -> int:
+    """Count how many leading lines are title-like (max 3)."""
+    count = 1  # first line always counts
+    for i in range(1, min(len(lines), 3)):
+        if _is_subtitle_line(lines[i]):
+            count = i + 1
+        else:
+            break
+    return count
+
+
 def _ends_with_colon(text: str) -> bool:
     """Text ending with colon is likely an introductory clause, not a heading."""
     text = text.strip()
@@ -850,6 +900,7 @@ class ChapterProcessor:
                 # with the next line, so we need to account for that.
                 lines = elem.content.split("\n")
                 heading_lines = 1
+                emit_separate = False
                 if len(lines) > 1:
                     first = lines[0].strip()
                     is_numbering_first = bool(_NUMBERING_ONLY_RE.match(first))
@@ -857,7 +908,15 @@ class ChapterProcessor:
                         first.endswith("-")
                         or bool(_DANGLING_WORD_RE.search(first))
                     )
-                    if is_numbering_first or is_continuation_first:
+                    if (not is_numbering_first
+                            and not is_continuation_first
+                            and _is_multiline_title(lines, elem.metadata.get("heading_level", 0))):
+                        # Multi-line document title — each short,
+                        # title-like line becomes its own heading element
+                        # (e.g. "TensorFlow:\nLarge-Scale ML ...").
+                        heading_lines = _count_title_lines(lines)
+                        emit_separate = heading_lines >= 2
+                    elif is_numbering_first or is_continuation_first:
                         # Greedily absorb continuation lines that complete
                         # the heading text (short, non-body).  Stop once a
                         # line no longer looks like a continuation (lacks a
@@ -881,6 +940,46 @@ class ChapterProcessor:
                 body_lines = [
                     l for l in lines[heading_lines:] if l.strip()
                 ]
+
+                # ── Multi-line title: emit each heading line as a
+                # separate PageElement (preserving heading_level) so
+                # "Title:\nSubtitle" renders as two # lines. ──
+                if emit_separate:
+                    elem.content = lines[0].strip()
+                    elem.metadata.pop("inline_spans", None)
+                    new_elements.append(elem)
+                    for i in range(1, heading_lines):
+                        extra = PageElement(
+                            type="text",
+                            content=lines[i].strip(),
+                            bbox=elem.bbox,
+                            page_number=elem.page_number,
+                            font=elem.font,
+                            metadata={**elem.metadata},
+                            confidence=elem.confidence,
+                            source=elem.source,
+                            layout_type=elem.layout_type,
+                        )
+                        new_elements.append(extra)
+                    if body_lines:
+                        body_text = "\n".join(lines[heading_lines:])
+                        body_elem = PageElement(
+                            type="text",
+                            content=body_text,
+                            bbox=elem.bbox,
+                            page_number=elem.page_number,
+                            font=elem.font,
+                            metadata={
+                                k: v for k, v in elem.metadata.items()
+                                if k != "heading_level"
+                            },
+                            confidence=elem.confidence,
+                            source=elem.source,
+                            layout_type=elem.layout_type,
+                        )
+                        new_elements.append(body_elem)
+                    split_count += 1
+                    continue
 
                 # Heading element keeps heading lines (combined form for
                 # number-only + title on next line; hyphen-wrap joins
