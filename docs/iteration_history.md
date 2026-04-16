@@ -8,6 +8,55 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 30 Track B — Multi-line Title Split (2026-04-16)
+
+**Scope**: paper01 首页标题 `TensorFlow:\nLarge-Scale Machine Learning on
+Heterogeneous Distributed Systems\n(Preliminary White Paper...)` 只有
+第一行被识别为 H1，其余两行降为 body text。GT 两行都应为 H1（共享
+largest font），括号行才是 body。
+
+### Fix
+
+`parserx/processors/chapter.py::_split_heading_body_elements` 增加
+通用多行 title 识别路径。新增三个 helpers：
+
+- `_is_subtitle_line(text)` — 通用判定：≤80 chars、非 body、非
+  metadata/cover、非括号/方括号开头。
+- `_is_multiline_title(lines, heading_level)` — 当元素为 H1（document
+  title）或首行以 `:` 结尾时触发。
+- `_count_title_lines(lines)` — 贪心计数首部 title-like 行（≤3）。
+
+当触发时，emit 多个 PageElement，每行独立保留 `heading_level`，而非
+像 numbering/dangling 路径把续行合并成单行字符串。
+
+### Impact
+
+- paper01: `heading_f1` 0.818 → 0.83（+0.012），`edit_distance` 0.234 →
+  0.242（VLM 描述噪声可接受），`char_f1` ~0.982 稳定。
+- 输出确认：`# TensorFlow:` + `# Large-Scale Machine Learning on
+  Heterogeneous Distributed Systems` 两行 H1；`(Preliminary White
+  Paper...)` 正确降为 body。
+- paper_chn01 heading_f1 0.87 稳定，无回退。
+
+### Design notes
+
+- **泛化性优先**：第一版实现以 colon-ended 为唯一触发，startswith("(")
+  作为 paper01-specific guard。重构后把触发扩展到「H1 document title
+  OR colon-ended heading」，括号 guard 扩展为 `( （ [ 【` + 复用
+  `_is_metadata_or_cover_line` 捕获日期/字段模式。无文档关键词。
+- 与 numbering/dangling 路径的差异：后两者每行是片段（`"3.1"` /
+  `"and"` 单独无意义）→ 合并；title/subtitle 每行独立可读 → emit 分离。
+- 增加 5 个回归测试 (`tests/test_chapter.py::test_split_heading_colon_*`
+  + `test_split_heading_h1_multiline_no_colon_emits_separate_headings`)
+  覆盖 colon + 无 colon + 长 subtitle + 括号 subtitle + 无 body 尾 行。
+
+### Open items
+
+- OCR `paragraph_title` 层级二义性（候选 a'）未触及，留给 Iter 31
+  作为 document-level hierarchy recognition 主题单独推进。
+
+---
+
 ## Iteration 29a — Fallback Level-Hint Calibration (2026-04-16)
 
 **Scope**: paper01 剩余 heading 层级误判——`_build_fallback_candidate`
