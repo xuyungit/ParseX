@@ -294,6 +294,117 @@ def test_sidebar_colon_label_is_promoted_to_heading():
     assert doc.pages[0].elements[0].metadata["heading_level"] == 2
 
 
+def test_caption_prefix_rejected_from_fallback():
+    """``表 X.Y`` / ``Figure N`` captions must not become headings via LLM."""
+    # font.size=0 mimics an OCR-sourced element that would otherwise
+    # zero-signal its way into the LLM fallback candidate list.
+    doc = _build_doc([
+        _text_elem("正文内容" * 30, 10.0),
+        _text_elem("表 3.2.3-1 普通钢筋抗拉、抗压强度设计值", 0.0),
+        _text_elem("正文内容" * 30, 10.0),
+        _text_elem("Figure 2: Gradients computed for graph", 0.0),
+        _text_elem("正文内容" * 30, 10.0),
+    ])
+    llm = FakeLLMService('[{"idx": 1, "level": 2}, {"idx": 2, "level": 2}]')
+
+    processor = ChapterProcessor(llm_service=llm)
+    processor.process(doc)
+
+    caption_elems = [doc.pages[0].elements[1], doc.pages[0].elements[3]]
+    for elem in caption_elems:
+        assert elem.metadata.get("heading_level") is None
+    # Captions must not consume LLM fallback budget either.
+    assert not llm.calls
+
+
+def test_caption_prefix_clears_preset_ocr_heading():
+    """Preset OCR heading_level on a caption should be cleared."""
+    caption = PageElement(
+        type="text",
+        content="表 3.2.4 钢筋的弹性模量",
+        source="ocr",
+        layout_type="paragraph_title",
+        metadata={"heading_level": 2},
+    )
+    doc = Document(pages=[Page(number=1, elements=[
+        _text_elem("正文内容" * 30, 10.0),
+        caption,
+        _text_elem("正文内容" * 30, 10.0),
+    ])])
+    MetadataBuilder().build(doc)
+
+    ChapterProcessor().process(doc)
+
+    assert caption.metadata.get("heading_level") is None
+
+
+def test_orphan_nested_numbering_cluster_demoted():
+    """≥5 dense orphan H4+ entries with no parent H3 → demoted to body."""
+    elements: list[PageElement] = [_text_elem("正文内容" * 30, 10.0)]
+    # 6 glossary entries at depth 3 (→ H4) with shared prefix 2.1 but no
+    # ``2.1`` parent heading anywhere in the document.
+    for idx in range(9, 15):
+        term = PageElement(
+            type="text",
+            content=f"2.1.{idx} 材料强度设计值 design value of material strength",
+            source="ocr",
+            layout_type="paragraph_title",
+            metadata={"heading_level": 2},
+        )
+        elements.append(term)
+        elements.append(_text_elem("材料强度标准值除以抗力分项系数后的值。", 10.0))
+
+    doc = Document(pages=[Page(number=1, elements=elements)])
+    MetadataBuilder().build(doc)
+    ChapterProcessor().process(doc)
+
+    term_elements = [
+        elem for elem in doc.all_elements
+        if isinstance(elem.content, str) and elem.content.startswith("2.1.")
+    ]
+    assert len(term_elements) == 6
+    for elem in term_elements:
+        assert elem.metadata.get("heading_level") is None
+        assert elem.metadata.get("heading_demoted_reason") == "orphan_nested_cluster"
+
+
+def test_orphan_cluster_preserved_when_parent_heading_exists():
+    """Legit hierarchy: a ``2.1`` parent heading elsewhere in the doc
+    keeps the six nested ``2.1.*`` children from being demoted."""
+    def _nested_title(text: str) -> PageElement:
+        # Simulate OCR paragraph_title so heading_level is already set and
+        # the numbering signal (not font) is authoritative.
+        return PageElement(
+            type="text",
+            content=text,
+            source="ocr",
+            layout_type="paragraph_title",
+            metadata={"heading_level": 2},
+        )
+
+    elements: list[PageElement] = [
+        _text_elem("正文内容" * 30, 10.0),
+        _nested_title("2.1 一般术语"),
+        _text_elem("正文内容" * 30, 10.0),
+    ]
+    for idx in range(1, 7):
+        elements.append(_nested_title(f"2.1.{idx} 术语 term"))
+        elements.append(_text_elem("定义正文。", 10.0))
+
+    doc = Document(pages=[Page(number=1, elements=elements)])
+    MetadataBuilder().build(doc)
+    ChapterProcessor().process(doc)
+
+    preserved = [
+        elem for elem in doc.all_elements
+        if isinstance(elem.content, str)
+        and elem.content.startswith("2.1.")
+        and not elem.content.startswith("2.1 ")
+        and elem.metadata.get("heading_level")
+    ]
+    assert len(preserved) == 6
+
+
 def test_merge_cover_heading_fragments():
     doc = Document(
         pages=[

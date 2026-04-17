@@ -67,6 +67,14 @@ _HEADING_COLON_END_RE = re.compile(r"[：:]$")
 _PRICE_RE = re.compile(r"^[$¥€£₽]\s*[\d,]+(?:\.\d+)?$")
 # Navigation link: ends with "›" or trailing " >" (common in emails/receipts)
 _NAV_LINK_RE = re.compile(r"[›»>]\s*$")
+# Figure/table caption prefix — these labels ride just above an image or
+# table element and are NOT structural headings. Matching the same family
+# used by the assembly/crossref layer so fallback/LLM paths do not promote
+# them. Optional leading hash survives a stray Markdown marker.
+_CAPTION_PREFIX_RE = re.compile(
+    r"^#{0,6}\s*(?:Figure|Fig\.|Table|Tab\.|图|表)\s*\d",
+    re.IGNORECASE,
+)
 
 
 def _resolve_heading_text(content: str) -> str:
@@ -103,6 +111,7 @@ def _is_false_positive(text: str) -> bool:
     2. TOC entries: "第一章 公告....... 2" are not real headings
     3. Metadata fields: "采购人：中铁七局..." is a label:value pair
     4. Pure numbers
+    5. Figure/table caption labels ("表 3.2.3-1 ...", "Figure 2: ...")
     """
     stripped = text.strip()
 
@@ -115,6 +124,8 @@ def _is_false_positive(text: str) -> bool:
     if _PRICE_RE.match(stripped):
         return True
     if _NAV_LINK_RE.search(stripped):
+        return True
+    if _CAPTION_PREFIX_RE.match(stripped):
         return True
     # Single-character text is never a heading — catches diagram node labels
     # (e.g., "C", "b", "W", "x" from computation graphs) that happen to be
@@ -423,7 +434,11 @@ class ChapterProcessor:
                         pass
                     elif elem.source == "ocr":
                         first_line = _resolve_heading_text(elem.content)
-                        if _looks_like_body_text(first_line) or _ends_with_colon(first_line):
+                        if (
+                            _looks_like_body_text(first_line)
+                            or _ends_with_colon(first_line)
+                            or _CAPTION_PREFIX_RE.match(first_line.strip())
+                        ):
                             elem.metadata.pop("heading_level", None)
                             continue
                         numbering_level = _heading_level_from_numbering(first_line)
@@ -483,13 +498,15 @@ class ChapterProcessor:
         merged_count = self._merge_split_section_headings(doc, heading_candidates)
         detected_count += merged_count
         split_count = self._split_heading_body_elements(doc)
+        demoted_count = self._suppress_orphan_nested_numbering_clusters(doc)
 
         log.info(
-            "Detected %d headings (%d via coherence, %d via fallback, %d split)",
+            "Detected %d headings (%d via coherence, %d via fallback, %d split, %d demoted)",
             detected_count,
             coherence_hits,
             fallback_hits,
             split_count,
+            demoted_count,
         )
         return doc
 
@@ -1043,6 +1060,69 @@ class ChapterProcessor:
             page.elements = new_elements
         return split_count
 
+    _ORPHAN_CLUSTER_MIN = 5
+    _ORPHAN_CLUSTER_MIN_DEPTH = 3  # only demote H4+ (dotted depth ≥3)
+
+    def _suppress_orphan_nested_numbering_clusters(self, doc: Document) -> int:
+        """Demote dense orphan clusters of dotted-numbering headings.
+
+        When ≥``_ORPHAN_CLUSTER_MIN`` headings share a dotted numbering
+        prefix at depth ≥ ``_ORPHAN_CLUSTER_MIN_DEPTH`` (e.g. ``2.1.9`` …
+        ``2.1.19``) and no parent heading with that prefix at the shallower
+        depth exists anywhere in the document, they almost always mark a
+        glossary/term list rather than structural subsections (Chinese
+        national/industry standards enumerate terms this way). Clearing
+        ``heading_level`` keeps the text in the body stream where it belongs.
+
+        The check is purely structural: cluster size + prefix coherence +
+        absence of parent. No content keywords. Rule-of-5 prevents firing
+        on isolated nested numbering that might be a legitimate subsection.
+        """
+        depth_groups: dict[tuple[int, str], list[PageElement]] = {}
+        parent_prefixes: set[str] = set()
+
+        for elem in doc.all_elements:
+            if elem.type != "text":
+                continue
+            level = elem.metadata.get("heading_level")
+            if not level:
+                continue
+            first_line = _resolve_heading_text(elem.content).strip()
+            result = detect_numbering_signal(first_line)
+            if not result or result[0] != "section_arabic_nested":
+                continue
+            stripped = re.sub(r"^\s{0,3}#{1,6}\s*", "", first_line)
+            stripped = stripped.replace("**", "").replace("*", "")
+            m = re.match(r"^(\d+(?:\.\d+)+)", stripped)
+            if not m:
+                continue
+            number = m.group(1)
+            depth = number.count(".") + 1  # "2.1"→2, "2.1.9"→3
+            prefix = ".".join(number.split(".")[:-1])  # "2.1.9" → "2.1"
+            # Track every nested-numbering heading's own number as a
+            # candidate parent for deeper siblings.
+            parent_prefixes.add(number)
+            if depth < self._ORPHAN_CLUSTER_MIN_DEPTH:
+                continue
+            depth_groups.setdefault((level, prefix), []).append(elem)
+
+        demoted = 0
+        for (level, prefix), cluster in depth_groups.items():
+            if len(cluster) < self._ORPHAN_CLUSTER_MIN:
+                continue
+            if prefix in parent_prefixes:
+                continue
+            for elem in cluster:
+                elem.metadata.pop("heading_level", None)
+                elem.metadata["heading_demoted_reason"] = "orphan_nested_cluster"
+                demoted += 1
+            log.info(
+                "Demoted %d H%d heading(s) with orphan prefix %r "
+                "(no parent at shallower depth)",
+                len(cluster), level, prefix,
+            )
+        return demoted
+
     def _infer_ocr_paragraph_title_level(self, doc: Document) -> int:
         """Document-level default level for OCR ``paragraph_title`` blocks.
 
@@ -1140,6 +1220,10 @@ class ChapterProcessor:
         # Same short-text requirement as _detect_heading — long text is body,
         # not a heading.  The threshold is consistent with _is_short_heading_text.
         if not _is_short_heading_text(first_line):
+            return None
+        # Sentence-ending punctuation indicates body text even when short
+        # (e.g. numbered list items ``"2. 构件中... 设计值。"``).
+        if _looks_like_body_text(first_line):
             return None
         # Geometric gating rejected this element as inline emphasis —
         # don't resurrect it via fallback / LLM.

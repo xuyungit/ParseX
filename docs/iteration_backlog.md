@@ -1,6 +1,6 @@
 # Iteration Backlog
 
-Updated: 2026-04-15 (post Iteration 23, re-prioritized)
+Updated: 2026-04-17 (post Iteration 32)
 
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
@@ -94,7 +94,17 @@ product-value (not leaderboard score):
    iteration_history.md Iter 31 段。bbox-height 聚类 signal 未实施
    (文档级 font-depth 已足够)，留作 backlog 候选。
 
-10. **Iter 32 候选（优先级排序）**：
+10. **Iter 32 — Heading false-positive suppression — DONE 2026-04-17**。
+    `_CAPTION_PREFIX_RE` 在 `_is_false_positive` + OCR 预设路径拦截
+    `表/图/Figure/Table + 数字` 被误识别为标题；
+    `_suppress_orphan_nested_numbering_clusters` 对 ≥5 个同前缀的
+    depth-≥3 nested-numbering heading（无 shallower parent）做整体
+    demotion；`_build_fallback_candidate` 头部加 `_looks_like_body_text`
+    守卫，拒绝句末带 `。！？` 的短文本。jtg3362 探针的假阳性
+    `# 表 X.Y.Z` ×3 + `#### 2.1.9–2.1.19` ×11 + `"2. … 。"` ×1 全部
+    清零。 详见 history Iter 32 段。
+    
+11. **Iter 33 候选（优先级排序）**：
 
     c. **Track C — code-block boundary 扩展**（backlog L 归并）：
        `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
@@ -107,19 +117,28 @@ product-value (not leaderboard score):
     f. **simple_doc01 DOCX 编号标题修复**：Docling provider 对
        auto-numbering heading 只提取到编号（`1.3.1`），丢失标题文本。
        char_f1=0.458。需调查 Docling 对 `w:numPr` 的处理。
-    g. **ocr_scan_jtg3362 native-fallback heading 层级**：`公路钢筋…`
-       被 native LLM fallback 路径降到 H3（expected H2）。该路径独立
-       于 Iter 31 OCR 分支，需单独调查。
+    g. **jtg3362 cover 页 `## 中华人民共和国行业标准` 补插 + 碎片合并**：
+       VLM add_missing 给出 H3 两段 title 碎片，无 bbox，现有
+       `_merge_cover_heading_fragments` 仅处理 H1。需要基于 "首页 +
+       VLM 来源 + 同级相邻 + 无 body 间隔" 的非几何合并通道。
+    h. **paper_chn01 / ocr01 OCR flaky run-to-run 降噪**：目前
+       LLM fallback hits 在同一 commit 下可达 3↔7 的波动，heading_f1
+       变化 ±0.05。调查 seed / prompt 一致性，可能通过降低
+       temperature 或引入 hits 去重。
 
-## Current Baseline (2026-04-17 post Iter 31, 16 ground truth docs)
+## Current Baseline (2026-04-17 post Iter 32, 16 ground truth docs)
 
-Full regression run: `eval_reports/iter31_baseline_2026-04-17.md`
-avg edit_dist=0.239, char_f1=0.901, heading_f1=0.531, table_f1=0.485.
-paper01 heading_f1 0.832 → 0.841 (+0.009)。paper_chn01 char_f1 0.717 → 0.726。
-avg heading_f1 -0.011 源于 ocr_scan_jtg3362 0.111 → 0.095 波动 (该文档在
-backlog 中标记为 OCR 服务器不稳定)。
+Full regression run: `eval_reports/iter32_baseline_2026-04-17.md`
+avg edit_dist=0.244, char_f1=0.897, heading_f1=0.544, table_f1=0.487.
+Iter 32 改善：jtg3362 heading_f1 0.095 → 0.286 (+0.191)，patent01
+heading_f1 0.300 → 0.500 (+0.200)，text_report01 heading_f1 0.526 →
+0.588 (+0.062)，paper01 heading_f1 0.841 → 0.854 (+0.013)。
+回退：paper_chn01 heading_f1 0.812 → 0.788、ocr01 heading_f1 0.737 →
+0.556 均来自 LLM fallback hits 的 run-to-run 波动（同一 commit 连跑
+两次可达 3↔7 hits 差异）。
 
-Prior baseline (2026-04-16): `eval_reports/iter30_baseline_2026-04-16.md`
+Prior baselines: `eval_reports/iter31_baseline_2026-04-17.md`,
+`eval_reports/iter30_baseline_2026-04-16.md`
 
 | Document | Edit Dist | Char F1 | Heading F1 | Table F1 | Notes |
 |----------|-----------|---------|------------|----------|-------|
@@ -129,17 +148,17 @@ Prior baseline (2026-04-16): `eval_reports/iter30_baseline_2026-04-16.md`
 | pdf_text01_tables | 0.041 | 0.979 | 0.000 | 0.992 | Heading 缺失 |
 | text_code_block | 0.050 | 0.975 | 0.500 | — | Code fence 问题 |
 | deepseek | 0.077 | 0.939 | 0.000 | — | 繁体→简体 |
-| receipt | 0.089 | 0.958 | 1.000 | — | Good |
-| text_report01 | 0.122 | 0.937 | 0.526 | 1.000 | Heading 漏检 |
-| ocr01 | 0.139 | 0.960 | 0.737 | 0.903 | ocr01 heading 改善 |
-| text_pic02 | 0.182 | 0.975 | 0.250 | 0.195 | DOCX 表格/图片 |
-| ocr_scan_jtg3362 | 0.239 | 0.884 | 0.095 | 0.714 | OCR 服务器不稳 |
-| paper01 | 0.252 | 0.979 | **0.832** | — | Iter 30 title split 改善 |
-| patent01 | 0.425 | 0.908 | 0.500 | 1.000 | 大幅改善 (was 0.955/0.159) |
-| paper_chn02 | 0.633 | 0.807 | 0.129 | — | HTML 表头丢失 |
-| paper_chn01 | 0.707 | 0.714 | 0.812 | 1.000 | OCR 服务器波动 |
-| simple_doc01 | 0.711 | 0.458 | 0.286 | — | **新文档，未追踪**；DOCX 编号型 heading 提取丢失正文 |
-| **Average** | **0.232** | **0.903** | **0.542** | **0.488** | |
+| receipt | 0.094 | 0.957 | 1.000 | — | Good |
+| text_report01 | 0.207 | 0.889 | **0.588** | 1.000 | Iter 32 heading 改善 |
+| ocr_scan_jtg3362 | 0.224 | 0.893 | **0.286** | 0.638 | Iter 32 FP 抑制 |
+| text_pic02 | 0.240 | 0.951 | 0.222 | 0.267 | DOCX 表格/图片 |
+| ocr01 | 0.249 | 0.925 | 0.556 | 0.903 | LLM fallback flaky |
+| paper01 | 0.260 | 0.979 | **0.854** | — | Iter 30/32 累计改善 |
+| patent01 | 0.373 | 0.909 | **0.500** | 1.000 | Iter 32 caption 抑制 |
+| paper_chn02 | 0.635 | 0.809 | 0.129 | — | HTML 表头丢失 |
+| paper_chn01 | 0.704 | 0.711 | 0.788 | 1.000 | OCR 服务器波动 |
+| simple_doc01 | 0.711 | 0.458 | 0.286 | — | DOCX 编号型 heading 提取丢失正文 |
+| **Average** | **0.244** | **0.897** | **0.544** | **0.487** | |
 
 Note: simple_doc01 是本地未提交的 DOCX GT（2026-04-10 创建），
 DOCX 自动编号标题导致内容丢失（只提取到 `#### 1.3.1` 数字，无文字）。
