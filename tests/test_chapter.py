@@ -746,3 +746,118 @@ def test_split_heading_colon_parenthetical_subtitle_stays_body():
     assert "(Draft Version 2.0)" in body.content
 
 
+# ── OCR paragraph_title hierarchy inference ───────────────────────────────
+
+
+def _ocr_heading_elem(content: str, layout_type: str = "paragraph_title", bbox=(50, 50, 500, 80)) -> PageElement:
+    """OCR-source heading element (no font info) with pre-assigned H2."""
+    return PageElement(
+        type="text",
+        content=content,
+        font=FontInfo(),
+        source="ocr",
+        layout_type=layout_type,
+        bbox=bbox,
+        metadata={"heading_level": 2},
+    )
+
+
+def test_ocr_paragraph_title_demoted_when_native_hierarchy_rich():
+    """When native text establishes ≥3 heading-candidate font sizes, OCR
+    paragraph_title demotes to H3."""
+    # Document with native text establishing H1 (18pt), H2 (14pt), H3 (12pt)
+    # hierarchy alongside body (10pt). OCR paragraph_title should demote to H3.
+    native_h1 = _text_elem("Chapter One", font_size=18.0, bold=True)
+    native_h2 = _text_elem("Section A", font_size=14.0, bold=True)
+    native_h3 = _text_elem("Subsection i", font_size=12.0, bold=True)
+    body = _text_elem("Body text. " * 50, font_size=10.0)
+    ocr_h = _ocr_heading_elem("OCR Block Title")
+    doc = _build_doc([native_h1, native_h2, native_h3, body, ocr_h])
+    ChapterProcessor().process(doc)
+    assert ocr_h.metadata["heading_level"] == 3
+    assert ocr_h.metadata.get("ocr_level_inferred") == "font_hierarchy_depth"
+
+
+def test_ocr_paragraph_title_keeps_h2_when_pure_ocr_doc():
+    """Pure-OCR documents (no native font hierarchy) keep default H2."""
+    ocr_h1 = _ocr_heading_elem("OCR Title Line")
+    ocr_body = PageElement(
+        type="text",
+        content="Body text body text body text." * 30,
+        font=FontInfo(),
+        source="ocr",
+        layout_type="text",
+        bbox=(50, 100, 500, 500),
+    )
+    doc = _build_doc([ocr_h1, ocr_body])
+    ChapterProcessor().process(doc)
+    assert ocr_h1.metadata["heading_level"] == 2
+    assert "ocr_level_inferred" not in ocr_h1.metadata
+
+
+def test_ocr_paragraph_title_keeps_h2_when_shallow_native_hierarchy():
+    """≤2 distinct heading-candidate sizes → conservative default H2."""
+    # Only two heading ranks: H1 (18pt) and H2 (14pt). paragraph_title stays H2.
+    native_h1 = _text_elem("Chapter One", font_size=18.0, bold=True)
+    native_h2 = _text_elem("Section A", font_size=14.0, bold=True)
+    body = _text_elem("Body text. " * 50, font_size=10.0)
+    ocr_h = _ocr_heading_elem("OCR Block Title")
+    doc = _build_doc([native_h1, native_h2, body, ocr_h])
+    ChapterProcessor().process(doc)
+    assert ocr_h.metadata["heading_level"] == 2
+    assert "ocr_level_inferred" not in ocr_h.metadata
+
+
+def test_ocr_paragraph_title_numbering_overrides_inference():
+    """Explicit numbering on the OCR heading wins over doc-level inference."""
+    native_h1 = _text_elem("Chapter One", font_size=18.0, bold=True)
+    native_h2 = _text_elem("Section A", font_size=14.0, bold=True)
+    native_h3 = _text_elem("Subsection i", font_size=12.0, bold=True)
+    body = _text_elem("Body text. " * 50, font_size=10.0)
+    # OCR heading starts with "第一章 ..." (H1 signal)
+    ocr_h = _ocr_heading_elem("第一章 总则")
+    doc = _build_doc([native_h1, native_h2, native_h3, body, ocr_h])
+    ChapterProcessor().process(doc)
+    # Numbering signal should promote to H1, not demote to H3.
+    assert ocr_h.metadata["heading_level"] == 1
+
+
+def test_ocr_paragraph_title_keeps_h2_when_ocr_dominated_doc():
+    """OCR-heavy documents with thin native cover metadata keep default H2,
+    even if native layer reports ≥3 distinct heading-candidate sizes."""
+    # Thin native layer: short title + subtitle + metadata at varied sizes.
+    native_title = _text_elem("Cover Title", font_size=18.0, bold=True)
+    native_sub = _text_elem("Subtitle", font_size=14.0, bold=True)
+    native_meta = _text_elem("Spec No.", font_size=12.0, bold=True)
+    # Dominant OCR body with paragraph_title headings.
+    ocr_h = _ocr_heading_elem("Chapter Heading On Scanned Page")
+    ocr_body = PageElement(
+        type="text",
+        content="Body text from OCR. " * 200,
+        font=FontInfo(),
+        source="ocr",
+        layout_type="text",
+        bbox=(50, 100, 500, 500),
+    )
+    doc = _build_doc([native_title, native_sub, native_meta, ocr_h, ocr_body])
+    ChapterProcessor().process(doc)
+    assert ocr_h.metadata["heading_level"] == 2
+    assert "ocr_level_inferred" not in ocr_h.metadata
+
+
+def test_ocr_paragraph_title_numbering_h2_preserved_even_with_deep_hierarchy():
+    """``section_arabic_spaced`` resolves to H2 — that local signal must win
+    over document-level inference so numbered sections don't get demoted."""
+    native_h1 = _text_elem("Chapter One", font_size=18.0, bold=True)
+    native_h2 = _text_elem("Section A", font_size=14.0, bold=True)
+    native_h3 = _text_elem("Subsection i", font_size=12.0, bold=True)
+    body = _text_elem("Body text. " * 50, font_size=10.0)
+    # OCR paragraph_title with section_arabic_spaced signal (e.g. "8 Performance")
+    ocr_h = _ocr_heading_elem("8 Performance")
+    doc = _build_doc([native_h1, native_h2, native_h3, body, ocr_h])
+    ChapterProcessor().process(doc)
+    # Numbering says H2; inference must not demote to H3.
+    assert ocr_h.metadata["heading_level"] == 2
+    assert "ocr_level_inferred" not in ocr_h.metadata
+
+

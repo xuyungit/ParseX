@@ -386,7 +386,7 @@ class VLMReviewProcessor:
                 entry["text"] = text
 
             if elem.metadata.get("heading_level"):
-                entry["heading_level"] = elem.metadata["heading_level"]
+                entry["is_heading"] = True
             if elem.source != "native":
                 entry["source"] = elem.source
 
