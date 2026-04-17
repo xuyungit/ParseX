@@ -8,6 +8,101 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 32 — Heading False-Positive Suppression (2026-04-17)
+
+**Scope**: ocr_scan_jtg3362 heading_f1=0.095 (iter31) was dominated by two
+false-positive patterns — OCR `figure_title` captions (`表 3.2.3-1 …`)
+leaking into LLM fallback as H2, and dense nested-numbering glossary
+entries (`2.1.9` … `2.1.19`) promoted to H4 via the `section_arabic_nested`
+rule despite having no structural parent heading. Both are generic
+pathologies (caption labels, glossary-in-a-standard) that also appeared
+on patent01.
+
+### Fix 1 — Caption-prefix rejection
+
+`parserx/processors/chapter.py::_CAPTION_PREFIX_RE` matches leading
+`Figure|Fig.|Table|Tab.|图|表` followed by a digit. Wired into
+`_is_false_positive` (blocks `_build_fallback_candidate` from promoting
+captions) and into the OCR-preset heading branch at chapter.py:437-442
+(pops pre-set heading_level on captions labelled `paragraph_title`). The
+regex requires a digit after the label, so legitimate headings like
+`表格说明` / `图表目录` are not false-matched.
+
+Also added a `_looks_like_body_text` guard at the top of
+`_build_fallback_candidate` — a short sentence with terminal punctuation
+(`。！？`) is body text even when it carries `section_arabic_root`
+numbering (`"2. 构件中… 设计值。"`). Previously only the zero-signal
+branch applied this guard.
+
+### Fix 2 — Orphan nested-numbering cluster suppression
+
+`_suppress_orphan_nested_numbering_clusters(doc)` (runs at the end of
+`ChapterProcessor.process`): groups headings with
+`section_arabic_nested` numbering by `(level, parent-prefix)`. If a
+group has ≥5 entries at depth ≥ 3 and no heading with the exact parent
+prefix exists anywhere in the document, all cluster members are demoted
+(heading_level cleared, marked `heading_demoted_reason=orphan_nested_cluster`).
+Structural test only — no keyword lists. The rule-of-5 threshold
+prevents firing on isolated nested headings that might be legitimate
+subsections.
+
+### Impact
+
+jtg3362-specific probe (no regression suite noise):
+
+| Item | Before | After |
+|------|--------|-------|
+| Spurious `# 表 X.Y.Z` H2 captions | 3 | 0 |
+| Spurious `#### 2.1.9 … 2.1.19` H4 terms | 11 | 0 |
+| Spurious H2 on numbered body `"2. …。"` | 1 | 0 |
+| Remaining FP on cover page (VLM-added fragments) | 3 | 3 |
+
+Full 16-doc eval (`eval_reports/iter32_baseline_2026-04-17.md`):
+
+| Metric | Iter 31 | Iter 32 | Δ |
+|--------|---------|---------|---|
+| Avg edit_distance | 0.239 | 0.244 | +0.005 |
+| Avg char_f1 | 0.901 | 0.897 | -0.004 |
+| Avg heading_f1 | 0.531 | 0.544 | **+0.013** |
+| Avg table_cell_f1 | 0.485 | 0.487 | +0.002 |
+
+Per-doc heading_f1 wins: jtg3362 0.095 → 0.286 (+0.191), patent01 0.300
+→ 0.500 (+0.200), text_report01 0.526 → 0.588 (+0.062), paper01 0.841 →
+0.854 (+0.013). Noise regressions on OCR-heavy docs (paper_chn01 -0.024,
+ocr01 -0.181 — ocr01 LLM fallback count swings 3↔7 between runs on the
+same commit).
+
+### Remaining on jtg3362
+
+Cover page `公路钢筋混凝土及预应力` / `混凝土桥涵设计规范` (VLM-inserted
+H3 fragments, should be one H2) and missing `# 中华人民共和国行业标准`
+H1 are not structural rule issues — the VLM add_missing path decides
+both placement and level. `_merge_cover_heading_fragments` currently
+only merges H1; VLM fragments have no bbox so the geometric-overlap
+guard cannot fire safely on broader levels without a different signal.
+
+### Entry points
+
+- `parserx/processors/chapter.py::_CAPTION_PREFIX_RE` — caption regex
+- `parserx/processors/chapter.py::_is_false_positive` — wired in
+- `parserx/processors/chapter.py:437-442` — OCR preset-heading caption clear
+- `parserx/processors/chapter.py::_build_fallback_candidate:1222-1231` — body-text guard
+- `parserx/processors/chapter.py::_suppress_orphan_nested_numbering_clusters`
+
+### Tests
+
+`tests/test_chapter.py`:
+- `test_caption_prefix_rejected_from_fallback` — table/figure captions
+  never consume LLM fallback budget and don't become headings.
+- `test_caption_prefix_clears_preset_ocr_heading` — OCR paragraph_title
+  with `表 N.M` text has heading_level cleared.
+- `test_orphan_nested_numbering_cluster_demoted` — six orphan H4 terms
+  with no parent H3 are demoted.
+- `test_orphan_cluster_preserved_when_parent_heading_exists` — a `2.1`
+  parent keeps the children.
+
+---
+
 ## Iteration 31 — Document-level OCR Heading Hierarchy (2026-04-17)
 
 **Scope**: OCR `paragraph_title` blocks were assigned H2 unconditionally
