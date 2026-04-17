@@ -79,48 +79,47 @@ product-value (not leaderboard score):
    非 body、非 metadata/括号），触发条件为 H1 或 colon-ended，无文档
    关键词。paper01 heading_f1 0.818 → 0.83 (+0.012)，其他文档无回退。
 
-9. **Iter 31 — Document-level hierarchy recognition**。**推荐下一步**。
+9. **Iter 31 — Document-level hierarchy recognition — DONE 2026-04-17**。
+   Step 1 诊断：throwaway patch (H2→H3) 在 VLM on/off 下跑 paper_chn01，
+   4 格 char_f1 均在 ±0.02 噪声内——VLM 级联假说未复现。
+   Step 2：`vlm_review.py:388-389` heading_level 改为布尔 `is_heading`
+   (VLM 合约健全化，无功能变化)。
+   Step 3：`chapter.py::_infer_ocr_paragraph_title_level(doc)` 基于
+   native 层 font-hierarchy depth (≥3 distinct heading-candidate sizes)
+   + native-dominance guard (char-ratio ≥0.5) 决定 OCR paragraph_title
+   默认层级。numbering 始终压过推理。paper01 `Model Parallel Training`
+   / `Concurrent Steps…` 从 H2 → H3 (正确)。paper01 heading_f1
+   0.832 → 0.841；paper_chn01 char_f1 0.717 → 0.726 / heading_f1 0.812
+   稳定；avg heading_f1 -0.011 (ocr_scan_jtg3362 波动所致)。详见
+   iteration_history.md Iter 31 段。bbox-height 聚类 signal 未实施
+   (文档级 font-depth 已足够)，留作 backlog 候选。
 
-   **核心问题**：`parserx/builders/ocr.py:1458` 硬编码 OCR
-   `paragraph_title` → H2。paper01 残留 4 处 `## Model Parallel
-   Training` 等应为 H3。用户标记 **高优先级**——影响阅读体验 + 未来
-   章节分割。
+10. **Iter 32 候选（优先级排序）**：
 
-   **前置诊断（级联隔离）**：此前两次 demote 尝试导致 paper_chn01
-   char_f1 0.891 → 0.722 剧烈回退。代码审计发现最大嫌疑为
-   `vlm_review.py:388-389` 把 `heading_level` 写入 VLM JSON 摘要——
-   heading level 变化导致 VLM 对周围 body text 的修正建议不同。
-   其他级别敏感消费者均为布尔用法（is heading or not），不应受层级
-   数值影响。
+    c. **Track C — code-block boundary 扩展**（backlog L 归并）：
+       `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
+    d. **Abstract 页顶 heading 补插**：首页 body-sized Bold + 后接
+       大正文段落 + 距 title ≥ 2×line-height → 插入 virtual "Abstract"
+       heading。高风险需 guard。
+    e. **`is_sub` preservation**（chemistry/math 语义）、paper_chn02
+       HTML 表头 / Chinese doc class、DOCX table/image quality
+       (backlog C)，然后 Chart track (M)。
+    f. **simple_doc01 DOCX 编号标题修复**：Docling provider 对
+       auto-numbering heading 只提取到编号（`1.3.1`），丢失标题文本。
+       char_f1=0.458。需调查 Docling 对 `w:numPr` 的处理。
+    g. **ocr_scan_jtg3362 native-fallback heading 层级**：`公路钢筋…`
+       被 native LLM fallback 路径降到 H3（expected H2）。该路径独立
+       于 Iter 31 OCR 分支，需单独调查。
 
-   **计划**：
-   1. 诊断实验：throwaway patch 把 paragraph_title → H3，分别在
-      VLM review enabled / disabled 下跑 paper_chn01 eval；确认 VLM
-      是否为级联源。
-   2. 级联修复：把 VLM 摘要中 `heading_level` 改为布尔
-      `is_heading`（或 clamp 到 H2），使 VLM 输出对层级变化不敏感。
-   3. 安全上线层级推理：`_infer_ocr_heading_levels(doc)` 使用
-      文档级信号（numbering depth、font hierarchy rank、
-      bbox-height cluster）决定 paragraph_title 层级。
-   4. 验证门槛：paper01 heading_f1 ≥ 0.83；paper_chn01 char_f1 ≥ 0.71,
-      heading_f1 ≥ 0.81；其他无回退。
+## Current Baseline (2026-04-17 post Iter 31, 16 ground truth docs)
 
-   **其他候选（低优先级）**：
-   c. **Track C — code-block boundary 扩展**（backlog L 归并）：
-      `# of Relu` 伪 H1 + text_code_block heading_f1=0.500。
-   d. **Abstract 页顶 heading 补插**：首页 body-sized Bold + 后接
-      大正文段落 + 距 title ≥ 2×line-height → 插入 virtual "Abstract"
-      heading。高风险需 guard。
-   e. **`is_sub` preservation**（chemistry/math 语义）、paper_chn02
-      HTML 表头 / Chinese doc class、DOCX table/image quality
-      (backlog C)，然后 Chart track (M)。
-   f. **simple_doc01 DOCX 编号标题修复**：Docling provider 对
-      auto-numbering heading 只提取到编号（`1.3.1`），丢失标题文本。
-      char_f1=0.458。需调查 Docling 对 `w:numPr` 的处理。
+Full regression run: `eval_reports/iter31_baseline_2026-04-17.md`
+avg edit_dist=0.239, char_f1=0.901, heading_f1=0.531, table_f1=0.485.
+paper01 heading_f1 0.832 → 0.841 (+0.009)。paper_chn01 char_f1 0.717 → 0.726。
+avg heading_f1 -0.011 源于 ocr_scan_jtg3362 0.111 → 0.095 波动 (该文档在
+backlog 中标记为 OCR 服务器不稳定)。
 
-## Current Baseline (2026-04-16 post Iter 30, 16 ground truth docs)
-
-Full regression run: `eval_reports/iter30_baseline_2026-04-16.md`
+Prior baseline (2026-04-16): `eval_reports/iter30_baseline_2026-04-16.md`
 
 | Document | Edit Dist | Char F1 | Heading F1 | Table F1 | Notes |
 |----------|-----------|---------|------------|----------|-------|

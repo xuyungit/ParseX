@@ -395,6 +395,8 @@ class ChapterProcessor:
         body_font = doc.metadata.font_stats.body_font
         numbering_patterns = doc.metadata.numbering_patterns
 
+        ocr_paragraph_title_default = self._infer_ocr_paragraph_title_level(doc)
+
         detected_count = 0
         fallback_candidates: list[dict] = []
 
@@ -425,8 +427,18 @@ class ChapterProcessor:
                             elem.metadata.pop("heading_level", None)
                             continue
                         numbering_level = _heading_level_from_numbering(first_line)
-                        if numbering_level is not None and numbering_level != elem.metadata["heading_level"]:
-                            elem.metadata["heading_level"] = numbering_level
+                        if numbering_level is not None:
+                            # Numbering is the strongest local signal — trust it
+                            # over document-level hierarchy inference.
+                            if numbering_level != elem.metadata["heading_level"]:
+                                elem.metadata["heading_level"] = numbering_level
+                        elif (
+                            elem.layout_type == "paragraph_title"
+                            and elem.metadata["heading_level"] == 2
+                            and ocr_paragraph_title_default != 2
+                        ):
+                            elem.metadata["heading_level"] = ocr_paragraph_title_default
+                            elem.metadata["ocr_level_inferred"] = "font_hierarchy_depth"
                         detected_count += 1
                         continue
                     else:
@@ -1030,6 +1042,50 @@ class ChapterProcessor:
 
             page.elements = new_elements
         return split_count
+
+    def _infer_ocr_paragraph_title_level(self, doc: Document) -> int:
+        """Document-level default level for OCR ``paragraph_title`` blocks.
+
+        OCR elements carry no font information, so their heading level cannot
+        be inferred locally. The document's native font hierarchy is consulted
+        instead: in a **native-dominant** document with ≥3 distinct heading
+        candidate font sizes (H1/H2/H3 ranks), an OCR ``paragraph_title`` on
+        an isolated scanned page is likely a sub-heading rather than a
+        top-level section — demote to H3.
+
+        The native-dominance check avoids regressing OCR-heavy documents
+        (e.g. scanned standards with a thin native text layer that contains
+        only a cover title + metadata): in those documents the OCR
+        paragraph_titles ARE the structural sections and must stay H2.
+        """
+        candidates = doc.metadata.font_stats.heading_candidates or []
+        distinct_sizes = {
+            round(f.size * 2) / 2
+            for f in candidates
+            if f.size > 0
+        }
+        if len(distinct_sizes) < 3:
+            return 2
+
+        native_chars = 0
+        ocr_chars = 0
+        for page in doc.pages:
+            for elem in page.elements:
+                if elem.type != "text":
+                    continue
+                n = len(elem.content)
+                if elem.source == "ocr":
+                    ocr_chars += n
+                elif elem.source == "native":
+                    native_chars += n
+        total = native_chars + ocr_chars
+        if total == 0:
+            return 2
+        # Require native content to dominate before trusting the native font
+        # hierarchy as a proxy for document depth.
+        if native_chars / total < 0.5:
+            return 2
+        return 3
 
     def _keep_existing_ocr_heading(self, page_width: float, elem: PageElement) -> bool:
         """Suppress OCR sidebar labels that are visually prominent but not structural headings."""

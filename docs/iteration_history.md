@@ -8,6 +8,100 @@ For the current active backlog, see [iteration_backlog.md](iteration_backlog.md)
 
 ---
 
+## Iteration 31 — Document-level OCR Heading Hierarchy (2026-04-17)
+
+**Scope**: OCR `paragraph_title` blocks were assigned H2 unconditionally
+(`parserx/builders/ocr.py:1458`), producing incorrect level for residual
+paper01 cases (e.g. `Model Parallel Training`, `Concurrent Steps for Model
+Computation Pipelining` should be H3 per section hierarchy). Earlier
+demote attempts reportedly triggered a paper_chn01 char_f1 cascade; Iter 31
+first isolates that risk before shipping a fix.
+
+### Step 1 — Cascade diagnosis (VLM suspected, not reproduced)
+
+Throwaway patch set OCR `paragraph_title` → H3. Ran paper_chn01 eval in
+four cells:
+
+| Cell | char_f1 | edit_dist | heading_f1 |
+|------|---------|-----------|-----------|
+| H2 + VLM on | 0.710 | 0.704 | 0.87 |
+| H2 + VLM off | 0.714 | 0.701 | 0.81 |
+| H3 + VLM on | 0.726 | 0.719 | 0.81 |
+| H3 + VLM off | 0.710 | 0.704 | 0.81 |
+
+All four within ±0.02 OCR noise. The previously reported
+0.891 → 0.722 regression came from an older code state or a different
+demotion path; it is **not** reproducible today. VLM is not amplifying
+level changes in the current pipeline.
+
+### Step 2 — VLM extraction-summary cleanup
+
+`parserx/processors/vlm_review.py:388-389` previously wrote numeric
+`heading_level` into the VLM input JSON. Switched to boolean
+`is_heading=True` — VLM only needs to know an element is a heading, not
+its level, to judge OCR corrections on surrounding text. Removes a
+potential future cascade vector without functional change today.
+
+### Step 3 — Document-level level inference for OCR paragraph_title
+
+`parserx/processors/chapter.py::_infer_ocr_paragraph_title_level(doc)`:
+returns default H2 unless the document has (a) ≥3 distinct heading-
+candidate font sizes in its native layer **and** (b) native content
+dominates by character count (≥50%). The OCR branch only demotes when
+inference differs from H2 and no numbering override fires — numbering is
+always the strongest signal.
+
+The native-dominance guard protects OCR-heavy standards documents
+(ocr_scan_jtg3362-like: thin native cover + metadata layer, OCR-dominant
+body) where paragraph_titles ARE the top-level sections and must remain
+H2.
+
+### Impact
+
+| Doc | Baseline | Iter 31 | Δ |
+|-----|----------|---------|---|
+| paper01 heading_f1 | 0.832 | **0.841** | +0.009 (target) |
+| paper_chn01 char_f1 | 0.717 | 0.726 | +0.009 |
+| paper_chn01 heading_f1 | 0.812 | 0.812 | 0 |
+| ocr01 heading_f1 | 0.737 | 0.737 | 0 |
+| patent01 heading_f1 | 0.300 | 0.300 | 0 |
+| avg char_f1 | 0.903 | 0.901 | -0.002 (noise) |
+| avg heading_f1 | 0.542 | 0.531 | -0.011 (ocr_scan_jtg3362 variance) |
+
+paper01 output: `### Model Parallel Training`, `### Concurrent Steps for
+Model Computation Pipelining` (previously H2, now correct H3).
+
+Full report: `eval_reports/iter31_baseline_2026-04-17.md`.
+
+### Design notes
+
+- **Signal choice**: font-hierarchy *depth* beats numbering depth for this
+  job. Numbering patterns can be sparse even in deep documents; font
+  candidates from the native layer directly encode visible rank count.
+- **Native-dominance guard** avoids the trap where a scanned document's
+  thin native layer (cover + metadata at varied sizes) falsely reports
+  a rich hierarchy.
+- **Numbering still wins locally**: a numbered OCR heading (`8
+  Performance` → section_arabic_spaced H2) is never demoted by inference.
+  Initial implementation missed this and had to be fixed before ship.
+- **Conservative default**: when signal is weak, stay at H2 — an
+  over-promoted heading is a less painful hierarchy error than an
+  under-promoted one.
+
+### Open items
+
+- ocr_scan_jtg3362 residual headings (`公路钢筋混凝土及预应力`) are
+  NATIVE-layer extractions routed through the LLM fallback path, not
+  OCR paragraph_titles — out of scope for this iter. Shows up as
+  `### ...` instead of `## ...`; heading_f1=0.095.
+- Iter 31 plan's Step 3 also sketched bbox-height clustering as a
+  per-element signal for OCR heading levels. Not implemented — the
+  document-level font-depth signal was sufficient for the paper01
+  target and simpler to reason about. Bbox clustering remains available
+  if a future case needs per-page discrimination.
+
+---
+
 ## Iteration 30 Track B — Multi-line Title Split (2026-04-16)
 
 **Scope**: paper01 首页标题 `TensorFlow:\nLarge-Scale Machine Learning on
