@@ -972,3 +972,121 @@ def test_ocr_paragraph_title_numbering_h2_preserved_even_with_deep_hierarchy():
     assert "ocr_level_inferred" not in ocr_h.metadata
 
 
+# ── Iter 33: DOCX numbering-pattern relaxation + TOC block detection ────
+
+def test_section_arabic_root_no_space_detected():
+    """``4.报价有效期`` (no space between number and title) should detect as H2.
+
+    Regression guard for tender/contract docs where the author omits the
+    conventional space — the heading intent is identical.
+    """
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("4.报价有效期") == ("section_arabic_root", "H2")
+    assert detect_numbering_signal("12.需要补充的其他内容") == ("section_arabic_root", "H2")
+    # Full-width variant ``9．监督`` (U+FF0E) also matches.
+    assert detect_numbering_signal("9．监督") == ("section_arabic_root", "H2")
+
+
+def test_section_arabic_nested_no_delim_detected():
+    """``1.4费用承担`` (nested, no delim before title) should detect as H3."""
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("1.4费用承担") == ("section_arabic_nested", "H3")
+    assert detect_numbering_signal("8.2对采购单位的纪律要求") == ("section_arabic_nested", "H3")
+    assert detect_numbering_signal("2.1.1竞争性谈判公告") == ("section_arabic_nested", "H3")
+
+
+def test_section_arabic_ideograph_detected():
+    """``1、评审方法`` (ideographic comma after number) should detect as H2."""
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("1、评审方法") == ("section_arabic_ideograph", "H2")
+    assert detect_numbering_signal("6、谈判评审") == ("section_arabic_ideograph", "H2")
+
+
+def test_article_cn_detected():
+    """``第一条名称、品种、规格和质量`` should detect as H3."""
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("第一条名称、品种、规格和质量") == ("article_cn", "H3")
+    assert detect_numbering_signal("第十三条其它事项：") == ("article_cn", "H3")
+    # Inline reference must NOT match.
+    assert detect_numbering_signal("根据第一条规定应当") is None
+
+
+def test_appendix_cn_detected():
+    """``附件一`` / ``附录一`` should detect as H2 so appendices become headings."""
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("附件一") == ("appendix_cn", "H2")
+    assert detect_numbering_signal("附录二 规范术语") == ("appendix_cn", "H2")
+
+
+def test_chapter_cn_matches_without_trailing_word_boundary():
+    """``第一章`` followed directly by CJK title — no whitespace required.
+
+    ``\\b`` between CJK chars never fires (both are word-class), so the old
+    pattern missed ``第一章竞争性谈判公告``.
+    """
+    from parserx.builders.metadata import detect_numbering_signal
+    assert detect_numbering_signal("第一章竞争性谈判公告") == ("chapter_cn", "H1")
+    assert detect_numbering_signal("第一章") == ("chapter_cn", "H1")
+
+
+def test_docx_fallback_article_cn_with_trailing_colon_promoted():
+    """``第八条 甲方违约责任：`` ends with colon — normally rejected, but
+    strong CN patterns (article_cn/chapter_cn/appendix_cn) canonically use
+    the colon to introduce sub-clauses and must still be promoted."""
+    body = _text_elem("Body. " * 30, font_size=10.0)
+    heading = _text_elem("第八条甲方违约责任：", font_size=10.0, bold=True)
+    doc = _build_doc([body, heading])
+    ChapterProcessor().process(doc)
+    assert heading.metadata["heading_level"] == 3
+
+
+def test_toc_block_detected_header_is_h1_entries_not_promoted():
+    """A ``目录`` paragraph followed by entries with trailing page numbers
+    becomes an H1 TOC block; entries stay plain text even though they have
+    strong ``第X章`` numbering signals that would otherwise promote them."""
+    toc = _text_elem("目录", font_size=14.0, bold=True)
+    e1 = _text_elem("第一章 公告   2", font_size=12.0, bold=True)
+    e2 = _text_elem("第二章 须知   10", font_size=12.0, bold=True)
+    e3 = _text_elem("第三章 规格书   15", font_size=12.0, bold=True)
+    body = _text_elem("Body text. " * 30, font_size=10.0)
+    real_chapter = _text_elem("第一章 公告", font_size=16.0, bold=True)
+    doc = _build_doc([toc, e1, e2, e3, body, real_chapter])
+    ChapterProcessor().process(doc)
+    # TOC header is H1.
+    assert toc.metadata.get("heading_level") == 1
+    assert toc.metadata.get("toc_header") is True
+    # Entries stay plain (no heading_level).
+    for entry in (e1, e2, e3):
+        assert entry.metadata.get("heading_level") is None
+        assert entry.metadata.get("toc_entry") is True
+    # The real chapter further down still gets H1.
+    assert real_chapter.metadata["heading_level"] == 1
+
+
+def test_toc_block_tolerates_double_space_header():
+    """``目  录`` (double space) and ``目 录`` (ideographic space) match."""
+    toc = _text_elem("目  录", font_size=14.0, bold=True)
+    e1 = _text_elem("第一章 公告   2", font_size=12.0, bold=True)
+    e2 = _text_elem("第二章 须知   10", font_size=12.0, bold=True)
+    doc = _build_doc([toc, e1, e2])
+    ChapterProcessor().process(doc)
+    assert toc.metadata.get("toc_header") is True
+    assert e1.metadata.get("toc_entry") is True
+
+
+def test_toc_block_requires_multiple_numeric_tail_entries():
+    """A stray ``目录`` line without a listing beneath must NOT be promoted.
+
+    Guards against false positives where the word ``目录`` appears in a
+    paragraph title or in body text (e.g. ``响应文件目录`` context).
+    """
+    toc = _text_elem("目录", font_size=14.0, bold=True)
+    # Only one numeric-tail entry → not a TOC block.
+    e1 = _text_elem("第一章 公告   2", font_size=12.0, bold=True)
+    followup = _text_elem("接下来的说明文字。", font_size=10.0)
+    doc = _build_doc([toc, e1, followup])
+    ChapterProcessor().process(doc)
+    assert toc.metadata.get("toc_header") is not True
+    assert e1.metadata.get("toc_entry") is not True
+
+

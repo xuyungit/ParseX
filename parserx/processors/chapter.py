@@ -408,7 +408,12 @@ class ChapterProcessor:
 
         ocr_paragraph_title_default = self._infer_ocr_paragraph_title_level(doc)
 
-        detected_count = 0
+        # Mark Table-of-Contents blocks before per-element heading detection.
+        # Entries inside a TOC block must never be promoted to document-level
+        # headings — they are pointers to the real chapter headings.
+        toc_hits = self._detect_toc_blocks(doc)
+
+        detected_count = toc_hits
         fallback_candidates: list[dict] = []
 
         for page in doc.pages:
@@ -422,6 +427,14 @@ class ChapterProcessor:
 
                 # Skip retained page-identity elements (header/footer kept on first page)
                 if elem.metadata.get("retained_page_identity"):
+                    continue
+
+                # Skip TOC entries — their heading_level is controlled by the
+                # TOC pre-pass, not by per-element detection.
+                if elem.metadata.get("toc_entry"):
+                    continue
+                if elem.metadata.get("toc_header"):
+                    # TOC header already has heading_level=1 set by the pre-pass.
                     continue
 
                 # Elements with heading_level already set (e.g. from DOCX styles, OCR layout)
@@ -604,11 +617,147 @@ class ChapterProcessor:
             and numbering_level is not None
             and _is_short_heading_text(first_line)
             and not _is_metadata_or_cover_line(first_line)
-            and not _ends_with_colon(first_line)
         ):
+            # Trailing colon normally signals an introductory clause, not a
+            # heading — but CN contract-style articles (``第X条 Title：``)
+            # and chapter markers (``第X章 Title：``) canonically use the
+            # colon to introduce the clauses that follow.  Accept those
+            # patterns even with the trailing colon.
+            if _ends_with_colon(first_line):
+                strong_colon_signals = {"chapter_cn", "article_cn", "appendix_cn"}
+                signal_result = detect_numbering_signal(first_line)
+                signal = signal_result[0] if signal_result else ""
+                if signal not in strong_colon_signals:
+                    return None
             return numbering_level
 
         return None
+
+    # ── Table-of-Contents block detection ───────────────────────────────
+
+    # TOC header: a standalone line that literally reads "目录", "目 录",
+    # "Contents", or "Table of Contents".  The leader pattern is intentionally
+    # generic — we only care that the line IS the TOC heading.
+    _TOC_HEADER_NAMES = {
+        "目录", "目 录", "目　录",
+        "contents", "table of contents", "table of content",
+    }
+
+    # TOC-entry tail: a trailing page number with optional dot/em-dash leader.
+    # Covers "第一章 公告  2", "第一章 公告 …… 2", "第一章 公告 .... 2",
+    # and "Appendix A 15" styles.
+    _TOC_ENTRY_TAIL_RE = re.compile(
+        r"(?:\s|\.{2,}|…{1,}|-{2,}|—{1,})\d{1,4}\s*$"
+    )
+
+    def _detect_toc_blocks(self, doc: Document) -> int:
+        """Mark ``目录`` / ``Table of Contents`` blocks so entries stay demoted.
+
+        A TOC block is a ``目录`` (or English equivalent) paragraph followed
+        by a run of short paragraphs, most of which end with a trailing page
+        number.  The header itself becomes an ``H1``; its entries are tagged
+        with ``toc_entry=True`` so later passes (per-element heading
+        detection, numbering coherence, LLM fallback) will not promote them.
+
+        The run ends when we see a non-matching paragraph at the same nesting
+        level — that is the real first chapter of the document.
+        """
+        promoted = 0
+        for page in doc.pages:
+            elements = page.elements
+            idx = 0
+            while idx < len(elements):
+                elem = elements[idx]
+                if elem.type != "text":
+                    idx += 1
+                    continue
+                header_text = self._match_toc_header(elem)
+                if header_text is None:
+                    idx += 1
+                    continue
+
+                entries, stop_idx = self._collect_toc_entries(elements, idx + 1)
+                # Require at least two entries with a numeric tail — a lone
+                # "目录" paragraph without a listing is usually noise (e.g.
+                # a body sentence that happens to mention 目录).
+                numeric_tail_count = sum(
+                    1 for e in entries if self._TOC_ENTRY_TAIL_RE.search(e.content.strip())
+                )
+                if numeric_tail_count < 2:
+                    idx += 1
+                    continue
+
+                elem.metadata["heading_level"] = 1
+                elem.metadata["toc_header"] = True
+                promoted += 1
+                for entry in entries:
+                    entry.metadata["toc_entry"] = True
+                    # Strip any preset heading_level so the entry renders as
+                    # a plain paragraph inside the TOC block.
+                    entry.metadata.pop("heading_level", None)
+                    entry.metadata["exclude_from_heading_detection"] = True
+
+                idx = stop_idx
+        if promoted:
+            log.info("Detected %d TOC block(s)", promoted)
+        return promoted
+
+    def _match_toc_header(self, elem: PageElement) -> str | None:
+        text = elem.content.strip()
+        if not text or "\n" in text:
+            return None
+        # Strip leading Markdown hashes in case an earlier stage already
+        # promoted the paragraph.
+        cleaned = re.sub(r"^\s{0,3}#{1,6}\s*", "", text).strip()
+        cleaned = cleaned.replace("**", "").strip()
+        if len(cleaned) > 20:
+            return None
+        # Normalize any whitespace run (including the ideographic space
+        # U+3000 and tabs) to a single ASCII space so "目 录", "目  录",
+        # and "目\u3000录" all match a single canonical form.
+        collapsed = re.sub(r"\s+", " ", cleaned).strip()
+        canonical = collapsed.replace(" ", "").lower()
+        for name in self._TOC_HEADER_NAMES:
+            if name.replace(" ", "").replace("\u3000", "").lower() == canonical:
+                return cleaned
+        return None
+
+    def _collect_toc_entries(
+        self, elements: list[PageElement], start: int,
+    ) -> tuple[list[PageElement], int]:
+        """Return the contiguous TOC-entry list starting at ``start``.
+
+        Entries are short single-line paragraphs, usually with a trailing
+        page number.  The run stops at the first paragraph that clearly
+        belongs to body text (long, multi-line, or without a numeric tail
+        and too long to be a stylistic TOC entry).
+        """
+        entries: list[PageElement] = []
+        i = start
+        # Allow up to two consecutive non-matching short paragraphs (e.g. a
+        # blank styling line) before giving up, so TOC formatting quirks do
+        # not truncate the block prematurely.
+        slack = 0
+        while i < len(elements):
+            elem = elements[i]
+            if elem.type != "text":
+                break
+            text = elem.content.strip()
+            if not text:
+                i += 1
+                continue
+            if "\n" in text or len(text) > 80:
+                break
+            if self._TOC_ENTRY_TAIL_RE.search(text):
+                entries.append(elem)
+                slack = 0
+            else:
+                slack += 1
+                if slack > 1 or not entries:
+                    break
+                entries.append(elem)
+            i += 1
+        return entries, i
 
     # ── Numbering coherence pass ────────────────────────────────────────
 
@@ -630,6 +779,8 @@ class ChapterProcessor:
         for page in doc.pages:
             for elem in page.elements:
                 if elem.type != "text":
+                    continue
+                if elem.metadata.get("toc_entry") or elem.metadata.get("toc_header"):
                     continue
                 first_line = _resolve_heading_text(elem.content)
                 if not first_line:

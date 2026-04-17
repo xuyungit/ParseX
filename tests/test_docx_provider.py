@@ -114,6 +114,40 @@ def test_table_to_markdown_empty():
     assert provider._table_to_markdown(table) == ""
 
 
+def test_section_header_numeric_only_skipped():
+    """SectionHeaderItem whose entire text is digits/whitespace returns None.
+
+    Docling emits such paragraphs for PAGE-field-bearing footers and similar
+    auto-generated section markers that Word promotes to an outline level.
+    They are never real headings — filtering them out prevents bogus
+    ``#### 1 2`` / ``#### 3`` noise from leaking into the body.
+    """
+    provider = DOCXProvider()
+    # Patch the isinstance checks by patching the imported types the
+    # provider does a fresh import of inside _convert_item.
+    with patch("docling_core.types.doc.document.SectionHeaderItem", FakeSectionHeader), \
+         patch("docling_core.types.doc.document.TextItem", FakeTextItem), \
+         patch("docling_core.types.doc.document.ListItem", type("_FakeListItem", (), {})), \
+         patch("docling_core.types.doc.document.TableItem", type("_FakeTableItem", (), {})), \
+         patch("docling_core.types.doc.document.PictureItem", type("_FakePictureItem", (), {})):
+        numeric = FakeSectionHeader("1 ", level=3, page_no=1)
+        result = provider._convert_item(numeric, page_number=1, docling_doc=None)
+        assert result is None
+
+        numeric_two = FakeSectionHeader("5 6", level=3, page_no=1)
+        assert provider._convert_item(numeric_two, 1, None) is None
+
+        blank = FakeSectionHeader("   ", level=2, page_no=1)
+        assert provider._convert_item(blank, 1, None) is None
+
+        # Legitimate heading with digits is kept.
+        real = FakeSectionHeader("1 买卖合同", level=1, page_no=1)
+        kept = provider._convert_item(real, 1, None)
+        assert kept is not None
+        assert kept.content == "1 买卖合同"
+        assert kept.metadata["heading_level"] == 1
+
+
 def test_extract_bbox():
     provider = DOCXProvider()
     item = MagicMock()
