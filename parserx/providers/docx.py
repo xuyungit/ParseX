@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from parserx.models.elements import (
@@ -15,6 +16,13 @@ from parserx.models.elements import (
 )
 
 log = logging.getLogger(__name__)
+
+# A paragraph whose entire text is digits/whitespace is never a real heading.
+# Docling emits such paragraphs as ``SectionHeaderItem`` when Word assigns
+# them an outline level (e.g. because they live in a footer that contains a
+# PAGE field, or other auto-generated section markers). Filter them out so
+# they do not leak into the body flow as ``#### 1 2`` noise.
+_NUMERIC_ONLY_RE = re.compile(r"^[\s\d]+$")
 
 
 class DOCXProvider:
@@ -205,6 +213,11 @@ class DOCXProvider:
         bbox = self._extract_bbox(item)
 
         if isinstance(item, SectionHeaderItem):
+            text = item.text or ""
+            if not text.strip() or _NUMERIC_ONLY_RE.match(text):
+                # Spurious heading emitted by Docling for empty/numeric-only
+                # paragraphs (e.g. page-number artefacts). Never a real heading.
+                return None
             font = FontInfo(
                 name="",
                 size=0.0,
@@ -212,7 +225,7 @@ class DOCXProvider:
             )
             return PageElement(
                 type="text",
-                content=item.text,
+                content=text,
                 bbox=bbox,
                 page_number=page_number,
                 font=font,

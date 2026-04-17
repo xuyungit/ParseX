@@ -28,14 +28,49 @@ from parserx.models.elements import (
 
 _NUMBERING_PATTERNS: list[tuple[str, str, str]] = [
     # (signal_name, regex, default_heading_level)
-    ("chapter_cn", r"^第[一二三四五六七八九十百千万0-9]+[编章节部分]\b", "H1"),
+    # Chapter: ``第一章``, ``第十编``.  ``\b`` is dropped so the pattern also
+    # matches ``第一章竞争性谈判公告`` (no whitespace between 章 and the title).
+    # CJK chars are all word-class in Python regex, so ``\b`` between two CJK
+    # chars never fires.
+    ("chapter_cn", r"^第[一二三四五六七八九十百千万0-9]+[编章节部分]", "H1"),
+    # Chinese-article style: 第一条, 第二条, 第十三条 — used for contract
+    # clauses and regulatory articles.  Mapped to H3 by default; document
+    # hierarchy adjusts via coherence promotion.  ``\b`` is not used because
+    # CJK characters are all word-chars in Python regex; the ``^`` anchor
+    # already guards against inline references like ``根据第一条规定``.
+    ("article_cn", r"^第[一二三四五六七八九十百千万零〇0-9]+条", "H3"),
+    # Appendix / attachment marker: 附件一, 附件二 — commonly used in
+    # contracts and regulatory docs to introduce a supplementary section.
+    ("appendix_cn", r"^附[件录][一二三四五六七八九十百千万零〇0-9]+", "H2"),
     ("section_cn", r"^[一二三四五六七八九十百千万]+[、.．)]", "H2"),
     ("section_cn_paren", r"^[（(][一二三四五六七八九十百千万]+[）)]", "H2"),
-    ("section_arabic_nested", r"^\d+\.\d+(?:\.\d+)*[\s、.．)]", "H3"),
+    # Nested arabic: 1.2, 1.2.3.  Allow the title to start immediately after
+    # the number (no delimiter required) for CJK text — ``1.4费用承担`` is
+    # indistinguishable from ``1.4 费用承担`` in intent.
+    (
+        "section_arabic_nested",
+        r"^\d+\.\d+(?:\.\d+)*(?:[\s、.．)]|(?=[\u4e00-\u9fff]))",
+        "H3",
+    ),
     ("section_arabic_paren", r"^(?:[（(]\d+[）)]|\d+[）)])", "H3"),
+    # Arabic with ideographic comma: 1、评审方法, 2、谈判小组 — common in
+    # Chinese regulatory/tender docs where 、 replaces . as the separator.
+    ("section_arabic_ideograph", r"^\d{1,3}、[\u4e00-\u9fffA-Za-z]", "H2"),
     ("section_arabic_spaced", r"^\d{1,3}\s+[\u4e00-\u9fffA-Za-z]", "H2"),  # max 3 digits, excludes years like 2026
-    ("section_arabic_root", r"^\d+\.[\s]+", "H2"),
+    # Root arabic ``N.``.  Historically required trailing whitespace; that
+    # made ``4.报价有效期`` (no space) fall through even when the same
+    # series had ``1. 总则`` (spaced).  Accept both forms; ambiguity with
+    # ordered-list items is resolved at the heading-detection layer via
+    # font/coherence signals.
+    ("section_arabic_root", r"^\d+\.\s*[\u4e00-\u9fffA-Za-z]", "H2"),
 ]
+
+
+_FULLWIDTH_NUMBER_SEP = str.maketrans({
+    "\uFF0E": ".",  # ． → .
+    "\uFF10": "0", "\uFF11": "1", "\uFF12": "2", "\uFF13": "3", "\uFF14": "4",
+    "\uFF15": "5", "\uFF16": "6", "\uFF17": "7", "\uFF18": "8", "\uFF19": "9",
+})
 
 
 def detect_numbering_signal(text: str) -> tuple[str, str] | None:
@@ -43,11 +78,18 @@ def detect_numbering_signal(text: str) -> tuple[str, str] | None:
 
     Returns (signal_name, heading_level) or None.
     Migrated from legacy pipeline chapter_outline_core.py detect_numbering_signal.
+
+    Normalizes full-width digits and the full-width full stop ``．`` (U+FF0E)
+    before matching so items like ``9．监督`` detect the same as ``9.监督``.
+    TextClean applies the same normalization globally later in the pipeline
+    but heading detection runs first; this local normalization keeps the
+    two paths in sync without depending on processor order.
     """
     stripped = text.strip()
     # Remove markdown marks
     stripped = re.sub(r"^\s{0,3}#{1,6}\s*", "", stripped)
     stripped = stripped.replace("**", "").replace("*", "")
+    stripped = stripped.translate(_FULLWIDTH_NUMBER_SEP)
 
     for signal, pattern, level in _NUMBERING_PATTERNS:
         if re.match(pattern, stripped):
