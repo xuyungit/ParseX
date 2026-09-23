@@ -115,7 +115,8 @@ uv run parserx parse document.pdf -c parserx.yaml -v
 ### 启用 OCR（扫描件处理）
 
 ```bash
-PADDLE_OCR_ENDPOINT="your-paddleocr-endpoint" \
+# token 在 https://aistudio.baidu.com/paddleocr 获取
+PADDLE_OCR_ENDPOINT="https://paddleocr.aistudio-app.com/api/v2/ocr/jobs" \
 PADDLE_OCR_TOKEN="your-token" \
 uv run parserx parse scanned.pdf -c parserx.yaml
 ```

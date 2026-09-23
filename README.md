@@ -164,8 +164,8 @@ Without these, VLM steps are skipped automatically — everything else works.
 ### Enable OCR for Scanned Documents
 
 ```bash
-PADDLE_OCR_ENDPOINT=your-paddleocr-endpoint
-PADDLE_OCR_TOKEN=your-token
+PADDLE_OCR_ENDPOINT=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
+PADDLE_OCR_TOKEN=your-token   # from https://aistudio.baidu.com/paddleocr
 ```
 
 Without OCR credentials, scanned pages are skipped.

@@ -23,24 +23,36 @@ class _FakeResponseStream:
         return False
 
 
+def _reject_unsupported(kwargs: dict, rejected: set[str]) -> None:
+    for name in rejected:
+        if name in kwargs:
+            raise RuntimeError(
+                f"Error code: 400 - Unsupported parameter: '{name}' is not supported with this model."
+            )
+
+
 class _FakeResponsesAPI:
     def __init__(self):
         self.calls: list[dict] = []
         self.raise_not_found = False
+        self.rejected: set[str] = set()
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         if self.raise_not_found:
             raise RuntimeError("404 Not Found")
+        _reject_unsupported(kwargs, self.rejected)
         return _FakeResponseStream(["hello", " world"])
 
 
 class _FakeChatCompletionsAPI:
     def __init__(self):
         self.calls: list[dict] = []
+        self.rejected: set[str] = set()
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        _reject_unsupported(kwargs, self.rejected)
         message = SimpleNamespace(content="chat answer")
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
@@ -200,3 +212,51 @@ def test_describe_image_forwards_json_schema_to_responses(monkeypatch, tmp_path:
     assert text_config["format"]["name"] == "demo_schema"
     assert text_config["format"]["schema"] == schema
     assert text_config["format"]["strict"] is True
+
+
+def test_rejected_temperature_is_dropped_and_remembered(monkeypatch):
+    service, client = _make_service(monkeypatch, api_style="responses")
+    client.responses.rejected = {"temperature"}
+
+    assert service.complete("system", "user", temperature=0.0) == "hello world"
+    assert service.complete("system", "user", temperature=0.0) == "hello world"
+
+    calls = client.responses.calls
+    assert len(calls) == 3  # rejected, retried, then never sent again
+    assert "temperature" in calls[0] and "temperature" not in calls[1] and "temperature" not in calls[2]
+
+
+def test_reasoning_effort_forwarded_per_api_style(monkeypatch):
+    service, client = _make_service(monkeypatch, api_style="responses", reasoning_effort="none")
+    service.complete("system", "user")
+    assert client.responses.calls[0]["reasoning"] == {"effort": "none"}
+
+    service, client = _make_service(monkeypatch, api_style="chat", reasoning_effort="low")
+    service.complete("system", "user")
+    assert client.chat.completions.calls[0]["reasoning_effort"] == "low"
+
+
+def test_rejected_reasoning_value_drops_reasoning(monkeypatch):
+    service, client = _make_service(monkeypatch, api_style="responses", reasoning_effort="minimal")
+
+    def create(**kwargs):
+        client.responses.calls.append(kwargs)
+        if "reasoning" in kwargs:
+            raise RuntimeError("Error code: 400 - Unsupported value: 'minimal' is not supported with the 'x' model.")
+        return _FakeResponseStream(["ok"])
+
+    client.responses.create = create
+    assert service.complete("system", "user") == "ok"
+    assert "reasoning" not in client.responses.calls[-1]
+
+
+def test_min_output_tokens_floor_and_chat_token_param_rename(monkeypatch):
+    service, client = _make_service(monkeypatch, api_style="responses", min_output_tokens=1024)
+    service.complete("system", "user", max_tokens=64)
+    assert client.responses.calls[0]["max_output_tokens"] == 1024
+
+    service, client = _make_service(monkeypatch, api_style="chat")
+    client.chat.completions.rejected = {"max_tokens"}
+    service.complete("system", "user", max_tokens=64)
+    assert client.chat.completions.calls[-1]["max_completion_tokens"] == 64
+    assert "max_tokens" not in client.chat.completions.calls[-1]

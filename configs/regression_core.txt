@@ -1,0 +1,8 @@
+# Core regression set (L1). One document per input class; see docs/redesign_guide.md §7.
+# Used by: scripts/regression_test.py --core  (flag added in Phase 0)
+deepseek
+text_table01
+receipt
+ocr_scan_jtg3362
+simple_doc01
+text_report01

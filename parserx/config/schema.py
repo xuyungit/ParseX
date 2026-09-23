@@ -47,7 +47,7 @@ class OCRBuilderConfig(BaseModel):
     lang: str = "ch_sim+en"
     endpoint: str = ""
     token: str = ""
-    model: str = "PaddleOCR-VL-1.5"
+    model: str = "PaddleOCR-VL-1.6"
     selective: bool = True
     force_full_page: bool = False
     batch: bool = True  # Batch OCR: assemble pages into temp PDF, one API call
@@ -181,6 +181,20 @@ class ServiceConfig(BaseModel):
     api_key: str = ""
     api_style: Literal["auto", "responses", "chat"] = "auto"
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    # User-Agent sent to the endpoint. Defaults to a non-SDK value because some
+    # OpenAI-compatible proxies sit behind a WAF (e.g. Cloudflare) that blocks
+    # the stock ``openai-python`` User-Agent with a 403. Set to "" to keep the
+    # SDK default.
+    user_agent: str = "parserx/0.1"
+    # Reasoning-model controls. ``reasoning_effort`` (none/low/medium/high) is
+    # forwarded when set; a backend that rejects it is detected from its 400
+    # and the parameter is dropped for the rest of the session.  The same
+    # applies to ``temperature`` (``send_temperature`` None = auto-detect).
+    # ``min_output_tokens`` raises every caller's token budget to at least
+    # this value so reasoning tokens cannot starve the visible answer.
+    reasoning_effort: str | None = None
+    send_temperature: bool | None = None
+    min_output_tokens: int = 0
     max_concurrent: int = 6
     timeout: int = 180
     max_retries: int = 3

@@ -2,6 +2,8 @@
 
 Updated: 2026-04-17 (post Iteration 32)
 
+> **2026-09-23**：v1 迭代停止。后续开发以 [redesign_guide.md](redesign_guide.md) 为准，本文件保留作 v1 历史记录。
+
 Active backlog for choosing the next iteration. For completed iteration
 records, see [iteration_history.md](iteration_history.md).
 

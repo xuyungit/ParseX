@@ -21,7 +21,7 @@ builders:
     lang: ch_sim+en
     endpoint: ${PADDLE_OCR_ENDPOINT}
     token: ${PADDLE_OCR_TOKEN}
-    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.5}
+    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.6}
     selective: true
 
 processors:
@@ -64,17 +64,26 @@ processors:
 services:
   vlm:
     provider: openai
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${VLM_MODEL:gpt-5.4-mini}
-    api_key: ${OPENAI_API_KEY}
+    # 2026-09-23: default switched to the official OpenAI endpoint (*_B vars);
+    # the relay endpoint (OPENAI_BASE_URL) no longer serves gpt-5.4-mini.
+    endpoint: ${OPENAI_BASE_URL_B}
+    model: ${VLM_MODEL_B:gpt-6-luna}
+    api_key: ${OPENAI_API_KEY_B}
+    # Reasoning models (gpt-5.6-*/gpt-6-*): no temperature, effort=none for
+    # transcription-style work.  Both are auto-dropped on backends that
+    # reject them, so the same config works for gpt-5.4-mini.
+    reasoning_effort: none
+    min_output_tokens: 1024
     max_concurrent: 6
     timeout: 180
     max_retries: 3
   llm:
     provider: openai
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${LLM_MODEL:gpt-5.4-mini}
-    api_key: ${OPENAI_API_KEY}
+    endpoint: ${OPENAI_BASE_URL_B}
+    model: ${LLM_MODEL_B:gpt-5.4-mini}
+    api_key: ${OPENAI_API_KEY_B}
+    reasoning_effort: none
+    min_output_tokens: 256
 
 verification:
   hallucination_detection: true

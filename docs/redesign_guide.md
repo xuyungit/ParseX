@@ -1,0 +1,715 @@
+# ParserX v2 设计与研发指导
+
+> **文档状态**：v1.0，2026-09-23 重新整理（此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
+>
+> 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
+
+## 0. 使用方法与当前状态
+
+### 0.1 状态快照（2026-09-23）
+
+- **外部依赖已全部确定**：OCR 走 AI Studio jobs API（PaddleOCR-VL-1.6）；LLM/VLM 走官方 OpenAI 端点，VLM 为 gpt-6-luna，LLM 暂为 gpt-5.4-mini；`services/llm.py` 已适配推理模型。`uv run python scripts/check_services.py` 三项通过。
+- **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
+- **阶段零 🟡**（端点切换、OCR 恢复、`llm.py` 适配已完成；验收工具修复、回归分层、缓存未开始），阶段一至五 ⬜。
+- **测试基线**：离线单元测试 432 通过、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
+- **工作区未提交**：`services/ocr.py` 重写、`services/llm.py` 与 `config/schema.py` 改动、`parserx.yaml`、`.env.example`、README、本文档、`scripts/check_services.py`、`configs/regression_core.txt`、两份 eval_reports。建议开新会话前先提交一次。
+
+### 0.2 新会话启动清单
+
+下一轮会话的主题是"具体的编码与研发如何展开"。开始时按顺序做：
+
+1. 读 §2（目标与原则）、§3（架构）、§5（工具包）、§7（运行时与实验）、§12（阶段）、§14（开放问题）。§4、§6、§8、§9 在动手实现对应部分时再读。
+2. 运行 `uv run python scripts/check_services.py`，三项都 OK 才继续；任一失败先修 `.env`，不要绕过。
+3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`，应为 432 通过、4 个已知失败。
+4. 从 §12 中状态为 🟡 的阶段开始；阶段零剩余任务见 §12。
+5. 每完成一个产出：更新 §12 状态列与 §15；新的决策写进 §14。
+6. 结束会话前：`git status` 确认改动在预期内；评测报告写入 `eval_reports/`。
+
+### 0.3 相关文档
+
+- [architecture.md](architecture.md)：v1 架构，保留作历史参考，不再更新。
+- [requirements.md](requirements.md)：痛点 P1–P19 与设计目标仍然有效。
+- [iteration_history.md](iteration_history.md)、[iteration_backlog.md](iteration_backlog.md)：v1 的 33 次迭代记录，已冻结。
+- [evaluation.md](evaluation.md)：指标定义，按 §9.2 修复。
+- [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
+
+## 1. 背景与根因
+
+### 1.1 v1 现状（数据）
+
+v1 从 2026-04-04 到 2026-04-17 共 108 次提交、33 次迭代。两次全量基线：
+
+| 日期 | 文档数 | char_f1 | heading_f1 | table_f1 | 总耗时 |
+|---|---|---|---|---|---|
+| 2026-04-09 | 14 | 0.902 | 0.528 | 未记录 | 未记录 |
+| 2026-04-17 | 16 | 0.897 | 0.544 | 0.487 | 570.6 s |
+
+中间 15 次迭代，Iter 26 到 33 全部围绕标题识别，heading_f1 只变化了 0.016。代码症状：
+
+| 症状 | 证据 |
+|---|---|
+| 规则堆叠 | `parserx/processors/chapter.py` 1599 行、38 个辅助函数，多数是针对单篇文档症状的守卫 |
+| 状态无模型 | `PageElement.metadata` 是自由字典，全项目使用 84 个不同的标志键 |
+| 评测不可复现 | 标题识别的 LLM 兜底使同一提交的 heading_f1 波动 ±0.05–0.10 |
+| 图片分类缺失 | 分类只看像素尺寸；`TABLE_IMAGE` / `TEXT_IMAGE` 分支因 LayoutBuilder 从未实现而休眠 |
+| AI 路径重叠 | 扫描页 OCR、图片 VLM 转录纠正、页面级 VLM 复审三层互相覆盖，靠字符串包含去重 |
+| 成本无控制 | 无缓存；每次回归都真实调用全部服务（最近一次 1208 s，OCR/VLM/LLM 32/50/11 次） |
+
+### 1.2 根因
+
+1. **OCR、VLM 和规则之间没有明确的职责、裁决权和停止条件。** 同一段内容会经历"OCR 给出文本 → VLM 改写 → 规则发现冲突 → 页面复审再改 → 渲染阶段去重"，每一步单看都有道理，但无法回答这句话是谁改的、依据是什么、哪一步该负责。VLM 的四种用途（纠正 OCR、理解表格、描述图片、组织章节）混在一条可以反复修改内容的流程里，后执行的一步自动拥有最终决定权。
+2. **本地没有统一的版面表示。** 版面理解被外包给远程 OCR 和 VLM，每类新文档只能靠加规则来补，规则互相打架；图片处理不是"先判断是什么再决定怎么做"，而是"先全部送 VLM 再用规则收拾结果"。
+3. **验收工具有实质漏洞**（§9.2）：表格指标忽略单元格位置与漏表，字符指标忽略顺序，HTML 表格检不出，文档全部失败时退出码仍为 0。"新路径不低于旧路径"在这套指标上无法可靠证明。
+
+v1 最初的方向是对的：希望工具能理解不同的文档，而不是积累"某种字号、某种编号就是什么"的规则。v2 保留这个目标；要收紧的不是模型的判断空间，而是"判断之后能改什么、如何验证、失败后如何结束"。
+
+### 1.3 决策：保留外壳，重建核心
+
+| 路线 | 代价 | 风险 | 结论 |
+|---|---|---|---|
+| 从零重写 | 丢掉评测资产、服务客户端、DOCX 图片提取等可用代码 | 重新踩同样的坑 | 否 |
+| 渐进重构 | 每步小 | 版面抽象仍然缺失，标志位总线换汤不换药 | 否 |
+| 保留外壳、重建核心 | 中等 | 新旧路径并行期需维护开关 | **采用** |
+
+"外壳"指配置、服务客户端、渲染器骨架、评测脚本和 ground truth。"核心"重新定义为三层：**文档工作区**（状态与证据）、**文档工具包**（按任务设计的能力）、**程序约束**（去向检查、修改权、预算、合法性）。重心从"设计一条覆盖所有文档的处理流程"转向"提供可靠的文档工具，让运行时根据证据选择处理过程"。无论最终运行时是固定流水线、现成 Agent 还是自研循环，这三层都能继续使用。
+
+## 2. 目标、原则与非目标
+
+### 2.1 目标场景
+
+- 输入：DOCX（含 .doc 经 LibreOffice 转换）和 PDF；以中文为主、中英混排；文档中嵌入大量扫描图片，内容包括扫描文字页、表格截图、示意图、图表、照片、印章。
+- 输出：适合大模型消费的 Markdown，外加机器可读的 sidecar（块、来源、置信度、页码、去向账目）。
+- 规模：单篇几页到几百页；需要可预期的耗时和成本上限。
+
+### 2.2 目标与优先级
+
+优先级沿用 v1 已确认的顺序：**信息保全与可读性 > 标题层级准确 > 任何公开基准分数**。一条改动如果提升了 heading_f1 但丢了正文内容，视为回归。
+
+v2 同时追求两件事，并认为可以同时做到：
+
+- **灵活性**：面对陌生文档仍能结合证据作判断；新增一类文档时不必修改很多处理器。
+- **可控性**：每个判断能改什么、依据是什么、如何验证、失败后如何结束都有定义；出错时能找到负责该判断的步骤并局部修正、局部重跑。
+
+### 2.3 原则
+
+1. **内容去向可追溯。** 每份已发现的内容（原生字符、OOXML 节点、检测区域、OCR 块）都必须有去向：输出、合并、判定重复、明确排除，或识别失败。流水线内部的静默丢失视为缺陷，由 §3.3 的去向检查在每次运行时核对。
+2. **两类规则区别对待。** 猜测文档含义的规则（大字号是标题、短句不是正文、某种编号固定对应某级标题、没有样式就不是标题）尽量不硬编码，作为证据交给模型结合上下文判断；保证处理正确性的约束（输出必须引用存在的块、调整章节不能改写正文、删除必须记录原因、数字与证据冲突不得覆盖）明确保留，由程序执行。
+3. **模型的修改是候选证据。** 不因为它后执行就拥有最终决定权；每个 AI 任务后面都有一个由程序执行的选择或校验步骤。
+4. **忠实优先于合理。** 转录与复核只回答"图上写了什么"；原图确实写错的数字也保留，纠错不得依据常识改写原文。
+5. **"少调用"不是架构原则。** 要优化的是达到目标质量所需的成本、耗时和可调试性；每次调用职责明确、每次修改有依据、每条路径有结束状态。
+
+### 2.4 非目标
+
+- 不追 ParseBench 或 OmniDocBench 榜单，只作偶尔的健全性检查。
+- 不为单篇文档加规则；任何阈值必须在整个语料上验证，隔离验证集不参与调参。
+- 不做多智能体系统；即使采用 Agent 运行时，也是单个主 Agent + 批量工具。
+- 不做文档问答式的按需识别：完成条件是全文保全，不是"模型认为值得看的部分"。
+- 不先开发一个新的 Agent 框架：先验证"Agent + 文档工具包"能否成为核心，只有出现明确缺口时才自研运行时（§7）。
+- 不做通用 PDF 编辑、不做版式还原。
+
+## 3. 总体架构
+
+### 3.1 三层与可替换运行时
+
+```mermaid
+flowchart TD
+    A[输入文档与解析目标] --> W[文档工作区：页面、Block、Observation、Relation、Asset、每页状态]
+    W --> R{运行时}
+    R -->|固定流水线| S1[固定步骤序列]
+    R -->|Codex / Claude Code / Pi / 自研循环| S2[主 Agent：读取概况与 Skill，决定下一步]
+    S1 --> T[文档工具包：overview / read / recognize / review_table / describe_figure / apply_structure / check+export]
+    S2 --> T
+    T --> W2[写回工作区：Observation、候选、Decision]
+    W2 --> C[程序约束：修改权、去向检查、预算、合法性、注入隔离]
+    C -->|有待解决项且有预算| R
+    C -->|完成或预算耗尽| O[渲染 Markdown、sidecar、未解决项]
+```
+
+换运行时只更换启动、事件收集和工具适配层；OCR 客户端、表格结构、来源记录、Skill 与评测资产不重做。
+
+### 3.2 工作区：状态保存在程序中
+
+几百页文字、全部图片和每轮识别结果不进入模型的对话历史。工作区持久保存完整内容（§4 的数据模型，sidecar 是其序列化形式）；运行时通常只看到文档概况、章节树、处理进度和当前问题，需要时再通过工具读取原页或局部证据。工作区带每页处理状态和每个块的状态，运行时无法"忘记"一页。
+
+### 3.3 程序约束一览
+
+这些约束由代码执行，不依赖运行时的自觉，也不依赖提示词：
+
+| 约束 | 内容 | 位置 |
+|---|---|---|
+| 修改权 | 每类 AI 任务只能改它被允许改的字段（§6.1）；结构变更永不改原文 | 工具层 `apply_structure`、选择步骤 |
+| 去向检查 | 发现集合与去向集合一一对应；不平衡则文档降为 `partial` 并列出未归属项；`check` 不通过不能 `export` | `accounting/` |
+| 预算 | 文档级截止时间、并发、请求数、费用；请求前预留、完成后结算；超限输出 `partial` 与缺失原因 | `scheduling/` |
+| 合法性 | 结构输出只能引用存在的块 id；层级不得跳级；同一编号模式同层级 | `hierarchy/` |
+| 接受门 | 复核候选必须有图像证据、数字与证据不冲突、结构合法，才替换已采用结果 | 选择步骤 |
+| 停止 | 同一问题没有新证据不再复核；预算耗尽即停 | `scheduling/` |
+| 注入隔离 | 文档内容是数据不是指令：工具返回的文字（包括原文里的"忽略以上指令"）永远不进入指令通道；指令只来自 Skill 与配置 | 工具返回信封 |
+
+## 4. 数据模型
+
+### 4.1 五个概念
+
+| 概念 | 表达什么 | 关键字段 |
+|---|---|---|
+| **Block** 内容块 | 段落、标题、列表、表格、图、公式、图注、页眉页脚等逻辑内容 | `id`、`kind`、`order`、`text`、`cells`、`level`、`semantic`、`status`、`chosen_observation` |
+| **SourceAnchor** 来源定位 | 内容在原文件里的位置 | PDF：`page`、`bbox`、`coord_space`（`page_pt` / `image_px`）、`image_size`、`transform`；DOCX：`part`、`node_path`、`run_range`。一个 Block 可有多个 anchor |
+| **Observation** 识别记录 | 某个引擎对某个 anchor 的一次识别结果 | `engine`、`engine_version`、`raw_ref`（原始响应缓存键）、`text`/`cells`、`det_confidence`、`rec_confidence`、`status`（ok / empty / failed / skipped_budget） |
+| **Relation** 关系 | 块与块之间的结构 | `kind`（contains / follows / continues / captions / footnotes / belongs_to_section / duplicate_of）、`src`、`dst`、`confidence` |
+| **Asset** 资源 | 原图、裁剪图、渲染图 | `sha256`、`path`、`width`、`height`、`derived_from`、`transform` |
+
+```python
+class Block(BaseModel):
+    id: str
+    kind: BlockKind            # title/text/list/table/figure/formula/caption/header/footer/page_number/footnote/scan/other
+    order: int
+    status: BlockStatus = BlockStatus.OK   # ok / degraded / failed / excluded / merged / duplicate
+    anchors: list[SourceAnchor]
+    observations: list[Observation] = []
+    chosen_observation: str | None = None
+    text: str = ""             # 由 chosen_observation 派生；表格块为空，内容在 cells
+    cells: TableGrid | None = None
+    level: int | None = None   # 仅 title
+    semantic: FigureSemantic | None = None   # 仅 figure，类型化，带证据层级
+    decisions: list[Decision] = []
+```
+
+### 4.2 状态与置信度规则
+
+- 正文只取一个识别版本（`chosen_observation`），证据层保留全部候选，供去重、回退、追溯。
+- 置信度分三种：`det_confidence` 来自检测器，`rec_confidence` 来自识别引擎，结构判断的把握写在 Relation 或 Decision 上。引擎不提供的记为 `None`，评测与渲染把 `None` 当"未知"而不是"可信"。
+- 坐标必须带坐标系；子文档区域用父图片像素坐标并携带 `transform`。DOCX 内容没有 `page`/`bbox`，只有 `part`/`node_path`，几何处理天然不适用，不喂假坐标。
+- 状态是枚举，不是标志位；渲染器只看 `kind`、`level`、`status`、`semantic` 和 Relation。禁止引入布尔标志或自由字典。
+
+### 4.3 表格结构 TableGrid
+
+```python
+class Cell(BaseModel):
+    row: int; col: int
+    rowspan: int = 1; colspan: int = 1
+    content: str
+    is_header: bool = False
+    anchors: list[SourceAnchor] = []
+    rec_confidence: float | None = None
+
+class TableGrid(BaseModel):
+    n_rows: int; n_cols: int
+    cells: list[Cell]
+    header_rows: int = 0
+```
+
+表格的主数据是网格，不是 Markdown 字符串。GFM 与 HTML 都由 `TableGrid` 生成（无合并单元格输出 GFM，有则输出 HTML）；跨页合并、表头关联、结构校验、评测都在 `TableGrid` 上做。扫描页引擎的 HTML 表格、原生 PDF 的字符归属结果、VLM 复核的候选，都先转成 `TableGrid`。v1 的 `html_table_to_markdown` 只复用其 HTML 解析与 `_build_table_grid`（保留 rowspan/colspan），不复用扁平化输出。
+
+### 4.4 Decision
+
+```python
+class Decision(BaseModel):
+    stage: DecisionStage       # image_route / content_source / review_accept / heading_role / heading_level / exclude / budget
+    choice: str
+    reason: str
+    evidence: dict[str, float | str]
+```
+
+每个 Block 至少有一条路由 Decision；任何让内容"消失"的分支（过滤、抑制、跳过、预算截断）必须产生 Decision 并被去向检查计数。
+
+### 4.5 输出契约
+
+Markdown：ATX 标题；正文段落内不保留硬换行；表格无合并单元格用 GFM、有则 HTML；图片 `![<一句话>](images/<file>)` 后紧跟固定格式的语义块（带证据层级），不再把描述同时写进 alt 与引用块；公式行内 `$…$`、独立 `$$…$$`；PDF 页锚点 `<!-- PAGE n -->`，DOCX 只输出显式分页 `<!-- PAGE-BREAK -->` 与分节 `<!-- SECTION k -->`。
+
+Sidecar（与 Markdown 同名 `.blocks.json`）：
+
+```
+{
+  "document": {"source": "...", "status": "complete|partial|failed", "pages": 12,
+               "engines": {...}, "prompt_hashes": {...}, "missing": [{"block": "...", "reason": "..."}]},
+  "pages": [{"n": 1, "status": "done|partial|failed|skipped"}],
+  "blocks": [Block, ...], "relations": [Relation, ...], "assets": [Asset, ...],
+  "images": [{"id": "...", "route": "SCAN|FIGURE|MIXED|UNCERTAIN|DECORATIVE", "shown": true, "t": 0.71, "f": 0.05}],
+  "accounting": {"discovered": 812, "output": 790, "merged": 12, "duplicate": 6, "excluded": 4, "failed": 0},
+  "stats": {"requests": {"ocr": 3, "vlm": 7, "llm": 1, "agent": 14}, "attempts": {...}, "cost_usd": 0.0, "wall_time_s": 0.0},
+  "warnings": [...]
+}
+```
+
+`document.status`：`complete`（无缺失）、`partial`（有块失败或预算跳过，`missing` 列原因）、`failed`（提取本身失败）。下游按 `blocks` 分块、按 `status` 与置信度过滤，不需要解析 Markdown。
+
+## 5. 文档工具包
+
+### 5.1 七个工具
+
+工具按任务设计，不只是暴露模型 API。只给 `call_ocr()` 和 `call_vlm()`，运行时仍要自己拼提示词、解释响应、维护状态。
+
+| 工具 | 输入 | 返回 | 副作用 | 对应模块 |
+|---|---|---|---|---|
+| `overview` | 文档 id | 页数、原生文字量、图片数、样式与编号摘要、每页状态、未解决项 | 无 | `workspace/` |
+| `read` | 页或 Block id、是否要图、上下文范围 | 原图或裁剪图、文字、坐标、邻近块 | 无 | `workspace/`、`content/` |
+| `recognize` | 页集合或区域集合、引擎 | 带 SourceAnchor 的文本、`TableGrid`、布局候选（Observation） | 写 Observation；走调度与缓存 | `content/`、`layout/` |
+| `review_table` | Block id、待核查问题 | `TableGrid` 候选、与现有结构的差异、未确定单元格 | 写候选 Observation，不改 `chosen_observation` | `tables/`、`semantic/` |
+| `describe_figure` | Block id | 可见文字、描述、推断，带证据层级 | 写 `semantic` | `semantic/` |
+| `apply_structure` | 一组变更：角色、层级、阅读顺序、Relation | 接受的变更；被合法性检查拒绝的变更及原因 | 只改 `kind`/`level`/`order`/Relation，永不改原文 | `hierarchy/`、`ir/` |
+| `check` / `export` | 文档 id | 去向平衡、非法引用、缺失资源、每页状态；最终 Markdown 与 sidecar | 写 `accounting`、`document.status` | `accounting/`、`assembly/` |
+
+### 5.2 返回信封与批量语义
+
+- 每个工具返回统一信封：`result`、`cost`（请求数、token、费用、耗时）、`failure`（原因、可否重试）、`diff`（候选与现状的差异）、`unresolved`。运行时据此决定是否继续。
+- 普通批量识别在工具内部执行（分批、并发、重试、校验页数）；运行时一次要求"识别这组扫描页"，完成后集中处理异常，不逐页发起几十轮思考。
+- 工具返回中的文档文字标记为数据（§3.3 注入隔离）。
+- 主 Agent 与工具内部的 OCR/VLM 调用分别计数（`stats.requests.agent` 与其余），CLI 的最终用量不涵盖工具内部的服务调用。
+
+### 5.3 接口形态
+
+先做成返回 JSON 的命令行工具（`parserx tool <name> --json …`），复用现有 Python 代码；MCP 服务作为第二层适配，只包装同一组函数。运行时适配层只负责启动、事件收集和工具调用格式转换。
+
+### 5.4 Skill
+
+三份任务指导独立保存在 `parserx/skills/`（Markdown，内容哈希参与缓存键），不同运行时只做必要的加载适配，关键方法不允许只存在于某个 Agent 的会话历史里：
+
+- **忠实转录与纠错**：先看原图与已有结构，判断问题属于字符、行列关系还是跨页续接；按需扩大查看范围；保留原始数值；提交带来源的候选；证据不足报告未解决。
+- **图片理解与描述**：区分可见文字、描述与推断；描述失败不影响正文。
+- **文档结构与章节组织**：只改角色、层级、归属；证据不足保留正文、结构待定。
+
+Skill 说明目标、取证方法、输出要求和停止条件，不写"字号大于多少就是标题""列数相同就是续表"。**Skill 提供方法，程序强制执行数据与预算约束。**
+
+## 6. 处理方法
+
+### 6.1 AI 任务边界
+
+四类任务可以用同一个模型，但输入、输出、修改权和结束状态不同：
+
+| 任务 | 回答的问题 | 输入 | 输出 | 可以改变什么 | 不确定时怎么结束 |
+|---|---|---|---|---|---|
+| 转录与复核 | 图上实际写了什么 | 原图裁剪、必要上下文、待核查的具体问题 | 文本或 `TableGrid` 候选，附修改位置 | 提交候选；由选择步骤决定是否采用 | 保留冲突与原图，块 `degraded`，不再叠加"再问一次" |
+| 图片描述 | 这张图展示了什么 | 图片、图注、邻近正文 | 附着在图片块上的说明，带证据层级 | 只增加描述 | 描述缺省，图片保留；与正文不一致不反过来改正文 |
+| 表格解释 | 某列代表什么、单位是否继承 | `TableGrid`、表头、图注 | 列语义、单位、关联信息 | 只增加解释，不改单元格 | 解释缺省 |
+| 章节组织 | 哪些块是标题、几级、边界在哪 | 候选块、邻近正文、编号、样式、视觉信号、结构摘要 | 块的角色、层级、章节归属 | 只改结构，不改任何块的原文 | 保留正文，结构"待定" |
+
+复核任务有明确触发条件：普通区域直接采用 OCR，不默认全部复核；表格结构异常、文字提取缺失、不同证据明显冲突、JSON 解析失败时才进入复核。"看起来没异常"不等于正确，数值错误等静默问题靠抽样验证（§9.3）。
+
+### 6.2 版面检测
+
+本地检测器是 v2 新增组件，已在本机验证（Apple Silicon，CPU，ONNX Runtime，827×1170 像素页面）：
+
+| 模型（rapid-layout 1.2.1） | 首次加载 | 单页推理 | 输出标签 |
+|---|---|---|---|
+| pp_doc_layoutv3（首选，中文文档训练） | 4.9 s（含 72 MB 下载） | 0.22 s | text / paragraph_title / image / table / … |
+| doclayout_docstructbench（对照） | 22.9 s（含下载） | 0.22 s | title / plain text / figure / table / caption / abandon / formula |
+
+三套标签（本地检测器、PaddleOCR-VL、DOCX 结构）映射到 `BlockKind` 的表放在 `parserx/layout/labels.py`，差异只允许出现在这一个文件。检测器输入统一是像素图；DOCX 流式内容不做像素检测。
+
+**检测器只负责组织和分类，不裁决内容是否存在，也不是唯一裁判。** 它提供位置和类型证据，也会漏检或误判；其标签是 §6.8 的证据之一，不是判决。
+
+### 6.3 内容获取与归属
+
+顺序固定：**全页提取 → 按版面组织和分类 → 对未归属或异常的区域补识别。**
+
+| 区域类型 | 原生 PDF 页 | 扫描页 / SCAN 子文档 |
+|---|---|---|
+| text / title / list / caption | 整页提取的原生字符按检测框归属（字符中心点落入框内即归属，不用 `clip` 裁取） | 扫描页引擎 |
+| table | 字符归属到表格框后由 §4.3 构建单元格；结构不完整时触发 VLM 复核 | 扫描页引擎；结构异常或置信低时触发 VLM 复核 |
+| figure | 渲染裁剪 → §6.7 | 同左 |
+| formula | 原生文本 + 归一化；复杂时触发 VLM 复核 | VLM |
+| header / footer / page_number | `status = excluded`，记入 sidecar | 同左 |
+
+归属规则：
+
+- **待归属内容**：检测框未覆盖的原生字符按行聚成 `text` 块，`det_confidence = None`，进入正文而不是丢弃。
+- **多来源选择**：原生层、OCR、图片子文档、复核候选同时给出同一区域的内容时，由独立的选择步骤裁决：(1) 原生层质量判定通过 → 用原生；(2) 否则用扫描页引擎；(3) 复核候选只在通过接受门（修改位置有图像证据、数字与证据不冲突、结构合法）时才替换。未被选中的 Observation 保留并建立 `duplicate_of`；这是删除 v1 字符串去重逻辑的前提。
+- **原生层质量判定**：扫描底图上的旧 OCR 文本层（字符与像素位置不符）、乱码字体（U+FFFD 或私用区比例高）、矢量文字（drawing 多而 text 少）各有判定入口，判定失败即视为无原生层。v1 的页面分类信号（图像覆盖率、乱码比例、矢量页判据）降级为这里的输入。
+- **区域重叠**：两个检测框重叠超过 50% 时先合并或按置信度取舍，再归属字符；同一字符不归属两个块。
+
+### 6.4 扫描页引擎
+
+`scan_engine: paddleocr | vlm`，输出形状相同，下游不感知差异：
+
+- `paddleocr`：整页一次远程调用（jobs API），返回文本、表格和布局标签，映射后成为 Observation。默认引擎。
+- `vlm`：本地检测器给出区域，VLM 一次调用收到整页图片和区域列表，按区域 id 返回文本（json_schema 约束），几何信息留在本地。2026-09-23 验证：gpt-5.6-luna、gpt-6-luna、gpt-5.4-mini 都能完整返回 14/14 区域且 id 不错位（§10.3）。对照引擎。
+
+页面级复审、逐图 VLM 纠正 OCR 这两层不再存在，取而代之的是有触发条件、输出候选、由程序裁决的复核任务。
+
+### 6.5 嵌入图片路由
+
+原则：**廉价判断只决定"值不值得调用识别"，不直接决定删除资源。**
+
+1. **廉价过滤只做标记**：短边 < 30 px、像素标准差 < 1.0、长宽比 ≥ 12 的图片标为 `decorative_candidate`，资源照常保存，默认不调用识别、不显示。"装饰性"与"看不清、未识别"是两种状态，后者标 `unrecognized`，永远保留原图链接。
+2. **版面检测**：对图片像素跑 §6.2 检测器。
+3. **面积统计**：分母是整图面积；分子是同类检测框的并集面积；文字类 `t` = text+title+list+table 的并集，图形类 `f` = figure/chart 的并集；被 figure 框包含的文字框只计入 `f`；留白不计入任何一类。
+4. **路由**（阈值是起点，只在整个语料上调，并单独统计"有信息图片被丢弃"）：
+
+| 条件 | 路由 | 处理 |
+|---|---|---|
+| `t ≥ 0.6` 且 `f ≤ 0.2` | SCAN | 子区域按 §6.3 取内容并内联；只有识别完整性检查通过（子区域全部 `ok` 且去向无缺口）才默认隐藏图片链接，否则自动显示原图 |
+| `f ≥ 0.5` 且 `t ≤ 0.2` | FIGURE | 保留图片；做 §6.7 描述 |
+| 两者都低、或检出区域置信度都低 | UNCERTAIN | 保留原图并显示；推迟语义判断；进入人工抽查清单 |
+| 其他 | MIXED | 文字表格子区域内联；整图保留并描述 |
+
+5. **保存与显示分离**：`assets.save`（默认全部保存）与 `render.show_image`（按路由与状态）是两项独立策略。
+6. 路由结果、`t`、`f`、区域数、完整性检查结果写入 Decision。PDF 与 DOCX 在这一层完全相同。
+
+### 6.6 转录与复核
+
+表格错误分三类，复核只处理前两类：
+
+| 问题 | 例子 | 处理 |
+|---|---|---|
+| 字符错误 | `8` 识别成 `3` | 对照图像核查字符，输出单元格级候选 |
+| 结构错误 | 数据归到错误的列、合并单元格丢失 | 重建 `TableGrid` 候选 |
+| 含义解释 | 某列代表什么、单位是否继承 | 表格解释任务，只增加信息 |
+
+三者混在一个提示词里，模型会为了"理解通顺"重新组织甚至改写表格，所以提示词与输出 schema 按任务分开。复核返回候选与修改位置，由选择步骤按接受门决定是否采用；无法判定时保留冲突与原图。
+
+### 6.7 图片描述与表格解释
+
+每项语义结果标注证据层级，机器消费时与转录明确区分：
+
+| 层级 | 含义 | 例子 |
+|---|---|---|
+| `visible` | 图中明确可见的文字或数值 | 数据标签、图例、节点名 |
+| `estimated` | 根据坐标或刻度估读 | 无数据标签的折线图取值 |
+| `inferred` | 模型概括或推断 | 未画线的节点关系、趋势描述 |
+| `unknown` | 无法确定 | 被遮挡的数值 |
+
+按图类型使用不同 schema：chart（`chart_type`、`title`、`x_axis`、`y_axis`、`series[{name, values}]`、`unit`、`axis_scale`、缺失值）、diagram（`diagram_type`、`nodes[]`、`edges[{from, to, label, direction}]`，方向允许 unknown）、photo / seal / other（`summary`、`visible_text`）。图片形式的表直接返回 `TableGrid` 进入表格块。评测以人工标注的节点、边和数值为对照，"节点数/边数"只是输出规模。描述失败不影响正文；描述与正文不一致不反过来改正文。
+
+### 6.8 章节组织
+
+目标是组织文档，不是重新识别文字；发生在内容基本稳定之后，主要使用文本模型能力，需要核对视觉证据时才引入图像。不采用"字号和编号筛选候选 → 模型在筛剩的候选里修正层级"，因为真正的标题一旦在第一步被排除就无法恢复。流程：
+
+> 提取内容块及证据 → 模型结合局部上下文判断角色 → 结合文档结构统一层级 → 程序检查结果是否合法 → 只对具体冲突补充上下文复核
+
+- **证据**（都是证据，不是判决）：文字内容及前后段落；字号、加粗、缩进、位置、版面检测标签；Word 的样式、大纲级别（`w:outlineLvl`，含样式继承）、标题样式关联（Heading N / 标题 N 及 basedOn 链）、编号定义；当前章节、相邻标题、文档中重复出现的结构。`numbering.xml` 的层级是编号层级，普通列表同样使用它，只用于渲染编号；带编号但无标题样式的段落默认为 LIST，模型仍可依据上下文改判。普通正文误用 Heading 样式、真正标题只做了加粗，都允许模型发现冲突并提出遗漏的标题。
+- **两个问题分开**："这一块是不是标题"需要邻近正文和局部版面，按相邻块批量判断；"它是几级"需要章节结构、编号体系和前后关系，在文档级阶段统一。分开是为了防止一次误判向整篇传播。
+- **有预算的结构分析**，不是"整篇最多一次调用"：局部判断按相邻块分批；结构清楚的 Word 文档可走确定性路径，但文档级检查发现不一致时仍允许模型提出遗漏或降级；只有程序发现具体冲突（层级跳跃、同一编号模式不同层级、章节为空）时才对相应片段补充复核；预算在配置中，超限保留正文、结构待定。
+- **合法性检查**（程序执行）：只能引用存在的块 id；只改 `kind`、`level`、章节归属；层级不得从 H1 跳到 H3；同一编号模式同一文档内层级一致；不确定的块保留文本并标 `degraded`，不永久排除。
+- v1 的 38 个守卫函数全部退役；若某类误判在语料上普遍存在，改的是证据集合或合法性检查，不是加守卫。
+
+### 6.9 分页、跨页与 DOCX 边界
+
+- PDF：`<!-- PAGE n -->`，`n` 是物理页码。DOCX 区分逻辑分节（`w:sectPr`，continuous 类型不换页）、显式分页（`w:br w:type="page"`、`pageBreakBefore`）与实际排版页码（只有排版引擎知道）；未经排版引擎时只输出 `PAGE-BREAK` 与 `SECTION k` 锚点。
+- 跨页续接在块层做：页 i 末尾 TEXT 与页 i+1 开头 TEXT 之间无标题、前者不以句末标点结束 → `continues` Relation 并合并，合并块保留两个 anchor。
+- 跨页表格：列数相同只产生候选；确认需要列位置对齐、表头结构一致、表格身份（图注或前文引用）和页面连续性；合并 `cells` 并保留来源。
+- 页眉页脚通过跨页重复检测识别，`excluded`，写入 sidecar。
+- **OOXML 支持边界**（阶段四前逐项标明支持 / 降级 / 不支持）：文本框、超链接、修订记录、域代码、脚注尾注、嵌套表格、浮动图片与锚定位置、分栏、目录域。"python-docx + 原始 XML"只是手段，不代表这些已解决。
+
+## 7. 运行时与实验计划
+
+### 7.1 运行时选项
+
+| 选项 | 对项目的价值 | 主要代价 | 定位 |
+|---|---|---|---|
+| Codex / Claude Code CLI | 最快建立可工作的 Agent 基线，观察真实处理过程 | 默认行为面向编码；运行策略控制有限；主模型绑定厂商 | 探索与第一、二条基线 |
+| Pi 完整 Agent / SDK | 从命令行实验逐步过渡到嵌入式应用 | 需接入并维护其运行时与扩展 | 可控性与集成成本验证 |
+| Pi Agent Core | 复用工具调用循环、事件与上下文转换，自己管理文档状态 | 更多应用职责自己实现 | 需要精准控制上下文时 |
+| 自研循环 | 对工具、上下文、停止条件完整控制；轨迹可按消息哈希缓存回放 | 恢复、取消、重试、并发修改、上下文裁剪、日志、模型适配都要维护 | 只在现有运行时出现明确缺口时 |
+
+官方无头入口足以做实验，不需要模拟终端：Codex `codex exec`（`--json` 事件流、`--output-schema` 结构化最终结果、配置 MCP 服务）；Claude Code `claude -p`（JSON / 流式事件 / JSON Schema 输出，`--max-turns`、`--allowedTools`，另有 Agent SDK）；Pi 支持 print、JSON、RPC 与 TypeScript SDK，Agent Core 提供工具循环、事件和上下文转换接口。
+
+**复用某个运行时，不等于已获得完整的文档处理运行时。** 文档级检查点、预算、内容覆盖和输出一致性始终是 ParserX 的职责（§3.3）。
+
+### 7.2 探索与验收分开
+
+- **探索阶段**给 Agent 较大自由：允许临时写脚本、尝试不同裁剪、比较 OCR 结果。目的是发现它需要什么工具、在哪里需要看图、什么信息缺失导致反复尝试、哪些能力值得封装。临时脚本可能揭示更好的通用算法。
+- **验收阶段**冻结工具和 Skill，要求 Agent 在固定条件下处理没见过的文档；不允许它为每份文档现场写专用转换器。
+
+### 7.3 实验卫生
+
+- 每份文档使用独立会话和工作目录，避免上一份文档的结论影响下一份。
+- Agent 只能看到输入和工具，不能看到 `expected.md`、历史答案或评分反馈。ground truth 就在仓库里，直接从项目目录启动尤其容易混入答案；实验目录只放输入。
+- 验收期间固定工具代码和评测器，不允许 Agent 为完成任务修改它们。
+- 确认看图链路有效：生成 PNG 或返回文件路径不等于主模型看到了图片，需要验证图片如何进入视觉上下文。
+- 同时记录主 Agent 和 OCR/VLM 工具的实际调用、耗时及成本。
+- 人工介入单独记账："经过不断提示后完成"与"一次任务自行完成"是不同结果。
+
+### 7.4 实验顺序
+
+1. **用 Codex CLI 跑通完整任务**（便利性选择，不代表质量判断）：挂上工具包与 Skill，在难例上端到端运行。
+2. **形成可重复执行的文档工具包与 Skill**：按探索结果修订接口。
+3. **用 Claude Code 做第二条基线**：观察同样的问题是否仍出现。此时比较的是完整系统效果，底层模型不同，差异不能全归因于框架。
+4. **用 Pi 验证可控性与集成成本**：如能使用相同模型、工具和预算，再比较运行时差异。
+5. **只有出现明确缺口时才自研**：例如必须精准控制上下文、恢复点或调度。
+
+同时保留固定流水线作为对照（用同一套工具的固定步骤序列）。下一阶段的定义是：**验证"Agent + 文档工具包"能否成为 ParserX 的核心，而不是先开发一个新的 Agent 框架。** 投入沉淀在工具、文档状态、Skill 和评测上，这些资产无论选哪个运行时都能用。
+
+### 7.5 Agent 运行时的完成条件
+
+全文解析的完成条件比文档问答严格：
+
+- 每页都有处理状态；没有被 Agent 注意到的页不能算完成。
+- 已提取内容都有去向；`check` 不平衡就不能 `export`。
+- 所有改动绑定 Block 与证据，原始结果可回看；只记"我认为应该这样处理"不算证据。
+- 同一问题反复调用却没有新证据时停止；达到预算时输出 `partial` 与缺失项。
+- 程序检查结构有效性；内容真实性靠抽样人工评测。
+- 单个主 Agent + 批量工具；OCR 与小型 VLM 作为工具运行，不发展成独立 Agent。
+- 调用记录包含输入、输出、状态变更和证据引用，才能定位错误并局部重跑。
+
+### 7.6 参考
+
+Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)）与工具设计经验（[Writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents)）；Codex 非交互模式文档（learn.chatgpt.com/docs/non-interactive-mode）；Claude Code 无头模式文档（code.claude.com/docs/en/headless）；Pi（github.com/earendil-works/pi，`packages/coding-agent` 与 `packages/agent`，TypeScript）；[DocClaw](https://arxiv.org/abs/2608.18685)（2026-08，文档 Skill + 工具循环 + 结构化文档状态，方向相近但未证明在本语料上更优）；[AgenticOCR](https://arxiv.org/abs/2602.24134)（2026-02，查询驱动的按需识别，其效率收益不能直接当作全文转换的收益）。
+
+## 8. 调度、预算、缓存与可复现
+
+### 8.1 三个计数概念
+
+| 概念 | 含义 | 上限（配置项，默认值） |
+|---|---|---|
+| 识别任务 | 一个块（或一页）需要的一次逻辑识别、复核、描述、解释或结构判断 | 每块最多 1 次基础识别、1 次复核、1 次描述或解释；结构分析按 §6.8 预算 |
+| 网络尝试 | 为完成一个任务发出的请求（含重试、参数降级重发） | 每任务最多 3 次；只重试可重试错误（网络、5xx、429、队列满 10010） |
+| 复核 | 基础识别未过接受门后以候选形式再识别一次 | 每块最多 1 次；没有新证据不再复核 |
+
+每个任务按（块 id、任务类型、输入哈希）寻址，可单独重跑；请求计数由调度层在发出时记录，不再从元素推算。
+
+### 8.2 调度层与失败状态
+
+所有远程调用经过 `parserx/scheduling/`：文档级截止时间、并发数、请求数与费用预算；请求前预留、完成后按真实用量结算。OCR jobs API 保存 `job_id`，轮询或下载失败时恢复原任务而不是重新提交；限定批次页数并校验返回页数等于提交页数。可重试错误显式列出；4xx 参数错误交给 `llm.py` 的参数降级。每个任务带 `status` 与 `attempts`；文档结束时汇总为 `complete / partial / failed`，每个缺失块记录原因。
+
+### 8.3 缓存与任务级重跑
+
+- 缓存键覆盖完整请求语义：输入图片字节（预处理后）、区域列表、提示词与 Skill 内容哈希、json_schema 哈希、模型名与端点身份、识别选项、`reasoning_effort`。`prompt_version` 保留作可读标签，不是唯一失效机制。原始响应缓存与后处理结果缓存分开（`.parserx_cache/raw/`、`.parserx_cache/derived/`）。
+- 任务级重跑：`parserx rerun --block <id> --task table_review` 只重跑该任务并重新走选择步骤；调试时同时看到原图、OCR 结果、复核候选和最终采用理由。
+- 自研循环若出现，每轮模型输出按消息哈希缓存，同一输入走同一条轨迹，Agent 运行时也能进回放回归。
+
+### 8.4 三种验收分开
+
+| 验收 | 做法 | 证明什么 |
+|---|---|---|
+| 回放回归 | 固定响应（缓存），跑核心集 | 代码改动没有改变结果 |
+| 服务契约检查 | 小样本真实请求（`scripts/check_services.py` 及少量区域） | 接口、参数、失败处理仍然正确 |
+| 质量评测 | 固定语料与标注，真实请求或冻结 run | 实际识别质量 |
+
+连续两次缓存结果一致只证明本地回放稳定；luna 系列无法设 temperature，新请求本身不稳定，是正常现象。阶段验收用完整冻结的 run（代码提交、配置、输入、标注、响应缓存、指标版本全部可追溯）；`best_scores.json` 逐指标取历史最优的看板保留作趋势参考，不作验收依据。
+
+## 9. 评测体系
+
+### 9.1 三层测试与核心集
+
+| 层 | 内容 | 何时跑 | 目标耗时 | 服务调用 |
+|---|---|---|---|---|
+| L0 单元测试 | `uv run pytest -q`，全部离线；需要服务的用例标 `live_e2e` 默认跳过 | 每次改动 | < 15 s | 无 |
+| L1 核心回归（回放） | `scripts/regression_test.py --core`，文档列表在 `configs/regression_core.txt`，响应来自缓存 | 每个任务结束、每次提交前 | 缓存命中 < 1 min；全未命中约 3 min | 缓存未命中时才调用 |
+| L2 全量回归（冻结 run） | 全部 ground truth（含隔离验证集与 `ground_truth_public/` 子集），真实调用 | 阶段退出、发布、改提示词或换模型后 | 约 20 min | 全部 |
+
+核心集选取规则：每类输入各一篇、优先最小、保留一篇当前得分最差的作哨兵；只增不换。当前 6 篇：
+
+| 文档 | 代表的输入类 | 页数 | 最近一次 O/V/L 调用 | 耗时 |
+|---|---|---|---|---|
+| deepseek | 原生 PDF，确定性 | 1 | 0/0/0 | 0.5 s |
+| text_table01 | 原生 PDF 表格，确定性 | 3 | 0/0/1 | 1.3 s |
+| receipt | 扫描小票，VLM | 3 | 1/2/0 | 2.1 s |
+| ocr_scan_jtg3362 | 扫描中文标准文档，表格 | 4 | 4/6/1 | 92 s |
+| simple_doc01 | DOCX，当前 char_f1 最差（0.457）哨兵 | | 0/0/1 | 3.4 s |
+| text_report01 | DOCX 含嵌入图片 | | 0/2/1 | 51 s |
+
+### 9.2 验收工具的已知漏洞与修复清单
+
+2026-09-23 外部审核给出五个最小反例，本地全部复现：
+
+| 反例 | 当前结果 | 原因 |
+|---|---|---|
+| 表格中"甲=10、乙=20"改为"甲=20、乙=10" | table_f1 = 1.0 | `compute_table_metrics` 对配对表格用单元格内容多重集，忽略行列位置 |
+| 两张表只输出第一张 | table_f1 = 1.0（仅 expected_count 记 2） | 未配对的表格不进入 F1 分母 |
+| 同一张表改为 HTML 输出 | 检出表格数 0 | `_extract_tables` 只识别 GFM 管道表 |
+| 交换句子中的甲、乙主体 | char_f1 = 1.0（edit distance 0.25） | `compute_text_metrics` 用字符频次，忽略顺序 |
+| 全部文档解析失败 | 退出码 0，打印 All clear | 退出码只取决于指标回退，失败文档只打印 |
+
+另外 `best_scores.json` 逐指标取历史最优；`pipeline._collect_api_calls` 按元素推算调用数。修复清单（修完后 v1 基线重算，旧分数不再沿用）：
+
+1. 表格结构指标：GFM 与 HTML 先归一为 `TableGrid`，按 (row, col, rowspan, colspan, content) 配对计算单元格位置 F1，另报表头关联正确率和合并单元格正确率。
+2. 硬检查：漏表数、多余表数、失败文档数、未执行文档数；任一非零则退出码非 0，`--update-baseline` 拒绝执行。
+3. 阅读顺序指标：块序列的 Kendall tau 或成对逆序率；保留 edit distance。
+4. 关键内容错误统计：数字、单位、否定词、日期在输出与标注间的不一致计数。
+5. 真实请求计数：由调度层记录。
+6. 冻结 run：阶段验收使用完整的一次运行。
+
+### 9.3 规则
+
+- 报告顺序固定：硬检查 → 表格结构 F1 → char_f1 与 edit distance → 阅读顺序 → heading_f1 → 关键内容错误 → 真实请求数 → 耗时 → 费用。L2 报告入 `eval_reports/`，文件名含日期和阶段号；L1 只在终端打印。
+- L1 默认 `--offline` 且确定性模式；缓存未命中时提示并允许 `--allow-calls`。
+- 新增语料先加 ground truth 再改代码；不为通过某篇文档改阈值；隔离验证集（按文档来源或模板划出，组成见 Q8）不参与调参。
+- 图片路由单独评测：每张图片记录期望路由（SCAN / FIGURE / MIXED / UNCERTAIN / 装饰），报告混淆矩阵与"有信息图片被丢弃"数量；归入 L1。
+- 静默错误抽样：L2 每次从含数字、单位、日期的块中随机抽固定数量，人工对照原图；抽样错误率单独记录。
+- 按 AI 任务类型分别评测：转录/复核按忠实度（含"原文错误被保留"用例），描述按证据层级标注，章节按角色与层级分别计分。
+- 图片描述从 char_f1 中剔除、按语义 schema 单独打分（receipt 的 ground truth 描述句按 gpt-5.4-mini 的措辞写成，直接比对会偏向旧模型）。
+- 替换一个 v1 模块时，删除只服务于其实现细节的单元测试；其承载的正确性要求先登记到 §11.5。
+
+### 9.4 运行时对比协议（阶段三）
+
+- **难例集**：每类至少一篇且不在核心集内：密集中文表格、跨页表格、混合扫描页、手工排版 Word、复杂标题层级、照片与正文混排。
+- **控制变量**：同一底层模型（能做到时）、同一套七个工具、同一预算与截止时间；避免把"换了更强模型"误认为架构优势；模型不同的对比（Codex 对 Claude Code）只比较完整系统效果。
+- **观察项**：
+
+| 维度 | 指标 |
+|---|---|
+| 质量 | 信息保全、数字归属、表格结构 F1、标题角色与层级 |
+| 泛化 | 遇到陌生文档时需要新增多少专用规则或 Skill 文字 |
+| 成本 | 主 Agent 与工具各自的真实请求数、token、费用、耗时、重复调用、未完成比例 |
+| 稳定 | 同一文档多次运行的波动 |
+| 可调试 | 一个错误能否定位到具体步骤并局部重跑 |
+| 人工介入 | 次数与内容，单独记账 |
+
+- **结论方式**：冻结 run 报告入 `eval_reports/`；Q13 记录决定与依据。允许的结论包括"默认流水线、难例交 Agent"。
+
+## 10. 外部依赖现状（2026-09-23）
+
+### 10.1 总表
+
+| 依赖 | 用途 | 状态 |
+|---|---|---|
+| PaddleOCR-VL-1.6，AI Studio 官方 jobs API（`https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`） | 扫描页引擎 | ✅ 已接入并实测；19 页 PDF 单次提交成功；高峰期排队数十秒到两分钟；队列满返回 HTTP 400 + `code 10010`，客户端等待重提 |
+| 官方端点 `api.openai.com`（`*_B` 环境变量） | 默认 LLM/VLM | ✅ VLM gpt-6-luna、LLM gpt-5.4-mini 经服务层通过 |
+| 中转端点 `OPENAI_BASE_URL`（Codex 账号中转） | 原默认，已停用 | 拒绝 gpt-5.4-mini、视觉 429；静默吞掉 `temperature`，不能作兼容性依据；只供试验 |
+| DashScope `qwen3.6-plus` | 备用 | ✅ 文本与视觉正常（约 5 s）；`json_schema` strict 不生效，需围栏剥离与宽松解析 |
+| LlamaCloud key | 工具对比评测 | ✅ 有效；Python 包 `llama-parse` 无引用，实际走 `scripts/llamaparse_to_markdown.ts`（需 `npm install`） |
+| LibreOffice 26.8 / Node 26.8 / uv 0.10.11 / Python 3.13.12 | .doc 转换 / 评测脚本 / 运行环境 | ✅ |
+| tesseract 5.5.3 | 无引用；根目录 `eng.traineddata` 为遗留文件 | 删除文件，不引入 |
+| rapid-layout 1.2.1 + onnxruntime | 本地版面检测（§6.2） | 阶段一引入 |
+
+### 10.2 OCR
+
+- 接入形态：异步 jobs，multipart（`file`、`model`、`optionalPayload`），`Authorization: bearer …`，轮询 `GET …/jobs/{jobId}`，下载 `resultUrl.jsonUrl`（JSONL）。`prunedResult.parsing_res_list` 结构与旧同步接口一致，新增 `block_id`、`group_id`、`block_polygon_points`，图片块 `block_order` 为 `null`；`markdown.text` 含 HTML，直接比对 ground truth 会低估。`useOcrForImageBlock=true` 会把图标内符号识别出来，属噪声。
+- 原始识别质量（去 HTML 标记后按字符）：ocr01 F1 0.961、ocr_scan_jtg3362 0.961、receipt 0.929。全量回归对比 Iter 32 基线：edit 0.244→0.226、char_f1 0.897→0.907、table_f1 0.487→0.531，OCR 调用数不变；同期还换了 LLM 端点并合入 Iter 33，差值不全归因于 OCR。
+- 远程 OCR 从"必需"降级为"引擎之一"：可用性不由我们控制；本地版面检测已可行；VLM 转录成本约 0.0005 美元/页。其他途径备查：百度智能云企业级 API（异步，¥0.09/页，1000 页免费，PDF ≤500 页）、千帆同步接口（`paddleocr-vl-0.9b`，版本未标明，¥0.18/页）、第三方托管 0.9B 识别模型（SiliconFlow 免费 1.5、Fireworks 1.6，需本地版面检测，与 `vlm` 引擎同构）、自托管（需 GPU）。
+
+### 10.3 LLM/VLM
+
+官方端点模型与定价（美元/百万 token，短上下文，OpenAI 定价页 2026-09-23）：
+
+| 模型 | 输入 | 缓存输入 | 输出 | 实测 |
+|---|---|---|---|---|
+| gpt-5.4-mini | 0.75 | 0.075 | 4.50 | 文本、视觉、json_schema 正常；2.4 s |
+| gpt-5.6-luna | 0.20 | 0.02 | 1.20 | 整页转录 `effort=none` 3.5 s、244 token，charF1 0.924 |
+| gpt-5.6-terra | 2.00 | 0.20 | 12.00 | 视觉正常 |
+| gpt-6-luna（默认 VLM） | 0.10 | 0.01 | 0.50 | 整页转录 `effort=none` 2.9 s、248 token，charF1 0.927 |
+| gpt-6-sol | 2.00 | 0.20 | 10.00 | 未测 |
+
+接口事实（已在 `services/llm.py` 处理）：gpt-5.6-*/gpt-6-* 拒绝 `temperature`；Chat Completions 两代模型都拒绝 `max_tokens`，要求 `max_completion_tokens`；推理 token 会耗尽过小的输出预算返回空文本；`reasoning.effort` 支持 none/low/medium，不支持 minimal。实现方式不按模型名维护能力表，而是后端 400 "Unsupported parameter/value" 时去掉或改名该参数、记入实例并重试一次；`ServiceConfig` 新增 `reasoning_effort`、`send_temperature`、`min_output_tokens`；`parserx.yaml` vlm `none` + 1024，llm `none` + 256。luna 无法设 temperature，同一输入两次输出有差异（receipt char_f1 0.962 / 0.954，gpt-5.4-mini 两次均 0.971），复现性只能靠缓存。
+
+单页探测（ocr01 第 1 页，827×1170）：三款模型整页转录与按区域转录（14/14 区域，精确率 ≥ 0.99）相当；6 路并发全部成功；示意图语义提取 gpt-5.6-luna 边关系略好于 gpt-6-luna，阶段四在完整语料复核。模型分层：转录与复核 gpt-6-luna（`none`）；图片描述与表格解释 gpt-6-luna（`low`），复杂图表可升级 gpt-5.6-terra；文档级结构判断暂 gpt-5.4-mini，可切 gpt-6-luna。
+
+### 10.4 Python 依赖
+
+| 包 | 当前 | 处置 |
+|---|---|---|
+| pymupdf 1.27.2（最新 1.28.2） | 使用中 | 保留，阶段五升级 |
+| openai 2.30.0（最新 3.19.0） | 使用中 | 3.x 是大版本，验证后再升 |
+| pydantic 2.12.5、python-docx 1.2.0、requests、pillow、numpy、pyyaml、python-dotenv | 使用中 | 保留 |
+| docling 2.84.0 | 仅 DOCX provider | 阶段四移除 |
+| pdfplumber 0.11.9 | 仅 `tool_eval/adapters.py` | 移到 `bench` 可选依赖 |
+| pypdf、llama-parse | 无引用 | 删除 |
+| rapid-layout、onnxruntime | 新增 | 阶段一 |
+
+## 11. 代码迁移清单
+
+### 11.1 可复用算法（需要适配接口）
+
+| 路径 | 可复用 | 需要适配 |
+|---|---|---|
+| `parserx/config/` | schema 与 YAML 加载 | 新增 layout、cache、scan_engine、预算、模型分层、运行时选择 |
+| `parserx/services/ocr.py` | jobs API 客户端 | 接入调度层：job_id 恢复、批次校验 |
+| `parserx/services/llm.py` | 参数降级、reasoning、结构化输出 | 接入调度层与缓存；真实请求计数 |
+| `parserx/builders/ocr.py` 的 HTML 表格解析 | `_parse_html_table` + `_build_table_grid` | 输出 `TableGrid`，弃用扁平化输出 |
+| `parserx/builders/image_extract.py` | OOXML 图片收集（正文顺序、`a:xfrm` 旋转）、ImageMask 反色、矢量图渲染 | 去掉 Docling 对象与 `docling_self_ref` 依赖，产出 Asset |
+| `parserx/providers/pdf.py` 页面分类信号 | 图像覆盖率、乱码比例、矢量页判据 | 降级为原生层质量判定的输入 |
+| `parserx/processors/table.py` 跨页合并 | 列数匹配、表头去重 | 改在 `TableGrid` 上做，列数相同只产生候选 |
+| `scripts/regression_test.py`、`parserx/eval/` | 运行框架、报告 | 指标按 §9.2 修复；失败硬检查；`--core`；冻结 run |
+
+### 11.2 重新设计
+
+| 路径 | 原因 |
+|---|---|
+| `parserx/verification/completeness.py` | 依赖旧标志与 GFM；由去向检查替代 |
+| `parserx/verification/hallucination.py` | 只比较描述与 OCR 文本；改为按证据层级校验并迁移"数字不得被改写"要求 |
+| `parserx/assembly/markdown.py` | 输入改为 Block/TableGrid；实现 §4.5 契约 |
+| `parserx/providers/docx.py` | 直接解析 OOXML，按 §6.8–6.9 的证据与边界 |
+| `parserx/pipeline.py` | 改为固定流水线运行时：提取 → 版面 → 归属 → 图片路由 → 识别与复核 → 层级 → 跨页 → 去向检查 → 渲染 |
+
+### 11.3 新模块
+
+| 新路径 | 职责 |
+|---|---|
+| `parserx/ir/` | Block、SourceAnchor、Observation、Relation、Asset、Decision |
+| `parserx/workspace/` | 文档工作区：状态读写、概况、页面与区域读取 |
+| `parserx/tools/` | 七个工具与统一返回信封；JSON CLI 入口；MCP 适配 |
+| `parserx/skills/` | 三份任务指导（Markdown，带内容哈希） |
+| `parserx/layout/` | 检测器封装、标签映射、面积统计 |
+| `parserx/routing/image.py` | §6.5 |
+| `parserx/content/` | 全页提取与归属、扫描页引擎（paddleocr / vlm）、公式 |
+| `parserx/tables/` | `TableGrid` 构建、GFM/HTML 生成、跨页合并 |
+| `parserx/semantic/` | §6.7 |
+| `parserx/hierarchy/` | §6.8 |
+| `parserx/scheduling/` | §8.2 |
+| `parserx/accounting/` | 去向检查 |
+| `parserx/cache/` | §8.3 |
+| `parserx/runtimes/` | 运行时适配：`pipeline`（固定序列）、`codex`、`claude_code`、`pi`（启动、事件收集、工具适配） |
+
+### 11.4 删除（阶段五）
+
+`parserx/processors/chapter.py`、`processors/image.py` 的路由与纠正逻辑、`processors/vlm_review.py`、`builders/ocr.py` 中的结果整合与去重、`models/elements.py` 的自由字典、Docling 依赖、`pypdf`、`llama-parse`、根目录 `eng.traineddata`。
+
+### 11.5 正确性要求登记（随模块替换迁移，不随测试删除消失）
+
+| 要求 | 来源 | 迁往 |
+|---|---|---|
+| VLM 输出的数字与 OCR/原生证据不一致时不得覆盖（如 100 万元 → 999 万元） | `test_image_processor.py::test_vlm_json_falls_back_to_overlap_evidence_on_number_mismatch` | 复核候选的接受门 |
+| 合并块不得丢失任一来源 | `test_line_unwrap.py` 的 bbox 合并用例 | Block 多 anchor 合并 |
+| 有文字重叠的图片不得同时输出描述与重复正文 | `test_verification.py` 的 text-heavy 用例 | 去向检查 + `duplicate_of` |
+| 页眉页脚首页身份信息保留上限 | `test_header_footer.py` | `excluded` 块的例外规则 |
+| 跨页表格列数不同不得合并 | `test_table_processor.py` | `TableGrid` 合并候选校验 |
+
+阅读顺序、代码块、行内格式、列表、图注、交叉引用各自在 §12 有归属阶段，不允许"顺手删掉"。
+
+## 12. 阶段路线
+
+统一退出条件：**新路径在冻结 run 上不低于旧路径（按 §9.2 修复后的指标），且真实请求数不增加。** 旧流水线留在 `pipeline: v1 | v2` 开关后面，直到阶段五完成再删。
+
+| 阶段 | 目标 | 产出 | 退出条件 | 状态 |
+|---|---|---|---|---|
+| 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；⬜ §9.2 指标修复与硬检查；⬜ 回归分层 `--core`；⬜ 缓存层（OCR 与 VLM）；⬜ 回归配置关闭 LLM 兜底；⬜ 用修好的指标冻结两份 v1 基线（gpt-5.4-mini、gpt-6-luna）并划出隔离验证集 | 五个反例全部被指标或硬检查捕获；核心集回放两次一致；两份冻结 run 入库 | 🟡 |
+| 1 文档工具包 v1 | 建立数据模型、约束与工具 | `ir/`、`workspace/`、`tables/`、`scheduling/`、`accounting/`、`cache/`；七个工具的 JSON CLI 与返回信封；三份 Skill；`layout/` 与 `routing/image.py` 影子运行；固定序列脚本（流水线运行时最小形态）在 text_table01、receipt、simple_doc01 上跑通作为工具包验收 | 单元测试覆盖五个 IR 概念、TableGrid 往返、七个工具契约；三篇在冻结 run 上不低于 v1；去向平衡；sidecar 通过 schema 校验 | ⬜ |
+| 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
+| 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
+| 4 能力完善 | 按结论补齐处理能力 | 图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
+| 5 清理 | 删除死代码与死依赖 | §11.4 执行；§11.5 全部迁移；README 反映真实状态 | 测试全绿；依赖清单与 §10.4 一致 | ⬜ |
+
+阶段二与三不等阶段四：对比实验只需要工具包和固定序列存在，越早拿到数据越早止损。
+
+## 13. 开发规范
+
+- 运行与安装只用 `uv`：`uv run python …`、`uv add …`。
+- 泛化优先：任何规则或阈值必须说明它对应的视觉或结构信号并在整个语料上验证；禁止文档专属关键词表。新增一条规则前先分类（§2.3）：猜测含义的规则改成交给模型的证据，保证正确性的约束才写成代码。
+- 一次 AI 调用一个职责；新增或修改 AI 任务时必须同时写明输入、输出、可改变什么、不确定时的结束状态，并补接受门与评测用例。
+- 新增区域类型或路由分支时必须同时补：标签映射、渲染规则、sidecar 字段、Decision、一条评测用例。
+- 提示词与 Skill 放在独立文件并带内容哈希；改动等同于改代码，需要跑回归。
+- 测试驱动：v2 新模块先写测试再写实现；测试对象是 Block 级合成输入（几行文本、一张生成图片、一个手写区域列表），整篇文档的验证交给 L1/L2。单元测试精简、全部离线；需要网络的标 `live_e2e`。
+- 删除 v1 模块前先看 §11.5：实现可以退役，正确性要求不能消失。
+- 任何让内容"消失"的分支必须产生 Decision 并被去向检查计数。
+- 提交信息说明改动针对的信号和验证范围；阶段完成时更新 §12 与 §15。
+
+## 14. 开放问题
+
+| 编号 | 问题 | 状态 |
+|---|---|---|
+| Q1 | OCR 引擎途径 | ✅ AI Studio jobs API（PaddleOCR-VL-1.6）；`vlm` 作对照 |
+| Q2 | 默认端点 | ✅ 官方端点；中转端点仅试验 |
+| Q3 | 默认 VLM | ✅ gpt-6-luna；语义提取用途阶段四复核 |
+| Q4 | 是否保留工具对比评测（LlamaParse/LiteParse）及 Node 依赖 | ❓ |
+| Q5 | `scan_engine: vlm` 在密集中文表格上的准确率是否足以作为唯一引擎 | ❓ 阶段四回答 |
+| Q6 | 本地检测器在 DOCX 嵌入的低分辨率截图上的召回率 | ❓ 阶段一回答 |
+| Q7 | PDF 分片 | ✅ jobs API 19 页单次返回完整；`_BATCH_MAX_PAGES = 100`，官方页数上限未确认 |
+| Q8 | 隔离验证集的组成：按文档来源还是模板；建议先划 3 篇不同类型且不进核心集的文档 | ❓ |
+| Q9 | OOXML 支持边界各项是支持、降级还是不支持 | ❓ 阶段四前决定 |
+| Q10 | 表格复核的触发阈值与预算占比 | ❓ 阶段四回答 |
+| Q11 | 结构分析预算：批次大小、文档级 token 上限、冲突复核次数 | ❓ 阶段四前决定 |
+| Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答 |
+| Q13 | 默认运行时：固定流水线、Codex、Claude Code、Pi，还是"默认流水线、难例交 Agent"；依据 §9.4 报告 | ❓ 阶段三回答 |
+| Q14 | 工具包对外接口：JSON CLI 是否足够，何时加 MCP | ❓ 阶段二回答 |
+
+## 15. 变更记录
+
+| 日期 | 版本 | 内容 |
+|---|---|---|
+| 2026-09-23 | v0.1–v0.3 | 建立文档：根因、重建决策、依赖探测、核心设计、迁移清单、阶段；luna 实测；OCR 四条途径；VLM/LLM 切官方端点 |
+| 2026-09-23 | v0.4–v0.5 | OCR 接入 AI Studio jobs API（另一会话）；依赖全部确定；新会话启动清单；`scripts/check_services.py` |
+| 2026-09-23 | v0.6–v0.7 | VLM 定为 gpt-6-luna；三层测试与核心回归集；`llm.py` 适配推理模型并切换 |
+| 2026-09-23 | v0.8 | 吸收外部审核：复现五个评测反例；IR 拆五概念；内容去向原则与检查；TableGrid；调度与失败状态；路由"判断不删除"；DOCX 规则；证据层级；正确性要求登记；阶段顺序改为先修验收工具 |
+| 2026-09-23 | v0.9 | 根因改为职责与裁决不清；AI 任务边界；两类规则；模型参与的有预算结构分析；任务级重跑；静默错误抽样 |
+| 2026-09-23 | v0.10 | 核心交付物改为工作区 + 工具层 + 程序约束；七个工具、三份 Skill；Agent 运行时对比实验 |
+| 2026-09-23 | v1.0 | 按全部讨论重新整理全文；运行时改为可替换（Codex → 工具包 → Claude Code → Pi → 必要时自研）；探索与验收分开；实验卫生；阶段改为 0–5；旧稿归档 |

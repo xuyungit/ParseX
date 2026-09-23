@@ -1,10 +1,19 @@
 """Pluggable LLM/VLM service abstraction.
 
 Supports OpenAI-compatible API endpoints with two API styles:
-- Responses API (client.responses.create) — used by legacy pipeline's endpoint
-- Chat Completions API (client.chat.completions.create) — standard OpenAI
+- Responses API (client.responses.create) — preferred; used by the official endpoint
+- Chat Completions API (client.chat.completions.create) — fallback
 
 Auto-detects which API to use, or can be configured explicitly.
+
+Reasoning models (gpt-5.6-*, gpt-6-*, o-series) reject some classic request
+parameters (``temperature``, ``max_tokens``) and take ``reasoning.effort``.
+Rather than keeping a per-model capability table, every request goes through
+``_create``: when the backend answers 400 "Unsupported parameter/value", the
+offending parameter is dropped (or renamed, for ``max_tokens`` →
+``max_completion_tokens``), remembered for the lifetime of the service, and
+the request is retried once.  The same config therefore works for both
+generations of models.
 """
 
 from __future__ import annotations
@@ -12,6 +21,7 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -62,24 +72,48 @@ class VLMService(Protocol):
     ) -> str: ...
 
 
+# Parameter the backend names in a 400, e.g.
+#   "Unsupported parameter: 'temperature' is not supported with this model."
+#   "Unsupported value: 'minimal' is not supported with the 'gpt-6-luna' model."
+_UNSUPPORTED_RE = re.compile(r"Unsupported (parameter|value): '([^']+)'")
+
+# Parameters renamed rather than dropped when rejected.
+_PARAM_RENAMES = {"max_tokens": "max_completion_tokens"}
+
+_MAX_PARAM_RETRIES = 4
+
+
 class OpenAICompatibleService:
     """LLM/VLM service supporting both Responses API and Chat Completions API.
 
-    Tries Responses API first (as used by legacy pipeline's endpoint).
-    Falls back to Chat Completions API if Responses API returns 404.
+    Tries Responses API first.  Falls back to Chat Completions API if the
+    Responses API returns 404.
     """
 
     def __init__(self, config: ServiceConfig):
         self._config = config
+        # Override the User-Agent when configured — some OpenAI-compatible
+        # proxies front a WAF (e.g. Cloudflare) that 403-blocks the stock
+        # openai-python User-Agent. An empty user_agent keeps the SDK default.
+        default_headers = (
+            {"User-Agent": config.user_agent} if config.user_agent else None
+        )
         self._client = OpenAI(
             api_key=config.api_key or "no-key",
             base_url=config.endpoint or None,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            default_headers=default_headers,
         )
         self._model = config.model
         # None = auto-detect, "responses" or "chat"
         self._api_style: str | None = None if config.api_style == "auto" else config.api_style
+        # Request parameters this backend has rejected (learned from 400s).
+        self._unsupported: set[str] = set()
+        if config.send_temperature is False:
+            self._unsupported.add("temperature")
+
+    # ── Public API ───────────────────────────────────────────────────────
 
     def complete(
         self,
@@ -169,130 +203,6 @@ class OpenAICompatibleService:
             json_schema_name=json_schema_name,
         )
 
-    # ── Responses API (legacy pipeline style) ────────────────────────────────
-
-    def _complete_responses(
-        self, prompt: str, temperature: float, max_tokens: int
-    ) -> str:
-        tokens: list[str] = []
-        with self._client.responses.create(
-            model=self._model,
-            input=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            stream=True,
-            **self._extra_request_kwargs(),
-        ) as stream:
-            for event in stream:
-                if getattr(event, "type", "") == "response.output_text.delta":
-                    tokens.append(event.delta)
-
-        text = "".join(tokens).strip()
-        if self._api_style is None:
-            self._api_style = "responses"
-        return _strip_code_fences(text)
-
-    def _describe_responses(
-        self,
-        image_data_url: str,
-        prompt: str,
-        context: str,
-        temperature: float,
-        max_tokens: int,
-        *,
-        structured_output_mode: str,
-        json_schema: dict[str, Any] | None,
-        json_schema_name: str,
-    ) -> str:
-        content: list[dict[str, Any]] = []
-        if context:
-            content.append({"type": "input_text", "text": context})
-        content.append({"type": "input_text", "text": prompt})
-        content.append({"type": "input_image", "image_url": image_data_url})
-
-        tokens: list[str] = []
-        with self._client.responses.create(
-            model=self._model,
-            input=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            stream=True,
-            **_structured_output_kwargs(
-                api_style="responses",
-                mode=structured_output_mode,
-                json_schema=json_schema,
-                json_schema_name=json_schema_name,
-            ),
-            **self._extra_request_kwargs(),
-        ) as stream:
-            for event in stream:
-                if getattr(event, "type", "") == "response.output_text.delta":
-                    tokens.append(event.delta)
-
-        text = "".join(tokens).strip()
-        if self._api_style is None:
-            self._api_style = "responses"
-        return _strip_code_fences(text)
-
-    # ── Chat Completions API (standard OpenAI) ──────────────────────────
-
-    def _complete_chat(
-        self, system: str, user: str, temperature: float, max_tokens: int
-    ) -> str:
-        messages: list[dict[str, Any]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": user})
-
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **self._extra_request_kwargs(),
-        )
-        if self._api_style is None:
-            self._api_style = "chat"
-        return response.choices[0].message.content or ""
-
-    def _describe_chat(
-        self,
-        image_data_url: str,
-        prompt: str,
-        context: str,
-        temperature: float,
-        max_tokens: int,
-        *,
-        structured_output_mode: str,
-        json_schema: dict[str, Any] | None,
-        json_schema_name: str,
-    ) -> str:
-        content: list[dict[str, Any]] = []
-        if context:
-            content.append({"type": "text", "text": context})
-        content.append({"type": "text", "text": prompt})
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": image_data_url},
-        })
-
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **_structured_output_kwargs(
-                api_style="chat",
-                mode=structured_output_mode,
-                json_schema=json_schema,
-                json_schema_name=json_schema_name,
-            ),
-            **self._extra_request_kwargs(),
-        )
-        if self._api_style is None:
-            self._api_style = "chat"
-        return response.choices[0].message.content or ""
-
     def describe_images(
         self,
         image_paths: list[Path],
@@ -321,6 +231,116 @@ class OpenAICompatibleService:
             image_data_urls, prompt, context, temperature, max_tokens,
         )
 
+    # ── Request assembly ─────────────────────────────────────────────────
+
+    def _generation_kwargs(
+        self, api_style: str, temperature: float, max_tokens: int,
+    ) -> dict[str, Any]:
+        """Sampling/budget/reasoning parameters, minus those the backend rejects."""
+        kwargs: dict[str, Any] = {}
+        if "temperature" not in self._unsupported:
+            kwargs["temperature"] = temperature
+
+        budget = max(max_tokens, self._config.min_output_tokens)
+        if api_style == "responses":
+            kwargs["max_output_tokens"] = budget
+        else:
+            key = _PARAM_RENAMES["max_tokens"] if "max_tokens" in self._unsupported else "max_tokens"
+            kwargs[key] = budget
+
+        effort = self._config.reasoning_effort
+        if effort:
+            if api_style == "responses" and "reasoning" not in self._unsupported:
+                kwargs["reasoning"] = {"effort": effort}
+            elif api_style == "chat" and "reasoning_effort" not in self._unsupported:
+                kwargs["reasoning_effort"] = effort
+
+        kwargs.update(self._extra_request_kwargs())
+        return kwargs
+
+    def _create(self, api: Any, kwargs: dict[str, Any]) -> Any:
+        """Call ``api.create(**kwargs)``, shedding parameters the backend rejects.
+
+        A rejected parameter is remembered in ``self._unsupported`` so later
+        requests never send it again.
+        """
+        for _ in range(_MAX_PARAM_RETRIES):
+            try:
+                return api.create(**kwargs)
+            except Exception as exc:
+                param = _unsupported_param(exc, kwargs)
+                if param is None:
+                    raise
+                self._unsupported.add(param)
+                value = kwargs.pop(param)
+                renamed = _PARAM_RENAMES.get(param)
+                if renamed:
+                    kwargs[renamed] = value
+                log.info(
+                    "%s rejects %r; %s and retrying",
+                    self._model, param,
+                    f"sending {renamed!r} instead" if renamed else "dropping it",
+                )
+        return api.create(**kwargs)
+
+    def _extra_request_kwargs(self) -> dict[str, Any]:
+        if not self._config.extra_body:
+            return {}
+        return {"extra_body": dict(self._config.extra_body)}
+
+    # ── Responses API ────────────────────────────────────────────────────
+
+    def _responses_stream(self, content: Any, temperature: float, max_tokens: int, **extra: Any) -> str:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "input": [{"role": "user", "content": content}],
+            "stream": True,
+            **extra,
+            **self._generation_kwargs("responses", temperature, max_tokens),
+        }
+        tokens: list[str] = []
+        with self._create(self._client.responses, kwargs) as stream:
+            for event in stream:
+                if getattr(event, "type", "") == "response.output_text.delta":
+                    tokens.append(event.delta)
+
+        text = "".join(tokens).strip()
+        if self._api_style is None:
+            self._api_style = "responses"
+        return _strip_code_fences(text)
+
+    def _complete_responses(
+        self, prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        return self._responses_stream(prompt, temperature, max_tokens)
+
+    def _describe_responses(
+        self,
+        image_data_url: str,
+        prompt: str,
+        context: str,
+        temperature: float,
+        max_tokens: int,
+        *,
+        structured_output_mode: str,
+        json_schema: dict[str, Any] | None,
+        json_schema_name: str,
+    ) -> str:
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "input_text", "text": context})
+        content.append({"type": "input_text", "text": prompt})
+        content.append({"type": "input_image", "image_url": image_data_url})
+        return self._responses_stream(
+            content, temperature, max_tokens,
+            **_structured_output_kwargs(
+                api_style="responses",
+                mode=structured_output_mode,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+            ),
+        )
+
     def _describe_images_responses(
         self,
         image_data_urls: list[str],
@@ -335,24 +355,57 @@ class OpenAICompatibleService:
         content.append({"type": "input_text", "text": prompt})
         for url in image_data_urls:
             content.append({"type": "input_image", "image_url": url})
+        return self._responses_stream(content, temperature, max_tokens)
 
-        tokens: list[str] = []
-        with self._client.responses.create(
-            model=self._model,
-            input=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            stream=True,
-            **self._extra_request_kwargs(),
-        ) as stream:
-            for event in stream:
-                if getattr(event, "type", "") == "response.output_text.delta":
-                    tokens.append(event.delta)
+    # ── Chat Completions API ─────────────────────────────────────────────
 
-        text = "".join(tokens).strip()
+    def _chat(self, messages: list[dict[str, Any]], temperature: float, max_tokens: int, **extra: Any) -> str:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            **extra,
+            **self._generation_kwargs("chat", temperature, max_tokens),
+        }
+        response = self._create(self._client.chat.completions, kwargs)
         if self._api_style is None:
-            self._api_style = "responses"
-        return _strip_code_fences(text)
+            self._api_style = "chat"
+        return response.choices[0].message.content or ""
+
+    def _complete_chat(
+        self, system: str, user: str, temperature: float, max_tokens: int
+    ) -> str:
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+        return self._chat(messages, temperature, max_tokens)
+
+    def _describe_chat(
+        self,
+        image_data_url: str,
+        prompt: str,
+        context: str,
+        temperature: float,
+        max_tokens: int,
+        *,
+        structured_output_mode: str,
+        json_schema: dict[str, Any] | None,
+        json_schema_name: str,
+    ) -> str:
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "text", "text": context})
+        content.append({"type": "text", "text": prompt})
+        content.append({"type": "image_url", "image_url": {"url": image_data_url}})
+        return self._chat(
+            [{"role": "user", "content": content}], temperature, max_tokens,
+            **_structured_output_kwargs(
+                api_style="chat",
+                mode=structured_output_mode,
+                json_schema=json_schema,
+                json_schema_name=json_schema_name,
+            ),
+        )
 
     def _describe_images_chat(
         self,
@@ -367,29 +420,31 @@ class OpenAICompatibleService:
             content.append({"type": "text", "text": context})
         content.append({"type": "text", "text": prompt})
         for url in image_data_urls:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": url},
-            })
-
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "user", "content": content}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **self._extra_request_kwargs(),
-        )
-        if self._api_style is None:
-            self._api_style = "chat"
-        return response.choices[0].message.content or ""
-
-    def _extra_request_kwargs(self) -> dict[str, Any]:
-        if not self._config.extra_body:
-            return {}
-        return {"extra_body": dict(self._config.extra_body)}
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        return self._chat([{"role": "user", "content": content}], temperature, max_tokens)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _unsupported_param(exc: Exception, kwargs: dict[str, Any]) -> str | None:
+    """Name the request parameter a 400 complains about, or None.
+
+    ``Unsupported parameter: 'x'`` maps to ``x`` (``'reasoning.effort'`` →
+    ``reasoning``).  ``Unsupported value: 'v'`` is attributed to the
+    reasoning parameter when ``v`` is the configured effort.
+    """
+    match = _UNSUPPORTED_RE.search(str(exc))
+    if not match:
+        return None
+    kind, name = match.group(1), match.group(2)
+    if kind == "value":
+        effort = kwargs.get("reasoning_effort") or (kwargs.get("reasoning") or {}).get("effort")
+        if name != effort:
+            return None
+        name = "reasoning" if "reasoning" in kwargs else "reasoning_effort"
+    name = name.split(".", 1)[0]
+    return name if name in kwargs else None
 
 
 def _encode_image_data_url(image_path: Path) -> str:
