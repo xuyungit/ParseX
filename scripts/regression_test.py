@@ -34,8 +34,11 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 from parserx.config.schema import load_config_with_result
 from parserx.eval.gate import EXIT_HARD_FAILURE, evaluate_gate, load_record, run_record
 from parserx.eval.metrics import fmt_metric
-from parserx.eval.reporting import build_config_report_metadata
+from parserx.eval.reporting import build_config_report_metadata, config_fingerprint
 from parserx.eval.runner import EvalRunner
+
+# Regression runs use the production config with every LLM call turned off.
+_DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "regression.yaml"
 
 _GREEN = "\033[32m"
 _RED = "\033[31m"
@@ -79,8 +82,8 @@ def main() -> None:
                         help="Deprecated: documents marked requires_services: [] in best_scores.json")
     parser.add_argument("--tolerance", type=float, default=0.005,
                         help="Tolerance for score comparison against the baseline (default: 0.005)")
-    parser.add_argument("--config", type=Path, default=None,
-                        help="Config file (default: auto-detect)")
+    parser.add_argument("--config", type=Path, default=_DEFAULT_CONFIG,
+                        help="Config file (default: configs/regression.yaml)")
     parser.add_argument("--baseline", type=Path, default=None,
                         help="Result record JSON or frozen run directory to compare against")
     parser.add_argument("--json-out", type=Path, default=None, help="Write this run's result record")
@@ -104,15 +107,21 @@ def main() -> None:
 
     baseline = load_record(args.baseline) if args.baseline else None
 
+    if not args.config.exists():
+        print(f"{_RED}Error: config {args.config} does not exist{_RESET}")
+        sys.exit(EXIT_HARD_FAILURE)
     config_result = load_config_with_result(args.config)
     runner = EvalRunner(config_result.config)
+    fingerprint = config_fingerprint(config_result.config)
     print(f"{_BOLD}Running evaluation on {gt_dir.name}...{_RESET}")
+    print(f"  Config: {args.config} (fingerprint {fingerprint})")
     if include_set:
         print(f"  Documents: {', '.join(sorted(include_set))}")
     print()
 
     results = runner.evaluate_dir(gt_dir, include_docs=include_set)
     record = run_record(results, failed=runner.failed_docs, not_executed=runner.not_executed)
+    record["config_fingerprint"] = fingerprint
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

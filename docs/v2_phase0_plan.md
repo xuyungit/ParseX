@@ -58,7 +58,7 @@ P0-1 先做：之后所有数字都用新指标。P0-2 很小，放在缓存之�
 
 - 新增 `configs/regression.yaml`：`extends: ../parserx.yaml`，覆盖 `processors.chapter.llm_fallback: false`、`processors.header_footer.llm_fallback: false`、`builders.quality_check.enabled: false`（Q18）；line_unwrap 和 content_value 显式写 false，防止默认值以后变化。回归配置不调用 LLM。
 - 只做 VLM gpt-6-luna 一份基线（Q19），不再建 gpt-5.4-mini 变体。
-- `scripts/regression_test.py` 不传 `--config` 时默认用 `configs/regression.yaml`；报告元数据记录解析后配置的哈希（去掉密钥）。
+- `scripts/regression_test.py` 不传 `--config` 时默认用 `configs/regression.yaml`；报告元数据和结果 JSON 记录配置指纹（解析后配置去掉密钥后的哈希），与基线指纹不同时给出提示。（实施时发现：`header_footer.llm_fallback` 在 v1 代码中没有被读取，v1 调用 LLM 的只有质量检查、chapter、line_unwrap、content_value 四处。）
 - 测试：`tests/test_config.py` 增加用例，加载 regression.yaml 后覆盖项生效、其余与 parserx.yaml 一致。
 - 验收：核心集跑一次，LLM 真实请求数为 0。结果只在终端打印（L1 级别，不写报告）。
 

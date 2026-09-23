@@ -220,6 +220,13 @@ uv run python scripts/regression_test.py --include deepseek --baseline /tmp/run.
 uv run python scripts/regression_test.py --report eval_reports/2026-09-23_p0-1_metric_fix.md
 ```
 
+The default config is `configs/regression.yaml`: `parserx.yaml` with every
+LLM call turned off (quality check, heading fallback, line-unwrap and
+content-value fallbacks), so results depend only on OCR/VLM responses. The
+report header and the run record carry a config fingerprint (sha256 of the
+resolved config without credentials); comparing against a baseline with a
+different fingerprint prints a note.
+
 Exit codes: `0` pass, `1` a score regressed beyond `--tolerance` (default
 0.005; key-content error counts use 0) against `--baseline`, `2` a hard check
 failed. Hard checks: any failed or not-executed document (absolute); missing

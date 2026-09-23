@@ -50,6 +50,12 @@ processors:
     vlm_debug_raw_preview_chars: 1200
   formula:
     enabled: true
+  vlm_review:
+    # Its json_schema is not strict-valid (no additionalProperties: false), so
+    # the endpoint rejected every json_schema request with a 400 and the call
+    # was resent as json_object.  Ask for json_object directly: same output,
+    # one request instead of two.
+    structured_output_mode: json_object
   line_unwrap:
     enabled: true
     llm_fallback: false
@@ -69,9 +75,10 @@ services:
     endpoint: ${OPENAI_BASE_URL_B}
     model: ${VLM_MODEL_B:gpt-6-luna}
     api_key: ${OPENAI_API_KEY_B}
-    # Reasoning models (gpt-5.6-*/gpt-6-*): no temperature, effort=none for
-    # transcription-style work.  Both are auto-dropped on backends that
-    # reject them, so the same config works for gpt-5.4-mini.
+    # gpt-6-luna is a reasoning model: it rejects temperature, so it is never
+    # sent (auto-detection would waste one rejected request per concurrent
+    # worker before the service learns).  effort=none for transcription work.
+    send_temperature: false
     reasoning_effort: none
     min_output_tokens: 1024
     max_concurrent: 6
@@ -80,8 +87,9 @@ services:
   llm:
     provider: openai
     endpoint: ${OPENAI_BASE_URL_B}
-    model: ${LLM_MODEL_B:gpt-5.4-mini}
+    model: ${LLM_MODEL_B:gpt-6-luna}
     api_key: ${OPENAI_API_KEY_B}
+    send_temperature: false
     reasoning_effort: none
     min_output_tokens: 256
 

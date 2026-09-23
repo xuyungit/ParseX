@@ -1,0 +1,18 @@
+# Regression config (guide §12 P0-2): the production config with every LLM
+# call turned off, so regression runs depend only on OCR/VLM responses (which
+# the response cache replays).  Only overrides live here.
+extends: ../parserx.yaml
+
+builders:
+  quality_check:
+    enabled: false        # LLM formula-fragment page check
+
+processors:
+  chapter:
+    llm_fallback: false   # heading LLM fallback (the main source of heading_f1 drift)
+  header_footer:
+    llm_fallback: false   # not read by v1 code; set for explicitness
+  line_unwrap:
+    llm_fallback: false   # already false in defaults; pinned here
+  content_value:
+    llm_fallback: false   # already false in defaults; pinned here

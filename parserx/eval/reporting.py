@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
+from typing import Any
 
 from parserx.config.schema import ConfigLoadResult, ParserXConfig, ServiceConfig
 
@@ -21,6 +24,7 @@ def build_config_report_metadata(
 
     metadata: ReportMetadata = []
     metadata.append(("Metric version", METRIC_VERSION))
+    metadata.append(("Config fingerprint", config_fingerprint(config)))
     metadata.append(("Config source", _format_config_source(loaded)))
     metadata.append(("Overrides", ", ".join(overrides) if overrides else "(none)"))
     metadata.append(("PDF provider", config.providers.pdf.engine))
@@ -99,3 +103,22 @@ def _format_service(service: ServiceConfig) -> str:
 
 def _on_off(value: bool) -> str:
     return "on" if value else "off"
+
+
+# Credential fields never enter the fingerprint (or any report).
+_SECRET_KEYS = frozenset({"api_key", "token"})
+
+
+def config_fingerprint(config: ParserXConfig) -> str:
+    """Short hash of the resolved config with credentials removed."""
+    data = _strip_secrets(config.model_dump(mode="json"))
+    blob = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _strip_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _strip_secrets(v) for k, v in value.items() if k not in _SECRET_KEYS}
+    if isinstance(value, list):
+        return [_strip_secrets(v) for v in value]
+    return value

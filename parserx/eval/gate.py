@@ -108,6 +108,16 @@ def evaluate_gate(record: dict, baseline: dict | None, tolerance: float = 0.005)
         )
         baseline = None
 
+    if (
+        baseline is not None
+        and baseline.get("config_fingerprint")
+        and baseline.get("config_fingerprint") != record.get("config_fingerprint")
+    ):
+        outcome.notes.append(
+            f"config differs from the baseline ({baseline.get('config_fingerprint')} → "
+            f"{record.get('config_fingerprint')}); score changes may come from configuration"
+        )
+
     documents = record.get("documents", {})
     if baseline is None:
         for name, scores in sorted(documents.items()):

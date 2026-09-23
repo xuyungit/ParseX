@@ -164,3 +164,38 @@ services:
         "enable_thinking": False,
         "custom_flag": "demo",
     }
+
+
+# ── Regression config (guide §12 P0-2) ──────────────────────────────────
+
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def test_regression_config_turns_off_every_llm_call_and_keeps_the_rest():
+    from parserx.config.schema import load_config
+
+    base = load_config(_REPO / "parserx.yaml")
+    reg = load_config(_REPO / "configs" / "regression.yaml")
+
+    assert reg.builders.quality_check.enabled is False
+    assert reg.processors.chapter.llm_fallback is False
+    assert reg.processors.line_unwrap.llm_fallback is False
+    assert reg.processors.content_value.llm_fallback is False
+
+    for cfg in (base, reg):
+        cfg.builders.quality_check.enabled = False
+        for name in ("chapter", "line_unwrap", "content_value", "header_footer"):
+            getattr(cfg.processors, name).llm_fallback = False
+    assert reg == base
+
+
+def test_config_fingerprint_ignores_secrets_but_not_settings():
+    from parserx.config.schema import apply_overrides
+    from parserx.eval.reporting import config_fingerprint
+
+    base = ParserXConfig()
+    secret = apply_overrides(base, ["services.llm.api_key=sk-other", "builders.ocr.token=t"])
+    changed = apply_overrides(base, ["services.llm.model=other-model"])
+
+    assert config_fingerprint(secret) == config_fingerprint(base)
+    assert config_fingerprint(changed) != config_fingerprint(base)
