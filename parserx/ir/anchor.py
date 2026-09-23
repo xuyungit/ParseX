@@ -29,6 +29,7 @@ class DocxAnchor(IRModel):
     part: str  # e.g. "word/document.xml"
     node_path: str  # XPath-like, e.g. "/w:body/w:tbl[3]/w:tr[2]/w:tc[1]/w:p[1]"
     run_range: tuple[int, int] | None = None  # [start, end) run indices
+    segment: int | None = Field(None, ge=1)  # docx_segment n: explicit page / section breaks split the body
 
 
 class AssetAnchor(IRModel):

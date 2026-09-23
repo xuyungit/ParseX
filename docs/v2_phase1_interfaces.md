@@ -110,6 +110,7 @@ class DocxAnchor(IRModel):
     part: str                                   # "word/document.xml"、"word/footnotes.xml"……
     node_path: str                              # 类 XPath，如 "/w:body/w:tbl[3]/w:tr[2]/w:tc[1]/w:p[1]"
     run_range: tuple[int, int] | None = None    # [start, end) 的 run 下标
+    segment: int | None = None                  # 〔P1-2〕所在的 docx_segment（显式分页 / 分节切出的段），位置属性，不随重排改变
 
 class AssetAnchor(IRModel):
     type: Literal["asset"] = "asset"
@@ -303,7 +304,7 @@ class Sidecar(DocumentState):       # 〔P1-1〕导出形式 = DocumentState + �
 
 **账目单位 〔增补〕**：指导 §2.3 原则 1 所说的"已发现内容"落到这些条目：原生 PDF 的文本行、OOXML 的段落 / 表格 / 图片节点、检测区域、OCR 块。每个条目只能有一个去向，`disposition=None` 就是未归属。`check` 要求 `discovered = output + merged + duplicate + excluded + failed` 且没有未归属条目。以行而不是字符为单位，是为了让账目规模可控，同时仍能发现整行丢失。行内丢字交给评测的字符指标发现。
 
-**持久化 〔增补〕**：`<ws>/state.json`（`DocumentState`）+ `<ws>/assets/` + `<ws>/calls.jsonl`（每次工具调用的请求、信封、diff 与证据引用，§7.5）+ 文件锁。先用 JSON 文件；几百页文档的 state.json 若超过约 50 MB，或写入明显拖慢速度，再换 SQLite，届时只改 `workspace/` 内部。
+**持久化 〔增补〕**：`<ws>/state.json`（`DocumentState`）+ `<ws>/assets/` + `<ws>/calls.jsonl`（每次工具调用的请求、信封、diff 与证据引用，§7.5）+ 文件锁。〔P1-2〕另存 `<ws>/source.<ext>`（输入文件副本，工具不依赖原路径，实验目录只需工作区本身）；`Workspace.create` 算作第一次提交（version 1）；`txn(actor, expect_version=, timeout=)` 在锁内读取最新状态、提交前整体重新校验（列表修改绕过赋值校验）、失败不写；`calls.jsonl` 同时记录提交（`type=txn`，actor 与新版本号）与工具调用（`type=call`）；资源按内容寻址（`assets/<asset id>.<ext>`，重复写入幂等）。查询函数在 `workspace/queries.py`（阅读顺序、邻近块、按页 / 段取块、标题树）。先用 JSON 文件；几百页文档的 state.json 若超过约 50 MB，或写入明显拖慢速度，再换 SQLite，届时只改 `workspace/` 内部。
 
 ## 3. TableGrid（§4.3，阶段零 P0-1 落地）
 
