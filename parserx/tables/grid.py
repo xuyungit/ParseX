@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from html import escape as html_escape
 
 from pydantic import Field, model_validator
 
@@ -59,6 +60,45 @@ class TableGrid(IRModel):
     @property
     def has_spans(self) -> bool:
         return any(cell.rowspan > 1 or cell.colspan > 1 for cell in self.cells)
+
+    @property
+    def needs_html(self) -> bool:
+        """GFM has no spans and exactly one header row; anything else renders as HTML (guide §4.5)."""
+        return self.has_spans or self.header_rows > 1
+
+    def to_gfm(self) -> str:
+        """GFM pipe table. GFM requires a header row, so a grid without one uses its first row."""
+        if self.needs_html:
+            raise ValueError("table has spans or several header rows; render it with to_html()")
+        if self.n_rows == 0 or self.n_cols == 0:
+            return ""
+        rows = [
+            "| " + " | ".join(_escape_gfm(cell.content if cell else "") for cell in row) + " |"
+            for row in self.slot_matrix()
+        ]
+        delimiter = "| " + " | ".join(["---"] * self.n_cols) + " |"
+        return "\n".join([rows[0], delimiter, *rows[1:]])
+
+    def to_html(self) -> str:
+        """HTML table keeping spans; header rows use ``<th>``, uncovered positions an empty ``<td>``."""
+        matrix = self.slot_matrix()
+        lines = ["<table>"]
+        for r, row in enumerate(matrix):
+            parts: list[str] = []
+            for c, cell in enumerate(row):
+                if cell is None:
+                    parts.append("<td></td>")
+                    continue
+                if (cell.row, cell.col) != (r, c):
+                    continue  # covered by a span
+                tag = "th" if cell.is_header or r < self.header_rows else "td"
+                attrs = (f' rowspan="{cell.rowspan}"' if cell.rowspan > 1 else "") + (
+                    f' colspan="{cell.colspan}"' if cell.colspan > 1 else ""
+                )
+                parts.append(f"<{tag}{attrs}>{_escape_html(cell.content)}</{tag}>")
+            lines.append("<tr>" + "".join(parts) + "</tr>")
+        lines.append("</table>")
+        return "\n".join(lines)
 
     def slot(self, row: int, col: int) -> Cell | None:
         """The cell covering position (row, col), or None if nothing covers it."""
@@ -128,6 +168,14 @@ _DELIMITER_CELL_RE = re.compile(r"^\s*:?-+:?\s*$")
 _HTML_TABLE_TAG_RE = re.compile(r"<table\b[^>]*>|</table\s*>", re.IGNORECASE)
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def _escape_gfm(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", "<br>")
+
+
+def _escape_html(text: str) -> str:
+    return html_escape(text, quote=False).replace("\n", "<br>")
 
 
 def _split_gfm_row(line: str) -> list[str]:

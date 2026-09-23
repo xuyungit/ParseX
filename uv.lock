@@ -1906,6 +1906,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "docling" },
+    { name = "jsonschema" },
     { name = "llama-parse" },
     { name = "numpy" },
     { name = "openai" },
@@ -1947,6 +1948,7 @@ requires-dist = [
     { name = "docling", specifier = ">=2.0" },
     { name = "docling", marker = "extra == 'docx'", specifier = ">=2.0" },
     { name = "huggingface-hub", marker = "extra == 'bench'", specifier = ">=0.25" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "llama-parse", specifier = ">=0.6.94" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=1.0" },

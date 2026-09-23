@@ -1,6 +1,6 @@
 # ParserX v2 设计与研发指导
 
-> **文档状态**：v1.9，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 两处 v1 修复；v1.8 阶段零完成；v1.9 阶段一分解与设计修订，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> **文档状态**：v1.10，2026-09-24（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 两处 v1 修复；v1.8 阶段零完成；v1.9 阶段一分解与设计修订；v1.10 起为阶段一实施，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
 > 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
 >
 > 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
@@ -13,7 +13,7 @@
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
 - **阶段零 ✅**（2026-09-23）：指标版本 2.0 与硬检查、无 LLM 的回归配置、响应缓存、L1 离线回放（`--core --repeat 2`）、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）。下一步阶段一 ⬜，阶段二至五 ⬜。分解见 [v2_phase0_plan.md](v2_phase0_plan.md)，阶段一接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)，两者 2026-09-23 已确认。
 - **测试基线**：离线单元测试 493 通过（阶段零结束时；开始时 432）、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
-- **阶段一 ⬜ 待开始**：工作分解见 [v2_phase1_plan.md](v2_phase1_plan.md)（草案，2026-09-24），接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)（已按分解修订，标〔v1.9〕）。开始前先确认 §14 的 Q23–Q26。
+- **阶段一 🟡 进行中**（2026-09-24 开始）：工作分解见 [v2_phase1_plan.md](v2_phase1_plan.md)（已确认），接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)（实施中的补充标〔P1-n〕）。Q23–Q26 已确认（按建议）。进度见 §12。
 - **代码状态**：阶段零全部工作已合并到 main（f3a5fd2），未推送远端。冻结基线与响应缓存只在本地（`eval_runs/`、`.parserx_cache/`，不入 git）。
 
 ### 0.2 新会话启动清单
@@ -684,7 +684,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 阶段 | 目标 | 产出 | 退出条件 | 状态 |
 |---|---|---|---|---|
 | 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；✅ P0-2 回归配置 `configs/regression.yaml` 关闭全部 LLM（含质量检查），核心集实测 LLM 请求为 0；✅ P0-3 缓存层（OCR、VLM、LLM；核心集离线回放 0 请求、输出逐字节一致，[报告](../eval_reports/2026-09-23_p0-3_cache.md)）；✅ P0-4 回归分层（`--core` 默认离线回放、`--allow-calls`、`--repeat`、多 ground truth 目录；核心集回放两次一致，整条命令 4.2 s）；✅ P0-5 冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇、提交 78556f4、两次离线回放逐项一致，[报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获 ✅；核心集回放两次一致 ✅；冻结 run 存档于本地 `eval_runs/`（不入 git）✅ | ✅ |
-| 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | ⬜ |
+| 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | 🟡 P1-1 ✅ |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
 | 4 能力完善 | 按结论补齐处理能力 | 图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
@@ -721,7 +721,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q9 | OOXML 支持边界各项是支持、降级还是不支持 | ❓ 阶段四前决定；修订记录一项提前到阶段一决定（Q26） |
 | Q10 | 表格复核的触发阈值与预算占比 | ❓ 阶段四回答 |
 | Q11 | 结构分析预算：批次大小、文档级 token 上限、冲突复核次数 | ❓ 阶段四前决定 |
-| Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答；阶段一的 DOCX 先走样式与大纲级别的确定性路径（Q24） |
+| Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答；阶段一的 DOCX 走样式与大纲级别的确定性路径（Q24 已定） |
 | Q13 | 默认运行时：固定流水线、Codex、Claude Code、Pi，还是"默认流水线、难例交 Agent"；依据 §9.4 报告 | ❓ 阶段三回答 |
 | Q14 | 工具包对外接口：JSON CLI 是否足够，何时加 MCP | ❓ 阶段二回答 |
 | Q15 | 测试数据与结果是否入 git | ✅ 暂时只有代码与文档入 git；`eval_runs/`、`.parserx_cache/`、新的 `eval_reports/` 不入 git（已跟踪的旧报告保持现状） |
@@ -732,10 +732,10 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q20 | 复核候选由谁、何时采用 | ✅ `recognize` / `review_table` 结束时由程序同步执行选择步骤与接受门，写 Decision |
 | Q21 | 是否引入 rapidfuzz | ✅ 引入；edit_distance 改为精确计算（不再分块近似） |
 | Q22 | 冻结前是否修 v1 的"纠正后仍重试"缺陷；冻结 run 用什么响应 | ✅ 修：只在响应无法解析时重试；冻结用空缓存、全部真实请求的干净 run，作废的首次冻结改名保留、不作种子 |
-| Q23 | 阶段一的验收集是否加入扫描文档 | ❓ 建议加 ocr_scan_jtg3362（能执行、去向平衡、信息类指标不低于 v1，标题不设门槛）：原定三篇都不含扫描页，而阶段二需要扫描页工具 |
-| Q24 | 阶段一的标题来源 | ❓ 建议：DOCX 走样式与大纲级别的确定性路径；原生 PDF 用临时适配器 `adapter:v1`，复用 v1 不调用服务的标题判断，经 `apply_structure` 写入，阶段四删除。heading_f1 是阶段一的退出条件，而 §6.8 在阶段四 |
-| Q25 | P1-7 之后是否做一次工具形态试用 | ❓ 建议做：约 30 分钟、一篇文档、不调优，只检查图片是否进入视觉上下文、JSON 长度、失败信息是否可用 |
-| Q26 | DOCX 修订记录的处理 | ❓ 建议按接受全部修订的最终视图提取；被删除的文字计入账目，去向为 excluded；sidecar 标注文档含修订（依据 simple_doc01 的标注） |
+| Q23 | 阶段一的验收集是否加入扫描文档 | ✅ 加 ocr_scan_jtg3362：能执行、去向平衡、信息类指标不低于 v1，标题不设门槛；请求数只记录不设门槛。若信息类指标低于 v1，如实报告并分析原因，不为这篇调参（2026-09-24） |
+| Q24 | 阶段一的标题来源 | ✅ DOCX 走确定性路径：段落直接设置或经样式继承的 `w:outlineLvl`、Heading 样式；有 Title 样式时 Title→H1、其余下移一级（simple_doc01 的标注如此：Title 段落带直接 `outlineLvl 9` 仍标 H1，heading 1–3 标 H2–H4）；带编号但无标题样式的段落按 LIST。原生 PDF 用临时适配器 `adapter:v1`，经 `apply_structure` 写入，阶段四删除（2026-09-24）。另：real_doc01 的标题主要靠段落直接设置的 `outlineLvl`（52 处），读取器必须两种都读 |
+| Q25 | P1-7 之后是否做一次工具形态试用 | ✅ 做：P1-7 之后，用 Codex（`codex exec`，本机 codex-cli 0.156.0）在 ocr_scan_jtg3362 上试用约 30 分钟，不调优；实验目录只放输入；只检查图片是否进入视觉上下文、JSON 长度、失败信息是否可用（2026-09-24） |
+| Q26 | DOCX 修订记录的处理 | ✅ 接受全部修订的最终视图：保留 `w:ins`/`w:moveTo`；`w:del`/`w:moveFrom` 的文字计入账目、去向 excluded、配 `revision_deleted` Decision；被删除的段落标记按最终视图合并段落；格式修订取最终格式；sidecar warnings 注明文档含修订（2026-09-24） |
 
 ## 15. 变更记录
 
@@ -757,3 +757,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-23 | v1.7 | 修 v1 图片 VLM 重试：只在响应无法解析（ok=False）时重试；解析成功但无独立描述（仅纠正）时不再重试，消除全语料约 14% 的重复请求与"自身抑制后判为已覆盖"的内容丢失（jtg3362 封面三行恢复，随机延迟下输出稳定）；加测试；决定 Q22 |
 | 2026-09-23 | v1.8 | P0-5 完成、**阶段零完成**：用空缓存、全部真实请求重新冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇，提交 78556f4，工作区干净，OCR 26、VLM 89、LLM 0 次请求，197.6 s），两次独立离线回放输出与分数逐项一致；首次冻结作废改名 `.invalid`；基线报告按调参集 / 隔离集 / 公开集分列；§0.1、§0.2、§9.1 核心集表按冻结基线更新 |
 | 2026-09-24 | v1.9 | 阶段零合并到 main。阶段一分解 [v2_phase1_plan.md](v2_phase1_plan.md) 与设计修订：DOCX 直接读 OOXML（Docling 给不出节点路径、无法记账，并会丢掉修订插入的文字）；Observation 增加类型化 `TextStyle`；修订删除的文字计入账目；阶段一版面检测只做影子运行，原生 PDF 按 PyMuPDF 文本块组织；新增 `render/`、`prompts/`、`hierarchy/legality.py`、临时 `runtimes/v1_structure.py`；语义块格式与评测对齐；§8.2 与 §13 加入阶段零得出的调度和确定性规则；§9.1 更正 receipt 为原生 PDF；§12 阶段一的产出与退出条件细化；新增 Q23–Q26，Q6 挪到阶段四；§0 改为阶段一的启动清单 |
+| 2026-09-24 | v1.10 | 阶段一开始：启动检查全部通过（服务三项 OK；L0 493 通过 + 4 个已知失败；v1 L1 PASS；基线回放 PASS）。Q23–Q26 按建议确认（§14），Q24 补充 DOCX 标题约定（Title→H1、其余下移一级；段落直接 `outlineLvl` 与样式继承都读）。**P1-1 完成**：`parserx/ir/` 补齐枚举、Observation（含 `TextStyle`/`Numbering`）、Relation、Asset、Decision、Block（结构校验器）、图片语义、工作区状态与 sidecar（`LedgerEntry.unit`、`Stats`/`TokenUsage`、`schema_version`、`Sidecar` = 状态 + 账目汇总）、确定性 ID、sidecar JSON Schema（序列化模式全字段必填，`jsonschema` 显式加入依赖）；`TableGrid.to_gfm/to_html/needs_html`（多行表头也走 HTML，避免丢结构）。L0 522 通过 + 4 个已知失败 |

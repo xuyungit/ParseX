@@ -12,4 +12,7 @@ Affine = tuple[float, float, float, float, float, float]
 class IRModel(BaseModel):
     """Unknown fields are errors: state lives in typed fields, never in free dicts or flags."""
 
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    # Serialization schemas (the sidecar) mark defaulted fields required: exports always emit them.
+    model_config = ConfigDict(
+        extra="forbid", validate_assignment=True, json_schema_serialization_defaults_required=True
+    )

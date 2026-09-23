@@ -19,6 +19,7 @@ dependencies = [
     "pypdf>=6.9.2",
     "llama-parse>=0.6.94",
     "rapidfuzz>=3.14.6",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]

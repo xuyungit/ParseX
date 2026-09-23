@@ -1,6 +1,6 @@
 # 阶段一"文档工具包 v1"工作分解
 
-> 状态：**草案**（2026-09-24）。依据 [redesign_guide.md](redesign_guide.md) v1.9 的 §3–§6、§8、§11、§12，接口以 [v2_phase1_interfaces.md](v2_phase1_interfaces.md) 为准。新会话开始时先确认 §6 的待决问题，再按 §3 的顺序实施；每完成一项更新指导 §12 与 §15。
+> 状态：**已确认**（2026-09-24；Q23–Q26 按建议确认，见指导 §14）。依据 [redesign_guide.md](redesign_guide.md) v1.9 的 §3–§6、§8、§11、§12，接口以 [v2_phase1_interfaces.md](v2_phase1_interfaces.md) 为准。新会话开始时先确认 §6 的待决问题，再按 §3 的顺序实施；每完成一项更新指导 §12 与 §15。
 
 ## 0. 目标与退出条件
 
@@ -17,7 +17,7 @@
    - heading_f1 也不低于 v1；
    - 以上分数容差 0.005，计数类容差 0；
    - 真实请求数 O/V/L 各自不超过 v1。
-3. **扫描路径**（待定 Q23）：ocr_scan_jtg3362 能执行、去向平衡、信息类指标不低于 v1；标题不设门槛。
+3. **扫描路径**（Q23 已定）：ocr_scan_jtg3362 能执行、去向平衡、信息类指标不低于 v1；标题不设门槛。
 4. **每篇文档**：`check` 无未归属条目；sidecar 通过 JSON Schema 校验；v2 冻结 run 能离线回放（`--replay` 通过）。
 5. **影子运行**：`layout/` 与 `routing/image.py` 写出检测 Observation、`images` 记录和 `image_route` Decision，不影响输出。
 6. **可离线回放**：v2 的 L1（`--core --config configs/regression_v2.yaml --repeat 2`）离线回放两遍一致。

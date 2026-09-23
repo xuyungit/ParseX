@@ -262,17 +262,25 @@ class PageState(IRModel):
 
 class LedgerEntry(IRModel):                     # 去向账目的最小单位（见下方说明）
     item: str
+    unit: LedgerUnit                            # 〔P1-1〕条目是什么：native_line / pdf_image / ocr_block /
+                                                # docx_paragraph / docx_table / docx_image / docx_deleted / docx_unsupported
     source: SourceAnchor
     chars: int
     disposition: Literal["output", "merged", "duplicate", "excluded", "failed"] | None = None
-    block: str | None = None
+    block: str | None = None                    # 承载内容、或记录其去向 Decision 的块
 
 class ImageRecord(IRModel):
     id: str; route: ImageRoute; shown: bool
     t: float | None = None; f: float | None = None
     regions: int = 0; complete: bool | None = None
 
+class Stats(IRModel):              # 〔P1-1〕sidecar 中唯一允许在新请求与回放之间不同的部分
+    requests: dict[str, int]; attempts: dict[str, int]; cache_hits: dict[str, int]
+    tokens: dict[str, TokenUsage]   # TokenUsage(input, cached_input, output)，按服务
+    cost_usd: float | None; wall_time_s: float
+
 class DocumentState(IRModel):
+    schema_version: Literal[1] = 1  # 〔P1-1〕
     id: str; source: str; source_sha256: str; format: Literal["pdf", "docx"]
     status: DocumentStatus
     engines: dict[str, str]; prompt_hashes: dict[str, str]
@@ -284,7 +292,12 @@ class DocumentState(IRModel):
     stats: Stats                    # requests / attempts / cache_hits / tokens / cost_usd / wall_time_s
     warnings: list[str]
     version: int                    # 每个事务 +1
+
+class Sidecar(DocumentState):       # 〔P1-1〕导出形式 = DocumentState + 由账目算出的汇总
+    accounting: AccountingSummary   # discovered / output / merged / duplicate / excluded / failed / unassigned
 ```
+
+〔P1-1〕实现说明：模型在 `parserx/ir/` 各子模块中，按子模块导入（包的 `__init__` 只导出 anchor 与 base，避免与 `tables/grid.py` 循环导入）。sidecar 的 JSON Schema 由 `ir.schema.sidecar_json_schema()` 生成（序列化模式，所有字段必填、`additionalProperties: false`），`validate_sidecar()` 用标准 JSON Schema 校验器（`jsonschema`，已显式加入依赖），外部消费者不需要导入 ParserX。结构校验器另有：`status=failed` 的 Observation 必须有 `error`；`role=crop` 的 Asset 必须有 `derived_from`，`dpi` 只用于渲染图；表格块的 `text` 必须为空；`semantic` 只能出现在 figure 上。跨块规则不放在模型里，由 `accounting/` 与 `hierarchy/` 报告。
 
 **修订记录 〔v1.9〕**：DOCX 按"接受全部修订"后的最终视图提取（Q26）。`w:ins` 与 `w:moveTo` 的文字进入正文；`w:del` 与 `w:moveFrom` 的文字作为账目条目，去向为 `excluded`，并配一条 `stage=exclude`、`choice=revision_deleted` 的 Decision。sidecar 的 `warnings` 注明文档含修订。`DocxAnchor.node_path` 在阶段一只到段落或单元格一级，`run_range` 可以为空。
 
@@ -323,7 +336,7 @@ class TableGrid(IRModel):
 def find_tables(markdown: str) -> list[TableSpan]: ...     # TableSpan(start, end, fmt: "gfm"|"html", grid)
 ```
 
-渲染规则（§4.5）：没有合并单元格输出 GFM，有则输出 HTML。
+渲染规则（§4.5）：没有合并单元格输出 GFM，有则输出 HTML。〔P1-1〕GFM 只能表达一行表头，所以判据是 `needs_html = has_spans or header_rows > 1`，`to_gfm()` 在 `needs_html` 时抛 ValueError，避免丢掉表头结构；没有标记表头的网格按 GFM 要求以第一行作表头（与 v1 相同；补一行空表头会让整张表的行位置错位）。`to_html()` 表头行用 `<th>`，未被任何单元格覆盖的位置输出空 `<td>`。
 
 ## 4. 工具返回信封（§5.2）
 
