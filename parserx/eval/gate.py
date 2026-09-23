@@ -3,8 +3,9 @@
 Exit codes: 0 pass · 1 metric regression against the baseline · 2 hard check
 failed.  Hard checks:
 
-- absolute: any failed document, any requested-but-not-executed document,
-  a baseline with a different metric version;
+- absolute: any failed document, any requested-but-not-executed document
+  (including offline replay cache misses), output that differs between
+  repeated runs of the same replay, a baseline with a different metric version;
 - relative: per-document missing / extra tables above the baseline (without a
   baseline they are only recorded, so the first freeze is never blocked).
 """
@@ -100,6 +101,8 @@ def evaluate_gate(record: dict, baseline: dict | None, tolerance: float = 0.005)
         outcome.hard_failures.append(f"failed: {item['document']} — {item['error']}")
     for item in record.get("not_executed", []):
         outcome.hard_failures.append(f"not executed: {item['document']} — {item['reason']}")
+    for name in record.get("not_reproducible", []):
+        outcome.hard_failures.append(f"not reproducible: {name} — output differs between repeated runs")
 
     if baseline is not None and baseline.get("metric_version") != record.get("metric_version"):
         outcome.hard_failures.append(

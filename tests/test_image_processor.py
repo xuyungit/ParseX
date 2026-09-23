@@ -521,3 +521,23 @@ def test_correction_disabled_by_config(tmp_path: Path):
     assert ocr_text.metadata.get("skip_render") is not True
     # Image should have a description via the fallback path
     assert elem.metadata.get("description")
+
+
+def test_overlap_evidence_does_not_depend_on_other_images_finishing_first():
+    """VLM calls run concurrently; one image's correction suppressing shared OCR
+    text must not change another image's evidence (and so its prompt)."""
+    from parserx.processors.image import _collect_overlapping_evidence
+
+    image = PageElement(type="image", bbox=(0, 0, 100, 100), page_number=1)
+    shared = PageElement(type="text", content="实施日期:2018年11月01日", source="ocr",
+                         bbox=(10, 10, 90, 30), page_number=1)
+    inside_figure = PageElement(type="text", content="axis label", source="ocr",
+                                bbox=(10, 40, 90, 60), page_number=1,
+                                metadata={"skip_render": True})
+    elements = [image, shared, inside_figure]
+
+    before = _collect_overlapping_evidence(image, elements)
+    shared.metadata.update(skip_render=True, suppressed_by_vlm_correction=True)
+    after = _collect_overlapping_evidence(image, elements)
+
+    assert before["text"] == after["text"] == "实施日期:2018年11月01日"

@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 """Regression test with hard checks (metric version 2.0, guide §9).
 
+Tiers (guide §9.1):
+    # L1 core regression: offline replay from the response cache, run twice
+    uv run python scripts/regression_test.py --core --repeat 2
+
+    # ...when the cache lacks responses (new code paths, new prompts):
+    uv run python scripts/regression_test.py --core --allow-calls
+
+    # L2 full regression: every ground-truth document, public set included
+    uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public \\
+        --report eval_reports/<date>_<phase>_<topic>.md
+
 Exit codes: 0 pass · 1 metric regression against --baseline · 2 hard check
-failed (failed / not-executed documents, more missing or extra tables than the
+failed (failed / not-executed documents, offline cache misses, output that
+differs between --repeat runs, more missing or extra tables than the
 baseline, or a baseline computed with a different metric version).
 
 Baselines are result records (``--json-out``) or frozen run directories; the
 old ``ground_truth/best_scores.json`` is never written and no longer gates.
-
-Usage:
-    # Specific docs, report only (no baseline yet):
-    uv run python scripts/regression_test.py --include text_table01 deepseek
-
-    # Save the run record, then compare a later run against it:
-    uv run python scripts/regression_test.py --include deepseek --json-out /tmp/run.json
-    uv run python scripts/regression_test.py --include deepseek --baseline /tmp/run.json
-
-    # Markdown report (L2 reports go to eval_reports/, named with date and phase):
-    uv run python scripts/regression_test.py --report eval_reports/2026-09-23_p0-1_x.md
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # Suppress PyMuPDF layout analyzer suggestion.
@@ -37,9 +38,10 @@ from parserx.eval.gate import EXIT_HARD_FAILURE, evaluate_gate, load_record, run
 from parserx.eval.metrics import fmt_metric
 from parserx.eval.reporting import build_config_report_metadata, config_fingerprint
 from parserx.eval.runner import EvalRunner
+from parserx.eval.suite import CORE_LIST, REPO_ROOT, output_digest, read_doc_list, repeat_mismatches, run_suite
 
 # Regression runs use the production config with every LLM call turned off.
-_DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "regression.yaml"
+_DEFAULT_CONFIG = REPO_ROOT / "configs" / "regression.yaml"
 
 _GREEN = "\033[32m"
 _RED = "\033[31m"
@@ -60,7 +62,7 @@ def _deterministic_docs(gt_dir: Path) -> set[str]:
 def _print_results(record: dict) -> None:
     header = (
         f"{'Document':<28} {'miss/extra':>10} {'table_f1':>8} {'char_f1':>8} {'edit':>6} "
-        f"{'order_τ':>8} {'head_f1':>8} {'key_err':>7} {'O/V/L':>9} {'time':>7}"
+        f"{'order_τ':>8} {'head_f1':>8} {'key_err':>7} {'O/V/L':>9} {'hits':>5} {'time':>7}"
     )
     print(f"{_BOLD}{header}{_RESET}")
     print("-" * len(header))
@@ -70,17 +72,58 @@ def _print_results(record: dict) -> None:
             f"{name:<28} {s['missing_tables']:>4}/{s['extra_tables']:<5} "
             f"{fmt_metric(s['table_cell_f1']):>8} {s['char_f1']:>8.3f} {s['edit_distance']:>6.3f} "
             f"{fmt_metric(s['order_tau']):>8} {fmt_metric(s['heading_f1']):>8} {s['key_errors']:>7} "
-            f"{req['ocr']:>3}/{req['vlm']}/{req['llm']:<3} {s['wall_time_seconds']:>6.1f}s"
+            f"{req['ocr']:>3}/{req['vlm']}/{req['llm']:<3} {sum(s['cache_hits'].values()):>5} "
+            f"{s['wall_time_seconds']:>6.1f}s"
         )
+
+
+def _select_documents(args: argparse.Namespace, gt_dirs: list[Path]) -> set[str] | None:
+    if args.core:
+        return set(read_doc_list(CORE_LIST))
+    if args.list:
+        return set(read_doc_list(args.list))
+    if args.include:
+        return set(args.include)
+    if args.deterministic_only:
+        print(f"{_YELLOW}--deterministic-only is deprecated; use --core (offline replay).{_RESET}")
+        names = set().union(*(_deterministic_docs(d) for d in gt_dirs))
+        if not names:
+            print(f"{_YELLOW}No offline documents found (requires_services: []).{_RESET}")
+            sys.exit(EXIT_HARD_FAILURE)
+        return names
+    return None
+
+
+def _cache_mode(args: argparse.Namespace) -> str | None:
+    """Explicit --cache-mode wins; --allow-calls records; --core replays offline."""
+    if args.cache_mode:
+        return args.cache_mode
+    if args.allow_calls:
+        return "read_write"
+    if args.core:
+        return "read_only"
+    return None
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Regression test with hard checks (metric v2.0)")
-    parser.add_argument("--gt-dir", type=Path, default=Path("ground_truth"),
-                        help="Ground truth directory (default: ground_truth)")
-    parser.add_argument("--include", nargs="*", help="Only test these documents")
-    parser.add_argument("--deterministic-only", action="store_true",
-                        help="Deprecated: documents marked requires_services: [] in best_scores.json")
+    parser.add_argument("--gt-dir", type=Path, action="append", default=None,
+                        help="Ground truth directory, repeatable (default: ground_truth)")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--core", action="store_true",
+                           help="L1: documents in configs/regression_core.txt, offline replay by default")
+    selection.add_argument("--list", type=Path, help="Documents listed in this file (# comments allowed)")
+    selection.add_argument("--include", nargs="*", help="Only test these documents")
+    selection.add_argument("--deterministic-only", action="store_true",
+                           help="Deprecated: documents marked requires_services: [] in best_scores.json")
+    parser.add_argument("--allow-calls", action="store_true",
+                        help="Allow real service calls on cache misses (cache mode read_write)")
+    parser.add_argument("--cache-mode", choices=["off", "read_write", "read_only", "refresh"],
+                        default=None, help="Response cache mode (overrides --core / --allow-calls)")
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Response cache directory (default: from config)")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="Run N times in one process; differing outputs are a hard failure")
     parser.add_argument("--tolerance", type=float, default=0.005,
                         help="Tolerance for score comparison against the baseline (default: 0.005)")
     parser.add_argument("--config", type=Path, default=_DEFAULT_CONFIG,
@@ -91,54 +134,56 @@ def main() -> None:
     parser.add_argument("--report", type=Path, default=None, help="Write the Markdown report")
     parser.add_argument("--outputs-dir", type=Path, default=None,
                         help="Write each document's Markdown output here")
-    parser.add_argument("--cache-mode", choices=["off", "read_write", "read_only", "refresh"],
-                        default=None, help="Response cache mode (default: from config)")
-    parser.add_argument("--cache-dir", type=Path, default=None,
-                        help="Response cache directory (default: from config)")
     args = parser.parse_args()
 
-    gt_dir = args.gt_dir.resolve()
-    if not gt_dir.exists():
-        print(f"{_RED}Error: {gt_dir} does not exist{_RESET}")
-        sys.exit(EXIT_HARD_FAILURE)
-
-    if args.include:
-        include_set: set[str] | None = set(args.include)
-    elif args.deterministic_only:
-        include_set = _deterministic_docs(gt_dir)
-        if not include_set:
-            print(f"{_YELLOW}No offline documents found (requires_services: []).{_RESET}")
+    gt_dirs = [d.resolve() for d in (args.gt_dir or [REPO_ROOT / "ground_truth"])]
+    for gt_dir in gt_dirs:
+        if not gt_dir.exists():
+            print(f"{_RED}Error: {gt_dir} does not exist{_RESET}")
             sys.exit(EXIT_HARD_FAILURE)
-    else:
-        include_set = None
-
-    baseline = load_record(args.baseline) if args.baseline else None
-
     if not args.config.exists():
         print(f"{_RED}Error: config {args.config} does not exist{_RESET}")
         sys.exit(EXIT_HARD_FAILURE)
+
+    include = _select_documents(args, gt_dirs)
+    baseline = load_record(args.baseline) if args.baseline else None
+
     config_result = load_config_with_result(args.config)
-    config = config_result.config
     overrides = []
-    if args.cache_mode:
-        overrides.append(f"cache.mode={args.cache_mode}")
+    mode = _cache_mode(args)
+    if mode:
+        overrides.append(f"cache.mode={mode}")
     if args.cache_dir:
         overrides.append(f"cache.dir={args.cache_dir}")
-    config = apply_overrides(config, overrides)
+    config = apply_overrides(config_result.config, overrides)
     runner = EvalRunner(config)
     fingerprint = config_fingerprint(config)
-    print(f"{_BOLD}Running evaluation on {gt_dir.name}...{_RESET}")
+
+    print(f"{_BOLD}Running evaluation on {', '.join(d.name for d in gt_dirs)}...{_RESET}")
     print(f"  Config: {args.config} (fingerprint {fingerprint}); cache {config.cache.mode} at {config.cache.dir}")
-    if include_set:
-        print(f"  Documents: {', '.join(sorted(include_set))}")
+    if include:
+        print(f"  Documents: {', '.join(sorted(include))}")
     print()
 
-    results = runner.evaluate_dir(gt_dir, include_docs=include_set)
-    record = run_record(results, failed=runner.failed_docs, not_executed=runner.not_executed)
+    started = time.time()
+    try:
+        run = run_suite(runner, gt_dirs, include)
+        mismatches: set[str] = set()
+        for _ in range(args.repeat - 1):
+            again = run_suite(runner, gt_dirs, include)
+            mismatches |= set(repeat_mismatches(run.outputs, again.outputs))
+    except ValueError as exc:
+        print(f"{_RED}Error: {exc}{_RESET}")
+        sys.exit(EXIT_HARD_FAILURE)
+    elapsed = time.time() - started
+
+    record = run_record(run.results, failed=run.failed, not_executed=run.not_executed)
     record["config_fingerprint"] = fingerprint
-    for name, markdown in runner.outputs.items():
+    if args.repeat > 1:
+        record["not_reproducible"] = sorted(mismatches)
+    for name, markdown in run.outputs.items():
         if name in record["documents"]:
-            record["documents"][name]["output_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+            record["documents"][name]["output_sha256"] = output_digest(markdown)
         if args.outputs_dir:
             args.outputs_dir.mkdir(parents=True, exist_ok=True)
             (args.outputs_dir / f"{name}.md").write_text(markdown, encoding="utf-8")
@@ -151,10 +196,10 @@ def main() -> None:
         metadata = build_config_report_metadata(config, loaded=config_result)
         args.report.write_text(
             EvalRunner.format_report(
-                results,
+                run.results,
                 metadata=metadata,
-                failed_docs=runner.failed_docs,
-                not_executed=runner.not_executed,
+                failed_docs=run.failed,
+                not_executed=run.not_executed,
             ),
             encoding="utf-8",
         )
@@ -169,9 +214,13 @@ def main() -> None:
         for line in outcome.hard_failures:
             print(f"  {_RED}✗ {line}{_RESET}")
     else:
-        print(f"  {_GREEN}✓ no failed or unexecuted documents{_RESET}")
+        print(f"  {_GREEN}✓ no failed, unexecuted or non-reproducible documents{_RESET}")
+    if any("cache miss" in reason for _, reason in run.not_executed):
+        print(f"  {_YELLOW}→ the cache lacks responses: rerun with --allow-calls to record them{_RESET}")
     for line in outcome.notes:
         print(f"  {_YELLOW}· {line}{_RESET}")
+    if args.repeat > 1 and not mismatches:
+        print(f"  {_GREEN}✓ {args.repeat} runs produced identical outputs{_RESET}")
     if baseline is None:
         print(f"{_YELLOW}No baseline given: scores reported, not compared.{_RESET}")
     for line in outcome.regressions:
@@ -180,7 +229,7 @@ def main() -> None:
         print(f"  {_GREEN}IMPROVED  {line}{_RESET}")
 
     verdict = {0: f"{_GREEN}PASS", 1: f"{_RED}REGRESSION DETECTED", 2: f"{_RED}HARD CHECK FAILED"}
-    print(f"{_BOLD}{verdict[outcome.exit_code]}{_RESET} (exit {outcome.exit_code})")
+    print(f"{_BOLD}{verdict[outcome.exit_code]}{_RESET} (exit {outcome.exit_code}, {elapsed:.1f}s)")
     sys.exit(outcome.exit_code)
 
 

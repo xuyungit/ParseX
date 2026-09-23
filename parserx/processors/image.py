@@ -453,8 +453,11 @@ def _collect_overlapping_evidence(
             continue
         if not elem.content.strip() or not _has_bbox(elem):
             continue
-        # Skip elements already suppressed (e.g. text inside vector figures)
-        if elem.metadata.get("skip_render"):
+        # Skip elements suppressed before image processing (e.g. text inside
+        # vector figures).  Suppression by another image's VLM correction is
+        # ignored: VLM calls run concurrently, so honouring it would make this
+        # image's evidence (and prompt) depend on which worker finished first.
+        if elem.metadata.get("skip_render") and not elem.metadata.get("suppressed_by_vlm_correction"):
             continue
         # For vector figures: ignore elements whose center is inside
         # the figure bbox — they are the figure's own content.

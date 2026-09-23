@@ -255,10 +255,17 @@ or extra tables above the baseline (relative; without a baseline they are only
 recorded, so a first freeze is never blocked); a baseline with a different
 `metric_version`.
 
+**Tiers (P0-4).** L1: `uv run python scripts/regression_test.py --core
+--repeat 2` replays `configs/regression_core.txt` offline (cache `read_only`),
+runs it twice in one process and fails (exit 2) if any output differs; a cache
+miss marks the document *not executed* and suggests `--allow-calls`
+(`read_write`). `--list FILE` runs any document list; `--gt-dir` is
+repeatable (L2: `--gt-dir ground_truth --gt-dir ground_truth_public`).
+`parserx eval` accepts `--cache-mode`.
+
 `--update-baseline` was removed: baselines are frozen runs outside
 `ground_truth/` (Phase 0 P0-5), and `best_scores.json` is read only by the
-deprecated `--deterministic-only` selector. Core-set tiers (`--core`,
-offline replay) arrive with the response cache (P0-3 / P0-4).
+deprecated `--deterministic-only` selector (use `--core`).
 
 ### Local iteration checklist
 
@@ -560,9 +567,9 @@ After automated metrics are collected:
 ### Quick reference: all evaluation commands
 
 ```bash
-# ── Regression test (fast, offline) ──
-uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
-uv run python scripts/regression_test.py --gt-dir ground_truth_public --deterministic-only
+# ── L1 core regression (offline replay, twice) ──
+uv run python scripts/regression_test.py --core --repeat 2
+uv run python scripts/regression_test.py --core --allow-calls   # record missing responses
 
 # ── Regression test (full, needs services) ──
 uv run python scripts/regression_test.py --gt-dir ground_truth

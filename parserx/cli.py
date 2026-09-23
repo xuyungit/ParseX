@@ -87,6 +87,10 @@ def main() -> None:
         "--include-list", type=Path,
         help="Path to newline-delimited document names to evaluate",
     )
+    eval_cmd.add_argument(
+        "--cache-mode", choices=["off", "read_write", "read_only", "refresh"],
+        help="Response cache mode (default: from config)",
+    )
     eval_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
     eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
@@ -383,7 +387,11 @@ def _print_summary(
 def _cmd_eval(args: argparse.Namespace) -> None:
     from parserx.eval.runner import EvalRunner
 
-    config, metadata = _load_cli_config(args.config, args.overrides, label="Eval")
+    overrides = list(args.overrides)
+    cache_mode = getattr(args, "cache_mode", None)
+    if cache_mode:
+        overrides.append(f"cache.mode={cache_mode}")
+    config, metadata = _load_cli_config(args.config, overrides, label="Eval")
     runner = EvalRunner(config)
     include_docs = _resolve_include_docs(
         getattr(args, "include_docs", None),
