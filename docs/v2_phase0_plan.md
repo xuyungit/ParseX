@@ -99,6 +99,7 @@ P0-1 先做：之后所有数字都用新指标。P0-2 很小，放在缓存之�
 - **隔离验证集**：新增 `configs/isolation_set.txt`：patent01、paper01、text_pic02（Q8，按来源划分；DOCX 以后补标注）。L1 永不包含它；L2 报告中单独成节，不计入调参集平均值。
 - **一次运行**：`configs/regression.yaml`（VLM gpt-6-luna），一次完整 L2（真实调用，约 20 min）。
 - 测试：manifest 字段完整；`--freeze` 在硬检查失败时拒绝；冻结 run 离线回放能复现 `metrics.json`。
+- 实施说明（2026-09-23）：逻辑在 `parserx/eval/freeze.py`；`--replay RUN` 从 run 自带的缓存离线重跑并逐项比对（耗时、请求与缓存计数除外），不一致即硬检查失败；冻结前先提交代码，manifest 另记录未跟踪的代码文件；报告中隔离集单列。
 - **验收**：冻结 run 存档；离线回放后 `metrics.json` 完全一致；报告 `eval_reports/<日期>_p0-5_v1_frozen_baseline.md` 按 §9.3 顺序输出，隔离集单列。满足阶段零三条退出条件后，§12 阶段零标 ✅。
 
 ## 4. 每项完成时的固定动作

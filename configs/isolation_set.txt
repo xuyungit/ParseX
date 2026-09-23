@@ -1,0 +1,8 @@
+# Isolation (hold-out) set: never used for tuning (guide §9.3, §14 Q8).
+# Split by source: each document comes from a source not otherwise in the
+# tuning set. Same-source pairs (pdf_text01_tables / real_doc01,
+# text_table_libreoffice / text_table_word, paper_chn01 / paper_chn02) stay
+# together in the tuning set. No DOCX yet: add one once annotated.
+patent01      # CN patent, scanned / mixed PDF
+paper01       # English native academic PDF, HTML tables in ground truth
+text_pic02    # image-heavy technical manual PDF

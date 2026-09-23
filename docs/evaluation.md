@@ -263,6 +263,28 @@ miss marks the document *not executed* and suggests `--allow-calls`
 repeatable (L2: `--gt-dir ground_truth --gt-dir ground_truth_public`).
 `parserx eval` accepts `--cache-mode`.
 
+**Frozen runs (P0-5).** Phase acceptance uses a frozen run, not
+`best_scores.json`:
+
+```bash
+uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public \
+    --freeze p0_v1_gpt-6-luna          # → eval_runs/<date>_p0_v1_gpt-6-luna/
+uv run python scripts/regression_test.py --replay eval_runs/<date>_p0_v1_gpt-6-luna
+uv run python scripts/regression_test.py --core --baseline eval_runs/<date>_p0_v1_gpt-6-luna
+```
+
+`--freeze` records fresh responses into the run's own `cache/`, and writes
+`manifest.json` (commit and working-tree state, redacted config and
+fingerprint, metric/cache schema versions, service identities, per-document
+input/expected hashes and isolation flag), `metrics.json`, `outputs/` and
+`report.md`. It is built under `eval_runs/.<id>.partial/` and renamed only
+when no document failed or went unexecuted; a refused attempt keeps its
+responses, so rerunning resumes from them. `--replay` re-runs the frozen
+documents offline from that cache and fails (exit 2) unless every output
+hash and score matches (timings, request and cache counters excepted).
+Frozen runs never go into git (guide §14 Q15). Isolation-set documents
+(`configs/isolation_set.txt`) are reported in a separate section.
+
 `--update-baseline` was removed: baselines are frozen runs outside
 `ground_truth/` (Phase 0 P0-5), and `best_scores.json` is read only by the
 deprecated `--deterministic-only` selector (use `--core`).

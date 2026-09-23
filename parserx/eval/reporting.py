@@ -109,10 +109,14 @@ def _on_off(value: bool) -> str:
 _SECRET_KEYS = frozenset({"api_key", "token"})
 
 
+def redacted_config(config: ParserXConfig) -> dict[str, Any]:
+    """The resolved processing config without credentials or cache settings."""
+    return _strip_secrets(config.model_dump(mode="json", exclude={"cache"}))
+
+
 def config_fingerprint(config: ParserXConfig) -> str:
-    """Short hash of the resolved processing config: credentials and cache settings excluded."""
-    data = _strip_secrets(config.model_dump(mode="json", exclude={"cache"}))
-    blob = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    """Short hash of ``redacted_config``: what the processing actually used."""
+    blob = json.dumps(redacted_config(config), sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 

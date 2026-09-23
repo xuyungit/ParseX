@@ -37,6 +37,7 @@ class SuiteRun:
     failed: list[tuple[str, str]] = field(default_factory=list)
     not_executed: list[tuple[str, str]] = field(default_factory=list)
     outputs: dict[str, str] = field(default_factory=dict)
+    sources: dict[str, Path] = field(default_factory=dict)  # document → its ground-truth dir
 
 
 def _doc_names(gt_dir: Path) -> set[str]:
@@ -56,7 +57,7 @@ def run_suite(runner: EvalRunner, gt_dirs: list[Path], include: set[str] | None)
                 raise ValueError(f"document {name!r} exists in both {seen[name]} and {gt_dir}")
             seen[name] = gt_dir
 
-    run = SuiteRun()
+    run = SuiteRun(sources=dict(seen))
     for gt_dir, names in names_by_dir:
         wanted = None if include is None else names & include
         if wanted is not None and not wanted:

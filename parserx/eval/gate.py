@@ -5,7 +5,8 @@ failed.  Hard checks:
 
 - absolute: any failed document, any requested-but-not-executed document
   (including offline replay cache misses), output that differs between
-  repeated runs of the same replay, a baseline with a different metric version;
+  repeated runs of the same replay, a frozen-run replay that does not
+  reproduce its outputs and scores, a baseline with a different metric version;
 - relative: per-document missing / extra tables above the baseline (without a
   baseline they are only recorded, so the first freeze is never blocked).
 """
@@ -103,6 +104,8 @@ def evaluate_gate(record: dict, baseline: dict | None, tolerance: float = 0.005)
         outcome.hard_failures.append(f"not executed: {item['document']} — {item['reason']}")
     for name in record.get("not_reproducible", []):
         outcome.hard_failures.append(f"not reproducible: {name} — output differs between repeated runs")
+    for line in record.get("replay_differences", []):
+        outcome.hard_failures.append(f"replay differs from the frozen run: {line}")
 
     if baseline is not None and baseline.get("metric_version") != record.get("metric_version"):
         outcome.hard_failures.append(
