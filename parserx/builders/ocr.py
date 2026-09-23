@@ -438,7 +438,8 @@ class OCRBuilder:
             temp_pdf.close()
             return 0
 
-        pdf_bytes = temp_pdf.tobytes()
+        # no_new_id: identical pages give identical bytes, so the response cache can match them.
+        pdf_bytes = temp_pdf.tobytes(no_new_id=True)
         temp_pdf.close()
 
         try:
@@ -706,7 +707,8 @@ class OCRBuilder:
             temp_pdf.close()
             return None
 
-        pdf_bytes = temp_pdf.tobytes()
+        # no_new_id: identical pages give identical bytes, so the response cache can match them.
+        pdf_bytes = temp_pdf.tobytes(no_new_id=True)
         temp_pdf.close()
         log.info(
             "Batch OCR: assembled %d pages (%.1f KB)",

@@ -227,6 +227,27 @@ report header and the run record carry a config fingerprint (sha256 of the
 resolved config without credentials); comparing against a baseline with a
 different fingerprint prints a note.
 
+**Response cache (P0-3).** Every OCR / VLM / LLM response goes through
+`parserx/scheduling/gateway.py` and is recorded under `.parserx_cache/raw/`
+(`cache:` in `parserx.yaml`; not in git). The key covers the full request
+semantics (service, endpoint host/path, model and generation settings, prompt
+texts, the bytes of every file sent, the JSON schema) and never credentials or
+temp-file paths. Modes: `read_write` (default in `parserx.yaml`; the schema
+default is `off`), `read_only` (offline replay: a miss raises, the document is
+reported as *not executed* rather than scored on degraded output), `refresh`
+(always request and record), `off`.
+
+```bash
+# Record, then replay offline and save outputs for comparison:
+uv run python scripts/regression_test.py --include receipt --cache-mode read_write --outputs-dir /tmp/run1
+uv run python scripts/regression_test.py --include receipt --cache-mode read_only --outputs-dir /tmp/run2
+# Debug unstable keys: log the key material of every miss
+PARSERX_CACHE_DEBUG=1 uv run python scripts/regression_test.py --include receipt
+```
+
+Run records carry `output_sha256` per document. Cache settings are excluded
+from the config fingerprint (replay does not change processing).
+
 Exit codes: `0` pass, `1` a score regressed beyond `--tolerance` (default
 0.005; key-content error counts use 0) against `--baseline`, `2` a hard check
 failed. Hard checks: any failed or not-executed document (absolute); missing

@@ -19,6 +19,8 @@ class ParseResult(BaseModel):
     api_attempts: dict[str, int] = Field(default_factory=dict)
     ocr_pages: int = 0  # pages submitted to OCR; one batch request can carry many
     cache_hits: dict[str, int] = Field(default_factory=dict)
+    # Offline replay only: responses the cache lacked (the document is not replayable).
+    cache_misses: dict[str, int] = Field(default_factory=dict)
     images_total: int = 0
     images_skipped: int = 0
     llm_fallback_hits: int = 0

@@ -33,7 +33,8 @@ from parserx.processors.text_clean import TextCleanProcessor
 from parserx.processors.vlm_review import VLMReviewProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
-from parserx.scheduling import MeteredService, RequestMeter
+from parserx.cache import open_cache, service_identity
+from parserx.scheduling import MeteredService, RequestMeter, ServiceGateway
 from parserx.services.llm import create_llm_service, create_vlm_service
 from parserx.verification import (
     CompletenessChecker,
@@ -56,8 +57,10 @@ class Pipeline:
 
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config if config is not None else load_config()
-        # Real requests per document, recorded at the service boundary.
+        # Real requests per document, recorded at the service boundary, and
+        # the response cache every remote call goes through (guide §8.3).
         self._meter = RequestMeter()
+        self._cache = open_cache(self._config.cache)
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
         self._reading_order_builder = ReadingOrderBuilder(
             self._config.processors.reading_order,
@@ -454,7 +457,10 @@ class Pipeline:
         cfg = self._config.services.vlm
         if cfg.endpoint and cfg.api_key:
             log.info("VLM service configured: %s / %s", cfg.endpoint, cfg.model)
-            return MeteredService(create_vlm_service(cfg), self._meter, "vlm")
+            return MeteredService(
+                create_vlm_service(cfg), self._meter, "vlm",
+                cache=self._cache, identity=service_identity(cfg),
+            )
         return None
 
     def _create_ocr_builder(self) -> OCRBuilder | None:
@@ -469,7 +475,8 @@ class Pipeline:
             skip_scan_image_marking=self._config.processors.image.vlm_refine_all_ocr,
         )
         if builder._ocr is not None:
-            builder._ocr = MeteredService(builder._ocr, self._meter, "ocr")
+            builder._ocr.gateway = ServiceGateway(self._meter, self._cache)
+            builder._ocr.attempt_hook = lambda: self._meter.attempt("ocr")
         return builder
 
     # ------------------------------------------------------------------
@@ -647,7 +654,10 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
         cfg = self._config.services.llm
         if cfg.endpoint and cfg.api_key:
             log.info("LLM service configured: %s / %s", cfg.endpoint, cfg.model)
-            return MeteredService(create_llm_service(cfg), self._meter, "llm")
+            return MeteredService(
+                create_llm_service(cfg), self._meter, "llm",
+                cache=self._cache, identity=service_identity(cfg),
+            )
         return None
 
     def _verify_all(
@@ -695,6 +705,7 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
             "api_attempts": snap.attempts,
             "ocr_pages": snap.pages.get("ocr", 0),
             "cache_hits": snap.cache_hits,
+            "cache_misses": snap.cache_misses,
         }
 
     def _build_processors(self) -> list[Processor]:

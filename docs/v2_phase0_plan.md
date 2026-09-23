@@ -72,6 +72,7 @@ P0-1 先做：之后所有数字都用新指标。P0-2 很小，放在缓存之�
 | 3d 确定性 | 两处 `temp_pdf.tobytes()` 改为 `tobytes(no_new_id=True)`（提交内容不变，只是不再生成随机 `/ID`）。设置 `PARSERX_CACHE_DEBUG=1` 时，未命中会记录键的各组成部分，用来查找其他不稳定字段 | `builders/ocr.py` |
 | 3e 配置 | `cache: {mode, dir}` 加入 schema，默认 `read_write`；`.parserx_cache/` 加入 `.gitignore`；CLI 和回归脚本加 `--cache-mode` | `config/schema.py`、`parserx.yaml`、`cli.py`、`.gitignore` |
 
+- 实施说明（2026-09-23）：计数与缓存合并为 `parserx/scheduling/gateway.py` 的 `ServiceGateway`；LLM/VLM 由 `MeteredService` 在公开方法处接入，OCR 由客户端的 `gateway` 属性在 `_run_with_retries` 接入（OCR 不再套 `MeteredService`）。schema 默认 `off`（库调用和单元测试不落盘），`parserx.yaml` 设为 `read_write`。离线回放未命中时计入 `cache_misses`，评测把该文档记为未执行，不对降级输出打分。回归脚本增加 `--cache-mode`、`--cache-dir`、`--outputs-dir`，结果记录带每篇 `output_sha256`；配置指纹不含缓存设置。
 - 测试 `tests/test_cache.py`：键对每个语义字段敏感，对 api_key 和临时路径不敏感；原子写入；`read_only` 未命中抛异常；命中时不调用内层服务；并发写同一个键不会损坏文件。
 - 验收：核心集先 `read_write` 跑一次，再 `read_only` 跑一次：第二次真实请求 0 次，六篇输出的 Markdown 字节一致。报告：`eval_reports/<日期>_p0-3_cache.md`（命中率、耗时对比、发现并修复的不稳定字段）。
 

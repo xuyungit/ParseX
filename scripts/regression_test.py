@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -31,7 +32,7 @@ from pathlib import Path
 # Suppress PyMuPDF layout analyzer suggestion.
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 
-from parserx.config.schema import load_config_with_result
+from parserx.config.schema import apply_overrides, load_config_with_result
 from parserx.eval.gate import EXIT_HARD_FAILURE, evaluate_gate, load_record, run_record
 from parserx.eval.metrics import fmt_metric
 from parserx.eval.reporting import build_config_report_metadata, config_fingerprint
@@ -88,6 +89,12 @@ def main() -> None:
                         help="Result record JSON or frozen run directory to compare against")
     parser.add_argument("--json-out", type=Path, default=None, help="Write this run's result record")
     parser.add_argument("--report", type=Path, default=None, help="Write the Markdown report")
+    parser.add_argument("--outputs-dir", type=Path, default=None,
+                        help="Write each document's Markdown output here")
+    parser.add_argument("--cache-mode", choices=["off", "read_write", "read_only", "refresh"],
+                        default=None, help="Response cache mode (default: from config)")
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Response cache directory (default: from config)")
     args = parser.parse_args()
 
     gt_dir = args.gt_dir.resolve()
@@ -111,10 +118,17 @@ def main() -> None:
         print(f"{_RED}Error: config {args.config} does not exist{_RESET}")
         sys.exit(EXIT_HARD_FAILURE)
     config_result = load_config_with_result(args.config)
-    runner = EvalRunner(config_result.config)
-    fingerprint = config_fingerprint(config_result.config)
+    config = config_result.config
+    overrides = []
+    if args.cache_mode:
+        overrides.append(f"cache.mode={args.cache_mode}")
+    if args.cache_dir:
+        overrides.append(f"cache.dir={args.cache_dir}")
+    config = apply_overrides(config, overrides)
+    runner = EvalRunner(config)
+    fingerprint = config_fingerprint(config)
     print(f"{_BOLD}Running evaluation on {gt_dir.name}...{_RESET}")
-    print(f"  Config: {args.config} (fingerprint {fingerprint})")
+    print(f"  Config: {args.config} (fingerprint {fingerprint}); cache {config.cache.mode} at {config.cache.dir}")
     if include_set:
         print(f"  Documents: {', '.join(sorted(include_set))}")
     print()
@@ -122,13 +136,19 @@ def main() -> None:
     results = runner.evaluate_dir(gt_dir, include_docs=include_set)
     record = run_record(results, failed=runner.failed_docs, not_executed=runner.not_executed)
     record["config_fingerprint"] = fingerprint
+    for name, markdown in runner.outputs.items():
+        if name in record["documents"]:
+            record["documents"][name]["output_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+        if args.outputs_dir:
+            args.outputs_dir.mkdir(parents=True, exist_ok=True)
+            (args.outputs_dir / f"{name}.md").write_text(markdown, encoding="utf-8")
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        metadata = build_config_report_metadata(config_result.config, loaded=config_result)
+        metadata = build_config_report_metadata(config, loaded=config_result)
         args.report.write_text(
             EvalRunner.format_report(
                 results,

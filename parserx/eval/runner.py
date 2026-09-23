@@ -22,6 +22,10 @@ from parserx.eval.warnings import summarize_warning_types, warning_label
 log = logging.getLogger(__name__)
 
 
+class NotReplayable(RuntimeError):
+    """Offline replay lacked cached responses; the document's result would be degraded."""
+
+
 class EvalRunner:
     """Run evaluation on documents with ground truth.
 
@@ -40,6 +44,8 @@ class EvalRunner:
         self.not_executed: list[tuple[str, str]] = []
         # Directories without ground truth found during a full scan: informational.
         self.skipped: list[tuple[str, str]] = []
+        # Markdown produced per document in the last evaluate_dir call.
+        self.outputs: dict[str, str] = {}
 
     def evaluate_single(
         self, input_path: Path, expected_md_path: Path, name: str = "",
@@ -51,6 +57,12 @@ class EvalRunner:
         start = time.time()
         parse_result = self._pipeline.parse_result(input_path)
         elapsed = time.time() - start
+        if parse_result.cache_misses:
+            # v1 processors swallow service errors and degrade; a replay that
+            # missed responses must not be scored as if it were complete.
+            missed = ", ".join(f"{k} {v}" for k, v in sorted(parse_result.cache_misses.items()))
+            raise NotReplayable(f"cache miss ({missed}); rerun with calls allowed")
+        self.outputs[name or input_path.stem] = parse_result.markdown
 
         return evaluate_markdown(
             parse_result.markdown,
@@ -88,6 +100,7 @@ class EvalRunner:
         self.failed_docs.clear()
         self.not_executed.clear()
         self.skipped.clear()
+        self.outputs.clear()
 
         if (ground_truth_dir / "expected.md").exists():
             doc_dirs = [ground_truth_dir]
@@ -135,6 +148,10 @@ class EvalRunner:
         log.info("Evaluating: %s", doc_dir.name)
         try:
             result = self.evaluate_single(input_path, expected_path, name=doc_dir.name)
+        except NotReplayable as exc:
+            log.error("  NOT EXECUTED: %s — %s", doc_dir.name, exc)
+            self.not_executed.append((doc_dir.name, str(exc)))
+            return None
         except Exception as exc:
             log.error("  FAILED: %s — %s", doc_dir.name, exc)
             self.failed_docs.append((doc_dir.name, str(exc)))

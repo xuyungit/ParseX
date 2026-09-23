@@ -223,6 +223,17 @@ class OutputConfig(BaseModel):
 # ── Top-level config ────────────────────────────────────────────────────
 
 
+class CacheConfig(BaseModel):
+    """Response cache for OCR / VLM / LLM (guide §8.3).
+
+    off: no cache · read_write: replay hits, record misses · read_only:
+    offline replay, a miss is an error · refresh: always request and record.
+    """
+
+    mode: Literal["off", "read_write", "read_only", "refresh"] = "off"
+    dir: str = ".parserx_cache"
+
+
 class ParserXConfig(BaseModel):
     """Top-level ParserX configuration."""
 
@@ -232,6 +243,7 @@ class ParserXConfig(BaseModel):
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

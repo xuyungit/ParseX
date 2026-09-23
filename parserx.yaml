@@ -104,3 +104,10 @@ output:
   chapter_split: true
   image_dir: images
   table_format: markdown
+
+# Response cache (guide §8.3): every OCR / VLM / LLM response is recorded and
+# replayed.  read_write: replay hits, record misses · read_only: offline
+# replay, a miss is an error · refresh: always request and record · off.
+cache:
+  mode: read_write
+  dir: .parserx_cache

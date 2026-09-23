@@ -198,4 +198,6 @@ def test_config_fingerprint_ignores_secrets_but_not_settings():
     changed = apply_overrides(base, ["services.llm.model=other-model"])
 
     assert config_fingerprint(secret) == config_fingerprint(base)
+    replay = apply_overrides(base, ["cache.mode=read_only"])
+    assert config_fingerprint(replay) == config_fingerprint(base)  # cache replays, it does not change processing
     assert config_fingerprint(changed) != config_fingerprint(base)

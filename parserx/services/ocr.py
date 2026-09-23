@@ -20,11 +20,15 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import requests
 
+from parserx.cache import bytes_digest, endpoint_identity
 from parserx.config.schema import OCRBuilderConfig
+
+if TYPE_CHECKING:
+    from parserx.scheduling import ServiceGateway
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +103,9 @@ class PaddleOCRService:
         self._timeout = 600  # Budget (s) for queue-full waits and for polling
         # Called once per network attempt; set by the request meter.
         self.attempt_hook: Callable[[], None] | None = None
+        # Counting and response cache for every job (set by the pipeline);
+        # without it every call goes straight to the network.
+        self.gateway: ServiceGateway | None = None
 
     def recognize(self, image_path: Path) -> OCRResult:
         """OCR a single image."""
@@ -116,6 +123,29 @@ class PaddleOCRService:
     # ── Transport ─────────────────────────────────────────────────────
 
     def _run_with_retries(self, file_bytes: bytes, filename: str, mime: str) -> dict:
+        """The single transport exit: raw merged result for one file, via the gateway if set.
+
+        The cache key covers the file bytes, mime type, model, endpoint and
+        pipeline options; the upload filename (often a temp name) is not part
+        of the request semantics.
+        """
+        if self.gateway is None:
+            return self._run_uncached(file_bytes, filename, mime)
+        material = {
+            "endpoint": endpoint_identity(self._url),
+            "model": self._model,
+            "options": _OPTIONS,
+            "mime": mime,
+            "file_sha256": bytes_digest(file_bytes),
+        }
+        return self.gateway.call(
+            "ocr",
+            material,
+            lambda: self._run_uncached(file_bytes, filename, mime),
+            pages=_page_count(file_bytes, mime),
+        )
+
+    def _run_uncached(self, file_bytes: bytes, filename: str, mime: str) -> dict:
         """Run one job, retrying transient failures with exponential backoff."""
         for attempt in range(1, self._max_retries + 1):
             if self.attempt_hook is not None:
@@ -205,6 +235,19 @@ def create_ocr_service(
     if cfg.engine == "none":
         return None
     return PaddleOCRService(cfg)
+
+
+def _page_count(file_bytes: bytes, mime: str) -> int:
+    """Pages submitted in one job: the PDF page count, or 1 for an image."""
+    if mime != "application/pdf":
+        return 1
+    import fitz  # PyMuPDF
+
+    try:
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+            return doc.page_count
+    except Exception:
+        return 0
 
 
 # ── Response parsing ──────────────────────────────────────────────────

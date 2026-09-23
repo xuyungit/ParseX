@@ -110,8 +110,8 @@ _SECRET_KEYS = frozenset({"api_key", "token"})
 
 
 def config_fingerprint(config: ParserXConfig) -> str:
-    """Short hash of the resolved config with credentials removed."""
-    data = _strip_secrets(config.model_dump(mode="json"))
+    """Short hash of the resolved processing config: credentials and cache settings excluded."""
+    data = _strip_secrets(config.model_dump(mode="json", exclude={"cache"}))
     blob = json.dumps(data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
