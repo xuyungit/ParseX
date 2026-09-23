@@ -1,6 +1,6 @@
 # ParserX v2 设计与研发指导
 
-> **文档状态**：v1.7，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 P0-5 进行中（两处 v1 修复），见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> **文档状态**：v1.8，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 两处 v1 修复；v1.8 阶段零完成，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
 > 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
 >
 > 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
@@ -11,8 +11,8 @@
 
 - **外部依赖已全部确定**：OCR 走 AI Studio jobs API（PaddleOCR-VL-1.6）；LLM/VLM 走官方 OpenAI 端点，VLM 与 LLM 都是 gpt-6-luna（LLM 于 2026-09-23 从 gpt-5.4-mini 切换，Q19）；`services/llm.py` 已适配推理模型。`uv run python scripts/check_services.py` 三项通过。
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
-- **阶段零 🟡**（端点切换、OCR 恢复、`llm.py` 适配、P0-1 验收工具修复、P0-2 回归配置、P0-3 缓存层、P0-4 回归分层已完成；冻结基线未开始），阶段一至五 ⬜。分解见 [v2_phase0_plan.md](v2_phase0_plan.md)，阶段一接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)，两者 2026-09-23 已确认。
-- **测试基线**：离线单元测试 468 通过（P0-1 后；此前 432）、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
+- **阶段零 ✅**（2026-09-23）：指标版本 2.0 与硬检查、无 LLM 的回归配置、响应缓存、L1 离线回放（`--core --repeat 2`）、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）。下一步阶段一 ⬜，阶段二至五 ⬜。分解见 [v2_phase0_plan.md](v2_phase0_plan.md)，阶段一接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)，两者 2026-09-23 已确认。
+- **测试基线**：离线单元测试 493 通过（阶段零结束时；开始时 432）、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
 - **工作区未提交**：`services/ocr.py` 重写、`services/llm.py` 与 `config/schema.py` 改动、`parserx.yaml`、`.env.example`、README、本文档、`scripts/check_services.py`、`configs/regression_core.txt`、两份 eval_reports。建议开新会话前先提交一次。
 
 ### 0.2 新会话启动清单
@@ -21,7 +21,7 @@
 
 1. 读 §2（目标与原则）、§3（架构）、§5（工具包）、§7（运行时与实验）、§12（阶段）、§14（开放问题）。§4、§6、§8、§9 在动手实现对应部分时再读。
 2. 运行 `uv run python scripts/check_services.py`，三项都 OK 才继续；任一失败先修 `.env`，不要绕过。
-3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`，应为 432 通过、4 个已知失败。
+3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`，应为 493 通过、4 个已知失败；再跑 L1 `uv run python scripts/regression_test.py --core --repeat 2`，应为 PASS。
 4. 从 §12 中状态为 🟡 的阶段开始；阶段零剩余任务见 §12。
 5. 每完成一个产出：更新 §12 状态列与 §15；新的决策写进 §14。
 6. 结束会话前：`git status` 确认改动在预期内；评测报告写入 `eval_reports/`。
@@ -493,14 +493,14 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 核心集选取规则：每类输入各一篇、优先最小、保留一篇当前得分最差的作哨兵；只增不换。当前 6 篇：
 
-| 文档 | 代表的输入类 | 页数 | 最近一次 O/V/L 调用 | 耗时 |
+| 文档 | 代表的输入类 | 页数 | 冻结基线 O/V/L 请求 | 冻结基线耗时 |
 |---|---|---|---|---|
 | deepseek | 原生 PDF（矢量图预扫描每次触发 1 次 OCR 请求，结果被去重、旧计数漏记；离线回放依赖缓存） | 1 | 1/0/0 | 0.5 s |
-| text_table01 | 原生 PDF（LLM 1 次来自质量检查，回归配置中关闭） | 3 | 0/0/1 | 1.3 s |
-| receipt | 扫描小票，VLM | 3 | 1/2/0 | 2.1 s |
-| ocr_scan_jtg3362 | 扫描中文标准文档，表格 | 4 | 4/6/1 | 92 s |
-| simple_doc01 | DOCX，当前 char_f1 最差（0.457）哨兵 | | 0/0/1 | 3.4 s |
-| text_report01 | DOCX 含嵌入图片 | | 0/2/1 | 51 s |
+| text_table01 | 原生 PDF（默认配置下 LLM 1 次来自质量检查，回归配置中关闭） | 3 | 0/0/0 | 0.0 s |
+| receipt | 扫描小票，VLM | 3 | 1/2/0 | 2.5 s |
+| ocr_scan_jtg3362 | 扫描中文标准文档，表格 | 4 | 1/11/0 | 15.4 s |
+| simple_doc01 | DOCX，char_f1 最差（指标 2.0 下 0.410）哨兵 | | 0/0/0 | 0.0 s |
+| text_report01 | DOCX 含嵌入图片 | | 2/2/0 | 2.5 s |
 
 ### 9.2 验收工具的已知漏洞与修复清单
 
@@ -669,7 +669,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 阶段 | 目标 | 产出 | 退出条件 | 状态 |
 |---|---|---|---|---|
-| 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；✅ P0-2 回归配置 `configs/regression.yaml` 关闭全部 LLM（含质量检查），核心集实测 LLM 请求为 0；✅ P0-3 缓存层（OCR、VLM、LLM；核心集离线回放 0 请求、输出逐字节一致，[报告](../eval_reports/2026-09-23_p0-3_cache.md)）；✅ P0-4 回归分层（`--core` 默认离线回放、`--allow-calls`、`--repeat`、多 ground truth 目录；核心集回放两次一致，整条命令 4.2 s）；⬜ P0-5 用修好的指标冻结 v1 基线（VLM gpt-6-luna）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获；核心集回放两次一致；冻结 run 存档于本地 `eval_runs/`（不入 git） | 🟡 |
+| 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；✅ P0-2 回归配置 `configs/regression.yaml` 关闭全部 LLM（含质量检查），核心集实测 LLM 请求为 0；✅ P0-3 缓存层（OCR、VLM、LLM；核心集离线回放 0 请求、输出逐字节一致，[报告](../eval_reports/2026-09-23_p0-3_cache.md)）；✅ P0-4 回归分层（`--core` 默认离线回放、`--allow-calls`、`--repeat`、多 ground truth 目录；核心集回放两次一致，整条命令 4.2 s）；✅ P0-5 冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇、提交 78556f4、两次离线回放逐项一致，[报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获 ✅；核心集回放两次一致 ✅；冻结 run 存档于本地 `eval_runs/`（不入 git）✅ | ✅ |
 | 1 文档工具包 v1 | 建立数据模型、约束与工具 | `ir/`、`workspace/`、`tables/`、`scheduling/`、`accounting/`、`cache/`；七个工具的 JSON CLI 与返回信封；三份 Skill；`layout/` 与 `routing/image.py` 影子运行；固定序列脚本（流水线运行时最小形态）在 text_table01、receipt、simple_doc01 上跑通作为工具包验收 | 单元测试覆盖五个 IR 概念、TableGrid 往返、七个工具契约；三篇在冻结 run 上不低于 v1；去向平衡；sidecar 通过 schema 校验 | ⬜ |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
@@ -735,3 +735,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-23 | v1.5 | P0-4 完成：`scripts/regression_test.py --core` 默认离线回放（缓存未命中记为未执行并提示 `--allow-calls`），`--list`、`--repeat N`（输出不一致为硬检查失败）、`--gt-dir` 可重复；逻辑在 `parserx/eval/suite.py`；`parserx eval --cache-mode`。离线回放发现 v1 图片处理的竞态：并发 VLM 任务中，一张图的纠正结果会抑制共享的 OCR 文本，另一张图收集重叠证据时跳过它，提示词随线程完成顺序变化（真实调用时同样不确定）；修正为证据忽略其他图片的 VLM 抑制标记，登记到 §11.5。核心集两个进程各回放两次，输出逐字节一致、0 请求 |
 | 2026-09-23 | v1.6 | P0-5 进行中：冻结与回放工具、隔离集清单（c154ccd）。首次冻结（27 篇，566.6 s）的离线回放中 ocr_scan_jtg3362 输出不同：v1 图片处理对 VLM 响应的解释会修改共享页面状态，结果随线程完成顺序变化（随机延迟探测 6 次出现两种输出，其中一种丢失封面三行）。修正为 VLM 调用并发、响应严格按任务顺序解释（`_run_vlm_concurrent` 轮次机制，加测试）；首次冻结 run 作废待重冻。另发现：VLM 返回纠正而无独立描述时 v1 会重试（全语料 103 次请求中 14 次），重试时因自身已抑制 OCR 文本而把本图判为已覆盖并跳过，内容丢失——已决定冻结前修复（Q22） |
 | 2026-09-23 | v1.7 | 修 v1 图片 VLM 重试：只在响应无法解析（ok=False）时重试；解析成功但无独立描述（仅纠正）时不再重试，消除全语料约 14% 的重复请求与"自身抑制后判为已覆盖"的内容丢失（jtg3362 封面三行恢复，随机延迟下输出稳定）；加测试；决定 Q22 |
+| 2026-09-23 | v1.8 | P0-5 完成、**阶段零完成**：用空缓存、全部真实请求重新冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇，提交 78556f4，工作区干净，OCR 26、VLM 89、LLM 0 次请求，197.6 s），两次独立离线回放输出与分数逐项一致；首次冻结作废改名 `.invalid`；基线报告按调参集 / 隔离集 / 公开集分列；§0.1、§0.2、§9.1 核心集表按冻结基线更新 |
