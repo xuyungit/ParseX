@@ -21,6 +21,8 @@ class ParseResult(BaseModel):
     cache_hits: dict[str, int] = Field(default_factory=dict)
     # Offline replay only: responses the cache lacked (the document is not replayable).
     cache_misses: dict[str, int] = Field(default_factory=dict)
+    tokens: dict[str, dict[str, int]] = Field(default_factory=dict)  # service → input / cached_input / output
+    cost_usd: float | None = None  # LLM/VLM token cost of the real requests; None = unpriced usage
     images_total: int = 0
     images_skipped: int = 0
     llm_fallback_hits: int = 0

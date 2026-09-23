@@ -42,6 +42,14 @@ def _run(name: str, fn) -> bool:
         return False
 
 
+def _usage(meter, service: str) -> str:
+    """Token usage must be reported; without it cost accounting is blind."""
+    tokens = meter.snapshot().tokens.get(service)
+    if not tokens or not tokens["input"]:
+        raise RuntimeError(f"{service} answered but reported no token usage")
+    return f"tokens={tokens['input']}/{tokens['output']}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", type=Path, default=None, help="Config file (default: auto-detect)")
@@ -50,6 +58,11 @@ def main() -> int:
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
     cfg = load_config(args.config)
+    # Live contract check: real requests (no cache) through the same gateway the pipeline uses.
+    from parserx.scheduling import MeteredService, RequestMeter, ServiceGateway
+
+    meter = RequestMeter()
+    gateway = ServiceGateway.from_config(meter, None, cfg.scheduling)
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         img = _sample_image(Path(tmp) / "check.png")
@@ -62,7 +75,9 @@ def main() -> int:
                     raise RuntimeError("OCR not configured (engine/endpoint/token)")
                 from parserx.services.ocr import PaddleOCRService
 
-                result = PaddleOCRService(oc).recognize(img)
+                service = PaddleOCRService(oc)
+                service.gateway = gateway
+                result = service.recognize(img)
                 if not result.blocks:
                     raise RuntimeError("no blocks returned")
                 return f"model={oc.model} blocks={len(result.blocks)} text={result.blocks[0].text[:30]!r}"
@@ -77,10 +92,11 @@ def main() -> int:
                     raise RuntimeError("LLM not configured (endpoint/api_key)")
                 from parserx.services.llm import create_llm_service
 
-                out = create_llm_service(lc).complete("Reply with the single word OK.", "ping", temperature=0.0, max_tokens=16)
+                llm = MeteredService(create_llm_service(lc), meter, "llm", gateway=gateway)
+                out = llm.complete("Reply with the single word OK.", "ping", temperature=0.0, max_tokens=16)
                 if not out.strip():
                     raise RuntimeError("empty response")
-                return f"model={lc.model} endpoint={lc.endpoint} -> {out.strip()[:20]!r}"
+                return f"model={lc.model} endpoint={lc.endpoint} -> {out.strip()[:20]!r} {_usage(meter, 'llm')}"
 
             ok &= _run("llm", check_llm)
 
@@ -92,13 +108,17 @@ def main() -> int:
                     raise RuntimeError("VLM not configured (endpoint/api_key)")
                 from parserx.services.llm import create_vlm_service
 
-                out = create_vlm_service(vc).describe_image(img, "Transcribe the text in this image.", temperature=0.0, max_tokens=64)
+                vlm = MeteredService(create_vlm_service(vc), meter, "vlm", gateway=gateway)
+                out = vlm.describe_image(img, "Transcribe the text in this image.", temperature=0.0, max_tokens=64)
                 if not out.strip():
                     raise RuntimeError("empty response")
-                return f"model={vc.model} endpoint={vc.endpoint} -> {out.strip()[:40]!r}"
+                return f"model={vc.model} endpoint={vc.endpoint} -> {out.strip()[:40]!r} {_usage(meter, 'vlm')}"
 
             ok &= _run("vlm", check_vlm)
 
+    snap = meter.snapshot()
+    cost = "unpriced" if snap.cost_usd is None else f"${snap.cost_usd:.6f}"
+    print(f"requests {snap.requests} attempts {snap.attempts} cost {cost}")
     print("all checks passed" if ok else "some checks FAILED")
     return 0 if ok else 1
 

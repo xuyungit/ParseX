@@ -42,7 +42,7 @@ def test_batch_ocr_is_one_request_with_many_pages(monkeypatch):
     meter = RequestMeter()
     ocr = PaddleOCRService(OCRBuilderConfig(endpoint="https://ocr.example.com/jobs", token="t"))
     ocr.gateway = ServiceGateway(meter)
-    monkeypatch.setattr(ocr, "_run_job", lambda *a: {"layoutParsingResults": []})
+    monkeypatch.setattr(ocr, "_run_job", lambda *a: {"layoutParsingResults": [{}, {}, {}]})
     ocr.recognize_pdf(_pdf_bytes(3))
     snap = meter.snapshot()
     assert snap.requests == {"ocr": 1}

@@ -197,7 +197,38 @@ class ServiceConfig(BaseModel):
     min_output_tokens: int = 0
     max_concurrent: int = 6
     timeout: int = 180
-    max_retries: int = 3
+
+
+class RetryConfig(BaseModel):
+    """Transport retries in the gateway (network, 5xx, 429, OCR queue full); SDKs never retry."""
+
+    max_attempts: int = 3
+    backoff_s: float = 2.0
+    max_backoff_s: float = 30.0
+
+
+class PriceConfig(BaseModel):
+    """USD per million tokens."""
+
+    input: float
+    output: float
+    cached_input: float = 0.0
+
+
+class BudgetConfig(BaseModel):
+    """Per-document limits (guide §8.2); None / missing = unlimited."""
+
+    deadline_s: float | None = None
+    requests: dict[str, int] = Field(default_factory=dict)  # per service: ocr / vlm / llm
+    usd: float | None = None
+    # Held per request until its real cost is known, so concurrent requests cannot overrun ``usd``.
+    reserve_usd: dict[str, float] = Field(default_factory=lambda: {"vlm": 0.01, "llm": 0.01})
+
+
+class SchedulingConfig(BaseModel):
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    prices: dict[str, PriceConfig] = Field(default_factory=dict)  # by model name
+    budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
 
 class ServicesConfig(BaseModel):
@@ -244,6 +275,7 @@ class ParserXConfig(BaseModel):
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
+    scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

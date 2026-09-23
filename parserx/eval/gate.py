@@ -80,11 +80,25 @@ def run_record(
 
 
 def load_record(path: Path) -> dict:
-    """A results JSON, or a frozen run directory containing ``metrics.json``."""
+    """A results JSON, or a frozen run directory containing ``metrics.json``.
+
+    For a frozen run the config fingerprint is recomputed from its manifest
+    with today's function, so config fields added since the freeze (at their
+    defaults) do not read as a configuration change; the value recorded at
+    freeze time is kept as ``config_fingerprint_recorded``.
+    """
     path = Path(path)
+    manifest_path = path / "manifest.json" if path.is_dir() else None
     if path.is_dir():
         path = path / "metrics.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if manifest_path is not None and manifest_path.exists():
+        from parserx.eval.reporting import resolved_fingerprint
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        record["config_fingerprint_recorded"] = record.get("config_fingerprint")
+        record["config_fingerprint"] = resolved_fingerprint(manifest["config"]["resolved"])
+    return record
 
 
 @dataclass

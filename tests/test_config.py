@@ -201,3 +201,15 @@ def test_config_fingerprint_ignores_secrets_but_not_settings():
     replay = apply_overrides(base, ["cache.mode=read_only"])
     assert config_fingerprint(replay) == config_fingerprint(base)  # cache replays, it does not change processing
     assert config_fingerprint(changed) != config_fingerprint(base)
+
+
+def test_fingerprint_ignores_transport_and_prices_but_not_budget():
+    from parserx.config.schema import PriceConfig, apply_overrides
+    from parserx.eval.reporting import config_fingerprint
+
+    base = ParserXConfig()
+    transport = apply_overrides(base, ["scheduling.retry.max_attempts=5"])
+    transport.scheduling.prices = {"m": PriceConfig(input=1.0, output=2.0)}
+    budget = apply_overrides(base, ["scheduling.budget.usd=0.5"])
+    assert config_fingerprint(transport) == config_fingerprint(base)
+    assert config_fingerprint(budget) != config_fingerprint(base)  # an exhausted budget changes outputs

@@ -137,7 +137,7 @@ def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], ma
 
 
 def replay_differences(record: dict, frozen: dict) -> list[str]:
-    """Everything a faithful replay must reproduce but did not."""
+    """Everything a faithful replay must reproduce but did not (*frozen* as ``load_record`` returns it)."""
     diffs: list[str] = []
     if record.get("config_fingerprint") != frozen.get("config_fingerprint"):
         diffs.append(

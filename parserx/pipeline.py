@@ -34,7 +34,7 @@ from parserx.processors.vlm_review import VLMReviewProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
 from parserx.cache import open_cache, service_identity
-from parserx.scheduling import MeteredService, RequestMeter, ServiceGateway
+from parserx.scheduling import JobStore, MeteredService, RequestMeter, ServiceGateway
 from parserx.services.llm import create_llm_service, create_vlm_service
 from parserx.verification import (
     CompletenessChecker,
@@ -61,6 +61,8 @@ class Pipeline:
         # the response cache every remote call goes through (guide §8.3).
         self._meter = RequestMeter()
         self._cache = open_cache(self._config.cache)
+        # One gateway per pipeline: shared budget, retries and prices for OCR, VLM and LLM.
+        self._gateway = ServiceGateway.from_config(self._meter, self._cache, self._config.scheduling)
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
         self._reading_order_builder = ReadingOrderBuilder(
             self._config.processors.reading_order,
@@ -91,6 +93,7 @@ class Pipeline:
             raise FileNotFoundError(f"Document not found: {path}")
 
         self._meter.reset()
+        self._gateway.budget.reset()
         doc = self._run_pipeline(path, output_dir=None)
         markdown = self._renderer.render(doc)
         self._verify_all(doc, markdown)
@@ -137,6 +140,7 @@ class Pipeline:
             raise FileNotFoundError(f"Document not found: {path}")
 
         self._meter.reset()
+        self._gateway.budget.reset()
         doc = self._run_pipeline(path, output_dir=output_dir)
         assembler = ChapterAssembler(self._config.output)
         md_path = assembler.assemble(doc, output_dir)
@@ -459,7 +463,7 @@ class Pipeline:
             log.info("VLM service configured: %s / %s", cfg.endpoint, cfg.model)
             return MeteredService(
                 create_vlm_service(cfg), self._meter, "vlm",
-                cache=self._cache, identity=service_identity(cfg),
+                identity=service_identity(cfg), gateway=self._gateway,
             )
         return None
 
@@ -475,8 +479,9 @@ class Pipeline:
             skip_scan_image_marking=self._config.processors.image.vlm_refine_all_ocr,
         )
         if builder._ocr is not None:
-            builder._ocr.gateway = ServiceGateway(self._meter, self._cache)
-            builder._ocr.attempt_hook = lambda: self._meter.attempt("ocr")
+            builder._ocr.gateway = self._gateway
+            if self._cache is not None and self._cache.writable:
+                builder._ocr.job_store = JobStore(self._cache.root / "jobs" / "ocr")
         return builder
 
     # ------------------------------------------------------------------
@@ -656,7 +661,7 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
             log.info("LLM service configured: %s / %s", cfg.endpoint, cfg.model)
             return MeteredService(
                 create_llm_service(cfg), self._meter, "llm",
-                cache=self._cache, identity=service_identity(cfg),
+                identity=service_identity(cfg), gateway=self._gateway,
             )
         return None
 
@@ -706,6 +711,8 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
             "ocr_pages": snap.pages.get("ocr", 0),
             "cache_hits": snap.cache_hits,
             "cache_misses": snap.cache_misses,
+            "tokens": snap.tokens,
+            "cost_usd": snap.cost_usd,
         }
 
     def _build_processors(self) -> list[Processor]:

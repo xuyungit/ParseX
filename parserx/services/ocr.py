@@ -11,6 +11,12 @@ the JSONL at ``resultUrl.jsonUrl``):
 
 A full submission queue is signalled by HTTP 400 with ``code 10010``; that is
 back-pressure, so it is waited out rather than treated as an error.
+
+Every job goes through ``ServiceGateway`` (cache, counting, budget, transport
+retries).  Submitted job ids are kept in a ``JobStore`` under the request key:
+a retry, or a new process after an interruption, polls the same job instead of
+submitting again.  A result whose page count differs from the submitted page
+count is a failure, never a partial answer.
 """
 
 from __future__ import annotations
@@ -20,15 +26,13 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any
 
 import requests
 
-from parserx.cache import bytes_digest, endpoint_identity
+from parserx.cache import bytes_digest, endpoint_identity, request_key
 from parserx.config.schema import OCRBuilderConfig
-
-if TYPE_CHECKING:
-    from parserx.scheduling import ServiceGateway
+from parserx.scheduling import JobStore, PageCountMismatch, RequestMeter, ServiceGateway, TransientError
 
 log = logging.getLogger(__name__)
 
@@ -99,13 +103,12 @@ class PaddleOCRService:
         self._url = cfg.endpoint.rstrip("/")
         self._headers = {"Authorization": f"bearer {cfg.token}"}
         self._model = cfg.model
-        self._max_retries = 3
         self._timeout = 600  # Budget (s) for queue-full waits and for polling
-        # Called once per network attempt; set by the request meter.
-        self.attempt_hook: Callable[[], None] | None = None
-        # Counting and response cache for every job (set by the pipeline);
-        # without it every call goes straight to the network.
-        self.gateway: ServiceGateway | None = None
+        # Cache, counting, budget and retries for every job; the pipeline sets
+        # its per-document gateway, otherwise a private one is used.
+        self.gateway: ServiceGateway = ServiceGateway(RequestMeter())
+        # Submitted jobs by request key (in memory unless the pipeline gives a directory).
+        self.job_store: JobStore = JobStore()
 
     def recognize(self, image_path: Path) -> OCRResult:
         """OCR a single image."""
@@ -123,14 +126,12 @@ class PaddleOCRService:
     # ── Transport ─────────────────────────────────────────────────────
 
     def _run_with_retries(self, file_bytes: bytes, filename: str, mime: str) -> dict:
-        """The single transport exit: raw merged result for one file, via the gateway if set.
+        """The single transport exit: raw merged result for one file, via the gateway.
 
         The cache key covers the file bytes, mime type, model, endpoint and
         pipeline options; the upload filename (often a temp name) is not part
-        of the request semantics.
+        of the request semantics.  Transport retries happen in the gateway.
         """
-        if self.gateway is None:
-            return self._run_uncached(file_bytes, filename, mime)
         material = {
             "endpoint": endpoint_identity(self._url),
             "model": self._model,
@@ -138,41 +139,48 @@ class PaddleOCRService:
             "mime": mime,
             "file_sha256": bytes_digest(file_bytes),
         }
+        pages = _page_count(file_bytes, mime)
+        job_key = request_key("ocr", material)
         return self.gateway.call(
             "ocr",
             material,
-            lambda: self._run_uncached(file_bytes, filename, mime),
-            pages=_page_count(file_bytes, mime),
+            lambda: self._run_checked(file_bytes, filename, mime, job_key, pages),
+            pages=pages,
         )
 
-    def _run_uncached(self, file_bytes: bytes, filename: str, mime: str) -> dict:
-        """Run one job, retrying transient failures with exponential backoff."""
-        for attempt in range(1, self._max_retries + 1):
-            if self.attempt_hook is not None:
-                self.attempt_hook()
-            try:
-                return self._run_job(file_bytes, filename, mime)
-            except Exception as exc:
-                if attempt == self._max_retries:
-                    raise RuntimeError(
-                        f"OCR failed for {filename} after {attempt} attempts: {exc}"
-                    ) from exc
-                wait = 2 ** attempt
-                log.warning("OCR retry %d for %s: %s (wait %ds)", attempt, filename, exc, wait)
-                time.sleep(wait)
-        raise AssertionError("unreachable")
+    def _run_checked(self, file_bytes: bytes, filename: str, mime: str, job_key: str, pages: int) -> dict:
+        """One job; its result must hold exactly the submitted pages (0 = count unknown)."""
+        result = self._run_job(file_bytes, filename, mime, job_key)
+        got = len(result.get("layoutParsingResults", []))
+        if pages and got != pages:
+            raise PageCountMismatch(pages, got)
+        return result
 
-    def _run_job(self, file_bytes: bytes, filename: str, mime: str) -> dict:
-        """Submit, poll until done, download and merge the JSONL result."""
-        job_id = self._submit(file_bytes, filename, mime)
-        data = self._wait_done(job_id)
+    def _run_job(self, file_bytes: bytes, filename: str, mime: str, job_key: str | None = None) -> dict:
+        """Submit (or resume a stored job), poll until done, download and merge the JSONL result."""
+        job_id = self.job_store.get(job_key) if job_key else None
+        if job_id:
+            log.info("OCR resuming job %s for %s", job_id, filename)
+        else:
+            job_id = self._submit(file_bytes, filename, mime)
+            if job_key:
+                self.job_store.put(job_key, job_id)
+        try:
+            data = self._wait_done(job_id)
+        except _JobGone:
+            if job_key:
+                self.job_store.drop(job_key)  # the next attempt submits afresh
+            raise
 
         json_url = (data.get("resultUrl") or {}).get("jsonUrl")
         if not json_url:
             raise RuntimeError(f"OCR job {job_id} done without result URL: {data}")
         resp = requests.get(json_url, timeout=self._SUBMIT_TIMEOUT)
         resp.raise_for_status()
-        return _merge_jsonl_results(resp.text)
+        merged = _merge_jsonl_results(resp.text)
+        if job_key:
+            self.job_store.drop(job_key)
+        return merged
 
     def _submit(self, file_bytes: bytes, filename: str, mime: str) -> str:
         """Submit a job, waiting out "queue full" rejections on their own budget."""
@@ -197,6 +205,8 @@ class PaddleOCRService:
                 time.sleep(wait)
                 wait = min(wait * 2, self._QUEUE_FULL_WAIT_MAX)
                 continue
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise TransientError(f"OCR submit HTTP {resp.status_code}: {resp.text[:300]}")
             if not resp.ok:
                 raise RuntimeError(f"OCR submit HTTP {resp.status_code}: {resp.text[:300]}")
             job_id = (payload.get("data") or {}).get("jobId")
@@ -210,18 +220,27 @@ class PaddleOCRService:
         interval = self._POLL_INTERVAL
         while True:
             resp = requests.get(f"{self._url}/{job_id}", headers=self._headers, timeout=60)
+            if resp.status_code == 404:
+                raise _JobGone(f"OCR job {job_id} not found")
             resp.raise_for_status()
-            data = resp.json().get("data") or {}
+            payload = _json_or_none(resp)
+            if payload is None:
+                raise TransientError(f"OCR job {job_id}: unreadable poll response")
+            data = payload.get("data") or {}
             state = data.get("state")
             log.debug("OCR job %s: %s %s", job_id, state, data.get("extractProgress") or "")
             if state == "done":
                 return data
             if state == "failed":
-                raise RuntimeError(f"OCR job {job_id} failed: {data.get('errorMsg')}")
+                raise _JobGone(f"OCR job {job_id} failed: {data.get('errorMsg')}")
             if time.monotonic() > deadline:
                 raise TimeoutError(f"OCR job {job_id} still '{state}' after {self._timeout}s")
             time.sleep(interval)
             interval = min(interval * 1.5, self._POLL_INTERVAL_MAX)
+
+
+class _JobGone(TransientError):
+    """The job failed or expired on the server; a retry submits it again."""
 
 
 def create_ocr_service(

@@ -87,3 +87,23 @@ def test_replay_reports_missing_documents_and_config_changes():
 def test_git_state_outside_a_repository(tmp_path):
     state = git_state(tmp_path)
     assert state["commit"] is None
+
+
+def test_frozen_config_fingerprint_is_recomputed_with_todays_schema(tmp_path):
+    import json
+
+    from parserx.config.schema import ParserXConfig
+    from parserx.eval.gate import load_record
+    from parserx.eval.reporting import config_fingerprint, redacted_config
+
+    resolved = redacted_config(ParserXConfig())
+    resolved.pop("scheduling")  # frozen before the section existed
+    (tmp_path / "metrics.json").write_text(json.dumps(_record(a=0.9)))  # recorded fingerprint "abc"
+    (tmp_path / "manifest.json").write_text(json.dumps({"config": {"resolved": resolved}}))
+
+    frozen = load_record(tmp_path)
+    assert frozen["config_fingerprint"] == config_fingerprint(ParserXConfig())
+    assert frozen["config_fingerprint_recorded"] == "abc"
+    replay = _record(a=0.9)
+    replay["config_fingerprint"] = config_fingerprint(ParserXConfig())
+    assert replay_differences(replay, frozen) == []

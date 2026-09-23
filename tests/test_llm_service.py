@@ -260,3 +260,34 @@ def test_min_output_tokens_floor_and_chat_token_param_rename(monkeypatch):
     service.complete("system", "user", max_tokens=64)
     assert client.chat.completions.calls[-1]["max_completion_tokens"] == 64
     assert "max_tokens" not in client.chat.completions.calls[-1]
+
+
+def test_usage_is_reported_for_responses_and_chat(monkeypatch):
+    service, client = _make_service(monkeypatch)
+    usage = SimpleNamespace(input_tokens=120, output_tokens=30,
+                            input_tokens_details=SimpleNamespace(cached_tokens=100))
+    completed = SimpleNamespace(type="response.completed", response=SimpleNamespace(usage=usage))
+
+    class _Stream(_FakeResponseStream):
+        def __init__(self):
+            super().__init__(["ok"])
+            self._events.append(completed)
+
+    client.responses.create = lambda **kw: _Stream()
+    chat_usage = SimpleNamespace(prompt_tokens=50, completion_tokens=5,
+                                 prompt_tokens_details=SimpleNamespace(cached_tokens=0))
+    message = SimpleNamespace(content="chat answer")
+    client.chat.completions.create = lambda **kw: SimpleNamespace(
+        choices=[SimpleNamespace(message=message)], usage=chat_usage)
+
+    reports = []
+    service.usage_hook = lambda *args: reports.append(args)
+    assert service.complete("s", "u") == "ok"
+    service._api_style = "chat"
+    assert service.complete("s", "u") == "chat answer"
+    assert reports == [("test-model", 120, 100, 30), ("test-model", 50, 0, 5)]
+
+
+def test_sdk_never_retries(monkeypatch):
+    _, client = _make_service(monkeypatch)
+    assert client.init_kwargs["max_retries"] == 0

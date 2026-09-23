@@ -14,6 +14,10 @@ offending parameter is dropped (or renamed, for ``max_tokens`` →
 ``max_completion_tokens``), remembered for the lifetime of the service, and
 the request is retried once.  The same config therefore works for both
 generations of models.
+
+Transport retries belong to the scheduling layer (``ServiceGateway``): the SDK
+is built with ``max_retries=0``.  Every network send is reported through
+``attempt_hook`` and the token usage of every answer through ``usage_hook``.
 """
 
 from __future__ import annotations
@@ -102,7 +106,7 @@ class OpenAICompatibleService:
             api_key=config.api_key or "no-key",
             base_url=config.endpoint or None,
             timeout=config.timeout,
-            max_retries=config.max_retries,
+            max_retries=0,  # the gateway retries and counts attempts (guide §8.2)
             default_headers=default_headers,
         )
         self._model = config.model
@@ -112,8 +116,10 @@ class OpenAICompatibleService:
         self._unsupported: set[str] = set()
         if config.send_temperature is False:
             self._unsupported.add("temperature")
-        # Called once per network attempt; set by the request meter.
+        # Called once per network send; set by the gateway.
         self.attempt_hook: Callable[[], None] | None = None
+        # Called with (model, input, cached_input, output) tokens per answer; set by the gateway.
+        self.usage_hook: Callable[[str, int, int, int], None] | None = None
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -291,6 +297,20 @@ class OpenAICompatibleService:
         if self.attempt_hook is not None:
             self.attempt_hook()
 
+    def _report_usage(self, usage: Any) -> None:
+        """Forward Responses (input/output_tokens) or Chat (prompt/completion_tokens) usage."""
+        if self.usage_hook is None or usage is None:
+            return
+        input_tokens = getattr(usage, "input_tokens", None)
+        if input_tokens is None:
+            input_tokens = getattr(usage, "prompt_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", None)
+        if output_tokens is None:
+            output_tokens = getattr(usage, "completion_tokens", 0)
+        details = getattr(usage, "input_tokens_details", None) or getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", 0) if details is not None else 0
+        self.usage_hook(self._model, int(input_tokens or 0), int(cached or 0), int(output_tokens or 0))
+
     def _extra_request_kwargs(self) -> dict[str, Any]:
         if not self._config.extra_body:
             return {}
@@ -307,10 +327,15 @@ class OpenAICompatibleService:
             **self._generation_kwargs("responses", temperature, max_tokens),
         }
         tokens: list[str] = []
+        usage = None
         with self._create(self._client.responses, kwargs) as stream:
             for event in stream:
-                if getattr(event, "type", "") == "response.output_text.delta":
+                kind = getattr(event, "type", "")
+                if kind == "response.output_text.delta":
                     tokens.append(event.delta)
+                elif kind == "response.completed":
+                    usage = getattr(getattr(event, "response", None), "usage", None)
+        self._report_usage(usage)
 
         text = "".join(tokens).strip()
         if self._api_style is None:
@@ -375,6 +400,7 @@ class OpenAICompatibleService:
             **self._generation_kwargs("chat", temperature, max_tokens),
         }
         response = self._create(self._client.chat.completions, kwargs)
+        self._report_usage(getattr(response, "usage", None))
         if self._api_style is None:
             self._api_style = "chat"
         return response.choices[0].message.content or ""

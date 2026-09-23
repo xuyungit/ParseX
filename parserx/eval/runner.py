@@ -76,6 +76,7 @@ class EvalRunner:
                 ocr_pages=parse_result.ocr_pages,
                 attempts=dict(parse_result.api_attempts),
                 cache_hits=dict(parse_result.cache_hits),
+                cost_usd=parse_result.cost_usd,
                 warning_count=len(parse_result.warnings),
                 llm_fallback_hits=parse_result.llm_fallback_hits,
                 pages_processed=parse_result.page_count,

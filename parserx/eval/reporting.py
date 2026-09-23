@@ -114,10 +114,29 @@ def redacted_config(config: ParserXConfig) -> dict[str, Any]:
     return _strip_secrets(config.model_dump(mode="json", exclude={"cache"}))
 
 
+# Settings that cannot change a replayed output: transport retries and the
+# price table only affect how requests are sent and what they cost.
+_NOT_PROCESSING = {"scheduling": ("retry", "prices")}
+
+
 def config_fingerprint(config: ParserXConfig) -> str:
-    """Short hash of ``redacted_config``: what the processing actually used."""
-    blob = json.dumps(redacted_config(config), sort_keys=True, ensure_ascii=False)
+    """Short hash of ``redacted_config`` minus ``_NOT_PROCESSING``: what the processing actually used."""
+    material = redacted_config(config)
+    for section, keys in _NOT_PROCESSING.items():
+        for key in keys:
+            material.get(section, {}).pop(key, None)
+    blob = json.dumps(material, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def resolved_fingerprint(resolved: dict[str, Any]) -> str:
+    """Fingerprint of a frozen run's resolved config, computed as today's ``config_fingerprint`` would.
+
+    Fields added to the config schema after the freeze take their defaults on
+    both sides, so an old frozen run stays replayable as long as its settings
+    are unchanged.
+    """
+    return config_fingerprint(ParserXConfig.model_validate(resolved))
 
 
 def _strip_secrets(value: Any) -> Any:

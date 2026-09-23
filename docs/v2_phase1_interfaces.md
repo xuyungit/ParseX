@@ -14,6 +14,15 @@
 | `parserx/content/`（最小形态） | 原生 PDF 提取（阶段一按 PyMuPDF 文本块组织，版面归属在阶段四决定）；paddleocr 扫描页引擎适配为 Observation；**〔v1.9〕DOCX 直接读取 OOXML**（正文段落、表格、图片、修订最终视图、域代码结果、分页分节、样式与编号证据），不再经 Docling 适配，因为后者给不出节点路径，也无法记账；选择步骤与接受门 | `extract_pdf(doc) -> Extraction`、`extract_docx(path) -> Extraction`、`scan_pages(pages, engine) -> list[Observation]`、`select(block) -> Decision` |
 | `parserx/scheduling/` | 在阶段零的 `ServiceGateway` 上加入预算（截止时间、并发、请求数、费用，请求前预留、完成后结算）、token 用量与费用、可重试错误分类（SDK `max_retries=0`）、OCR job_id 恢复与页数校验；**〔v1.9〕`run_ordered`：并发请求，结果按任务顺序生效** | `ServiceGateway.call(...)`、`run_ordered(tasks, fetch, apply) -> list[TaskOutcome]` |
 | `parserx/cache/` | 阶段零已建；增加 `derived/` 后处理缓存 | `ResponseCache.get/put` |
+
+〔P1-3〕调度层实现要点：
+- 每篇文档一个 `ServiceGateway.from_config(meter, cache, config.scheduling)`，OCR、VLM、LLM 共用，共享预算、重试策略与价格表；`gateway.budget.reset()` 在每篇开始时调用。
+- `call(service, material, fetch, *, pages=0, parse=None, parse_retries=1)`：缓存命中直接返回（不占预算）；未命中先 `budget.reserve`（不足则抛 `BudgetExhausted`，计 `skipped_budget`），再发送并做传输重试（`RetryPolicy`，只重试 `is_retryable` 为真的错误：网络、5xx、429、`TransientError`），结束后按真实费用结算。`parse` 抛 `UnparseableResponse` 时以 `parse_retry: n` 作为新请求再发一次，回放时按同样顺序命中缓存；已解析的响应不再重试。
+- 服务通过钩子报告：`attempt_hook`（每次网络发送，含参数降级重发）与 `usage_hook(model, input, cached_input, output)`；网关用 context variable 把它们归到当前请求，并发请求互不混淆。没有报告发送次数的服务按每次 fetch 一次尝试计。OpenAI SDK `max_retries=0`，`ServiceConfig.max_retries` 已删除，重试次数在 `scheduling.retry`。
+- 费用：`scheduling.prices`（美元/百万 token，按模型名）；`cost_usd` 只含 LLM/VLM 的 token 费用，OCR 按页计费不在其中；有未定价的用量时 `cost_usd=None`（未知，不是免费）。
+- `run_ordered(tasks, fetch, apply, max_workers=)`：fetch 并发、不得修改共享状态；apply 在调用线程按任务顺序执行、只对成功的任务执行；结果为 `TaskOutcome(status=ok|failed|skipped_budget|cache_miss, retryable)`。
+- OCR：`JobStore` 按请求键记住已提交的 job_id（有缓存目录时存在 `<cache>/jobs/ocr/`），重试或进程重启后恢复轮询而不是重新提交，任务失败或过期（404）才重新提交；返回页数与提交页数不符抛 `PageCountMismatch`（不重试、不缓存）。
+- 配置指纹只覆盖能改变回放输出的设置：不含 `cache`、`scheduling.retry`、`scheduling.prices`，含 `scheduling.budget`。`load_record` 读取冻结 run 时按今天的函数从 manifest 重新计算其指纹，此后新增的配置字段（取默认值）不会让旧的冻结 run 无法回放。
 | `parserx/render/` 〔v1.9〕 | §4.5 的 Markdown 契约与 sidecar 导出（v1 的 `assembly/` 不动） | `render_markdown(state) -> str`、`export_sidecar(state) -> dict` |
 | `parserx/hierarchy/legality.py` 〔v1.9〕 | `apply_structure` 的合法性检查（§6.8 的完整实现在阶段四） | `check_changes(state, changes) -> list[Rejection]` |
 | `parserx/prompts/` 〔v1.9〕 | 工具内部 VLM 任务的提示词文件（内容哈希计入缓存键）；与面向运行时的 Skill 分开 | `load_prompt(name) -> (text, sha256)` |

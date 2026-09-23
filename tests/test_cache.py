@@ -132,7 +132,7 @@ def test_ocr_caches_raw_result_and_counts_pages_once(tmp_path, monkeypatch):
     ocr.gateway = ServiceGateway(meter, ResponseCache(tmp_path / "c", "read_write"))
     jobs = []
 
-    def fake_job(file_bytes, filename, mime):
+    def fake_job(file_bytes, filename, mime, job_key=None):
         jobs.append(filename)
         return {"layoutParsingResults": [_ocr_page("一"), _ocr_page("二"), _ocr_page("三")]}
 
