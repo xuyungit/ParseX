@@ -38,6 +38,7 @@ class PageState(IRModel):
     status: PageStatus
     size_pt: tuple[float, float] | None = None
     render: str | None = None  # Asset id
+    starts_with: Literal["page_break", "section_break"] | None = None  # DOCX: what opened this segment
 
 
 class LedgerEntry(IRModel):

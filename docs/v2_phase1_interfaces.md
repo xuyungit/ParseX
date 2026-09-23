@@ -309,6 +309,15 @@ class Sidecar(DocumentState):       # 〔P1-1〕导出形式 = DocumentState + �
 
 〔P1-1〕实现说明：模型在 `parserx/ir/` 各子模块中，按子模块导入（包的 `__init__` 只导出 anchor 与 base，避免与 `tables/grid.py` 循环导入）。sidecar 的 JSON Schema 由 `ir.schema.sidecar_json_schema()` 生成（序列化模式，所有字段必填、`additionalProperties: false`），`validate_sidecar()` 用标准 JSON Schema 校验器（`jsonschema`，已显式加入依赖），外部消费者不需要导入 ParserX。结构校验器另有：`status=failed` 的 Observation 必须有 `error`；`role=crop` 的 Asset 必须有 `derived_from`，`dpi` 只用于渲染图；表格块的 `text` 必须为空；`semantic` 只能出现在 figure 上。跨块规则不放在模型里，由 `accounting/` 与 `hierarchy/` 报告。
 
+〔P1-4〕`PageState` 增加 `starts_with: "page_break" | "section_break" | None`（DOCX 段由什么开始，渲染 PAGE-BREAK / SECTION 锚点用）。
+
+〔P1-4〕内容获取的实现要点（`parserx/content/`）：
+- `extract_pdf` / `extract_docx` 返回 `Extraction`（pages、blocks、relations、ledger、assets 与其字节、engines、warnings、missing），`to_state()` 生成初始 `DocumentState`；`Asset.from_bytes` 是纯函数，`Workspace.create(files=)` 在写状态前写入资源字节。
+- 原生 PDF：每个 PyMuPDF 文本行一个 `native_line` 账目条目；文本块按位置排序（行内同一行从左到右），块内的行同样按位置排序；`find_tables` 的规则表格成为 TABLE 块，表内的行记到表格块；每个块至少一条 `content_source` Decision。原生层质量判定新增**不可见文字**信号（渲染模式 3，可检索扫描件的 OCR 层）：语料 24 个 PDF 中只有 ocr_scan_jtg3362 含不可见文字（每页 100%），其封面被切成 7 张图片，v1 的主图判据漏掉了它。判定失败的页上**所有**嵌入图片都是 SCAN 块（扫描页引擎读取整页渲染图）。
+- 扫描页：按 v1 相同的方式组装子 PDF（`no_new_id`，字节稳定，可命中既有缓存）；引擎阅读顺序为主，`block_order=None` 的区域（表格、图注、页眉页码）按纵向位置插入；页眉、页脚、页码为 `excluded`；图片从整页渲染图裁剪（渲染图与裁剪图都是 Asset，带 `derived_from` 与 `transform`），图中 OCR 文字只作证据；无法转换的表格 HTML 保留为 OTHER 块文字（`degraded`）。未知标签映射为 OTHER 并记 warning。
+- 选择步骤（`content/select.py`）：`integrate_scan_page` 把原生块标 `duplicate`（`duplicate_of` 指向重叠最多的新块）、扫描图标 `merged`，账目随之更新并重排 `order`；`mark_scan_failed` 保留原生文字（`degraded`）与扫描图并记 `missing`。接受门 `review_table` / `review_text` 返回 `GateCheck` 列表：图像证据（候选来自区域图像、有 `raw_ref`）；数字（原生证据的数字一律不得改；OCR 证据只允许在被要求核查的单元格里改数字；文本候选不得改动证据中的数字）；结构（网格合法，未被要求核查的单元格内容不得丢失）。
+- DOCX：修订被删除的文字成为 `excluded` 块（`exclude` / `revision_deleted` Decision，账目 `docx_deleted`），被删除的段落标记按最终视图合并段落（账目 `merged`）；`mc:AlternateContent` 只读第一个 Choice；列表编号按 numbering.xml 渲染并写入段落文字（Word 显示的样子），同时记入 `TextStyle.numbering`；页眉页脚为 `excluded`；文本框、脚注尾注、批注、链接图片为 `failed` 块（文字保留在 sidecar，账目 `docx_unsupported`，`missing` 列出）。样式名按 styles.xml 原样记录（内置样式为小写，如 `heading 1`）。
+
 **修订记录 〔v1.9〕**：DOCX 按"接受全部修订"后的最终视图提取（Q26）。`w:ins` 与 `w:moveTo` 的文字进入正文；`w:del` 与 `w:moveFrom` 的文字作为账目条目，去向为 `excluded`，并配一条 `stage=exclude`、`choice=revision_deleted` 的 Decision。sidecar 的 `warnings` 注明文档含修订。`DocxAnchor.node_path` 在阶段一只到段落或单元格一级，`run_range` 可以为空。
 
 **账目单位 〔增补〕**：指导 §2.3 原则 1 所说的"已发现内容"落到这些条目：原生 PDF 的文本行、OOXML 的段落 / 表格 / 图片节点、检测区域、OCR 块。每个条目只能有一个去向，`disposition=None` 就是未归属。`check` 要求 `discovered = output + merged + duplicate + excluded + failed` 且没有未归属条目。以行而不是字符为单位，是为了让账目规模可控，同时仍能发现整行丢失。行内丢字交给评测的字符指标发现。

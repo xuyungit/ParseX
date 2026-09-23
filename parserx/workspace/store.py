@@ -16,7 +16,6 @@ exception inside the block leaves ``state.json`` untouched.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import shutil
@@ -27,15 +26,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from parserx.ir import ids
 from parserx.ir.anchor import DocxAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.base import Affine
 from parserx.ir.state import DocumentState
-
-_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/bmp": ".bmp",
-               "image/tiff": ".tif", "image/webp": ".webp", "image/x-emf": ".emf", "image/x-wmf": ".wmf"}
-
 
 class WorkspaceExists(FileExistsError):
     pass
@@ -86,7 +80,8 @@ class Workspace:
 
     @classmethod
     def create(cls, root: Path | str, state: DocumentState, source_file: Path | str,
-               *, timeout: float = 30.0) -> "Workspace":
+               *, files: dict[str, bytes] | None = None, timeout: float = 30.0) -> "Workspace":
+        """New workspace; *files* (paths relative to the root, e.g. asset bytes) are written before the state."""
         root = Path(root)
         if root.exists() and any(root.iterdir()):
             raise WorkspaceExists(f"{root} is not empty")
@@ -94,6 +89,10 @@ class Workspace:
         ws = cls(root)
         ws.assets_dir.mkdir()
         shutil.copyfile(source_file, root / f"source{Path(source_file).suffix.lower()}")
+        for rel, data in sorted((files or {}).items()):
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(target, data)
         with ws._locked(timeout):
             initial = DocumentState.model_validate({**state.model_dump(), "version": 1})
             ws._write_state(initial)
@@ -139,14 +138,12 @@ class Workspace:
                   derived_from: str | None = None, source: PdfAnchor | DocxAnchor | None = None,
                   transform: Affine | None = None, dpi: float | None = None) -> Asset:
         """Store *data* under its digest (idempotent) and return its Asset; the caller records it in a txn."""
-        digest = hashlib.sha256(data).hexdigest()
-        asset_id = ids.asset_id(digest)
-        rel = f"assets/{asset_id}{_EXTENSIONS.get(media_type, '.bin')}"
-        path = self.root / rel
+        asset = Asset.from_bytes(data, media_type=media_type, width=width, height=height, role=role,
+                                 derived_from=derived_from, source=source, transform=transform, dpi=dpi)
+        path = self.root / asset.path
         if not path.exists():
             _atomic_write(path, data)
-        return Asset(id=asset_id, sha256=digest, path=rel, media_type=media_type, width=width, height=height,
-                     role=role, derived_from=derived_from, source=source, transform=transform, dpi=dpi)
+        return asset
 
     # ── Internals ───────────────────────────────────────────────────────
 

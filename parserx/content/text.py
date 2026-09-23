@@ -1,0 +1,21 @@
+"""Joining visually wrapped lines into one paragraph (output contract, guide §4.5)."""
+
+from __future__ import annotations
+
+import unicodedata
+
+
+def _is_wide(ch: str) -> bool:
+    """CJK ideographs, kana, hangul and full-width punctuation: no spaces between words."""
+    return unicodedata.east_asian_width(ch) in ("W", "F")
+
+
+def join_wrapped(lines: list[str]) -> str:
+    """Join wrapped lines: no space at a wide-character boundary, one space between other words."""
+    parts = [line.strip() for line in lines if line.strip()]
+    if not parts:
+        return ""
+    out = parts[0]
+    for part in parts[1:]:
+        out += part if _is_wide(out[-1]) or _is_wide(part[0]) else " " + part
+    return out
