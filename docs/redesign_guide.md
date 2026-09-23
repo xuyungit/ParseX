@@ -1,29 +1,30 @@
 # ParserX v2 设计与研发指导
 
-> **文档状态**：v1.8，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 两处 v1 修复；v1.8 阶段零完成，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> **文档状态**：v1.9，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 两处 v1 修复；v1.8 阶段零完成；v1.9 阶段一分解与设计修订，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
 > 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
 >
 > 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
 
 ## 0. 使用方法与当前状态
 
-### 0.1 状态快照（2026-09-23）
+### 0.1 状态快照（2026-09-24）
 
 - **外部依赖已全部确定**：OCR 走 AI Studio jobs API（PaddleOCR-VL-1.6）；LLM/VLM 走官方 OpenAI 端点，VLM 与 LLM 都是 gpt-6-luna（LLM 于 2026-09-23 从 gpt-5.4-mini 切换，Q19）；`services/llm.py` 已适配推理模型。`uv run python scripts/check_services.py` 三项通过。
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
 - **阶段零 ✅**（2026-09-23）：指标版本 2.0 与硬检查、无 LLM 的回归配置、响应缓存、L1 离线回放（`--core --repeat 2`）、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）。下一步阶段一 ⬜，阶段二至五 ⬜。分解见 [v2_phase0_plan.md](v2_phase0_plan.md)，阶段一接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)，两者 2026-09-23 已确认。
 - **测试基线**：离线单元测试 493 通过（阶段零结束时；开始时 432）、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
-- **工作区未提交**：`services/ocr.py` 重写、`services/llm.py` 与 `config/schema.py` 改动、`parserx.yaml`、`.env.example`、README、本文档、`scripts/check_services.py`、`configs/regression_core.txt`、两份 eval_reports。建议开新会话前先提交一次。
+- **阶段一 ⬜ 待开始**：工作分解见 [v2_phase1_plan.md](v2_phase1_plan.md)（草案，2026-09-24），接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)（已按分解修订，标〔v1.9〕）。开始前先确认 §14 的 Q23–Q26。
+- **代码状态**：阶段零全部工作已合并到 main（f3a5fd2），未推送远端。冻结基线与响应缓存只在本地（`eval_runs/`、`.parserx_cache/`，不入 git）。
 
 ### 0.2 新会话启动清单
 
-下一轮会话的主题是"具体的编码与研发如何展开"。开始时按顺序做：
+下一轮会话的主题是"实现阶段一：文档工具包 v1"。开始时按顺序做：
 
-1. 读 §2（目标与原则）、§3（架构）、§5（工具包）、§7（运行时与实验）、§12（阶段）、§14（开放问题）。§4、§6、§8、§9 在动手实现对应部分时再读。
+1. 读 §2、§3、§4、§5、§8.2、§12、§13、§14，以及 [v2_phase1_plan.md](v2_phase1_plan.md) 全文和 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)。§6 在实现对应模块时再读。
 2. 运行 `uv run python scripts/check_services.py`，三项都 OK 才继续；任一失败先修 `.env`，不要绕过。
-3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`，应为 493 通过、4 个已知失败；再跑 L1 `uv run python scripts/regression_test.py --core --repeat 2`，应为 PASS。
-4. 从 §12 中状态为 🟡 的阶段开始；阶段零剩余任务见 §12。
-5. 每完成一个产出：更新 §12 状态列与 §15；新的决策写进 §14。
+3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`，应为 493 通过、4 个已知失败；再跑 v1 的 L1 `uv run python scripts/regression_test.py --core --repeat 2`，应为 PASS。确认 `eval_runs/2026-09-23_p0_v1_gpt-6-luna` 存在，并且 `--replay` 通过。
+4. 把 §14 的 Q23–Q26 一次性交给用户确认，再按阶段一分解的顺序实施。
+5. 每完成一项：跑 L0 汇报结果；从 P1-3 起确认 v1 的 L1 仍然 PASS；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 结束会话前：`git status` 确认改动在预期内；评测报告写入 `eval_reports/`。
 
 ### 0.3 相关文档
@@ -34,6 +35,7 @@
 - [evaluation.md](evaluation.md)：指标定义，按 §9.2 修复。
 - [v2_phase0_plan.md](v2_phase0_plan.md)：阶段零剩余任务分解（改动文件、测试、验收、顺序）。
 - [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
+- [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
 
 ## 1. 背景与根因
@@ -218,7 +220,7 @@ class Decision(BaseModel):
 
 ### 4.5 输出契约
 
-Markdown：ATX 标题；正文段落内不保留硬换行；表格无合并单元格用 GFM、有则 HTML；图片 `![<一句话>](images/<file>)` 后紧跟固定格式的语义块（带证据层级），不再把描述同时写进 alt 与引用块；公式行内 `$…$`、独立 `$$…$$`；PDF 页锚点 `<!-- PAGE n -->`，DOCX 只输出显式分页 `<!-- PAGE-BREAK -->` 与分节 `<!-- SECTION k -->`。
+Markdown：ATX 标题；正文段落内不保留硬换行；表格无合并单元格用 GFM、有则 HTML；图片 `![<一句话>](images/<file>)` 后紧跟固定格式的语义块（带证据层级），语义块必须是紧跟图片行的引用块、首行为 `> [图片语义]`，这样评测的规范化步骤才会把它当作描述剔除（格式见接口文档 §5.6）；不再把描述同时写进 alt 与引用块；公式行内 `$…$`、独立 `$$…$$`；PDF 页锚点 `<!-- PAGE n -->`，DOCX 只输出显式分页 `<!-- PAGE-BREAK -->` 与分节 `<!-- SECTION k -->`。
 
 Sidecar（与 Markdown 同名 `.blocks.json`）：
 
@@ -299,6 +301,8 @@ Skill 说明目标、取证方法、输出要求和停止条件，不写"字号�
 | doclayout_docstructbench（对照） | 22.9 s（含下载） | 0.22 s | title / plain text / figure / table / caption / abandon / formula |
 
 三套标签（本地检测器、PaddleOCR-VL、DOCX 结构）映射到 `BlockKind` 的表放在 `parserx/layout/labels.py`，差异只允许出现在这一个文件。检测器输入统一是像素图；DOCX 流式内容不做像素检测。
+
+**阶段一的检测器只做影子运行**：写出检测 Observation 与路由 Decision，不影响输出；§6.3 中"按检测框归属"的做法在阶段四根据影子结果决定是否启用。阶段一的原生 PDF 按 PyMuPDF 文本块组织。
 
 **检测器只负责组织和分类，不裁决内容是否存在，也不是唯一裁判。** 它提供位置和类型证据，也会漏检或误判；其标签是 §6.8 的证据之一，不是判决。
 
@@ -392,7 +396,7 @@ Skill 说明目标、取证方法、输出要求和停止条件，不写"字号�
 - 跨页续接在块层做：页 i 末尾 TEXT 与页 i+1 开头 TEXT 之间无标题、前者不以句末标点结束 → `continues` Relation 并合并，合并块保留两个 anchor。
 - 跨页表格：列数相同只产生候选；确认需要列位置对齐、表头结构一致、表格身份（图注或前文引用）和页面连续性；合并 `cells` 并保留来源。
 - 页眉页脚通过跨页重复检测识别，`excluded`，写入 sidecar。
-- **OOXML 支持边界**（阶段四前逐项标明支持 / 降级 / 不支持）：文本框、超链接、修订记录、域代码、脚注尾注、嵌套表格、浮动图片与锚定位置、分栏、目录域。"python-docx + 原始 XML"只是手段，不代表这些已解决。
+- **OOXML 支持边界**（阶段四前逐项标明支持 / 降级 / 不支持）：文本框、超链接、修订记录、域代码、脚注尾注、嵌套表格、浮动图片与锚定位置、分栏、目录域。"python-docx + 原始 XML"只是手段，不代表这些已解决。阶段一的最小读取器先支持：正文段落、表格（`gridSpan` / `vMerge`）、内嵌与浮动图片、修订记录（建议按接受全部修订的最终视图，被删除的文字计入账目，去向为 excluded，见 Q26）、域代码结果文字、显式分页与分节；其余元素记入 warnings，在账目中记为 failed。依据：simple_doc01 含 104 处插入、25 处删除，v1 经 Docling 丢掉了插入的文字，char_f1 只有 0.410。
 
 ## 7. 运行时与实验计划
 
@@ -465,6 +469,14 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 所有远程调用经过 `parserx/scheduling/`：文档级截止时间、并发数、请求数与费用预算；请求前预留、完成后按真实用量结算。OCR jobs API 保存 `job_id`，轮询或下载失败时恢复原任务而不是重新提交；限定批次页数并校验返回页数等于提交页数。可重试错误显式列出；4xx 参数错误交给 `llm.py` 的参数降级。每个任务带 `status` 与 `attempts`；文档结束时汇总为 `complete / partial / failed`，每个缺失块记录原因。
 
+阶段零（v1 离线回放与冻结）得出的硬规则：
+
+1. 所有远程调用必须经过 `ServiceGateway`：查缓存、计数、请求、写回；不允许绕过它直接调用客户端。
+2. 并发只用于发请求；凡是会修改共享状态的结果处理，都要按任务顺序生效（`run_ordered`）。v1 曾因按完成顺序处理结果而输出不确定，甚至丢失内容。
+3. 只对传输错误和无法解析的响应重试；已解析的响应即使没有期望的字段，也不重试。v1 曾因此多花约 14% 的 VLM 请求，并在重试时误判、丢掉内容。
+4. 已知的模型参数约束（例如 luna 不接受 temperature）写进配置，不靠 400 去试探；OpenAI SDK 设 `max_retries=0`，尝试次数由调度层统计。
+5. 记录 token 用量，并按配置中的价格表结算费用。
+
 ### 8.3 缓存与任务级重跑
 
 - 缓存键覆盖完整请求语义：输入图片字节（预处理后）、区域列表、提示词与 Skill 内容哈希、json_schema 哈希、模型名与端点身份、识别选项、`reasoning_effort`。`prompt_version` 保留作可读标签，不是唯一失效机制。原始响应缓存与后处理结果缓存分开（`.parserx_cache/raw/`、`.parserx_cache/derived/`）。
@@ -497,7 +509,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 |---|---|---|---|---|
 | deepseek | 原生 PDF（矢量图预扫描每次触发 1 次 OCR 请求，结果被去重、旧计数漏记；离线回放依赖缓存） | 1 | 1/0/0 | 0.5 s |
 | text_table01 | 原生 PDF（默认配置下 LLM 1 次来自质量检查，回归配置中关闭） | 3 | 0/0/0 | 0.0 s |
-| receipt | 扫描小票，VLM | 3 | 1/2/0 | 2.5 s |
+| receipt | 原生 PDF 小票（含小图标；旧表误标为扫描件） | 3 | 1/2/0 | 2.5 s |
 | ocr_scan_jtg3362 | 扫描中文标准文档，表格 | 4 | 1/11/0 | 15.4 s |
 | simple_doc01 | DOCX，char_f1 最差（指标 2.0 下 0.410）哨兵 | | 0/0/0 | 0.0 s |
 | text_report01 | DOCX 含嵌入图片 | | 2/2/0 | 2.5 s |
@@ -608,13 +620,13 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 路径 | 可复用 | 需要适配 |
 |---|---|---|
 | `parserx/config/` | schema 与 YAML 加载 | 新增 layout、cache、scan_engine、预算、模型分层、运行时选择 |
-| `parserx/services/ocr.py` | jobs API 客户端 | 接入调度层：job_id 恢复、批次校验 |
-| `parserx/services/llm.py` | 参数降级、reasoning、结构化输出 | 接入调度层与缓存；真实请求计数 |
-| `parserx/builders/ocr.py` 的 HTML 表格解析 | `_parse_html_table` + `_build_table_grid` | 输出 `TableGrid`，弃用扁平化输出 |
+| `parserx/services/ocr.py` | jobs API 客户端（阶段零已接入 `ServiceGateway`：缓存与计数） | 阶段一：job_id 恢复、返回页数校验 |
+| `parserx/services/llm.py` | 参数降级、reasoning、结构化输出（阶段零已接入缓存与计数） | 阶段一：token 用量回调与费用；SDK `max_retries=0`，重试交给调度层 |
+| `parserx/tables/html.py`（阶段零从 `builders/ocr.py` 迁出） | HTML 表格解析与 `_build_table_grid`；`TableGrid.from_html/from_gfm` 已有 | 阶段一：`to_gfm`、`to_html` |
 | `parserx/builders/image_extract.py` | OOXML 图片收集（正文顺序、`a:xfrm` 旋转）、ImageMask 反色、矢量图渲染 | 去掉 Docling 对象与 `docling_self_ref` 依赖，产出 Asset |
 | `parserx/providers/pdf.py` 页面分类信号 | 图像覆盖率、乱码比例、矢量页判据 | 降级为原生层质量判定的输入 |
 | `parserx/processors/table.py` 跨页合并 | 列数匹配、表头去重 | 改在 `TableGrid` 上做，列数相同只产生候选 |
-| `scripts/regression_test.py`、`parserx/eval/` | 运行框架、报告 | 指标按 §9.2 修复；失败硬检查；`--core`；冻结 run |
+| `scripts/regression_test.py`、`parserx/eval/` | 阶段零已完成：指标版本 2.0、硬检查、`--core`、`--repeat`、`--freeze`、`--replay` | 阶段一：冻结 run 另存 sidecar；支持 `pipeline: v2` |
 
 ### 11.2 重新设计
 
@@ -623,7 +635,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | `parserx/verification/completeness.py` | 依赖旧标志与 GFM；由去向检查替代 |
 | `parserx/verification/hallucination.py` | 只比较描述与 OCR 文本；改为按证据层级校验并迁移"数字不得被改写"要求 |
 | `parserx/assembly/markdown.py` | 输入改为 Block/TableGrid；实现 §4.5 契约 |
-| `parserx/providers/docx.py` | 直接解析 OOXML，按 §6.8–6.9 的证据与边界 |
+| `parserx/providers/docx.py` | 直接解析 OOXML，按 §6.8–6.9 的证据与边界。阶段一先在 `parserx/content/docx.py` 做最小读取器（见 §6.9），不经 Docling；v1 的 provider 保留到阶段五 |
 | `parserx/pipeline.py` | 改为固定流水线运行时：提取 → 版面 → 归属 → 图片路由 → 识别与复核 → 层级 → 跨页 → 去向检查 → 渲染 |
 
 ### 11.3 新模块
@@ -640,9 +652,11 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | `parserx/tables/` | `TableGrid` 构建、GFM/HTML 生成、跨页合并 |
 | `parserx/semantic/` | §6.7 |
 | `parserx/hierarchy/` | §6.8 |
-| `parserx/scheduling/` | §8.2 |
+| `parserx/scheduling/` | §8.2（阶段零已有计数器与 `ServiceGateway`） |
 | `parserx/accounting/` | 去向检查 |
-| `parserx/cache/` | §8.3 |
+| `parserx/cache/` | §8.3（阶段零已完成） |
+| `parserx/render/` | §4.5 的 Markdown 与 sidecar 导出（v1 的 `assembly/` 不动） |
+| `parserx/prompts/` | 工具内部 VLM 任务的提示词文件，带内容哈希 |
 | `parserx/runtimes/` | 运行时适配：`pipeline`（固定序列）、`codex`、`claude_code`、`pi`（启动、事件收集、工具适配） |
 
 ### 11.4 删除（阶段五）
@@ -670,7 +684,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 阶段 | 目标 | 产出 | 退出条件 | 状态 |
 |---|---|---|---|---|
 | 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；✅ P0-2 回归配置 `configs/regression.yaml` 关闭全部 LLM（含质量检查），核心集实测 LLM 请求为 0；✅ P0-3 缓存层（OCR、VLM、LLM；核心集离线回放 0 请求、输出逐字节一致，[报告](../eval_reports/2026-09-23_p0-3_cache.md)）；✅ P0-4 回归分层（`--core` 默认离线回放、`--allow-calls`、`--repeat`、多 ground truth 目录；核心集回放两次一致，整条命令 4.2 s）；✅ P0-5 冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇、提交 78556f4、两次离线回放逐项一致，[报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获 ✅；核心集回放两次一致 ✅；冻结 run 存档于本地 `eval_runs/`（不入 git）✅ | ✅ |
-| 1 文档工具包 v1 | 建立数据模型、约束与工具 | `ir/`、`workspace/`、`tables/`、`scheduling/`、`accounting/`、`cache/`；七个工具的 JSON CLI 与返回信封；三份 Skill；`layout/` 与 `routing/image.py` 影子运行；固定序列脚本（流水线运行时最小形态）在 text_table01、receipt、simple_doc01 上跑通作为工具包验收 | 单元测试覆盖五个 IR 概念、TableGrid 往返、七个工具契约；三篇在冻结 run 上不低于 v1；去向平衡；sidecar 通过 schema 校验 | ⬜ |
+| 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | ⬜ |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
 | 4 能力完善 | 按结论补齐处理能力 | 图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
@@ -688,6 +702,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 - 测试驱动：v2 新模块先写测试再写实现；测试对象是 Block 级合成输入（几行文本、一张生成图片、一个手写区域列表），整篇文档的验证交给 L1/L2。单元测试精简、全部离线；需要网络的标 `live_e2e`。
 - 删除 v1 模块前先看 §11.5：实现可以退役，正确性要求不能消失。
 - 任何让内容"消失"的分支必须产生 Decision 并被去向检查计数。
+- 所有远程调用经过 `ServiceGateway`；并发任务的结果按任务顺序生效；只对传输错误和无法解析的响应重试；已知模型约束写进配置（§8.2）。
+- 新代码不得依赖线程完成顺序、字典或集合的遍历顺序、时间戳或临时路径；同一输入必须产生逐字节相同的输出（L1 用 `--repeat 2` 检查）。
 - 提交信息说明改动针对的信号和验证范围；阶段完成时更新 §12 与 §15。
 
 ## 14. 开放问题
@@ -699,13 +715,13 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q3 | 默认 VLM | ✅ gpt-6-luna；语义提取用途阶段四复核 |
 | Q4 | 是否保留工具对比评测（LlamaParse/LiteParse）及 Node 依赖 | ✅ 暂时保留代码但冻结：随新指标更新，不进 L0/L1/L2，需要时手动跑 |
 | Q5 | `scan_engine: vlm` 在密集中文表格上的准确率是否足以作为唯一引擎 | ❓ 阶段四回答 |
-| Q6 | 本地检测器在 DOCX 嵌入的低分辨率截图上的召回率 | ❓ 阶段一回答 |
+| Q6 | 本地检测器在 DOCX 嵌入的低分辨率截图上的召回率 | ❓ 需要人工标注检测框；阶段一只汇报影子运行的检测结果，召回率挪到阶段四回答 |
 | Q7 | PDF 分片 | ✅ jobs API 19 页单次返回完整；`_BATCH_MAX_PAGES = 100`，官方页数上限未确认 |
 | Q8 | 隔离验证集的组成：按文档来源还是模板；建议先划 3 篇不同类型且不进核心集的文档 | ✅ 按来源：patent01、paper01、text_pic02；同源文档成对留在调参集；DOCX 暂缺，以后补标注 |
-| Q9 | OOXML 支持边界各项是支持、降级还是不支持 | ❓ 阶段四前决定 |
+| Q9 | OOXML 支持边界各项是支持、降级还是不支持 | ❓ 阶段四前决定；修订记录一项提前到阶段一决定（Q26） |
 | Q10 | 表格复核的触发阈值与预算占比 | ❓ 阶段四回答 |
 | Q11 | 结构分析预算：批次大小、文档级 token 上限、冲突复核次数 | ❓ 阶段四前决定 |
-| Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答 |
+| Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答；阶段一的 DOCX 先走样式与大纲级别的确定性路径（Q24） |
 | Q13 | 默认运行时：固定流水线、Codex、Claude Code、Pi，还是"默认流水线、难例交 Agent"；依据 §9.4 报告 | ❓ 阶段三回答 |
 | Q14 | 工具包对外接口：JSON CLI 是否足够，何时加 MCP | ❓ 阶段二回答 |
 | Q15 | 测试数据与结果是否入 git | ✅ 暂时只有代码与文档入 git；`eval_runs/`、`.parserx_cache/`、新的 `eval_reports/` 不入 git（已跟踪的旧报告保持现状） |
@@ -716,6 +732,10 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q20 | 复核候选由谁、何时采用 | ✅ `recognize` / `review_table` 结束时由程序同步执行选择步骤与接受门，写 Decision |
 | Q21 | 是否引入 rapidfuzz | ✅ 引入；edit_distance 改为精确计算（不再分块近似） |
 | Q22 | 冻结前是否修 v1 的"纠正后仍重试"缺陷；冻结 run 用什么响应 | ✅ 修：只在响应无法解析时重试；冻结用空缓存、全部真实请求的干净 run，作废的首次冻结改名保留、不作种子 |
+| Q23 | 阶段一的验收集是否加入扫描文档 | ❓ 建议加 ocr_scan_jtg3362（能执行、去向平衡、信息类指标不低于 v1，标题不设门槛）：原定三篇都不含扫描页，而阶段二需要扫描页工具 |
+| Q24 | 阶段一的标题来源 | ❓ 建议：DOCX 走样式与大纲级别的确定性路径；原生 PDF 用临时适配器 `adapter:v1`，复用 v1 不调用服务的标题判断，经 `apply_structure` 写入，阶段四删除。heading_f1 是阶段一的退出条件，而 §6.8 在阶段四 |
+| Q25 | P1-7 之后是否做一次工具形态试用 | ❓ 建议做：约 30 分钟、一篇文档、不调优，只检查图片是否进入视觉上下文、JSON 长度、失败信息是否可用 |
+| Q26 | DOCX 修订记录的处理 | ❓ 建议按接受全部修订的最终视图提取；被删除的文字计入账目，去向为 excluded；sidecar 标注文档含修订（依据 simple_doc01 的标注） |
 
 ## 15. 变更记录
 
@@ -736,3 +756,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-23 | v1.6 | P0-5 进行中：冻结与回放工具、隔离集清单（c154ccd）。首次冻结（27 篇，566.6 s）的离线回放中 ocr_scan_jtg3362 输出不同：v1 图片处理对 VLM 响应的解释会修改共享页面状态，结果随线程完成顺序变化（随机延迟探测 6 次出现两种输出，其中一种丢失封面三行）。修正为 VLM 调用并发、响应严格按任务顺序解释（`_run_vlm_concurrent` 轮次机制，加测试）；首次冻结 run 作废待重冻。另发现：VLM 返回纠正而无独立描述时 v1 会重试（全语料 103 次请求中 14 次），重试时因自身已抑制 OCR 文本而把本图判为已覆盖并跳过，内容丢失——已决定冻结前修复（Q22） |
 | 2026-09-23 | v1.7 | 修 v1 图片 VLM 重试：只在响应无法解析（ok=False）时重试；解析成功但无独立描述（仅纠正）时不再重试，消除全语料约 14% 的重复请求与"自身抑制后判为已覆盖"的内容丢失（jtg3362 封面三行恢复，随机延迟下输出稳定）；加测试；决定 Q22 |
 | 2026-09-23 | v1.8 | P0-5 完成、**阶段零完成**：用空缓存、全部真实请求重新冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇，提交 78556f4，工作区干净，OCR 26、VLM 89、LLM 0 次请求，197.6 s），两次独立离线回放输出与分数逐项一致；首次冻结作废改名 `.invalid`；基线报告按调参集 / 隔离集 / 公开集分列；§0.1、§0.2、§9.1 核心集表按冻结基线更新 |
+| 2026-09-24 | v1.9 | 阶段零合并到 main。阶段一分解 [v2_phase1_plan.md](v2_phase1_plan.md) 与设计修订：DOCX 直接读 OOXML（Docling 给不出节点路径、无法记账，并会丢掉修订插入的文字）；Observation 增加类型化 `TextStyle`；修订删除的文字计入账目；阶段一版面检测只做影子运行，原生 PDF 按 PyMuPDF 文本块组织；新增 `render/`、`prompts/`、`hierarchy/legality.py`、临时 `runtimes/v1_structure.py`；语义块格式与评测对齐；§8.2 与 §13 加入阶段零得出的调度和确定性规则；§9.1 更正 receipt 为原生 PDF；§12 阶段一的产出与退出条件细化；新增 Q23–Q26，Q6 挪到阶段四；§0 改为阶段一的启动清单 |

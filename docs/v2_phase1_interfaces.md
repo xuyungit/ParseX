@@ -1,6 +1,6 @@
 # 阶段一"文档工具包 v1"：模块与接口草案
 
-> 状态：**已确认**（2026-09-23）。依据 [redesign_guide.md](redesign_guide.md) §4、§5、§11.3。本文只给数据模型与接口签名，不含实现。标 **〔增补〕** / **〔偏离〕** 的地方已一并确认，并回写到指导 v1.1。字段级定义以本文为准。
+> 状态：**已确认**（2026-09-23），2026-09-24 按阶段一分解修订（标 **〔v1.9〕**，见 [v2_phase1_plan.md](v2_phase1_plan.md) §2）。依据 [redesign_guide.md](redesign_guide.md) §4、§5、§11.3。本文只给数据模型与接口签名，不含实现。标 **〔增补〕** / **〔偏离〕** 的地方已一并确认，并回写到指导 v1.1。字段级定义以本文为准。
 >
 > `TableGrid`（§3）会在阶段零 P0-1 提前落地，因为评测要用到它。
 
@@ -11,14 +11,18 @@
 | `parserx/ir/` | 五个概念 + Decision + 枚举；序列化与 schema 导出 | §2 的模型；`ir.schema.export_json_schema()` |
 | `parserx/tables/` | `TableGrid` 构建（HTML / GFM / 字符归属结果）、GFM / HTML 渲染、结构校验；跨页合并只产生候选 | `TableGrid.from_html/from_gfm/to_gfm/to_html`、`merge_candidate(a, b) -> MergeCandidate \| None` |
 | `parserx/workspace/` | 工作区持久化、事务、版本号、调用日志；概况与读取 | `Workspace.create/open`、`Workspace.txn(actor)` |
-| `parserx/content/`（最小形态） | 原生 PDF 整页提取与按框归属；paddleocr 扫描页引擎适配为 Observation；DOCX 暂经 v1 provider 适配成 Block（阶段四换成直接解析 OOXML）；选择步骤 | `extract_native(page) -> list[LedgerEntry]`、`attribute(entries, regions) -> ...`、`select(block) -> Decision` |
-| `parserx/scheduling/` | 在阶段零计数器基础上加入预算（截止时间、并发、请求数、费用，请求前预留、完成后结算）、可重试错误分类、OCR job_id 恢复 | `Scheduler.run(tasks: list[TaskSpec]) -> list[TaskOutcome]` |
+| `parserx/content/`（最小形态） | 原生 PDF 提取（阶段一按 PyMuPDF 文本块组织，版面归属在阶段四决定）；paddleocr 扫描页引擎适配为 Observation；**〔v1.9〕DOCX 直接读取 OOXML**（正文段落、表格、图片、修订最终视图、域代码结果、分页分节、样式与编号证据），不再经 Docling 适配，因为后者给不出节点路径，也无法记账；选择步骤与接受门 | `extract_pdf(doc) -> Extraction`、`extract_docx(path) -> Extraction`、`scan_pages(pages, engine) -> list[Observation]`、`select(block) -> Decision` |
+| `parserx/scheduling/` | 在阶段零的 `ServiceGateway` 上加入预算（截止时间、并发、请求数、费用，请求前预留、完成后结算）、token 用量与费用、可重试错误分类（SDK `max_retries=0`）、OCR job_id 恢复与页数校验；**〔v1.9〕`run_ordered`：并发请求，结果按任务顺序生效** | `ServiceGateway.call(...)`、`run_ordered(tasks, fetch, apply) -> list[TaskOutcome]` |
 | `parserx/cache/` | 阶段零已建；增加 `derived/` 后处理缓存 | `ResponseCache.get/put` |
+| `parserx/render/` 〔v1.9〕 | §4.5 的 Markdown 契约与 sidecar 导出（v1 的 `assembly/` 不动） | `render_markdown(state) -> str`、`export_sidecar(state) -> dict` |
+| `parserx/hierarchy/legality.py` 〔v1.9〕 | `apply_structure` 的合法性检查（§6.8 的完整实现在阶段四） | `check_changes(state, changes) -> list[Rejection]` |
+| `parserx/prompts/` 〔v1.9〕 | 工具内部 VLM 任务的提示词文件（内容哈希计入缓存键）；与面向运行时的 Skill 分开 | `load_prompt(name) -> (text, sha256)` |
 | `parserx/accounting/` | 去向账目与检查 | `check(state) -> CheckResult` |
 | `parserx/tools/` | 七个工具、统一返回信封、JSON CLI | §4、§5 |
 | `parserx/skills/` | 三份 Skill（Markdown）+ 内容哈希 | `load_skill(name) -> SkillText(text, sha256)` |
 | `parserx/layout/` + `parserx/routing/image.py` | 检测器封装、标签映射、面积统计、图片路由；**影子运行**：只写 Decision，不影响输出 | `Detector.detect(asset) -> list[Observation]`、`labels.to_kind(source, label)`、`route(asset, regions) -> RouteResult` |
-| `parserx/runtimes/pipeline.py` | 固定序列（流水线运行时的最小形态），全部通过工具函数完成 | `run(input, ws, config) -> ExportResult` |
+| `parserx/runtimes/pipeline.py` | 固定序列（流水线运行时的最小形态），全部通过工具函数完成；`pipeline: v1 \| v2` 开关，v2 返回同样的 `ParseResult` | `run(input, ws, config) -> ExportResult` |
+| `parserx/runtimes/v1_structure.py` 〔v1.9，临时〕 | 原生 PDF 的标题来源：复用 v1 不调用服务的元数据构建与章节处理，经 `apply_structure` 写入（actor `adapter:v1`）；阶段四删除（Q24） | `propose_structure(pdf_path, state) -> list[StructureChange]` |
 
 新旧路径由 `pipeline: v1 | v2` 开关切换（§12）。
 
@@ -132,10 +136,26 @@ class Observation(IRModel):
     label: str | None = None        # 〔增补〕引擎原始标签（映射前），映射只在 layout/labels.py
     text: str | None = None
     cells: TableGrid | None = None
+    style: TextStyle | None = None  # 〔v1.9〕结构证据，见下
     det_confidence: float | None = None
     rec_confidence: float | None = None   # None 表示"未知"，不表示"可信"（§4.2）
     status: ObservationStatus
     error: str | None = None        # 〔增补〕status=failed 时的原因
+```
+
+**〔v1.9〕TextStyle**：结构判断用到的排版证据（§6.8）。用类型化字段表示，不用自由字典（§4.2）。只记录来源里实际存在的值，缺失时为 None。
+
+```python
+class Numbering(IRModel):
+    num_id: str; level: int          # numbering.xml 中的编号定义与层级（这是编号层级，不是标题层级）
+    text: str | None = None          # 渲染出来的编号文字，如 "1.2.3"
+
+class TextStyle(IRModel):
+    font_size: float | None = None   # pt
+    bold: bool | None = None
+    style_name: str | None = None    # DOCX 样式名（沿 basedOn 链解析后的显示名）
+    outline_level: int | None = None # w:outlineLvl（含样式继承），0 起
+    numbering: Numbering | None = None
 ```
 
 ### 2.5 Relation
@@ -265,6 +285,8 @@ class DocumentState(IRModel):
     warnings: list[str]
     version: int                    # 每个事务 +1
 ```
+
+**修订记录 〔v1.9〕**：DOCX 按"接受全部修订"后的最终视图提取（Q26）。`w:ins` 与 `w:moveTo` 的文字进入正文；`w:del` 与 `w:moveFrom` 的文字作为账目条目，去向为 `excluded`，并配一条 `stage=exclude`、`choice=revision_deleted` 的 Decision。sidecar 的 `warnings` 注明文档含修订。`DocxAnchor.node_path` 在阶段一只到段落或单元格一级，`run_range` 可以为空。
 
 **账目单位 〔增补〕**：指导 §2.3 原则 1 所说的"已发现内容"落到这些条目：原生 PDF 的文本行、OOXML 的段落 / 表格 / 图片节点、检测区域、OCR 块。每个条目只能有一个去向，`disposition=None` 就是未归属。`check` 要求 `discovered = output + merged + duplicate + excluded + failed` 且没有未归属条目。以行而不是字符为单位，是为了让账目规模可控，同时仍能发现整行丢失。行内丢字交给评测的字符指标发现。
 
@@ -493,6 +515,16 @@ class DescribeFigureResult(IRModel):
 ```
 
 描述失败时，`semantic` 缺省、图片保留，不影响正文（§6.1）。
+
+**〔v1.9〕渲染格式**：语义块必须是紧跟在图片行之后的引用块，首行为 `> [图片语义]`，然后每项一行并标出证据层级。评测的规范化步骤（`parserx/eval/normalize.py`）会把这种结构当作图片描述剔除；换成其他写法，描述会被计入正文分数。
+
+```
+![<一句话>](images/<file>)
+
+> [图片语义] chart · 可见
+> 标题：2024 年各月产量（可见）
+> 系列 产量：1 月 120，2 月 135（可见）；3 月约 150（估读）
+```
 
 ### 5.7 apply_structure
 
