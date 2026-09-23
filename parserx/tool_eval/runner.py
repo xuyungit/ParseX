@@ -10,10 +10,9 @@ from pathlib import Path
 from parserx.eval.metrics import (
     CostMetrics,
     EvalResult,
-    compute_heading_metrics,
-    compute_residual_diagnostics,
-    compute_table_metrics,
-    compute_text_metrics,
+    evaluate_markdown,
+    fmt_metric,
+    mean_defined,
 )
 from parserx.tool_eval.adapters import (
     BuiltinDocPdfAdapter,
@@ -205,10 +204,10 @@ class MultiToolEvalRunner:
                             tool,
                             str(len(ok_records)),
                             str(failed_count),
-                            f"{_avg(ok_records, lambda r: r.metrics.text.edit_distance):.3f}",
-                            f"{_avg(ok_records, lambda r: r.metrics.text.char_f1):.3f}",
-                            f"{_avg(ok_records, lambda r: r.metrics.headings.f1):.3f}",
-                            f"{_avg(ok_records, lambda r: r.metrics.tables.cell_f1):.3f}",
+                            _avg(ok_records, lambda r: r.metrics.text.edit_distance),
+                            _avg(ok_records, lambda r: r.metrics.text.char_f1),
+                            _avg(ok_records, lambda r: r.metrics.headings.f1),
+                            _avg(ok_records, lambda r: r.metrics.tables.cell_f1),
                             str(sum(record.metrics.cost.warning_count for record in ok_records)),
                             f"{sum(record.metrics.cost.wall_time_seconds for record in ok_records):.1f}s",
                             f"`{artifact_root}`",
@@ -247,10 +246,10 @@ class MultiToolEvalRunner:
                         record.document_name,
                         record.tool,
                         record.status,
-                        f"{metrics.text.edit_distance:.3f}",
-                        f"{metrics.text.char_f1:.3f}",
-                        f"{metrics.headings.f1:.3f}",
-                        f"{metrics.tables.cell_f1:.3f}",
+                        fmt_metric(metrics.text.edit_distance),
+                        fmt_metric(metrics.text.char_f1),
+                        fmt_metric(metrics.headings.f1),
+                        fmt_metric(metrics.tables.cell_f1),
                         str(metrics.cost.warning_count),
                         f"{metrics.cost.wall_time_seconds:.1f}s",
                         f"`{record.output_path}`",
@@ -321,11 +320,10 @@ def _score_markdown(
     warnings: list[str],
     api_calls: dict[str, int],
 ) -> EvalResult:
-    return EvalResult(
-        document_name=document_name,
-        text=compute_text_metrics(output_md, expected_md),
-        headings=compute_heading_metrics(output_md, expected_md),
-        tables=compute_table_metrics(output_md, expected_md),
+    return evaluate_markdown(
+        output_md,
+        expected_md,
+        name=document_name,
         cost=CostMetrics(
             wall_time_seconds=wall_time_seconds,
             ocr_calls=api_calls.get("ocr", 0),
@@ -333,14 +331,12 @@ def _score_markdown(
             llm_calls=api_calls.get("llm", 0),
             warning_count=len(warnings),
         ),
-        warnings=list(warnings),
-        residuals=compute_residual_diagnostics(output_md, expected_md),
+        warnings=warnings,
     )
 
 
-def _avg(records: list[ToolEvalRecord], fn) -> float:
-    values = [fn(record) for record in records]
-    return sum(values) / len(values)
+def _avg(records: list[ToolEvalRecord], fn) -> str:
+    return fmt_metric(mean_defined(fn(record) for record in records))
 
 
 def _record_to_json(record: ToolEvalRecord) -> dict:

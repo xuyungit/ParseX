@@ -23,7 +23,7 @@ import logging
 import mimetypes
 import re
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from openai import OpenAI
 
@@ -112,6 +112,8 @@ class OpenAICompatibleService:
         self._unsupported: set[str] = set()
         if config.send_temperature is False:
             self._unsupported.add("temperature")
+        # Called once per network attempt; set by the request meter.
+        self.attempt_hook: Callable[[], None] | None = None
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -265,6 +267,7 @@ class OpenAICompatibleService:
         requests never send it again.
         """
         for _ in range(_MAX_PARAM_RETRIES):
+            self._note_attempt()
             try:
                 return api.create(**kwargs)
             except Exception as exc:
@@ -281,7 +284,12 @@ class OpenAICompatibleService:
                     self._model, param,
                     f"sending {renamed!r} instead" if renamed else "dropping it",
                 )
+        self._note_attempt()
         return api.create(**kwargs)
+
+    def _note_attempt(self) -> None:
+        if self.attempt_hook is not None:
+            self.attempt_hook()
 
     def _extra_request_kwargs(self) -> dict[str, Any]:
         if not self._config.extra_body:

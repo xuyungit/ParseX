@@ -14,7 +14,11 @@ class ParseResult(BaseModel):
     markdown_path: Path | None = None
     page_count: int = 0
     element_count: int = 0
-    api_calls: dict[str, int] = Field(default_factory=dict)  # {"ocr": 5, "vlm": 3, "llm": 1}
+    # Real requests recorded at the service boundary: {"ocr": 1, "vlm": 3, "llm": 0}
+    api_calls: dict[str, int] = Field(default_factory=dict)
+    api_attempts: dict[str, int] = Field(default_factory=dict)
+    ocr_pages: int = 0  # pages submitted to OCR; one batch request can carry many
+    cache_hits: dict[str, int] = Field(default_factory=dict)
     images_total: int = 0
     images_skipped: int = 0
     llm_fallback_hits: int = 0

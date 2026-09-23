@@ -38,3 +38,8 @@ ground_truth_public/*
 !ground_truth_public/header_footer_cleanup/**
 !ground_truth_public/subsets/
 !ground_truth_public/subsets/**
+
+# Eval results and response caches stay local (guide §14 Q15)
+eval_runs/
+.parserx_cache/
+eval_reports/

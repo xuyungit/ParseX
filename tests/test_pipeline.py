@@ -137,72 +137,43 @@ def test_parse_result_collects_verification_warnings(tmp_path: Path, monkeypatch
     assert any("jump from H1 to H3" in warning for warning in result.warnings)
 
 
-def test_parse_result_counts_llm_fallback_calls(tmp_path: Path, monkeypatch):
+def test_parse_result_reports_real_requests_not_fallback_hits(tmp_path: Path, monkeypatch):
+    """api_calls come from the request meter; fallback hits are counted separately."""
     from parserx.models.elements import Document, Page, PageElement
+    from parserx.scheduling import MeteredService
+
+    class _FakeLLM:
+        def complete(self, system, user, **kw):
+            return "{}"
 
     doc = Document(
         pages=[
             Page(
                 number=1,
                 elements=[
-                    PageElement(
-                        type="text",
-                        content="项目概况",
-                        metadata={"heading_level": 2, "llm_fallback_used": True},
-                    ),
-                    PageElement(type="text", content="正文内容"),
+                    PageElement(type="text", content="项目概况", metadata={"llm_fallback_used": True}),
+                    PageElement(type="text", content="适用范围", metadata={"llm_fallback_used": True}),
                 ],
             )
         ]
     )
-
     pipeline = _pipeline_no_ocr()
-    monkeypatch.setattr(pipeline, "_extract", lambda path: doc)
-    monkeypatch.setattr(pipeline, "_extract_and_describe_images", lambda d, source, images_dir: d)
+    pipeline._llm_service = MeteredService(_FakeLLM(), pipeline._meter, "llm")
 
+    def fake_run(path, output_dir):
+        pipeline._llm_service.complete("system", "one batched request")
+        return doc
+
+    monkeypatch.setattr(pipeline, "_run_pipeline", fake_run)
     dummy = tmp_path / "dummy.pdf"
     dummy.write_bytes(b"%PDF-1.4 fake")
 
-    result = pipeline.parse_result(dummy)
+    first = pipeline.parse_result(dummy)
+    second = pipeline.parse_result(dummy)  # the meter is per document
 
-    assert result.api_calls["llm"] == 1
-
-
-def test_parse_result_separates_llm_api_calls_from_fallback_hits(tmp_path: Path, monkeypatch):
-    from parserx.models.elements import Document, DocumentMetadata, Page, PageElement
-
-    doc = Document(
-        pages=[
-            Page(
-                number=1,
-                elements=[
-                    PageElement(
-                        type="text",
-                        content="项目概况",
-                        metadata={"heading_level": 2, "llm_fallback_used": True},
-                    ),
-                    PageElement(
-                        type="text",
-                        content="适用范围",
-                        metadata={"heading_level": 3, "llm_fallback_used": True},
-                    ),
-                ],
-            )
-        ],
-        metadata=DocumentMetadata(processing_stats={"llm_calls": 1}),
-    )
-
-    pipeline = _pipeline_no_ocr()
-    monkeypatch.setattr(pipeline, "_extract", lambda path: doc)
-    monkeypatch.setattr(pipeline, "_extract_and_describe_images", lambda d, source, images_dir: d)
-
-    dummy = tmp_path / "dummy.pdf"
-    dummy.write_bytes(b"%PDF-1.4 fake")
-
-    result = pipeline.parse_result(dummy)
-
-    assert result.api_calls["llm"] == 1
-    assert result.llm_fallback_hits == 2
+    assert first.api_calls == {"ocr": 0, "vlm": 0, "llm": 1}
+    assert first.llm_fallback_hits == 2
+    assert second.api_calls["llm"] == 1
 
 
 # ── Quality check (formula fragmentation detection) ──────────────────

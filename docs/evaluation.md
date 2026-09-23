@@ -63,24 +63,55 @@ $PARSERX_PRIVATE_GT_DIR/
 The directory structure should match `ground_truth_public/` so the same
 evaluation runner can be reused.
 
-## What To Measure
+## What To Measure (metric version 2.0, 2026-09-23)
 
-ParserX already computes:
-- text edit distance
-- character F1
-- heading precision / recall / F1
-- table cell F1
-- wall time
-- warning count
-- API calls (`ocr` / `vlm` / `llm`)
-- per-document `llm_fallback_hits`
+Metric definitions changed on 2026-09-23 to close the five counterexamples in
+`docs/redesign_guide.md` §9.2 (tests: `tests/test_eval_counterexamples.py`).
+Every result record carries `metric_version`; records with different versions
+are never compared, and baselines computed before 2.0 are not reused.
 
-For model-assisted features, we should also track:
-- warning count
-- `api_calls.llm`
-- `api_calls.vlm`
-- `api_calls.ocr`
-- per-document count of `llm_fallback_used`
+Reports always follow this order (guide §9.3):
+
+1. **Hard checks** — failed documents, not-executed documents (requested but
+   missing input / `expected.md`), missing tables, extra tables.
+2. **Table structure** (`parserx/eval/tables.py`) — GFM and HTML tables are
+   both parsed into `TableGrid` (`parserx/tables/`). Tables are paired by
+   cell-content similarity (pairs below 0.2 Dice count as one missing plus one
+   extra). Unpaired tables stay in the denominators. Within a pair, rows and
+   columns are aligned by dynamic programming (as in GriTS), so one inserted
+   row only costs that row. `cell_f1` counts a cell as correct when an output
+   cell sits at the aligned position with the same rowspan, colspan and
+   normalized content. Also reported: header association (data cell under the
+   same header path, punctuation-insensitive, so `A > B` equals a two-row
+   header `A` / `B`) and merged-cell accuracy. Not applicable (`—`) when
+   neither side has a table.
+3. **Text** (`parserx/eval/normalize.py`) — both sides are canonicalized:
+   HTML comments removed; tables replaced by row-major cell text (table format
+   never changes text scores); image placeholders removed and counted
+   (`![…](…)`, `> [图片] …`, and a blockquote directly after an image line —
+   descriptions are scored separately later, §9.3); NFKC; heading markers and
+   all whitespace dropped. `char_f1` is LCS-based (order-aware);
+   `char_bag_f1` keeps the old order-blind character-frequency F1 as a
+   diagnostic; `edit_distance` is exact Levenshtein / max length (rapidfuzz,
+   no chunking).
+4. **Reading order** (`parserx/eval/order.py`) — expected text is split into
+   blocks on blank lines; each block is located in the output by 8-character
+   anchors unique on both sides (median position). Reported: Kendall tau
+   (1 − 2 · pairwise inversion rate), inversions, and coverage of locatable
+   blocks.
+5. **Headings** — unchanged matching (normalized text + identical level);
+   `f1` is `—` when neither side has headings.
+6. **Key-content errors** (`parserx/eval/key_content.py`) — numbers, numbers
+   with units, negation words and dates (spellings normalized) are extracted
+   in order; token sequences are aligned by LCS and unaligned tokens are
+   counted as missing / extra per kind.
+7. **Real requests** — recorded at the service boundary by
+   `parserx/scheduling/meter.py` (one batch OCR job is one request; OCR pages
+   and network attempts reported separately), no longer inferred from elements.
+8. **Wall time**.
+9. **Cost** — `—` until token usage is recorded (Phase 1).
+
+Averages ignore documents where a metric is not applicable.
 
 ## Layered Evaluation Model
 
@@ -177,53 +208,29 @@ uv run parserx eval "$PARSERX_PRIVATE_GT_DIR" -o reports/private_eval.md
 
 ### Regression test (recommended first step)
 
-After each non-trivial parsing change, run the regression test script to
-compare current evaluation scores against the best known baseline:
-
 ```bash
-# Fast check — offline docs only, no API calls needed (~5s):
-uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
-uv run python scripts/regression_test.py --gt-dir ground_truth_public --deterministic-only
+# Specific docs, scores reported (no baseline):
+uv run python scripts/regression_test.py --include text_table01 deepseek
 
-# Full check — all docs, needs OCR/VLM/LLM services:
-uv run python scripts/regression_test.py --gt-dir ground_truth
+# Save this run's record, and compare a later run against it:
+uv run python scripts/regression_test.py --include deepseek --json-out /tmp/run.json
+uv run python scripts/regression_test.py --include deepseek --baseline /tmp/run.json
 
-# Specific docs:
-uv run python scripts/regression_test.py --gt-dir ground_truth --include text_table01 deepseek
+# Markdown report (L2 reports: eval_reports/<date>_<phase>_<topic>.md):
+uv run python scripts/regression_test.py --report eval_reports/2026-09-23_p0-1_metric_fix.md
 ```
 
-The script prints a colored diff table: green for improved metrics, red for
-regressions, and exits with code 1 if any regression exceeds tolerance
-(default 0.005).
+Exit codes: `0` pass, `1` a score regressed beyond `--tolerance` (default
+0.005; key-content error counts use 0) against `--baseline`, `2` a hard check
+failed. Hard checks: any failed or not-executed document (absolute); missing
+or extra tables above the baseline (relative; without a baseline they are only
+recorded, so a first freeze is never blocked); a baseline with a different
+`metric_version`.
 
-**Updating baseline after confirmed improvement:**
-
-```bash
-uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only --update-baseline
-```
-
-This takes the best of (current, baseline) per metric and writes it back to
-`best_scores.json`.  Baseline files live at:
-
-- `ground_truth/best_scores.json` — internal documents
-- `ground_truth_public/best_scores.json` — public documents
-
-#### Offline vs service-dependent documents
-
-Each document in `best_scores.json` has a `requires_services` field listing
-which external services (ocr, vlm, llm) are needed.  Documents with
-`requires_services: []` are **offline documents** — their results are fully
-deterministic and reproducible without any API calls.  The
-`--deterministic-only` flag selects exactly these documents.
-
-Current offline documents:
-- **Internal:** `deepseek`, `pdf_text01_tables`, `text_table01`,
-  `text_table_libreoffice`
-- **Public:** `header_footer_cleanup`
-
-When adding a new ground truth document, set `requires_services` in
-`best_scores.json` so the regression script knows whether to include it in
-offline runs.
+`--update-baseline` was removed: baselines are frozen runs outside
+`ground_truth/` (Phase 0 P0-5), and `best_scores.json` is read only by the
+deprecated `--deterministic-only` selector. Core-set tiers (`--core`,
+offline replay) arrive with the response cache (P0-3 / P0-4).
 
 ### Local iteration checklist
 
@@ -532,8 +539,9 @@ uv run python scripts/regression_test.py --gt-dir ground_truth_public --determin
 # ── Regression test (full, needs services) ──
 uv run python scripts/regression_test.py --gt-dir ground_truth
 
-# ── Update baseline after improvement ──
-uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only --update-baseline
+# ── Compare against a saved run record (replaces --update-baseline) ──
+uv run python scripts/regression_test.py --gt-dir ground_truth --json-out /tmp/run.json
+uv run python scripts/regression_test.py --gt-dir ground_truth --baseline /tmp/run.json
 
 # ── Single-config eval ──
 uv run parserx eval <gt_dir> -o <report.md>

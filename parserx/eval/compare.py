@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
-from parserx.eval.metrics import EvalResult
+from parserx.eval.metrics import EvalResult, fmt_metric, mean_defined
 from parserx.eval.reporting import ReportMetadata, append_metadata_section
 from parserx.eval.warnings import summarize_warning_types, warning_label
 
@@ -65,18 +65,22 @@ def format_compare_report(
     if not rows:
         return "No comparable results."
 
-    avg_char_a = sum(row.result_a.text.char_f1 for row in rows) / len(rows)
-    avg_char_b = sum(row.result_b.text.char_f1 for row in rows) / len(rows)
-    avg_heading_a = sum(row.result_a.headings.f1 for row in rows) / len(rows)
-    avg_heading_b = sum(row.result_b.headings.f1 for row in rows) / len(rows)
-    avg_table_a = sum(row.result_a.tables.cell_f1 for row in rows) / len(rows)
-    avg_table_b = sum(row.result_b.tables.cell_f1 for row in rows) / len(rows)
-    avg_edit_a = sum(row.result_a.text.edit_distance for row in rows) / len(rows)
-    avg_edit_b = sum(row.result_b.text.edit_distance for row in rows) / len(rows)
-    warn_a = sum(row.result_a.cost.warning_count for row in rows)
-    warn_b = sum(row.result_b.cost.warning_count for row in rows)
-    llm_a = sum(row.result_a.cost.llm_calls for row in rows)
-    llm_b = sum(row.result_b.cost.llm_calls for row in rows)
+    # (label, per-result getter, better direction) in guide §9.3 order.
+    metrics = [
+        ("Table cell F1", lambda r: r.tables.cell_f1, "higher"),
+        ("Char F1", lambda r: r.text.char_f1, "higher"),
+        ("Edit distance", lambda r: r.text.edit_distance, "lower"),
+        ("Reading order τ", lambda r: r.order.tau, "higher"),
+        ("Heading F1", lambda r: r.headings.f1, "higher"),
+    ]
+    totals = [
+        ("Missing tables", lambda r: r.tables.missing_tables),
+        ("Key content errors", lambda r: r.key_content.total),
+        ("OCR requests", lambda r: r.cost.ocr_calls),
+        ("VLM requests", lambda r: r.cost.vlm_calls),
+        ("LLM requests", lambda r: r.cost.llm_calls),
+        ("Warnings", lambda r: r.cost.warning_count),
+    ]
     time_a = sum(row.result_a.cost.wall_time_seconds for row in rows)
     time_b = sum(row.result_b.cost.wall_time_seconds for row in rows)
 
@@ -96,16 +100,18 @@ def format_compare_report(
     lines.extend([
         "## Summary",
         "",
-        "| Metric | "
-        f"{label_a} | {label_b} | Delta ({label_b}-{label_a}) | Better |",
-        "|--------|"
-        "----|----|------------------------|--------|",
-        f"| Edit distance | {avg_edit_a:.3f} | {avg_edit_b:.3f} | {avg_edit_b - avg_edit_a:+.3f} | lower |",
-        f"| Char F1 | {avg_char_a:.3f} | {avg_char_b:.3f} | {avg_char_b - avg_char_a:+.3f} | higher |",
-        f"| Heading F1 | {avg_heading_a:.3f} | {avg_heading_b:.3f} | {avg_heading_b - avg_heading_a:+.3f} | higher |",
-        f"| Table F1 | {avg_table_a:.3f} | {avg_table_b:.3f} | {avg_table_b - avg_table_a:+.3f} | higher |",
-        f"| Warnings | {warn_a} | {warn_b} | {warn_b - warn_a:+d} | lower |",
-        f"| LLM API calls | {llm_a} | {llm_b} | {llm_b - llm_a:+d} | lower |",
+        f"| Metric | {label_a} | {label_b} | Delta ({label_b}-{label_a}) | Better |",
+        "|--------|----|----|------------------------|--------|",
+    ])
+    for name, get, better in metrics:
+        a = mean_defined(get(row.result_a) for row in rows)
+        b = mean_defined(get(row.result_b) for row in rows)
+        lines.append(f"| {name} | {fmt_metric(a)} | {fmt_metric(b)} | {_delta(a, b)} | {better} |")
+    for name, get in totals:
+        a = sum(get(row.result_a) for row in rows)
+        b = sum(get(row.result_b) for row in rows)
+        lines.append(f"| {name} | {a} | {b} | {b - a:+d} | lower |")
+    lines.extend([
         f"| Wall time (s) | {time_a:.1f} | {time_b:.1f} | {time_b - time_a:+.1f} | lower |",
         "",
         f"- Char F1 improved on {improved_char} doc(s), regressed on {regressed_char}.",
@@ -145,8 +151,9 @@ def format_compare_report(
         "",
         "## Per Document",
         "",
-        "| Document | Edit Dist Δ | Char F1 Δ | Heading F1 Δ | Table F1 Δ | Warn Δ | LLM Δ | Time Δ |",
-        "|----------|-------------|-----------|--------------|------------|--------|-------|--------|",
+        "| Document | Table F1 Δ | Char F1 Δ | Edit Dist Δ | Order τ Δ | Heading F1 Δ | Key err Δ "
+        "| Warn Δ | LLM Δ | Time Δ |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ])
 
     for row in rows:
@@ -154,10 +161,12 @@ def format_compare_report(
         b = row.result_b
         lines.append(
             f"| {row.document_name} "
-            f"| {b.text.edit_distance - a.text.edit_distance:+.3f} "
-            f"| {b.text.char_f1 - a.text.char_f1:+.3f} "
-            f"| {b.headings.f1 - a.headings.f1:+.3f} "
-            f"| {b.tables.cell_f1 - a.tables.cell_f1:+.3f} "
+            f"| {_delta(a.tables.cell_f1, b.tables.cell_f1)} "
+            f"| {_delta(a.text.char_f1, b.text.char_f1)} "
+            f"| {_delta(a.text.edit_distance, b.text.edit_distance)} "
+            f"| {_delta(a.order.tau, b.order.tau)} "
+            f"| {_delta(a.headings.f1, b.headings.f1)} "
+            f"| {b.key_content.total - a.key_content.total:+d} "
             f"| {b.cost.warning_count - a.cost.warning_count:+d} "
             f"| {b.cost.llm_calls - a.cost.llm_calls:+d} "
             f"| {b.cost.wall_time_seconds - a.cost.wall_time_seconds:+.1f}s |"
@@ -165,3 +174,7 @@ def format_compare_report(
 
     lines.append("")
     return "\n".join(lines)
+
+
+def _delta(a: float | None, b: float | None) -> str:
+    return "—" if a is None or b is None else f"{b - a:+.3f}"

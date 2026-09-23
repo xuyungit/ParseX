@@ -391,7 +391,10 @@ def _cmd_eval(args: argparse.Namespace) -> None:
     )
     results = runner.evaluate_dir(args.ground_truth, include_docs=include_docs)
     report = EvalRunner.format_report(
-        results, metadata=metadata, failed_docs=runner.failed_docs,
+        results,
+        metadata=metadata,
+        failed_docs=runner.failed_docs,
+        not_executed=runner.not_executed,
     )
 
     if args.output:
@@ -400,6 +403,16 @@ def _cmd_eval(args: argparse.Namespace) -> None:
         logging.info("Report written to %s", args.output)
     else:
         print(report)
+
+    # Hard checks (failed or not-executed documents) fail the command (guide §9.2).
+    from parserx.eval.gate import evaluate_gate, run_record
+
+    outcome = evaluate_gate(
+        run_record(results, failed=runner.failed_docs, not_executed=runner.not_executed),
+        baseline=None,
+    )
+    if outcome.exit_code:
+        sys.exit(outcome.exit_code)
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:

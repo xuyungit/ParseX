@@ -33,6 +33,7 @@ from parserx.processors.text_clean import TextCleanProcessor
 from parserx.processors.vlm_review import VLMReviewProcessor
 from parserx.providers.docx import DOCXProvider
 from parserx.providers.pdf import PDFProvider
+from parserx.scheduling import MeteredService, RequestMeter
 from parserx.services.llm import create_llm_service, create_vlm_service
 from parserx.verification import (
     CompletenessChecker,
@@ -55,6 +56,8 @@ class Pipeline:
 
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config if config is not None else load_config()
+        # Real requests per document, recorded at the service boundary.
+        self._meter = RequestMeter()
         self._metadata_builder = MetadataBuilder(self._config.builders.metadata)
         self._reading_order_builder = ReadingOrderBuilder(
             self._config.processors.reading_order,
@@ -84,6 +87,7 @@ class Pipeline:
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
 
+        self._meter.reset()
         doc = self._run_pipeline(path, output_dir=None)
         markdown = self._renderer.render(doc)
         self._verify_all(doc, markdown)
@@ -101,7 +105,7 @@ class Pipeline:
             markdown=markdown,
             page_count=len(doc.pages),
             element_count=len(doc.all_elements),
-            api_calls=self._collect_api_calls(doc),
+            **self._request_stats(),
             images_total=images_total,
             images_skipped=images_skipped,
             llm_fallback_hits=llm_fallback_hits,
@@ -129,6 +133,7 @@ class Pipeline:
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
 
+        self._meter.reset()
         doc = self._run_pipeline(path, output_dir=output_dir)
         assembler = ChapterAssembler(self._config.output)
         md_path = assembler.assemble(doc, output_dir)
@@ -155,7 +160,7 @@ class Pipeline:
             markdown_path=md_path,
             page_count=len(doc.pages),
             element_count=len(doc.all_elements),
-            api_calls=self._collect_api_calls(doc),
+            **self._request_stats(),
             images_total=images_total,
             images_skipped=images_skipped,
             llm_fallback_hits=llm_fallback_hits,
@@ -449,7 +454,7 @@ class Pipeline:
         cfg = self._config.services.vlm
         if cfg.endpoint and cfg.api_key:
             log.info("VLM service configured: %s / %s", cfg.endpoint, cfg.model)
-            return create_vlm_service(cfg)
+            return MeteredService(create_vlm_service(cfg), self._meter, "vlm")
         return None
 
     def _create_ocr_builder(self) -> OCRBuilder | None:
@@ -459,10 +464,13 @@ class Pipeline:
         if not cfg.endpoint or not cfg.token:
             log.info("OCR service not configured; selective OCR disabled")
             return None
-        return OCRBuilder(
+        builder = OCRBuilder(
             cfg,
             skip_scan_image_marking=self._config.processors.image.vlm_refine_all_ocr,
         )
+        if builder._ocr is not None:
+            builder._ocr = MeteredService(builder._ocr, self._meter, "ocr")
+        return builder
 
     # ------------------------------------------------------------------
     # LLM-based page quality check
@@ -639,7 +647,7 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
         cfg = self._config.services.llm
         if cfg.endpoint and cfg.api_key:
             log.info("LLM service configured: %s / %s", cfg.endpoint, cfg.model)
-            return create_llm_service(cfg)
+            return MeteredService(create_llm_service(cfg), self._meter, "llm")
         return None
 
     def _verify_all(
@@ -679,26 +687,14 @@ Respond with ONLY valid JSON: {"has_formula_fragments": true} or {"has_formula_f
         for warning in warnings:
             log.warning("Verification: %s", warning)
 
-    def _collect_api_calls(self, doc: Document) -> dict[str, int]:
-        ocr_pages = {
-            elem.page_number for elem in doc.all_elements if elem.source == "ocr"
-        }
-        vlm_images = sum(
-            1
-            for elem in doc.elements_by_type("image")
-            if elem.metadata.get("description")
-            and not elem.metadata.get("vlm_skipped_due_to_large_text_overlap")
-        )
-        llm_calls = sum(
-            1
-            for elem in doc.all_elements
-            if elem.metadata.get("llm_fallback_used")
-        )
-        llm_calls = doc.metadata.processing_stats.get("llm_calls", llm_calls)
+    def _request_stats(self) -> dict:
+        """ParseResult fields from the real-request meter."""
+        snap = self._meter.snapshot()
         return {
-            "ocr": len(ocr_pages),
-            "vlm": vlm_images,
-            "llm": llm_calls,
+            "api_calls": {svc: snap.requests.get(svc, 0) for svc in ("ocr", "vlm", "llm")},
+            "api_attempts": snap.attempts,
+            "ocr_pages": snap.pages.get("ocr", 0),
+            "cache_hits": snap.cache_hits,
         }
 
     def _build_processors(self) -> list[Processor]:

@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -97,6 +97,8 @@ class PaddleOCRService:
         self._model = cfg.model
         self._max_retries = 3
         self._timeout = 600  # Budget (s) for queue-full waits and for polling
+        # Called once per network attempt; set by the request meter.
+        self.attempt_hook: Callable[[], None] | None = None
 
     def recognize(self, image_path: Path) -> OCRResult:
         """OCR a single image."""
@@ -116,6 +118,8 @@ class PaddleOCRService:
     def _run_with_retries(self, file_bytes: bytes, filename: str, mime: str) -> dict:
         """Run one job, retrying transient failures with exponential backoff."""
         for attempt in range(1, self._max_retries + 1):
+            if self.attempt_hook is not None:
+                self.attempt_hook()
             try:
                 return self._run_job(file_bytes, filename, mime)
             except Exception as exc:

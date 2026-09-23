@@ -1,28 +1,63 @@
-"""Evaluation metrics for document parsing quality.
+"""Evaluation metrics for document parsing quality (metric version 2.0).
 
-Metrics:
-- Text: normalized edit distance, character-level precision/recall
-- Headings: precision, recall, F1 of detected headings
-- Cost: API call counts, processing time
+Report order (guide §9.3): hard checks → table structure → char_f1 and edit
+distance → reading order → headings → key-content errors → real requests →
+time → cost.  Text-side normalization lives in ``parserx.eval.normalize``.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from typing import Iterable
 
+from rapidfuzz.distance import LCSseq, Levenshtein
+
+from parserx.eval.key_content import KeyContentMetrics, compute_key_content_errors
+from parserx.eval.normalize import canonicalize, char_sequence
+from parserx.eval.order import OrderMetrics, compute_order_metrics
+from parserx.eval.tables import TableMetrics, compute_table_metrics
 from parserx.text_utils import compute_edit_distance, normalize_for_comparison
+
+# Bump whenever a metric definition changes; results with different versions
+# are never compared against each other.
+METRIC_VERSION = "2.0"
+
+__all__ = [
+    "METRIC_VERSION",
+    "CostMetrics",
+    "EvalResult",
+    "HeadingMetrics",
+    "KeyContentMetrics",
+    "OrderMetrics",
+    "TableMetrics",
+    "TextMetrics",
+    "compute_edit_distance",
+    "compute_heading_metrics",
+    "compute_key_content_errors",
+    "compute_order_metrics",
+    "compute_residual_diagnostics",
+    "compute_table_metrics",
+    "compute_text_metrics",
+    "evaluate_markdown",
+    "fmt_metric",
+    "mean_defined",
+]
 
 
 @dataclass
 class TextMetrics:
-    """Text extraction quality metrics."""
+    """Order-aware text quality on canonicalized text (see parserx.eval.normalize)."""
 
-    edit_distance: float = 0.0  # Normalized edit distance (0 = identical, 1 = completely different)
-    char_precision: float = 0.0  # What fraction of output chars are in ground truth
-    char_recall: float = 0.0  # What fraction of ground truth chars are in output
+    edit_distance: float = 0.0  # exact Levenshtein / max length (0 = identical)
+    char_precision: float = 0.0  # LCS / output length
+    char_recall: float = 0.0  # LCS / expected length
     char_f1: float = 0.0
+    char_bag_f1: float = 0.0  # order-blind character-frequency F1 (diagnostic only)
+    images_expected: int = 0  # image placeholders removed before scoring
+    images_output: int = 0
 
 
 @dataclass
@@ -31,33 +66,24 @@ class HeadingMetrics:
 
     precision: float = 0.0  # What fraction of detected headings are correct
     recall: float = 0.0  # What fraction of ground truth headings were detected
-    f1: float = 0.0
+    f1: float | None = 0.0  # None: no headings on either side
     detected_count: int = 0
     expected_count: int = 0
     correct_count: int = 0
 
 
 @dataclass
-class TableMetrics:
-    """Table extraction quality metrics."""
-
-    detected_count: int = 0
-    expected_count: int = 0
-    matched_count: int = 0  # Tables matched by column count
-    cell_precision: float = 0.0  # What fraction of output cells are correct
-    cell_recall: float = 0.0  # What fraction of expected cells were found
-    cell_f1: float = 0.0
-    column_accuracy: float = 0.0  # Fraction of tables with correct column count
-
-
-@dataclass
 class CostMetrics:
-    """Processing cost metrics."""
+    """Processing cost metrics.  Call counts are real requests recorded at the service boundary."""
 
     wall_time_seconds: float = 0.0
     ocr_calls: int = 0
     vlm_calls: int = 0
     llm_calls: int = 0
+    ocr_pages: int = 0  # pages submitted to OCR (one batch request can carry many)
+    attempts: dict[str, int] = field(default_factory=dict)
+    cache_hits: dict[str, int] = field(default_factory=dict)
+    cost_usd: float | None = None  # token usage is recorded from Phase 1 on
     warning_count: int = 0
     llm_fallback_hits: int = 0
     pages_processed: int = 0
@@ -93,46 +119,43 @@ class EvalResult:
     text: TextMetrics = field(default_factory=TextMetrics)
     headings: HeadingMetrics = field(default_factory=HeadingMetrics)
     tables: TableMetrics = field(default_factory=TableMetrics)
+    order: OrderMetrics = field(default_factory=OrderMetrics)
+    key_content: KeyContentMetrics = field(default_factory=KeyContentMetrics)
     cost: CostMetrics = field(default_factory=CostMetrics)
     warnings: list[str] = field(default_factory=list)
     residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
-
-
-# ── Edit distance ───────────────────────────────────────────────────────
 
 
 # ── Text metrics ────────────────────────────────────────────────────────
 
 
 def compute_text_metrics(output: str, expected: str) -> TextMetrics:
-    """Compute text quality metrics by comparing output to expected."""
-    edit_dist = compute_edit_distance(output, expected)
+    """Order-aware character metrics on canonicalized text."""
+    out_canon = canonicalize(output)
+    exp_canon = canonicalize(expected)
+    out_seq = char_sequence(out_canon.text)
+    exp_seq = char_sequence(exp_canon.text)
+    images = {"images_expected": exp_canon.image_count, "images_output": out_canon.image_count}
 
-    # Character-level precision/recall using set intersection
-    out_chars = set(enumerate(output))  # (position, char) pairs won't work for set comparison
-    # Use character frequency comparison instead
-    out_norm = normalize_for_comparison(output)
-    exp_norm = normalize_for_comparison(expected)
+    if not out_seq and not exp_seq:
+        return TextMetrics(char_precision=1.0, char_recall=1.0, char_f1=1.0, char_bag_f1=1.0, **images)
+    if not out_seq or not exp_seq:
+        return TextMetrics(edit_distance=1.0, **images)
 
-    if not exp_norm and not out_norm:
-        return TextMetrics(edit_distance=0.0, char_precision=1.0, char_recall=1.0, char_f1=1.0)
-
-    # Count character overlap
-    from collections import Counter
-    out_counter = Counter(out_norm)
-    exp_counter = Counter(exp_norm)
-
-    common = sum((out_counter & exp_counter).values())
-    precision = common / max(sum(out_counter.values()), 1)
-    recall = common / max(sum(exp_counter.values()), 1)
-    f1 = 2 * precision * recall / max(precision + recall, 1e-10)
-
+    lcs = LCSseq.similarity(out_seq, exp_seq)
+    common = sum((Counter(out_seq) & Counter(exp_seq)).values())
     return TextMetrics(
-        edit_distance=edit_dist,
-        char_precision=round(precision, 4),
-        char_recall=round(recall, 4),
-        char_f1=round(f1, 4),
+        edit_distance=round(Levenshtein.distance(out_seq, exp_seq) / max(len(out_seq), len(exp_seq)), 4),
+        char_precision=round(lcs / len(out_seq), 4),
+        char_recall=round(lcs / len(exp_seq), 4),
+        char_f1=round(_f1(lcs / len(out_seq), lcs / len(exp_seq)), 4),
+        char_bag_f1=round(_f1(common / len(out_seq), common / len(exp_seq)), 4),
+        **images,
     )
+
+
+def _f1(precision: float, recall: float) -> float:
+    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
 
 def compute_residual_diagnostics(output: str, expected: str) -> ResidualDiagnostics:
@@ -208,7 +231,9 @@ def compute_heading_metrics(
     expected = _extract_headings(expected_md)
 
     if not expected:
+        # Nothing to find: not applicable when nothing was emitted either.
         return HeadingMetrics(
+            f1=None if not detected else 0.0,
             detected_count=len(detected),
             expected_count=0,
         )
@@ -312,120 +337,36 @@ def _infer_residual_themes(
     return deduped
 
 
-# ── Table metrics ──────────────────────────────────────────────────────
+# ── Whole-document evaluation ───────────────────────────────────────────
 
 
-def _extract_tables(markdown: str) -> list[list[list[str]]]:
-    """Extract tables from markdown as list of 2D grids.
-
-    Each table is a list of rows, each row a list of cell strings.
-    Skips the separator row (|---|---|).
-    """
-    tables: list[list[list[str]]] = []
-    current_table: list[list[str]] = []
-    in_table = False
-
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("|") and stripped.endswith("|"):
-            # Skip separator rows
-            if re.match(r"^\|[\s\-:|]+(\|[\s\-:|]+)+\|$", stripped):
-                continue
-            cells = [c.strip() for c in stripped[1:-1].split("|")]
-            current_table.append(cells)
-            in_table = True
-        else:
-            if in_table and current_table:
-                tables.append(current_table)
-                current_table = []
-            in_table = False
-
-    if current_table:
-        tables.append(current_table)
-
-    return tables
-
-
-def _normalize_cell(text: str) -> str:
-    """Normalize cell text for comparison."""
-    return re.sub(r"\s+", "", text).lower()
-
-
-def _table_cells_to_set(tables: list[list[list[str]]]) -> set[str]:
-    """Convert all table cells to a set of (table_idx, row, col, normalized_text) keys."""
-    cells = set()
-    for t_idx, table in enumerate(tables):
-        for r_idx, row in enumerate(table):
-            for c_idx, cell in enumerate(row):
-                norm = _normalize_cell(cell)
-                if norm:  # Skip empty cells
-                    cells.add(f"{t_idx}:{r_idx}:{c_idx}:{norm}")
-    return cells
-
-
-def compute_table_metrics(
-    output_md: str, expected_md: str,
-) -> TableMetrics:
-    """Compare extracted tables against ground truth tables.
-
-    Matches tables by order (first output table vs first expected table, etc.)
-    then computes cell-level precision/recall/F1.
-
-    Also checks column count accuracy as a structural metric.
-    """
-    detected_tables = _extract_tables(output_md)
-    expected_tables = _extract_tables(expected_md)
-
-    if not expected_tables and not detected_tables:
-        return TableMetrics()
-
-    if not expected_tables:
-        return TableMetrics(detected_count=len(detected_tables))
-
-    if not detected_tables:
-        return TableMetrics(expected_count=len(expected_tables))
-
-    # Match tables by order, compute per-matched-pair cell overlap
-    n_match = min(len(detected_tables), len(expected_tables))
-    col_correct = 0
-    total_out_cells = 0
-    total_exp_cells = 0
-    total_common = 0
-
-    for i in range(n_match):
-        det = detected_tables[i]
-        exp = expected_tables[i]
-
-        # Column count check
-        det_cols = max((len(r) for r in det), default=0)
-        exp_cols = max((len(r) for r in exp), default=0)
-        if det_cols == exp_cols:
-            col_correct += 1
-
-        # Cell-level comparison using normalized text multiset
-        from collections import Counter
-        det_cells = Counter(
-            _normalize_cell(c) for row in det for c in row if _normalize_cell(c)
-        )
-        exp_cells = Counter(
-            _normalize_cell(c) for row in exp for c in row if _normalize_cell(c)
-        )
-
-        common = sum((det_cells & exp_cells).values())
-        total_common += common
-        total_out_cells += sum(det_cells.values())
-        total_exp_cells += sum(exp_cells.values())
-
-    precision = total_common / max(total_out_cells, 1)
-    recall = total_common / max(total_exp_cells, 1)
-    f1 = 2 * precision * recall / max(precision + recall, 1e-10)
-
-    return TableMetrics(
-        detected_count=len(detected_tables),
-        expected_count=len(expected_tables),
-        matched_count=n_match,
-        cell_precision=round(precision, 4),
-        cell_recall=round(recall, 4),
-        cell_f1=round(f1, 4),
-        column_accuracy=round(col_correct / max(n_match, 1), 4),
+def evaluate_markdown(
+    output_md: str,
+    expected_md: str,
+    *,
+    name: str = "",
+    cost: CostMetrics | None = None,
+    warnings: list[str] | None = None,
+) -> EvalResult:
+    """All metrics for one document; the single entry point for eval, compare and tool-eval."""
+    return EvalResult(
+        document_name=name,
+        text=compute_text_metrics(output_md, expected_md),
+        headings=compute_heading_metrics(output_md, expected_md),
+        tables=compute_table_metrics(output_md, expected_md),
+        order=compute_order_metrics(output_md, expected_md),
+        key_content=compute_key_content_errors(output_md, expected_md),
+        cost=cost or CostMetrics(),
+        warnings=list(warnings or []),
+        residuals=compute_residual_diagnostics(output_md, expected_md),
     )
+
+
+def mean_defined(values: Iterable[float | None]) -> float | None:
+    """Mean over the values that are defined; None when none are."""
+    defined = [v for v in values if v is not None]
+    return sum(defined) / len(defined) if defined else None
+
+
+def fmt_metric(value: float | None, digits: int = 3) -> str:
+    return "—" if value is None else f"{value:.{digits}f}"

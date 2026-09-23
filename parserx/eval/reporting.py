@@ -17,7 +17,10 @@ def build_config_report_metadata(
     overrides: Sequence[str] | None = None,
 ) -> ReportMetadata:
     """Summarize the resolved runtime config for report headers."""
+    from parserx.eval.metrics import METRIC_VERSION
+
     metadata: ReportMetadata = []
+    metadata.append(("Metric version", METRIC_VERSION))
     metadata.append(("Config source", _format_config_source(loaded)))
     metadata.append(("Overrides", ", ".join(overrides) if overrides else "(none)"))
     metadata.append(("PDF provider", config.providers.pdf.engine))

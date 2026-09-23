@@ -1,258 +1,158 @@
 #!/usr/bin/env python3
-"""Regression test — compare current eval scores against best known baseline.
+"""Regression test with hard checks (metric version 2.0, guide §9).
+
+Exit codes: 0 pass · 1 metric regression against --baseline · 2 hard check
+failed (failed / not-executed documents, more missing or extra tables than the
+baseline, or a baseline computed with a different metric version).
+
+Baselines are result records (``--json-out``) or frozen run directories; the
+old ``ground_truth/best_scores.json`` is never written and no longer gates.
 
 Usage:
-    # Fast check (deterministic docs only, no API calls needed):
-    uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only
+    # Specific docs, report only (no baseline yet):
+    uv run python scripts/regression_test.py --include text_table01 deepseek
 
-    # Full eval (needs OCR/VLM/LLM services):
-    uv run python scripts/regression_test.py --gt-dir ground_truth
+    # Save the run record, then compare a later run against it:
+    uv run python scripts/regression_test.py --include deepseek --json-out /tmp/run.json
+    uv run python scripts/regression_test.py --include deepseek --baseline /tmp/run.json
 
-    # Specific docs:
-    uv run python scripts/regression_test.py --gt-dir ground_truth --include text_table01 deepseek
-
-    # Update baseline after confirmed improvement:
-    uv run python scripts/regression_test.py --gt-dir ground_truth --deterministic-only --update-baseline
+    # Markdown report (L2 reports go to eval_reports/, named with date and phase):
+    uv run python scripts/regression_test.py --report eval_reports/2026-09-23_p0-1_x.md
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 # Suppress PyMuPDF layout analyzer suggestion.
-import os
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 
 from parserx.config.schema import load_config_with_result
+from parserx.eval.gate import EXIT_HARD_FAILURE, evaluate_gate, load_record, run_record
+from parserx.eval.metrics import fmt_metric
+from parserx.eval.reporting import build_config_report_metadata
 from parserx.eval.runner import EvalRunner
-
-
-# ── ANSI colors ──────────────────────────────────────────────────────────
 
 _GREEN = "\033[32m"
 _RED = "\033[31m"
 _YELLOW = "\033[33m"
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
-_DIM = "\033[2m"
-
-METRIC_KEYS = ["edit_distance", "char_f1", "heading_f1", "table_cell_f1"]
-
-# edit_distance: lower is better; others: higher is better.
-_HIGHER_IS_BETTER = {"char_f1", "heading_f1", "table_cell_f1"}
 
 
-def load_baseline(gt_dir: Path) -> dict:
+def _deterministic_docs(gt_dir: Path) -> set[str]:
+    """Deprecated selector: docs marked ``requires_services: []`` in best_scores.json (read-only)."""
     path = gt_dir / "best_scores.json"
     if not path.exists():
-        print(f"{_YELLOW}Warning: {path} not found — no baseline to compare.{_RESET}")
-        return {}
-    return json.loads(path.read_text())
+        return set()
+    docs = json.loads(path.read_text()).get("documents", {})
+    return {name for name, scores in docs.items() if not scores.get("requires_services")}
 
 
-def save_baseline(gt_dir: Path, baseline: dict) -> None:
-    path = gt_dir / "best_scores.json"
-    path.write_text(json.dumps(baseline, indent=2, ensure_ascii=False) + "\n")
-    print(f"{_GREEN}Baseline updated: {path}{_RESET}")
-
-
-def result_to_scores(result) -> dict:
-    return {
-        "edit_distance": round(result.text.edit_distance, 3),
-        "char_f1": round(result.text.char_f1, 3),
-        "heading_f1": round(result.headings.f1, 3),
-        "table_cell_f1": round(result.tables.cell_f1, 3),
-    }
-
-
-def compare_scores(
-    current: dict, baseline: dict, tolerance: float,
-) -> list[tuple[str, float, float, str]]:
-    """Compare current vs baseline. Returns list of (metric, current, baseline, status)."""
-    comparisons = []
-    for key in METRIC_KEYS:
-        cur = current.get(key, 0.0)
-        base = baseline.get(key, 0.0)
-        delta = cur - base
-
-        if key in _HIGHER_IS_BETTER:
-            if delta < -tolerance:
-                status = "regression"
-            elif delta > tolerance:
-                status = "improved"
-            else:
-                status = "ok"
-        else:
-            # edit_distance: lower is better
-            if delta > tolerance:
-                status = "regression"
-            elif delta < -tolerance:
-                status = "improved"
-            else:
-                status = "ok"
-
-        comparisons.append((key, cur, base, status))
-    return comparisons
-
-
-def format_delta(cur: float, base: float, key: str) -> str:
-    delta = cur - base
-    if abs(delta) < 0.0005:
-        return f"{_DIM}  ={_RESET}"
-    sign = "+" if delta > 0 else ""
-    # Color based on whether delta is good or bad
-    if key in _HIGHER_IS_BETTER:
-        color = _GREEN if delta > 0 else _RED
-    else:
-        color = _RED if delta > 0 else _GREEN
-    return f"{color}{sign}{delta:.3f}{_RESET}"
+def _print_results(record: dict) -> None:
+    header = (
+        f"{'Document':<28} {'miss/extra':>10} {'table_f1':>8} {'char_f1':>8} {'edit':>6} "
+        f"{'order_τ':>8} {'head_f1':>8} {'key_err':>7} {'O/V/L':>9} {'time':>7}"
+    )
+    print(f"{_BOLD}{header}{_RESET}")
+    print("-" * len(header))
+    for name, s in sorted(record["documents"].items()):
+        req = s["requests"]
+        print(
+            f"{name:<28} {s['missing_tables']:>4}/{s['extra_tables']:<5} "
+            f"{fmt_metric(s['table_cell_f1']):>8} {s['char_f1']:>8.3f} {s['edit_distance']:>6.3f} "
+            f"{fmt_metric(s['order_tau']):>8} {fmt_metric(s['heading_f1']):>8} {s['key_errors']:>7} "
+            f"{req['ocr']:>3}/{req['vlm']}/{req['llm']:<3} {s['wall_time_seconds']:>6.1f}s"
+        )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Regression test against best known scores")
+    parser = argparse.ArgumentParser(description="Regression test with hard checks (metric v2.0)")
     parser.add_argument("--gt-dir", type=Path, default=Path("ground_truth"),
                         help="Ground truth directory (default: ground_truth)")
     parser.add_argument("--include", nargs="*", help="Only test these documents")
     parser.add_argument("--deterministic-only", action="store_true",
-                        help="Only test documents that need 0 API calls")
+                        help="Deprecated: documents marked requires_services: [] in best_scores.json")
     parser.add_argument("--tolerance", type=float, default=0.005,
-                        help="Tolerance for metric comparison (default: 0.005)")
-    parser.add_argument("--update-baseline", action="store_true",
-                        help="Update baseline with current scores (only for improvements)")
+                        help="Tolerance for score comparison against the baseline (default: 0.005)")
     parser.add_argument("--config", type=Path, default=None,
                         help="Config file (default: auto-detect)")
+    parser.add_argument("--baseline", type=Path, default=None,
+                        help="Result record JSON or frozen run directory to compare against")
+    parser.add_argument("--json-out", type=Path, default=None, help="Write this run's result record")
+    parser.add_argument("--report", type=Path, default=None, help="Write the Markdown report")
     args = parser.parse_args()
 
     gt_dir = args.gt_dir.resolve()
     if not gt_dir.exists():
         print(f"{_RED}Error: {gt_dir} does not exist{_RESET}")
-        sys.exit(1)
+        sys.exit(EXIT_HARD_FAILURE)
 
-    # Load baseline
-    baseline_data = load_baseline(gt_dir)
-    baseline_docs = baseline_data.get("documents", {})
-
-    # Determine which docs to evaluate
     if args.include:
-        include_set = set(args.include)
+        include_set: set[str] | None = set(args.include)
     elif args.deterministic_only:
-        # Select documents with requires_services: [] (no API calls needed)
-        include_set = {
-            name for name, scores in baseline_docs.items()
-            if not scores.get("requires_services")
-        }
+        include_set = _deterministic_docs(gt_dir)
         if not include_set:
             print(f"{_YELLOW}No offline documents found (requires_services: []).{_RESET}")
-            sys.exit(1)
+            sys.exit(EXIT_HARD_FAILURE)
     else:
-        include_set = None  # all docs
+        include_set = None
 
-    # Load config and run evaluation
+    baseline = load_record(args.baseline) if args.baseline else None
+
     config_result = load_config_with_result(args.config)
     runner = EvalRunner(config_result.config)
-
     print(f"{_BOLD}Running evaluation on {gt_dir.name}...{_RESET}")
     if include_set:
         print(f"  Documents: {', '.join(sorted(include_set))}")
     print()
 
     results = runner.evaluate_dir(gt_dir, include_docs=include_set)
+    record = run_record(results, failed=runner.failed_docs, not_executed=runner.not_executed)
 
-    if not results and not runner.failed_docs:
-        print(f"{_YELLOW}No documents evaluated.{_RESET}")
-        sys.exit(0)
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        metadata = build_config_report_metadata(config_result.config, loaded=config_result)
+        args.report.write_text(
+            EvalRunner.format_report(
+                results,
+                metadata=metadata,
+                failed_docs=runner.failed_docs,
+                not_executed=runner.not_executed,
+            ),
+            encoding="utf-8",
+        )
 
-    # Compare against baseline
-    has_regression = False
-    has_improvement = False
-    updated_docs = {}
+    if record["documents"]:
+        _print_results(record)
 
-    # Header
-    print(f"{_BOLD}{'Document':<30} {'Metric':<18} {'Current':>8} {'Best':>8} {'Delta':>10}{_RESET}")
+    outcome = evaluate_gate(record, baseline, tolerance=args.tolerance)
     print("-" * 80)
-
-    for result in sorted(results, key=lambda r: r.document_name):
-        name = result.document_name
-        current = result_to_scores(result)
-        base = baseline_docs.get(name, {})
-
-        if not base:
-            # New document, no baseline yet
-            print(f"{_BOLD}{name:<30}{_RESET} {_YELLOW}(new — no baseline){_RESET}")
-            for key in METRIC_KEYS:
-                print(f"{'':>30} {key:<18} {current[key]:>8.3f}")
-            updated_docs[name] = current
-            continue
-
-        comparisons = compare_scores(current, base, args.tolerance)
-        doc_has_regression = any(s == "regression" for _, _, _, s in comparisons)
-        doc_has_improvement = any(s == "improved" for _, _, _, s in comparisons)
-
-        if doc_has_regression:
-            has_regression = True
-        if doc_has_improvement:
-            has_improvement = True
-
-        first = True
-        for key, cur, bs, status in comparisons:
-            doc_label = f"{_BOLD}{name}{_RESET}" if first else ""
-            first = False
-
-            delta_str = format_delta(cur, bs, key)
-
-            if status == "regression":
-                marker = f"{_RED}REGRESSED{_RESET}"
-            elif status == "improved":
-                marker = f"{_GREEN}IMPROVED{_RESET}"
-            else:
-                marker = ""
-
-            print(f"{doc_label:<40} {key:<18} {cur:>8.3f} {bs:>8.3f} {delta_str:>20} {marker}")
-
-        # Track best scores for update
-        merged = dict(base)
-        for key in METRIC_KEYS:
-            cur = current[key]
-            bs = base.get(key, 0.0)
-            if key in _HIGHER_IS_BETTER:
-                merged[key] = max(cur, bs)
-            else:
-                merged[key] = min(cur, bs)
-        updated_docs[name] = merged
-
-        print()
-
-    # Failed docs
-    if runner.failed_docs:
-        print(f"\n{_RED}Failed documents:{_RESET}")
-        for name, error in runner.failed_docs:
-            print(f"  {name}: {error}")
-
-    # Summary
-    print("-" * 80)
-    if has_regression:
-        print(f"{_RED}{_BOLD}REGRESSION DETECTED{_RESET}")
-    elif has_improvement:
-        print(f"{_GREEN}{_BOLD}All clear — some metrics improved!{_RESET}")
+    print(f"{_BOLD}Hard checks{_RESET}")
+    if outcome.hard_failures:
+        for line in outcome.hard_failures:
+            print(f"  {_RED}✗ {line}{_RESET}")
     else:
-        print(f"{_GREEN}{_BOLD}All clear — no regressions.{_RESET}")
+        print(f"  {_GREEN}✓ no failed or unexecuted documents{_RESET}")
+    for line in outcome.notes:
+        print(f"  {_YELLOW}· {line}{_RESET}")
+    if baseline is None:
+        print(f"{_YELLOW}No baseline given: scores reported, not compared.{_RESET}")
+    for line in outcome.regressions:
+        print(f"  {_RED}REGRESSED {line}{_RESET}")
+    for line in outcome.improvements:
+        print(f"  {_GREEN}IMPROVED  {line}{_RESET}")
 
-    # Update baseline if requested
-    if args.update_baseline and (has_improvement or not baseline_docs):
-        from datetime import date
-        new_baseline = {
-            "_meta": {
-                **baseline_data.get("_meta", {}),
-                "updated": str(date.today()),
-            },
-            "documents": {**baseline_docs, **updated_docs},
-        }
-        save_baseline(gt_dir, new_baseline)
-
-    sys.exit(1 if has_regression else 0)
+    verdict = {0: f"{_GREEN}PASS", 1: f"{_RED}REGRESSION DETECTED", 2: f"{_RED}HARD CHECK FAILED"}
+    print(f"{_BOLD}{verdict[outcome.exit_code]}{_RESET} (exit {outcome.exit_code})")
+    sys.exit(outcome.exit_code)
 
 
 if __name__ == "__main__":

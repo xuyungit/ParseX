@@ -1,6 +1,6 @@
 # ParserX v2 设计与研发指导
 
-> **文档状态**：v1.0，2026-09-23 重新整理（此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> **文档状态**：v1.2，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
 > 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
 >
 > 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
@@ -11,8 +11,8 @@
 
 - **外部依赖已全部确定**：OCR 走 AI Studio jobs API（PaddleOCR-VL-1.6）；LLM/VLM 走官方 OpenAI 端点，VLM 为 gpt-6-luna，LLM 暂为 gpt-5.4-mini；`services/llm.py` 已适配推理模型。`uv run python scripts/check_services.py` 三项通过。
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
-- **阶段零 🟡**（端点切换、OCR 恢复、`llm.py` 适配已完成；验收工具修复、回归分层、缓存未开始），阶段一至五 ⬜。
-- **测试基线**：离线单元测试 432 通过、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
+- **阶段零 🟡**（端点切换、OCR 恢复、`llm.py` 适配、P0-1 验收工具修复已完成；回归配置、缓存、回归分层、冻结基线未开始），阶段一至五 ⬜。分解见 [v2_phase0_plan.md](v2_phase0_plan.md)，阶段一接口见 [v2_phase1_interfaces.md](v2_phase1_interfaces.md)，两者 2026-09-23 已确认。
+- **测试基线**：离线单元测试 468 通过（P0-1 后；此前 432）、4 个既有失败（`test_image_processor` 1、`test_line_unwrap` 2、`test_verification` 1），在提交 87ef225 上同样失败，属于将被替换的 v1 处理器，阶段零不修，其承载的正确性要求已登记到 §11.5。
 - **工作区未提交**：`services/ocr.py` 重写、`services/llm.py` 与 `config/schema.py` 改动、`parserx.yaml`、`.env.example`、README、本文档、`scripts/check_services.py`、`configs/regression_core.txt`、两份 eval_reports。建议开新会话前先提交一次。
 
 ### 0.2 新会话启动清单
@@ -32,6 +32,8 @@
 - [requirements.md](requirements.md)：痛点 P1–P19 与设计目标仍然有效。
 - [iteration_history.md](iteration_history.md)、[iteration_backlog.md](iteration_backlog.md)：v1 的 33 次迭代记录，已冻结。
 - [evaluation.md](evaluation.md)：指标定义，按 §9.2 修复。
+- [v2_phase0_plan.md](v2_phase0_plan.md)：阶段零剩余任务分解（改动文件、测试、验收、顺序）。
+- [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
 - [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
 
 ## 1. 背景与根因
@@ -153,7 +155,7 @@ flowchart TD
 | 概念 | 表达什么 | 关键字段 |
 |---|---|---|
 | **Block** 内容块 | 段落、标题、列表、表格、图、公式、图注、页眉页脚等逻辑内容 | `id`、`kind`、`order`、`text`、`cells`、`level`、`semantic`、`status`、`chosen_observation` |
-| **SourceAnchor** 来源定位 | 内容在原文件里的位置 | PDF：`page`、`bbox`、`coord_space`（`page_pt` / `image_px`）、`image_size`、`transform`；DOCX：`part`、`node_path`、`run_range`。一个 Block 可有多个 anchor |
+| **SourceAnchor** 来源定位 | 内容在原文件里的位置 | PDF：`page`、`bbox`、`coord_space`（`page_pt` / `image_px`）、`image_size`、`transform`；DOCX：`part`、`node_path`、`run_range`；嵌入图片内的区域：`asset`、`bbox`（image_px）、`image_size`、`transform`（原图位置记在 Asset 上）。一个 Block 可有多个 anchor |
 | **Observation** 识别记录 | 某个引擎对某个 anchor 的一次识别结果 | `engine`、`engine_version`、`raw_ref`（原始响应缓存键）、`text`/`cells`、`det_confidence`、`rec_confidence`、`status`（ok / empty / failed / skipped_budget） |
 | **Relation** 关系 | 块与块之间的结构 | `kind`（contains / follows / continues / captions / footnotes / belongs_to_section / duplicate_of）、`src`、`dst`、`confidence` |
 | **Asset** 资源 | 原图、裁剪图、渲染图 | `sha256`、`path`、`width`、`height`、`derived_from`、`transform` |
@@ -207,7 +209,9 @@ class Decision(BaseModel):
     stage: DecisionStage       # image_route / content_source / review_accept / heading_role / heading_level / exclude / budget
     choice: str
     reason: str
-    evidence: dict[str, float | str]
+    evidence: dict[str, float | int | str | bool]
+    actor: str                 # 谁做的判断：program:<模块> / pipeline / agent / tool:<名称>
+    refs: list[str] = []       # 作为证据的 Observation / Relation / Block id
 ```
 
 每个 Block 至少有一条路由 Decision；任何让内容"消失"的分支（过滤、抑制、跳过、预算截断）必须产生 Decision 并被去向检查计数。
@@ -244,16 +248,16 @@ Sidecar（与 Markdown 同名 `.blocks.json`）：
 | `overview` | 文档 id | 页数、原生文字量、图片数、样式与编号摘要、每页状态、未解决项 | 无 | `workspace/` |
 | `read` | 页或 Block id、是否要图、上下文范围 | 原图或裁剪图、文字、坐标、邻近块 | 无 | `workspace/`、`content/` |
 | `recognize` | 页集合或区域集合、引擎 | 带 SourceAnchor 的文本、`TableGrid`、布局候选（Observation） | 写 Observation；走调度与缓存 | `content/`、`layout/` |
-| `review_table` | Block id、待核查问题 | `TableGrid` 候选、与现有结构的差异、未确定单元格 | 写候选 Observation，不改 `chosen_observation` | `tables/`、`semantic/` |
+| `review_table` | Block id、待核查问题 | `TableGrid` 候选、与现有结构的差异、未确定单元格、接受门逐项结果 | 写候选 Observation；工具结束时由程序执行选择步骤（接受门），模型不能直接改 `chosen_observation` | `tables/`、`semantic/` |
 | `describe_figure` | Block id | 可见文字、描述、推断，带证据层级 | 写 `semantic` | `semantic/` |
 | `apply_structure` | 一组变更：角色、层级、阅读顺序、Relation | 接受的变更；被合法性检查拒绝的变更及原因 | 只改 `kind`/`level`/`order`/Relation，永不改原文 | `hierarchy/`、`ir/` |
 | `check` / `export` | 文档 id | 去向平衡、非法引用、缺失资源、每页状态；最终 Markdown 与 sidecar | 写 `accounting`、`document.status` | `accounting/`、`assembly/` |
 
 ### 5.2 返回信封与批量语义
 
-- 每个工具返回统一信封：`result`、`cost`（请求数、token、费用、耗时）、`failure`（原因、可否重试）、`diff`（候选与现状的差异）、`unresolved`。运行时据此决定是否继续。
+- 每个工具返回统一信封：`result`、`cost`（请求数、token、费用、耗时）、`failures`（列表；原因、可否重试、涉及目标）、`diff`（候选与现状的差异）、`unresolved`。运行时据此决定是否继续。`recognize` 与 `review_table` 结束时由程序同步执行选择步骤，信封中报告是否采用及理由。
 - 普通批量识别在工具内部执行（分批、并发、重试、校验页数）；运行时一次要求"识别这组扫描页"，完成后集中处理异常，不逐页发起几十轮思考。
-- 工具返回中的文档文字标记为数据（§3.3 注入隔离）。
+- 工具返回中的文档文字标记为数据（§3.3 注入隔离）：统一包在 `{"doc_text": …}` 中。
 - 主 Agent 与工具内部的 OCR/VLM 调用分别计数（`stats.requests.agent` 与其余），CLI 的最终用量不涵盖工具内部的服务调用。
 
 ### 5.3 接口形态
@@ -491,8 +495,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 文档 | 代表的输入类 | 页数 | 最近一次 O/V/L 调用 | 耗时 |
 |---|---|---|---|---|
-| deepseek | 原生 PDF，确定性 | 1 | 0/0/0 | 0.5 s |
-| text_table01 | 原生 PDF 表格，确定性 | 3 | 0/0/1 | 1.3 s |
+| deepseek | 原生 PDF（矢量图预扫描每次触发 1 次 OCR 请求，结果被去重、旧计数漏记；离线回放依赖缓存） | 1 | 1/0/0 | 0.5 s |
+| text_table01 | 原生 PDF（LLM 1 次来自质量检查，回归配置中关闭） | 3 | 0/0/1 | 1.3 s |
 | receipt | 扫描小票，VLM | 3 | 1/2/0 | 2.1 s |
 | ocr_scan_jtg3362 | 扫描中文标准文档，表格 | 4 | 4/6/1 | 92 s |
 | simple_doc01 | DOCX，当前 char_f1 最差（0.457）哨兵 | | 0/0/1 | 3.4 s |
@@ -513,7 +517,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 另外 `best_scores.json` 逐指标取历史最优；`pipeline._collect_api_calls` 按元素推算调用数。修复清单（修完后 v1 基线重算，旧分数不再沿用）：
 
 1. 表格结构指标：GFM 与 HTML 先归一为 `TableGrid`，按 (row, col, rowspan, colspan, content) 配对计算单元格位置 F1，另报表头关联正确率和合并单元格正确率。
-2. 硬检查：漏表数、多余表数、失败文档数、未执行文档数；任一非零则退出码非 0，`--update-baseline` 拒绝执行。
+2. 硬检查：失败文档数、未执行文档数任一非零则退出码非 0，冻结 run 拒绝执行；漏表数、多余表数逐篇与冻结基线比较，增加才算失败，第一次冻结只记录不拦截（2026-09-23 决定，Q16）。基线不再写 `ground_truth/best_scores.json`。
 3. 阅读顺序指标：块序列的 Kendall tau 或成对逆序率；保留 edit distance。
 4. 关键内容错误统计：数字、单位、否定词、日期在输出与标注间的不一致计数。
 5. 真实请求计数：由调度层记录。
@@ -527,7 +531,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 - 图片路由单独评测：每张图片记录期望路由（SCAN / FIGURE / MIXED / UNCERTAIN / 装饰），报告混淆矩阵与"有信息图片被丢弃"数量；归入 L1。
 - 静默错误抽样：L2 每次从含数字、单位、日期的块中随机抽固定数量，人工对照原图；抽样错误率单独记录。
 - 按 AI 任务类型分别评测：转录/复核按忠实度（含"原文错误被保留"用例），描述按证据层级标注，章节按角色与层级分别计分。
-- 图片描述从 char_f1 中剔除、按语义 schema 单独打分（receipt 的 ground truth 描述句按 gpt-5.4-mini 的措辞写成，直接比对会偏向旧模型）。
+- 图片描述从 char_f1 中剔除、按语义 schema 单独打分（receipt 的 ground truth 描述句按 gpt-5.4-mini 的措辞写成，直接比对会偏向旧模型）。阶段零先做剔除：两侧的 `> [图片] …` 与 `![…](…)` 不进入文本类指标，只报告图片占位数；按 schema 打分阶段四再做（Q17）。
 - 替换一个 v1 模块时，删除只服务于其实现细节的单元测试；其承载的正确性要求先登记到 §11.5。
 
 ### 9.4 运行时对比协议（阶段三）
@@ -595,6 +599,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | pdfplumber 0.11.9 | 仅 `tool_eval/adapters.py` | 移到 `bench` 可选依赖 |
 | pypdf、llama-parse | 无引用 | 删除 |
 | rapid-layout、onnxruntime | 新增 | 阶段一 |
+| rapidfuzz | 新增（2026-09-23） | 评测的 LCS 与精确编辑距离（Q21） |
 
 ## 11. 代码迁移清单
 
@@ -662,7 +667,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 阶段 | 目标 | 产出 | 退出条件 | 状态 |
 |---|---|---|---|---|
-| 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；⬜ §9.2 指标修复与硬检查；⬜ 回归分层 `--core`；⬜ 缓存层（OCR 与 VLM）；⬜ 回归配置关闭 LLM 兜底；⬜ 用修好的指标冻结两份 v1 基线（gpt-5.4-mini、gpt-6-luna）并划出隔离验证集 | 五个反例全部被指标或硬检查捕获；核心集回放两次一致；两份冻结 run 入库 | 🟡 |
+| 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；⬜ P0-2 回归配置关闭 LLM（含质量检查）；⬜ P0-3 缓存层（OCR、VLM、LLM）；⬜ P0-4 回归分层 `--core`；⬜ P0-5 用修好的指标冻结 v1 基线（VLM gpt-6-luna）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获；核心集回放两次一致；冻结 run 存档于本地 `eval_runs/`（不入 git） | 🟡 |
 | 1 文档工具包 v1 | 建立数据模型、约束与工具 | `ir/`、`workspace/`、`tables/`、`scheduling/`、`accounting/`、`cache/`；七个工具的 JSON CLI 与返回信封；三份 Skill；`layout/` 与 `routing/image.py` 影子运行；固定序列脚本（流水线运行时最小形态）在 text_table01、receipt、simple_doc01 上跑通作为工具包验收 | 单元测试覆盖五个 IR 概念、TableGrid 往返、七个工具契约；三篇在冻结 run 上不低于 v1；去向平衡；sidecar 通过 schema 校验 | ⬜ |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
@@ -690,17 +695,24 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q1 | OCR 引擎途径 | ✅ AI Studio jobs API（PaddleOCR-VL-1.6）；`vlm` 作对照 |
 | Q2 | 默认端点 | ✅ 官方端点；中转端点仅试验 |
 | Q3 | 默认 VLM | ✅ gpt-6-luna；语义提取用途阶段四复核 |
-| Q4 | 是否保留工具对比评测（LlamaParse/LiteParse）及 Node 依赖 | ❓ |
+| Q4 | 是否保留工具对比评测（LlamaParse/LiteParse）及 Node 依赖 | ✅ 暂时保留代码但冻结：随新指标更新，不进 L0/L1/L2，需要时手动跑 |
 | Q5 | `scan_engine: vlm` 在密集中文表格上的准确率是否足以作为唯一引擎 | ❓ 阶段四回答 |
 | Q6 | 本地检测器在 DOCX 嵌入的低分辨率截图上的召回率 | ❓ 阶段一回答 |
 | Q7 | PDF 分片 | ✅ jobs API 19 页单次返回完整；`_BATCH_MAX_PAGES = 100`，官方页数上限未确认 |
-| Q8 | 隔离验证集的组成：按文档来源还是模板；建议先划 3 篇不同类型且不进核心集的文档 | ❓ |
+| Q8 | 隔离验证集的组成：按文档来源还是模板；建议先划 3 篇不同类型且不进核心集的文档 | ✅ 按来源：patent01、paper01、text_pic02；同源文档成对留在调参集；DOCX 暂缺，以后补标注 |
 | Q9 | OOXML 支持边界各项是支持、降级还是不支持 | ❓ 阶段四前决定 |
 | Q10 | 表格复核的触发阈值与预算占比 | ❓ 阶段四回答 |
 | Q11 | 结构分析预算：批次大小、文档级 token 上限、冲突复核次数 | ❓ 阶段四前决定 |
 | Q12 | 哪些文档类型允许标题走确定性路径跳过模型 | ❓ 阶段四回答 |
 | Q13 | 默认运行时：固定流水线、Codex、Claude Code、Pi，还是"默认流水线、难例交 Agent"；依据 §9.4 报告 | ❓ 阶段三回答 |
 | Q14 | 工具包对外接口：JSON CLI 是否足够，何时加 MCP | ❓ 阶段二回答 |
+| Q15 | 测试数据与结果是否入 git | ✅ 暂时只有代码与文档入 git；`eval_runs/`、`.parserx_cache/`、新的 `eval_reports/` 不入 git（已跟踪的旧报告保持现状） |
+| Q16 | 漏表、多余表的硬检查口径 | ✅ 与冻结基线比较，增加才算失败；第一次冻结只记录；失败文档与未执行文档按绝对数 |
+| Q17 | 阶段零是否把图片描述从文本类指标中剔除 | ✅ 剔除；按语义 schema 打分阶段四再做 |
+| Q18 | 回归配置是否也关闭 `builders.quality_check` 的 LLM 判断 | ✅ 关闭，回归配置不调用 LLM |
+| Q19 | 冻结几份 v1 基线 | ✅ 只冻结 VLM gpt-6-luna 一份；以后只用 gpt-6-luna，不再做 gpt-5.4-mini 对照 |
+| Q20 | 复核候选由谁、何时采用 | ✅ `recognize` / `review_table` 结束时由程序同步执行选择步骤与接受门，写 Decision |
+| Q21 | 是否引入 rapidfuzz | ✅ 引入；edit_distance 改为精确计算（不再分块近似） |
 
 ## 15. 变更记录
 
@@ -713,3 +725,5 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-23 | v0.9 | 根因改为职责与裁决不清；AI 任务边界；两类规则；模型参与的有预算结构分析；任务级重跑；静默错误抽样 |
 | 2026-09-23 | v0.10 | 核心交付物改为工作区 + 工具层 + 程序约束；七个工具、三份 Skill；Agent 运行时对比实验 |
 | 2026-09-23 | v1.0 | 按全部讨论重新整理全文；运行时改为可替换（Codex → 工具包 → Claude Code → Pi → 必要时自研）；探索与验收分开；实验卫生；阶段改为 0–5；旧稿归档 |
+| 2026-09-23 | v1.1 | 确认阶段零分解（[v2_phase0_plan.md](v2_phase0_plan.md)）与阶段一接口（[v2_phase1_interfaces.md](v2_phase1_interfaces.md)）：新增 AssetAnchor、Decision 的 actor/refs、信封 failures 列表与 DocText、确定性 ID、按行/节点记账；决定 Q4、Q8、Q15–Q21；v1 基线只冻结 gpt-6-luna 一份；P0-1 开始 |
+| 2026-09-23 | v1.2 | P0-1 完成：指标版本 2.0（TableGrid 表格结构 F1、有序 char_f1、阅读顺序 τ、关键内容错误、硬检查与退出码 0/1/2、服务边界真实请求计数）；五个反例全部捕获；发现原生 PDF 页被送去 OCR、结果全部去重的请求此前漏记（deepseek、pdf_text01_tables、text_table_libreoffice），修正 §9.1 核心集表 |

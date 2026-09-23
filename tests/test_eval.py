@@ -9,14 +9,13 @@ from parserx.eval.metrics import (
     CostMetrics,
     EvalResult,
     TableMetrics,
-    _extract_tables,
-    _normalize_cell,
     compute_residual_diagnostics,
     compute_edit_distance,
     compute_heading_metrics,
     compute_table_metrics,
     compute_text_metrics,
 )
+from parserx.eval.normalize import normalize_cell
 from parserx.eval.reporting import build_config_report_metadata
 from parserx.eval.warnings import categorize_warning, summarize_warning_types
 
@@ -209,50 +208,16 @@ def test_heading_metrics_both_empty():
     m = compute_heading_metrics("no headings", "also no headings")
     assert m.expected_count == 0
     assert m.detected_count == 0
+    assert m.f1 is None  # not applicable, excluded from averages
 
 
 # ── Table metrics ──────────────────────────────────────────────────────
 
 
-def test_extract_tables_single():
-    md = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
-    tables = _extract_tables(md)
-    assert len(tables) == 1
-    assert tables[0] == [["A", "B"], ["1", "2"], ["3", "4"]]
-
-
-def test_extract_tables_multiple():
-    md = (
-        "Some text\n\n"
-        "| X | Y |\n|---|---|\n| a | b |\n\n"
-        "More text\n\n"
-        "| P | Q | R |\n|---|---|---|\n| 1 | 2 | 3 |"
-    )
-    tables = _extract_tables(md)
-    assert len(tables) == 2
-    assert len(tables[0][0]) == 2  # 2 columns
-    assert len(tables[1][0]) == 3  # 3 columns
-
-
-def test_extract_tables_none():
-    assert _extract_tables("No tables here") == []
-
-
-def test_extract_tables_skip_separator():
-    """Separator rows should not appear as data."""
-    md = "| H1 | H2 |\n|---|---|\n| d1 | d2 |"
-    tables = _extract_tables(md)
-    assert len(tables) == 1
-    # Should have header + 1 data row, no separator
-    assert len(tables[0]) == 2
-    assert tables[0][0] == ["H1", "H2"]
-    assert tables[0][1] == ["d1", "d2"]
-
-
 def test_normalize_cell():
-    assert _normalize_cell("  Hello World  ") == "helloworld"
-    assert _normalize_cell("王 艳 辉") == "王艳辉"
-    assert _normalize_cell("") == ""
+    assert normalize_cell("  Hello World  ") == "helloworld"
+    assert normalize_cell("王 艳 辉") == "王艳辉"
+    assert normalize_cell("") == ""
 
 
 def test_table_metrics_perfect():
@@ -268,7 +233,7 @@ def test_table_metrics_no_tables():
     m = compute_table_metrics("no tables", "no tables")
     assert m.detected_count == 0
     assert m.expected_count == 0
-    assert m.cell_f1 == 0.0
+    assert m.cell_f1 is None  # not applicable, excluded from averages
 
 
 def test_table_metrics_missing_table():
@@ -276,6 +241,8 @@ def test_table_metrics_missing_table():
     m = compute_table_metrics("no tables", expected)
     assert m.detected_count == 0
     assert m.expected_count == 1
+    assert m.missing_tables == 1
+    assert m.cell_f1 == 0.0
 
 
 def test_table_metrics_extra_table():
@@ -283,6 +250,7 @@ def test_table_metrics_extra_table():
     m = compute_table_metrics(output, "no tables")
     assert m.detected_count == 1
     assert m.expected_count == 0
+    assert m.extra_tables == 1
 
 
 def test_table_metrics_partial_match():
@@ -384,7 +352,8 @@ def test_format_report_includes_warning_and_api_sections():
     assert "model=demo-vlm" in report
     assert "Overrides" in report
     assert "Total warnings: 3" in report
-    assert "API calls (OCR/VLM/LLM): 1/0/2" in report
+    assert "Real requests (OCR/VLM/LLM): 1/0/2" in report
+    assert "## Hard Checks" in report
     assert "LLM fallback hits: 4" in report
     assert "Residual Themes" in report
     assert "Residual Diagnostics" in report
@@ -514,4 +483,4 @@ def test_format_compare_report_shows_deltas():
     assert "| Char F1 | 0.800 | 0.900 | +0.100 | higher |" in report
     assert "Warning Type Delta" in report
     assert "| Number mismatch | 1 | 0 | -1 |" in report
-    assert "| doc-a | -0.100 | +0.100 | +0.100 | +0.050 | -1 | -1 | -0.5s |" in report
+    assert "| doc-a | +0.050 | +0.100 | -0.100 | — | +0.100 | +0 | -1 | -1 | -0.5s |" in report
