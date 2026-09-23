@@ -541,3 +541,68 @@ def test_overlap_evidence_does_not_depend_on_other_images_finishing_first():
     after = _collect_overlapping_evidence(image, elements)
 
     assert before["text"] == after["text"] == "实施日期:2018年11月01日"
+
+
+def test_vlm_responses_are_applied_in_document_order(tmp_path, monkeypatch):
+    """VLM calls run concurrently, but applying a response mutates shared page state
+    (one image suppressing OCR text changes how the next is judged), so responses must
+    be applied in task order whatever order the calls finish in."""
+    import time
+
+    import parserx.processors.image as image_module
+
+    applied: list[str] = []
+
+    def record_order(result, elem, **kwargs):
+        applied.append(elem.metadata["name"])
+        return result, True, {}
+
+    monkeypatch.setattr(image_module, "_normalize_vlm_output", record_order)
+
+    class SlowFirstVLM:
+        def describe_image(self, image_path, prompt, **kwargs):
+            time.sleep({"a": 0.3, "b": 0.15, "c": 0.0}[image_path.stem])
+            return f"description of {image_path.stem}"
+
+    tasks = []
+    for name in ("a", "b", "c"):
+        path = tmp_path / f"{name}.png"
+        Image.new("RGB", (40, 40), "white").save(path)
+        elem = PageElement(type="image", bbox=(0, 0, 40, 40), page_number=1, metadata={"name": name})
+        tasks.append((elem, [elem], path))
+
+    processor = ImageProcessor(ImageProcessorConfig(), vlm_service=SlowFirstVLM(), max_concurrent=3)
+    processor._run_vlm_concurrent(tasks)
+
+    assert applied == ["a", "b", "c"]
+    assert [t[0].metadata["description"] for t in tasks] == [f"description of {n}" for n in "abc"]
+
+
+def _count_vlm_calls(tmp_path, monkeypatch, normalized_result):
+    import parserx.processors.image as image_module
+
+    monkeypatch.setattr(image_module, "_normalize_vlm_output", lambda *a, **k: normalized_result)
+    calls = []
+
+    class CountingVLM:
+        def describe_image(self, image_path, prompt, **kwargs):
+            calls.append(image_path.name)
+            return "{}"
+
+    path = tmp_path / "img.png"
+    Image.new("RGB", (40, 40), "white").save(path)
+    elem = PageElement(type="image", bbox=(0, 0, 40, 40), page_number=1)
+    config = ImageProcessorConfig(vlm_retry_attempts=1)
+    ImageProcessor(config, vlm_service=CountingVLM())._run_vlm_concurrent([(elem, [elem], path)])
+    return len(calls)
+
+
+def test_parsed_response_without_description_is_not_retried(tmp_path, monkeypatch):
+    """A correction-only answer (text fixed, no separate description) is a success:
+    retrying wasted a request, and the retry then judged the image 'covered' by the
+    OCR text its own first answer had suppressed, dropping the corrected content."""
+    assert _count_vlm_calls(tmp_path, monkeypatch, ("", True, {"vlm_route": "correction"})) == 1
+
+
+def test_unparseable_response_is_retried(tmp_path, monkeypatch):
+    assert _count_vlm_calls(tmp_path, monkeypatch, ("", False, {"vlm_unstructured_output": True})) == 2

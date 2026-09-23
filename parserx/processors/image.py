@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -1029,10 +1030,42 @@ class ImageProcessor:
     def _run_vlm_concurrent(
         self, tasks: list[tuple[PageElement, list[PageElement], Path]]
     ) -> int:
-        """Run VLM descriptions concurrently. Returns actual API call count."""
-        api_call_count = 0
+        """Run VLM descriptions concurrently. Returns actual API call count.
 
-        def _describe(task: tuple[PageElement, list[PageElement], Path]) -> tuple[PageElement, str, int]:
+        The calls run concurrently, but applying a response mutates shared page
+        state (OCR text suppressed by one image changes how the next image is
+        judged), so responses are applied strictly in task order: a task waits
+        for its turn before interpreting its first response and keeps the turn
+        until it is done, retries included.  The executor starts tasks in
+        submission order, so every earlier task is already running or done and
+        the wait cannot deadlock.
+        """
+        api_call_count = 0
+        turn = threading.Condition()
+        next_task = [0]
+
+        def _describe(index: int, task: tuple[PageElement, list[PageElement], Path]) -> tuple[PageElement, str, int]:
+            has_turn = False
+
+            def take_turn() -> None:
+                nonlocal has_turn
+                if not has_turn:
+                    with turn:
+                        turn.wait_for(lambda: next_task[0] == index)
+                    has_turn = True
+
+            try:
+                return _describe_in_turn(task, take_turn)
+            finally:
+                take_turn()
+                with turn:
+                    next_task[0] = index + 1
+                    turn.notify_all()
+
+        def _describe_in_turn(
+            task: tuple[PageElement, list[PageElement], Path],
+            take_turn,
+        ) -> tuple[PageElement, str, int]:
             elem, page_elements, image_path = task
             context = _get_context_before(elem, page_elements)
             evidence = _collect_overlapping_evidence(elem, page_elements)
@@ -1085,6 +1118,7 @@ class ImageProcessor:
                     log.warning("VLM failed for %s (attempt %d/%d): %s", image_path.name, attempt + 1, attempts, exc)
                     continue
 
+                take_turn()
                 normalized, ok, metadata_updates = _normalize_vlm_output(
                     result.strip(),
                     elem,
@@ -1100,6 +1134,11 @@ class ImageProcessor:
                     if attempt > 0:
                         elem.metadata["vlm_retry_used"] = True
                     return elem, normalized, calls_made
+                if ok:
+                    # Parsed and applied (e.g. a correction with no separate
+                    # description): nothing to retry.  A retry would re-judge the
+                    # image against OCR text this answer already suppressed.
+                    return elem, "", calls_made
                 if not ok:
                     excerpt = elem.metadata.get("vlm_raw_excerpt", "")
                     if excerpt:
@@ -1116,7 +1155,7 @@ class ImageProcessor:
             return elem, "", calls_made
 
         with ThreadPoolExecutor(max_workers=self._max_concurrent) as executor:
-            futures = {executor.submit(_describe, task): task for task in tasks}
+            futures = {executor.submit(_describe, i, task): task for i, task in enumerate(tasks)}
             done_count = 0
             total = len(futures)
             for future in as_completed(futures):

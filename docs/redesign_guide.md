@@ -1,6 +1,6 @@
 # ParserX v2 设计与研发指导
 
-> **文档状态**：v1.5，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4，见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
+> **文档状态**：v1.7，2026-09-23（v1.0 当日重新整理；v1.1 确认阶段零分解与阶段一接口；v1.2 完成 P0-1；v1.3 LLM 切到 gpt-6-luna、完成 P0-2；v1.4 完成 P0-3；v1.5 完成 P0-4；v1.6–v1.7 P0-5 进行中（两处 v1 修复），见 §15。此前 v0.1–v0.10 的逐次修订稿见 [archive/redesign_guide_v0.10_draft.md](archive/redesign_guide_v0.10_draft.md)）。
 > 这是一份活文档：阶段完成时更新 §12 状态列与 §15 变更记录；决策变化时在 §15 追加记录并修订正文。
 >
 > 状态标记：⬜ 未开始 · 🟡 进行中 · ✅ 完成 · ⛔ 阻塞 · ❓ 待决策
@@ -658,6 +658,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 有文字重叠的图片不得同时输出描述与重复正文 | `test_verification.py` 的 text-heavy 用例 | 去向检查 + `duplicate_of` |
 | 页眉页脚首页身份信息保留上限 | `test_header_footer.py` | `excluded` 块的例外规则 |
 | 跨页表格列数不同不得合并 | `test_table_processor.py` | `TableGrid` 合并候选校验 |
+| 被跳过或被纠正的图片，其区域内容必须有去向：不得因为另一张图已抑制共享的 OCR 文本而把本图判为"已被覆盖"并丢弃 | P0-5 冻结回放发现（ocr_scan_jtg3362 封面三行内容随线程顺序丢失） | 去向检查（accounting）+ 选择步骤 |
 | 并发识别任务的输入（证据、提示词）不得依赖其他任务的完成顺序；同一输入同一请求 | `test_image_processor.py::test_overlap_evidence_does_not_depend_on_other_images_finishing_first`（P0-4 发现的竞态） | 调度层：任务输入在派发前确定，结果由选择步骤按确定顺序合并 |
 
 阅读顺序、代码块、行内格式、列表、图注、交叉引用各自在 §12 有归属阶段，不允许"顺手删掉"。
@@ -714,6 +715,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q19 | 冻结几份 v1 基线；默认模型 | ✅ 只冻结 VLM gpt-6-luna 一份；以后只用 gpt-6-luna，不再做 gpt-5.4-mini 对照；LLM 默认也改为 gpt-6-luna（`parserx.yaml` 与 `.env` 的 `LLM_MODEL_B`） |
 | Q20 | 复核候选由谁、何时采用 | ✅ `recognize` / `review_table` 结束时由程序同步执行选择步骤与接受门，写 Decision |
 | Q21 | 是否引入 rapidfuzz | ✅ 引入；edit_distance 改为精确计算（不再分块近似） |
+| Q22 | 冻结前是否修 v1 的"纠正后仍重试"缺陷；冻结 run 用什么响应 | ✅ 修：只在响应无法解析时重试；冻结用空缓存、全部真实请求的干净 run，作废的首次冻结改名保留、不作种子 |
 
 ## 15. 变更记录
 
@@ -731,3 +733,5 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-23 | v1.3 | LLM 默认模型改为 gpt-6-luna（`parserx.yaml`、`.env` 的 `LLM_MODEL_B`；服务检查与 v1 标题兜底实测通过）；P0-2 完成：`configs/regression.yaml` 继承 `parserx.yaml`，关闭质量检查与全部 LLM 兜底，回归脚本默认使用；报告与结果记录带配置指纹；核心集实测 LLM 请求 0、硬检查通过；发现 `header_footer.llm_fallback` 在 v1 中未被读取。消除浪费的请求：vlm/llm 配置 `send_temperature: false`（只用 gpt-6-luna，不再靠 400 自动探测）；v1 页面复审的 json_schema 不符合 strict 要求、每次被拒后以 json_object 重发，改为直接请求 json_object（`processors.vlm_review.structured_output_mode`，输出行为不变）；ocr_scan_jtg3362 由 12 请求 16 次尝试降为 12/12 |
 | 2026-09-23 | v1.4 | P0-3 完成：所有远程请求经 `ServiceGateway`（查缓存、计数、请求、写回），LLM/VLM 在公开方法、OCR 在唯一传输出口缓存原始 JSON；键覆盖完整请求语义、不含密钥与临时路径；模式 off / read_write / read_only / refresh，离线未命中记为未执行；批量 OCR 临时 PDF 改 `no_new_id` 使字节稳定；核心集回放 0 请求、6 篇输出逐字节一致，耗时 172.9 s → 2.6 s |
 | 2026-09-23 | v1.5 | P0-4 完成：`scripts/regression_test.py --core` 默认离线回放（缓存未命中记为未执行并提示 `--allow-calls`），`--list`、`--repeat N`（输出不一致为硬检查失败）、`--gt-dir` 可重复；逻辑在 `parserx/eval/suite.py`；`parserx eval --cache-mode`。离线回放发现 v1 图片处理的竞态：并发 VLM 任务中，一张图的纠正结果会抑制共享的 OCR 文本，另一张图收集重叠证据时跳过它，提示词随线程完成顺序变化（真实调用时同样不确定）；修正为证据忽略其他图片的 VLM 抑制标记，登记到 §11.5。核心集两个进程各回放两次，输出逐字节一致、0 请求 |
+| 2026-09-23 | v1.6 | P0-5 进行中：冻结与回放工具、隔离集清单（c154ccd）。首次冻结（27 篇，566.6 s）的离线回放中 ocr_scan_jtg3362 输出不同：v1 图片处理对 VLM 响应的解释会修改共享页面状态，结果随线程完成顺序变化（随机延迟探测 6 次出现两种输出，其中一种丢失封面三行）。修正为 VLM 调用并发、响应严格按任务顺序解释（`_run_vlm_concurrent` 轮次机制，加测试）；首次冻结 run 作废待重冻。另发现：VLM 返回纠正而无独立描述时 v1 会重试（全语料 103 次请求中 14 次），重试时因自身已抑制 OCR 文本而把本图判为已覆盖并跳过，内容丢失——已决定冻结前修复（Q22） |
+| 2026-09-23 | v1.7 | 修 v1 图片 VLM 重试：只在响应无法解析（ok=False）时重试；解析成功但无独立描述（仅纠正）时不再重试，消除全语料约 14% 的重复请求与"自身抑制后判为已覆盖"的内容丢失（jtg3362 封面三行恢复，随机延迟下输出稳定）；加测试；决定 Q22 |
