@@ -83,7 +83,7 @@ GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public")
 EXPLORE_SET = REPO_ROOT / "configs" / "phase2_explore.yaml"
 V1_BASELINE = REPO_ROOT / "eval_runs" / "2026-09-23_p0_v1_gpt-6-luna.rescored-2.1.json"
 INPUT_ORDER = (".pdf", ".docx", ".doc")  # as the evaluation runner picks them
-MODEL, EFFORT = "gpt-6-sol", "high"  # Q35: explicit on every run
+MODEL, EFFORT = "gpt-6-sol", "medium"  # Q35 (medium since P2-5): explicit on every run
 PROMPT = "Follow the task in AGENTS.md in the current directory. Work only with the files in this directory."
 LARGE_PAGES, SMALL_MIN, LARGE_MIN = 100, 30, 90  # Q39
 
@@ -630,7 +630,7 @@ def main() -> int:
     which_run.add_argument("--doc", action="append", help="document name(s), repeatable or comma-separated")
     which_run.add_argument("--all", action="store_true", help="every document of the exploration set")
     run.add_argument("--jobs", type=int, default=1, help="documents run at the same time (default 1)")
-    run.add_argument("--vision", choices=("agent", "tool"), default="agent",
+    run.add_argument("--vision", choices=("agent", "tool"), default="tool",  # Q47
                      help="agent: the agent opens images itself; tool: only through ask_image (its viewing is off)")
     run.add_argument("--input", type=Path, help="input file for a document without ground truth")
     run.add_argument("--timeout-min", type=int, help="override the Q39 deadline")
