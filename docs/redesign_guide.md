@@ -43,6 +43,7 @@
 - [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
+- [v2_phase3_plan.md](v2_phase3_plan.md)：阶段三工作分解（草稿，待用户确认：固定流水线与 Codex 在未见集上的对比、混合方案的分流规则、P3-1 至 P3-6、待决问题 Q51–Q55）。
 - [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
 
 ## 1. 背景与根因
