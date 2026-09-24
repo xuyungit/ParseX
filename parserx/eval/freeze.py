@@ -137,7 +137,12 @@ def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], ma
 
 
 def replay_differences(record: dict, frozen: dict) -> list[str]:
-    """Everything a faithful replay must reproduce but did not (*frozen* as ``load_record`` returns it)."""
+    """Everything a faithful replay must reproduce but did not (*frozen* as ``load_record`` returns it).
+
+    A frozen run scored under an older metric version is rescored: then only
+    its outputs must be reproduced, the scores are expected to move.
+    """
+    rescored = record.get("metric_version") != frozen.get("metric_version")
     diffs: list[str] = []
     if record.get("config_fingerprint") != frozen.get("config_fingerprint"):
         diffs.append(
@@ -150,7 +155,7 @@ def replay_differences(record: dict, frozen: dict) -> list[str]:
             diffs.append(f"{name}: missing from the replay")
             continue
         for key in sorted(set(then) | set(now)):
-            if key in _VOLATILE:
+            if key in _VOLATILE or (rescored and key != "output_sha256"):
                 continue
             if then.get(key) != now.get(key):
                 diffs.append(f"{name}: {key} {then.get(key)!r} → {now.get(key)!r}")

@@ -8,7 +8,9 @@ Both sides of every comparison go through the same steps:
 1. HTML comments (page anchors etc.) are removed.
 2. Tables — GFM or HTML — are replaced by their cell text in row-major order,
    so the table *format* never affects text scores (structure is scored by
-   the table metric).
+   the table metric).  A cell repeating the one directly above or to its left
+   is written once (2.1): a merged value counts once whether it is written as
+   a span, repeated in every row, or written once with blanks around it.
 3. Image placeholders are removed and counted: ``![alt](src)``,
    ``> [图片] …`` lines, and a blockquote directly following an image line
    (the v1 description layout).  Descriptions are scored separately later
@@ -69,14 +71,28 @@ def normalize_label(text: str) -> str:
 
 
 def grid_text(grid: TableGrid) -> str:
-    """Cell contents in row-major order: cells joined by spaces, rows by newlines."""
-    rows: dict[int, list[tuple[int, str]]] = {}
-    for cell in grid.cells:
-        if cell.content.strip():
-            rows.setdefault(cell.row, []).append((cell.col, cell.content))
-    return "\n".join(
-        " ".join(content for _, content in sorted(rows[r])) for r in sorted(rows)
-    )
+    """Cell contents in row-major order: cells joined by spaces, rows by newlines.
+
+    Positions repeating the content directly above or to the left are skipped,
+    so merged cells count once in every notation.
+    """
+    matrix = grid.slot_matrix()
+    lines: list[str] = []
+    for r, row in enumerate(matrix):
+        parts: list[str] = []
+        for c, cell in enumerate(row):
+            if cell is None or not cell.content.strip():
+                continue
+            left = row[c - 1] if c else None
+            above = matrix[r - 1][c] if r else None
+            if (left is not None and left.content == cell.content) or (
+                above is not None and above.content == cell.content
+            ):
+                continue
+            parts.append(cell.content)
+        if parts:
+            lines.append(" ".join(parts))
+    return "\n".join(lines)
 
 
 def _flatten_tables(text: str) -> str:

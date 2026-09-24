@@ -107,3 +107,13 @@ def test_frozen_config_fingerprint_is_recomputed_with_todays_schema(tmp_path):
     replay = _record(a=0.9)
     replay["config_fingerprint"] = config_fingerprint(ParserXConfig())
     assert replay_differences(replay, frozen) == []
+
+
+def test_replay_under_a_newer_metric_compares_outputs_only():
+    frozen = _record(a=0.9)
+    frozen["metric_version"] = "2.0"
+    replay = _record(a=0.95)  # rescored under a newer metric: scores may move, outputs may not
+    replay["metric_version"] = "2.1"
+    assert replay_differences(replay, frozen) == []
+    replay["documents"]["a"]["output_sha256"] = "changed"
+    assert any("output_sha256" in d for d in replay_differences(replay, frozen))

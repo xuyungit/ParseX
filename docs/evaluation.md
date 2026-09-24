@@ -63,7 +63,7 @@ $PARSERX_PRIVATE_GT_DIR/
 The directory structure should match `ground_truth_public/` so the same
 evaluation runner can be reused.
 
-## What To Measure (metric version 2.0, 2026-09-23)
+## What To Measure (metric version 2.1, 2026-09-24; 2.0 on 2026-09-23)
 
 Metric definitions changed on 2026-09-23 to close the five counterexamples in
 `docs/redesign_guide.md` §9.2 (tests: `tests/test_eval_counterexamples.py`).
@@ -84,10 +84,17 @@ Reports always follow this order (guide §9.3):
    normalized content. Also reported: header association (data cell under the
    same header path, punctuation-insensitive, so `A > B` equals a two-row
    header `A` / `B`) and merged-cell accuracy. Not applicable (`—`) when
-   neither side has a table.
+   neither side has a table. **2.1**: an annotated table without any merged
+   cell (every GFM table) cannot express merges, and annotators either repeat a
+   merged value in each row or write it once with blanks around it; against
+   such a table an output cell matches an annotated cell at any position it
+   covers, spans are not compared, recall counts annotated cells and precision
+   counts distinct output cells. Annotations with spans keep the 2.0 rule.
 3. **Text** (`parserx/eval/normalize.py`) — both sides are canonicalized:
    HTML comments removed; tables replaced by row-major cell text (table format
-   never changes text scores); image placeholders removed and counted
+   never changes text scores; 2.1: a cell repeating the one directly above or
+   to its left is written once, so merged values count once in every
+   notation); image placeholders removed and counted
    (`![…](…)`, `> [图片] …`, and a blockquote directly after an image line —
    descriptions are scored separately later, §9.3); NFKC; heading markers and
    all whitespace dropped. `char_f1` is LCS-based (order-aware);

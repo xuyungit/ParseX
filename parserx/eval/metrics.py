@@ -23,7 +23,7 @@ from parserx.text_utils import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.0"
+METRIC_VERSION = "2.1"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 
 __all__ = [
     "METRIC_VERSION",

@@ -1,4 +1,4 @@
-"""Table structure metric (metric version 2.0, guide §9.2 item 1).
+"""Table structure metric (metric version 2.1, guide §9.2 item 1).
 
 Both sides are parsed into TableGrid (GFM or HTML).  Tables are paired by
 cell-content similarity; unpaired tables stay in the denominators, so a
@@ -7,6 +7,14 @@ rows and columns are aligned by dynamic programming (as in GriTS), so an
 inserted or dropped row only costs that row instead of shifting every cell.
 A cell counts as correct when an output cell sits at the aligned position with
 the same rowspan, colspan and normalized content.
+
+2.1 (Q28): an annotation without any merged cell — every GFM table — cannot
+say whether cells are merged; annotators then either repeat a merged value in
+each row or write it once and leave the other rows blank.  Against such an
+annotation an output cell matches an annotated cell at any position it covers,
+spans are not compared, and recall counts annotated cells while precision
+counts distinct output cells.  Annotations that do contain spans keep the 2.0
+rule.
 """
 
 from __future__ import annotations
@@ -48,10 +56,11 @@ def compute_table_metrics(output_md: str, expected_md: str) -> TableMetrics:
     total_out = sum(_count_cells(g) for g in detected)
     total_exp = sum(_count_cells(g) for g in expected)
 
-    correct = header_ok = merged_ok = cols_ok = 0
+    correct = correct_out = header_ok = merged_ok = cols_ok = 0
     for e_idx, o_idx in pairs:
         stats = _compare_pair(expected[e_idx], detected[o_idx])
         correct += stats.correct
+        correct_out += stats.correct_out
         header_ok += stats.header_ok
         merged_ok += stats.merged_ok
         cols_ok += expected[e_idx].n_cols == detected[o_idx].n_cols
@@ -59,7 +68,7 @@ def compute_table_metrics(output_md: str, expected_md: str) -> TableMetrics:
     header_total = sum(len(_data_cells(g)) for g in expected if g.header_rows)
     merged_total = sum(len(_spanning_cells(g)) for g in expected)
 
-    precision = correct / total_out if total_out else 0.0
+    precision = correct_out / total_out if total_out else 0.0
     recall = correct / total_exp if total_exp else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     return TableMetrics(
@@ -127,7 +136,8 @@ def _pair_tables(expected: list[TableGrid], detected: list[TableGrid]) -> list[t
 
 @dataclass
 class _PairStats:
-    correct: int
+    correct: int  # annotated cells matched (recall)
+    correct_out: int  # distinct output cells matched (precision)
     header_ok: int
     merged_ok: int
 
@@ -190,21 +200,26 @@ def _compare_pair(expected: TableGrid, detected: TableGrid) -> _PairStats:
     row_map = _align(_line_bags(exp_matrix, False), _line_bags(out_matrix, False))
     col_map = _align(_line_bags(exp_matrix, True), _line_bags(out_matrix, True))
     origins = {(c.row, c.col): c for c in detected.cells}
+    spans_known = expected.has_spans  # otherwise the annotation cannot express merged cells (2.1)
 
     def counterpart(cell: Cell) -> Cell | None:
         r, c = row_map.get(cell.row), col_map.get(cell.col)
         if r is None or c is None:
             return None
-        other = origins.get((r, c))
+        other = origins.get((r, c)) if spans_known else out_matrix[r][c]
         if other is None or normalize_cell(other.content) != normalize_cell(cell.content):
+            return None
+        if spans_known and (other.rowspan, other.colspan) != (cell.rowspan, cell.colspan):
             return None
         return other
 
     correct = merged_ok = 0
+    matched_out: set[tuple[int, int]] = set()
     for cell in _nonempty(expected):
         other = counterpart(cell)
-        if other is not None and (other.rowspan, other.colspan) == (cell.rowspan, cell.colspan):
+        if other is not None:
             correct += 1
+            matched_out.add((other.row, other.col))
             if cell.rowspan > 1 or cell.colspan > 1:
                 merged_ok += 1
 
@@ -217,4 +232,4 @@ def _compare_pair(expected: TableGrid, detected: TableGrid) -> _PairStats:
             if other is not None and exp_paths[cell.col] == out_paths[other.col]:
                 header_ok += 1
 
-    return _PairStats(correct=correct, header_ok=header_ok, merged_ok=merged_ok)
+    return _PairStats(correct=correct, correct_out=len(matched_out), header_ok=header_ok, merged_ok=merged_ok)

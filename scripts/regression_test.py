@@ -51,7 +51,7 @@ from parserx.eval.freeze import (
     write_frozen_run,
 )
 from parserx.eval.gate import EXIT_HARD_FAILURE, evaluate_gate, load_record, run_record
-from parserx.eval.metrics import fmt_metric
+from parserx.eval.metrics import METRIC_VERSION, fmt_metric
 from parserx.eval.reporting import build_config_report_metadata, config_fingerprint
 from parserx.eval.runner import EvalRunner
 from parserx.eval.suite import CORE_LIST, REPO_ROOT, output_digest, read_doc_list, repeat_mismatches, run_suite
@@ -206,6 +206,11 @@ def main() -> None:
 
     include = _select_documents(args, gt_dirs)
     baseline = frozen if frozen is not None else (load_record(args.baseline) if args.baseline else None)
+    if frozen is not None and frozen.get("metric_version") != METRIC_VERSION:
+        # Scored under an older metric: the replay proves the outputs; scores are recomputed, not compared.
+        print(f"{_YELLOW}Frozen run scored under metric {frozen.get('metric_version')}; replay compares outputs "
+              f"and reports scores under {METRIC_VERSION} (save them with --json-out to use as a baseline).{_RESET}")
+        baseline = None
 
     config_result = load_config_with_result(args.config)
     overrides = []

@@ -185,3 +185,46 @@ def test_metric_version_mismatch_refuses_comparison():
     base = _record(doc=("x", "x"))
     base["metric_version"] = "1.0"
     assert evaluate_gate(_record(doc=("x", "x")), baseline=base).exit_code == 2
+
+
+# ── Metric 2.1: merged cells against annotations that cannot express them (Q28) ──
+
+_SPANNED_OUTPUT = (
+    "<table><tr><th>种类</th><th>设计值</th><th>备注</th></tr>"
+    "<tr><td rowspan=\"3\">钢绞线</td><td>1720</td><td rowspan=\"3\">390</td></tr>"
+    "<tr><td>1860</td></tr><tr><td>1960</td></tr></table>\n"
+)
+
+
+def test_gfm_annotation_leaving_merged_rows_blank_accepts_a_rowspan():
+    expected = _table([["种类", "设计值", "备注"], ["钢绞线", "1720", ""], ["", "1860", "390"], ["", "1960", ""]])
+    metrics = compute_table_metrics(_SPANNED_OUTPUT, expected)
+    assert (metrics.cell_precision, metrics.cell_recall) == (1.0, 1.0)
+    assert metrics.merged_cell_accuracy is None  # the annotation cannot say anything about spans
+
+
+def test_gfm_annotation_repeating_merged_values_accepts_a_rowspan():
+    expected = _table([["种类", "设计值", "备注"], ["钢绞线", "1720", "390"], ["钢绞线", "1860", "390"],
+                       ["钢绞线", "1960", "390"]])
+    metrics = compute_table_metrics(_SPANNED_OUTPUT, expected)
+    assert (metrics.cell_precision, metrics.cell_recall) == (1.0, 1.0)
+    text = compute_text_metrics(_SPANNED_OUTPUT, expected)
+    assert text.char_f1 == 1.0  # a merged value counts once however it is written
+
+
+def test_wrong_value_under_a_span_is_still_wrong():
+    expected = _table([["种类", "设计值", "备注"], ["钢绞线", "1720", ""], ["", "1860", "391"], ["", "1960", ""]])
+    assert compute_table_metrics(_SPANNED_OUTPUT, expected).cell_recall < 1.0
+
+
+def test_annotation_with_spans_still_requires_the_same_spans():
+    expected = _SPANNED_OUTPUT
+    flat = _table([["种类", "设计值", "备注"], ["钢绞线", "1720", "390"], ["", "1860", ""], ["", "1960", ""]])
+    metrics = compute_table_metrics(flat, expected)
+    assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
+
+
+def test_metric_version_is_2_1():
+    from parserx.eval.metrics import METRIC_VERSION
+
+    assert METRIC_VERSION == "2.1"

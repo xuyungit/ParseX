@@ -12,7 +12,7 @@
    - 五个 IR 概念与 Decision 的往返与校验，TableGrid 的解析与渲染往返；
    - 七个工具的契约：信封、`DocText`、失败码、版本冲突、`apply_structure` 的每条合法性规则；
    - 去向检查；调度层的预算、按确定顺序合并结果、重试分类。
-2. **与 v1 基线比较**（`eval_runs/2026-09-23_p0_v1_gpt-6-luna`）：text_table01、receipt、simple_doc01 三篇的 v2 冻结 run 满足：
+2. **与 v1 基线比较**（`eval_runs/2026-09-23_p0_v1_gpt-6-luna`；分数用指标 2.1 离线重算的 `.rescored-2.1.json`，请求数用冻结 run 的记录）：text_table01、receipt、simple_doc01 三篇的 v2 冻结 run 满足（receipt 的 char_f1、编辑距离、关键内容错误只报告，Q27）：
    - 信息类指标都不低于 v1：char_f1、编辑距离、表格 F1、阅读顺序 τ 与覆盖率、关键内容错误、漏表和多余表数；
    - heading_f1 也不低于 v1；
    - 以上分数容差 0.005，计数类容差 0；
