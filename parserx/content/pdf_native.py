@@ -32,7 +32,7 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")  # PyMuPDF prints 
 import fitz  # noqa: E402
 
 from parserx.content.extraction import Extraction  # noqa: E402
-from parserx.content.order import reading_order  # noqa: E402
+from parserx.content.order import reading_order, row_order  # noqa: E402
 from parserx.content.quality import NativeVerdict, PageSignals, assess_native_layer  # noqa: E402
 from parserx.content.text import join_wrapped  # noqa: E402
 from parserx.ir import ids  # noqa: E402
@@ -102,7 +102,7 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
     for line in free:
         by_block.setdefault(line.block, []).append(line)
     for group in by_block.values():
-        group = [group[i] for i in reading_order([ln.bbox for ln in group])]  # streams can be out of visual order
+        group = [group[i] for i in row_order([ln.bbox for ln in group])]  # streams can be out of visual order
         regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in group]), group))
     for info in images:
         asset = ext.add_asset(*_image_asset(doc, page, n, info))

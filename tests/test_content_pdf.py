@@ -148,6 +148,58 @@ def test_reading_order_groups_rows_left_to_right():
     assert reading_order(boxes) == [2, 1, 0, 3]
 
 
+def _column_lines(x0, x1, top, n, leading=16, height=11):
+    return [(x0, top + leading * i, x1, top + leading * i + height) for i in range(n)]
+
+
+def test_two_columns_of_lines_are_read_column_by_column():
+    title = [(57, 40, 538, 60)]
+    left, right = _column_lines(57, 292, 80, 12), _column_lines(306, 538, 80, 12)  # same leading: rows align
+    page_number = [(296, 780, 302, 790)]  # centred in the gutter
+    boxes = title + right + left + page_number
+    order = reading_order(boxes)
+    ids = {i: ("title" if i == 0 else "right" if i <= 12 else "left" if i <= 24 else "number") for i in range(26)}
+    assert [ids[i] for i in order] == ["title"] + ["left"] * 12 + ["right"] * 12 + ["number"]
+    assert order[1:13] == sorted(order[1:13])  # top to bottom inside the column
+
+
+def test_full_width_blocks_start_a_new_column_section():
+    boxes = [(57, 80, 292, 190), (57, 200, 292, 300), (306, 80, 538, 150), (306, 160, 538, 300),  # section 1
+             (57, 320, 538, 500),                                                                 # full-width figure
+             (57, 520, 292, 700), (306, 520, 538, 640)]                                           # section 2
+    assert reading_order(boxes) == [0, 1, 2, 3, 4, 5, 6]
+    perm = (5, 3, 6, 1, 4, 0, 2)
+    assert [perm[i] for i in reading_order([boxes[i] for i in perm])] == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_forms_and_unruled_tables_keep_row_order():
+    labels = ["Name", "Order date", "Billing address", "Total"]
+    form = [box for i, label in enumerate(labels)
+            for box in ((57, 100 + 20 * i, 57 + 9 * len(label), 112 + 20 * i), (300, 100 + 20 * i, 420, 112 + 20 * i))]
+    assert reading_order(form) == list(range(len(form)))
+    table = [box for i in range(5) for box in ((57, 100 + 18 * i, 57 + 30 + 12 * (i % 3), 112 + 18 * i),
+                                             (250, 100 + 18 * i, 300, 112 + 18 * i),
+                                             (450, 100 + 18 * i, 500, 112 + 18 * i))]
+    assert reading_order(table) == list(range(len(table)))
+
+
+def test_single_column_with_short_lines_reads_top_to_bottom():
+    boxes = [(57, 100, 538, 112), (57, 116, 200, 128), (57, 140, 538, 152), (400, 156, 538, 168), (57, 172, 300, 184)]
+    assert reading_order(boxes) == [0, 1, 2, 3, 4]
+
+
+def test_two_column_page_extracts_in_column_order(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    for x, side in ((57, "Left"), (306, "Right")):  # typeset column by column, as layout programs write them
+        for i in range(20):
+            page.insert_text((x, 90 + 16 * i), f"{side} column line {i:02d} with enough words", fontsize=10)
+    path = tmp_path / "cols.pdf"
+    doc.save(path)
+    text = "\n".join(b.text for b in extract_pdf(path).blocks)
+    assert text.index("Left column line 19") < text.index("Right column line 00")
+
+
 def test_invisible_text_over_tiled_images_is_an_ocr_layer(tmp_path):
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
