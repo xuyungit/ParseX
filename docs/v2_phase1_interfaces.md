@@ -669,7 +669,7 @@ class ExportResult(IRModel):
 
 ### 5.12 〔P2-5〕process、批量描述、Agent 修改与排除
 
-- `process`（`tools/process.py`）：一次调用完成标准处理——待识别页的扫描页引擎、版面影子运行、未描述图片的批量描述、已确认的跨页续表、标题（DOCX 样式；PDF 的 `adapter:v1` 与引擎标题统一层级，因依赖另一来源而被判跳级的层级在两者都写入后再发一次）、`check`。各步直接在本次调用的上下文里运行，只有一条调用记录、请求只计一次；已完成的步骤跳过，再次调用不发请求。结果是摘要：`steps`（执行了的步骤与简述）、`pages`、`blocks_by_kind`、`figures`（described / failed / not_described）、`titles`（with_level / pending）、`check`（exportable、状态、账目），以及 `worklist`——未解决项（最多 200 条，另给 `worklist_total`），Agent 据此处理需要判断的地方，不必逐页通读。固定序列运行时改为 `workspace init → process → export`（v2 冻结 run 回放逐字节一致）。
+- `process`（`tools/process.py`）：一次调用完成标准处理——待识别页的扫描页引擎、版面影子运行、未描述图片的批量描述、已确认的跨页续表、标题（DOCX 样式；PDF 的 `adapter:v1` 与引擎标题统一层级，因依赖另一来源而被判跳级的层级在两者都写入后再发一次）、被分页切开的段落（〔P2-7〕`content/continuation.py`，PDF：页 i 最后一个正文块与页 i+1 第一个正文块之间只隔页面装饰与脚注，前者以字母、数字、汉字或句中标点结束（引号括号内看），后者不以编号、项目符号或图表标号开头、与前者文字不同，两者都有字体证据时字号与粗细相同 → `continues`，经 `apply_structure` 写入，渲染为一段）、`check`。各步直接在本次调用的上下文里运行，只有一条调用记录、请求只计一次；已完成的步骤跳过，再次调用不发请求。结果是摘要：`steps`（执行了的步骤与简述）、`pages`、`blocks_by_kind`、`figures`（described / failed / not_described）、`titles`（with_level / pending）、`check`（exportable、状态、账目），以及 `worklist`——未解决项（最多 200 条，另给 `worklist_total`），Agent 据此处理需要判断的地方，不必逐页通读。固定序列运行时改为 `workspace init → process → export`（v2 冻结 run 回放逐字节一致）。
 - `describe_figure --blocks a,b,…`（请求字段 `blocks`，与 `block` 二选一）：请求并发（`services.vlm.max_concurrent`），结果按给出的块顺序在一次事务中生效；某一块的问题（不是图片、没有图像、格式不能发送）只作为该块的失败；有请求数预算时按块顺序截断，结果不随完成顺序变化。结果增加 `items`（每块的类型、渲染后的描述、是否已有描述）。`--schema` 指定类型时，JSON Schema 只允许该类型。
 
 - `correct`（`tools/correct.py`，Q30）：主 Agent 看图读出的修改直接提交，不再让服务层 VLM 重读。请求：`block`、`image`（`read --image` 为该块或其所在页返回的图像 id）、`reason`，以及 `edits`（正文：`{find, replace}`，`find` 须在当前文字中恰好出现一次）或 `cells`（表格：`{row, col, content}`，网格内的空位可以补填，Q45）。接受门（`content/select.py::correct`）：图像证据——该图确由本工作区的 `read` 为这个块或它所在的页生成（从 `calls.jsonl` 核对）；数字——原生文字层的数字不得改，OCR 文字的修改限于声明的片段；结构——结果非空。修改成为新的 Observation（`task=correct`、`engine=agent`），旧的识别结果保留为证据，写 `review_accept` Decision（证据含图像 id）；未采用时返回 `evidence_conflict` 未解决项。DOCX 正文来自 XML、没有页面图像，不能这样修改。
@@ -702,3 +702,5 @@ class ExportResult(IRModel):
 | `test_layout_labels.py` | 三套标签的映射表是完整的 |
 
 合成输入都是 Block 级的（几行文本、一张生成的图片、手写的区域列表），不依赖整篇文档（§13）。
+- 〔P2-6〕服务层：流式回答（Responses API）两段数据之间超过 `services.*.stream_idle_timeout`（默认 60 s）即视为卡住，按传输错误重试（不必等到 `timeout`）；流中途断开时 httpx 直接抛出的 `TransportError`（SDK 只包装建立请求时的错误）也列为可重试。换行合并（`content/text.py::join_wrapped`）：字母后的连字符断行不加空格、保留连字符（`character-istics`、`well-known`）。
+

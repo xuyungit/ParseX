@@ -13,6 +13,7 @@ from PIL import Image
 import parserx.cli
 from parserx.config.schema import CacheConfig, OCRBuilderConfig, ParserXConfig, PriceConfig
 from parserx.ir.enums import BlockKind, PageStatus
+from parserx.render import render_markdown
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools import TOOLS, ToolContext, call_tool, tool_schema, workspace_init
 from parserx.workspace import Workspace, verify_workspace
@@ -437,6 +438,21 @@ def test_process_does_the_standard_steps_in_one_call(ws):
     assert verify_workspace(ws).ok
     again, _ = _call("process", ws, {}, config=config, context=context)  # nothing left to do: no requests
     assert again.ok and again.cost.requests == {}
+
+
+def test_process_joins_a_paragraph_cut_by_the_page(tmp_path):
+    doc = fitz.open()
+    for text in ("供货方应在合同签订后分两批交货，第一批", "不少于总量的百分之六十。"):
+        doc.new_page(width=595, height=842).insert_text((72, 400), text, fontsize=11, fontname="china-s")
+    doc.save(tmp_path / "cut.pdf")
+    config = _config()
+    config.runtime.layout_shadow = False
+    workspace_init(tmp_path / "cut.pdf", tmp_path / "cut", config=config)
+    env, _ = _call("process", tmp_path / "cut", {}, config=config)
+    state = Workspace.open(tmp_path / "cut").load()
+    assert [(r.kind.value, r.src, r.dst) for r in state.relations] == [("continues", "b-p001-0001", "b-p002-0001")]
+    assert "1 paragraph continuations" in env.result.steps[-2].detail
+    assert "第一批不少于" in render_markdown(state)
 
 
 # ── P2-5: the agent corrects what it read from the image (Q30) ──────────

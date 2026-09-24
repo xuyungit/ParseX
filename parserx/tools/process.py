@@ -11,7 +11,8 @@ The fixed sequence of the pipeline runtime, as a tool the agent calls first:
 5. titles through ``apply_structure``: DOCX styles and outline levels; PDF ``adapter:v1`` on native text and the
    scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
    other source is sent again once both are in place);
-6. ``check``.
+6. paragraphs cut by a page break (``content.continuation``, PDF): ``continues`` between the two parts;
+7. ``check``.
 
 It returns a compact summary and the worklist — what is left for judgment (unresolved items: pending pages, failed
 blocks, uncertain tables, merge candidates, pending structure …) — so the agent need not read every page to find
@@ -25,6 +26,7 @@ from collections import Counter
 from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
+from parserx.content.continuation import ACTOR as CONTINUATION_ACTOR, propose_continuations
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
 from parserx.hierarchy.levels import title_changes, unify_levels
@@ -125,9 +127,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     else:
         titles = pdf_titles(ctx.ws.source_path, state, ctx.config)
     applied += _apply(ctx, titles, failures, retry_level_skips=True)
+    continuations = propose_continuations(ctx.ws.load())  # after the titles: a title ends a paragraph
+    applied += _apply(ctx, [(CONTINUATION_ACTOR, continuations)], failures)
     if applied:
         steps.append(StepSummary(step="structure", detail=f"{applied} changes accepted"
-                                                          + (f", {len(merges)} table continuations" if merges else "")))
+                                                          + (f", {len(merges)} table continuations" if merges else "")
+                                                          + (f", {len(continuations)} paragraph continuations"
+                                                             if continuations else "")))
 
     checked = check_export._checked(ctx)
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))

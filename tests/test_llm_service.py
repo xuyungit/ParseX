@@ -291,3 +291,12 @@ def test_usage_is_reported_for_responses_and_chat(monkeypatch):
 def test_sdk_never_retries(monkeypatch):
     _, client = _make_service(monkeypatch)
     assert client.init_kwargs["max_retries"] == 0
+
+
+def test_a_streamed_answer_that_stalls_times_out_early(monkeypatch):
+    # guide §8.2: a stalled stream is a transport failure, found after the idle limit rather than the full timeout
+    service, client = _make_service(monkeypatch, api_style="responses", timeout=180, stream_idle_timeout=45)
+    service.complete("s", "u")
+    timeout = client.responses.calls[0]["timeout"]
+    assert (timeout.read, timeout.connect) == (45, 180)
+

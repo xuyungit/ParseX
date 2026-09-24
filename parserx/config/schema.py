@@ -197,6 +197,9 @@ class ServiceConfig(BaseModel):
     min_output_tokens: int = 0
     max_concurrent: int = 6
     timeout: int = 180
+    # Longest pause in a streamed answer (Responses API) before the request counts as stalled: a transport
+    # failure the gateway retries (guide §8.2), found long before ``timeout``.  A long answer keeps streaming.
+    stream_idle_timeout: int = 60
 
 
 class RetryConfig(BaseModel):

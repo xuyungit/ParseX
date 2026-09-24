@@ -203,6 +203,8 @@ def _http_error(status):
     (requests.Timeout(), True),
     (_http_error(502), True),
     (_http_error(404), False),
+    (httpx.ReadTimeout("stalled mid-stream"), True),  # raised while reading a stream: not wrapped by the SDK
+    (httpx.RemoteProtocolError("peer closed connection"), True),
     (TransientError("OCR queue full (10010)"), True),
     (UnparseableResponse("not json"), False),  # handled by the parse retry, not the transport retry
     (PageCountMismatch(3, 2), False),

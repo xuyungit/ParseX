@@ -12,11 +12,17 @@ def _is_wide(ch: str) -> bool:
 
 def join_wrapped(lines: list[str]) -> str:
     """Join wrapped lines: a break between two wide characters disappears, any other becomes a space
-    (pandoc's ``east_asian_line_breaks`` convention)."""
+    (pandoc's ``east_asian_line_breaks`` convention); a word broken at a hyphen is joined without the space,
+    keeping the hyphen (it cannot be told from a compound's: ``well-known``)."""
     parts = [line.strip() for line in lines if line.strip()]
     if not parts:
         return ""
     out = parts[0]
     for part in parts[1:]:
-        out += part if _is_wide(out[-1]) and _is_wide(part[0]) else " " + part
+        tight = (_is_wide(out[-1]) and _is_wide(part[0])) or _hyphen_break(out, part)
+        out += part if tight else " " + part
     return out
+
+
+def _hyphen_break(before: str, after: str) -> bool:
+    return len(before) > 1 and before[-1] == "-" and before[-2].isalpha() and after[0].islower()
