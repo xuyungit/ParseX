@@ -73,7 +73,7 @@
 {"op": "add_relation", "kind": "continues|captions|footnotes|contains|follows|belongs_to_section|duplicate_of", "src": ID, "dst": ID}
 ```
 
-`set_role` 的 `level` 只在 `kind` 为 `title` 时使用，可省。被拒绝的变更会给出规则名与原因。
+`set_role` 的 `level` 只在 `kind` 为 `title` 时使用，可省。除 `add_relation` 外，每条都可以另带 `"evidence": {"page": 3, "image": "a-…"}`——一个字典，值为文字、数字或真假值，可省；依据主要写在 `reason` 里。被拒绝的变更会给出规则名与原因。
 
 `review_table`（`./px tool review_table --ws ws --block ID --issues - --json`）：
 

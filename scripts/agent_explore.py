@@ -331,6 +331,7 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     # Codex and the agent's shell get no service settings: only px-run loads them, inside the tool process.
     dotenv_names = set(dotenv_values(ENV_FILE)) | set(dotenv_values(Path.home() / ".config" / "parserx" / ".env"))
     env = {k: v for k, v in os.environ.items() if k not in dotenv_names and not _SECRET_NAME.search(k)}
+    env["RUST_LOG"] = "codex_core=info"  # stalls, stream retries and reconnects go to run/stderr.log (P2-5)
     started, t0 = _utc(), time.monotonic()
     timed_out = False
     with open(runs / "events.jsonl", "wb") as out, open(runs / "event_times.txt", "w") as times, \
