@@ -62,12 +62,13 @@ def docx_path(tmp_path):
     doc.add_picture(image_stream)
     doc.add_section(WD_SECTION.CONTINUOUS)
     doc.add_paragraph("New section")
-    # a textbox (unsupported in Phase 1): its text must be accounted, not silently lost
+    # a textbox (Q44): its paragraphs become text after the paragraph that anchors it
     _add(body, (
         f'<w:p {W} xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
         'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
         'xmlns:v="urn:schemas-microsoft-com:vml"><w:r><mc:AlternateContent><mc:Choice Requires="wps">'
-        '<w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout text</w:t></w:r></w:p></w:txbxContent>'
+        '<w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout text</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent>'
         '</wps:txbx></w:drawing></mc:Choice><mc:Fallback><w:pict><v:textbox><w:txbxContent><w:p><w:r>'
         '<w:t>Callout text</w:t></w:r></w:p></w:txbxContent></v:textbox></w:pict></mc:Fallback>'
         '</mc:AlternateContent></w:r></w:p>'))
@@ -137,13 +138,17 @@ def test_images_become_assets(docx_path):
     assert figure.anchors[0].segment == 2
 
 
-def test_unsupported_textbox_is_accounted_once(docx_path):
+def test_textbox_paragraphs_become_text_after_their_anchor(docx_path):
     ext = extract_docx(docx_path)
-    failed = [b for b in ext.blocks if b.status == BlockStatus.FAILED]
-    assert [b.text for b in failed] == ["Callout text"]  # the VML fallback is not read twice
-    entry = next(e for e in ext.ledger if e.block == failed[0].id)
-    assert entry.unit == "docx_unsupported" and entry.disposition == "failed" and entry.chars == 11
-    assert any("textbox" in w for w in ext.warnings)
+    texts = [b.text for b in _text_blocks(ext)]
+    assert texts[texts.index("New section") + 1:] == ["Callout text", "Second line"]  # the VML fallback is not read twice
+    assert not any(b.status == BlockStatus.FAILED for b in ext.blocks)
+    boxes = [b for b in ext.blocks if b.text in ("Callout text", "Second line")]
+    entries = [e for e in ext.ledger if e.block in {b.id for b in boxes}]
+    assert [(e.unit, e.disposition, e.chars) for e in entries] == [("docx_paragraph", "output", 11),
+                                                                    ("docx_paragraph", "output", 10)]
+    assert boxes[0].anchors[0].node_path.endswith("w:txbxContent[1]/w:p[1]")
+    assert not any("textbox" in w for w in ext.warnings)
 
 
 def test_ledger_and_anchors(docx_path):

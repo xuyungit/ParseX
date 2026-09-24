@@ -22,9 +22,12 @@ Supported in Phase 1:
   rendered number is part of the paragraph text, as Word displays it;
 - header and footer parts as excluded page furniture.
 
+- textboxes (Q44): each paragraph becomes a text block right after the
+  paragraph that anchors the textbox (no style evidence).
+
 Not supported yet (warning, ``failed`` ledger item, text kept on a failed
-block in the sidecar): textboxes, footnotes and endnotes, comments, linked
-images.  Paragraph roles (title, list) are the structure step's decision.
+block in the sidecar): footnotes and endnotes, comments, linked images.
+Paragraph roles (title, list) are the structure step's decision.
 """
 
 from __future__ import annotations
@@ -345,6 +348,7 @@ class _Piece:
     rid: str | None = None
     extent: tuple[int, int] | None = None
     note_id: str | None = None
+    paragraphs: list[str] = field(default_factory=list)  # textbox: its paragraphs' text
 
 
 @dataclass
@@ -463,8 +467,9 @@ def _graphics(node, para: _Para, path: str) -> None:
     """Images and textboxes inside a drawing, VML picture or embedded object."""
     boxes = list(node.iter(_w("txbxContent")))
     for index, box in enumerate(boxes, 1):
-        text = "\n".join(_plain_text(p) for p in box.iter(_w("p")))
-        para.pieces.append(_Piece("textbox", f"{path}//w:txbxContent[{index}]", text.strip()))
+        paragraphs = [_plain_text(p) for p in box.iter(_w("p"))]
+        para.pieces.append(_Piece("textbox", f"{path}//w:txbxContent[{index}]", "\n".join(paragraphs).strip(),
+                                  paragraphs=paragraphs))
     extent = node.find(f".//{{{NS['wp']}}}extent")
     size = None
     if extent is not None:
@@ -681,6 +686,9 @@ class _Reader:
                 self._image(piece)
             elif piece.kind in ("footnote", "endnote", "comment"):
                 self._note(piece)
+            elif piece.kind == "textbox":  # Q44: its paragraphs follow the paragraph that anchors it
+                for index, text in enumerate(piece.paragraphs, 1):
+                    self._text_block(text, f"{piece.path}/w:p[{index}]", None)
             else:
                 self._failed(piece.kind, piece.path, piece.text, labels.to_kind(ENGINE, piece.kind))
 
