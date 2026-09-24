@@ -202,3 +202,12 @@ def test_shadow_run_is_idempotent_and_cached(tmp_path):
     assert env.ok and Workspace.open(ws).load().version == version and detector.calls == calls
     env, _ = call_tool("recognize", ws, {**request, "force": True}, config=config, context_factory=Context)
     assert detector.calls == calls  # forced again, but the detections come from the derived cache
+
+
+def test_onnxruntime_telemetry_is_off():
+    # it sends usage events, and in a sandbox leaves ":memory:.ses" in the working directory (P2-4 F4)
+    import os
+
+    import parserx.layout.detector  # noqa: F401
+
+    assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"

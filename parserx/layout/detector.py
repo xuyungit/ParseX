@@ -5,6 +5,10 @@ derived cache, so offline replays never load it.  rapid-layout downloads the
 model on first use; unit tests use a fake detector (``live_layout`` tests use
 the real one).  Output order and precision are fixed (boxes rounded to 0.1 px,
 scores to 0.001) so the same image yields the same regions.
+
+onnxruntime's telemetry is switched off: it sends usage events off the machine,
+and where it cannot write its device id (a sandbox) it leaves ``:memory:.ses``
+in the working directory (P2-4 F4).
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from importlib import metadata
@@ -22,6 +27,8 @@ from PIL import Image
 
 from parserx.cache import ResponseCache
 from parserx.ir.base import BBox
+
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")  # read when onnxruntime starts its first session
 
 
 @dataclass(frozen=True)
