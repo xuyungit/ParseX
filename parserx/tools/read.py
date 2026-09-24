@@ -13,7 +13,7 @@ from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import page_render, region_crop, write_once
 from parserx.tools.views import BlockView, ImageRef, ObservationView, block_view, observation_view
-from parserx.workspace.queries import block_map, blocks_on_page, neighbors
+from parserx.workspace.queries import HIDDEN, block_map, block_unit, ordered
 
 
 class ReadRequest(IRModel):
@@ -24,6 +24,8 @@ class ReadRequest(IRModel):
     dpi: int | None = None  # default tools.read_dpi
     pad_pt: float | None = None  # default tools.crop_pad_pt
     observations: bool = False
+    include_hidden: bool = False  # also blocks superseded or excluded (duplicate / merged / excluded)
+    geometry: bool = False  # anchors and coordinates
 
     @model_validator(mode="after")
     def _one_target(self) -> "ReadRequest":
@@ -43,14 +45,16 @@ class ReadResult(IRModel):
 def run(ctx: ToolContext, req: ReadRequest) -> ToolOutput[ReadResult]:
     state = ctx.ws.load()
     blocks_by_id = block_map(state)
+    shown = [b for b in ordered(state) if req.include_hidden or b.status not in HIDDEN or b.id == req.block]
     if req.page is not None:
         if all(p.n != req.page for p in state.pages):
             raise ToolFailure(FailureCode.NOT_FOUND, f"no page {req.page}", targets=[f"p{req.page}"])
-        blocks = blocks_on_page(state, req.page)
+        blocks = [b for b in shown if block_unit(state, b) == req.page]
     else:
         if req.block not in blocks_by_id:
             raise ToolFailure(FailureCode.NOT_FOUND, f"no block {req.block}", targets=[req.block])
-        blocks = neighbors(state, req.block, req.context)
+        at = next(i for i, b in enumerate(shown) if b.id == req.block)
+        blocks = shown[max(0, at - req.context): at + req.context + 1]
     failures: list[Failure] = []
     image = None
     if req.image != "none":
@@ -60,9 +64,9 @@ def run(ctx: ToolContext, req: ReadRequest) -> ToolOutput[ReadResult]:
                                     targets=[req.block or f"p{req.page}"]))
     observations = None
     if req.observations:
-        observations = [observation_view(b, o) for b in blocks for o in b.observations]
-    return output(ReadResult(image=image, blocks=[block_view(state, b) for b in blocks], observations=observations),
-                  failures=failures)
+        observations = [observation_view(b, o, geometry=req.geometry) for b in blocks for o in b.observations]
+    return output(ReadResult(image=image, blocks=[block_view(state, b, geometry=req.geometry) for b in blocks],
+                             observations=observations), failures=failures)
 
 
 def _image(ctx: ToolContext, state, req: ReadRequest, blocks_by_id) -> tuple[ImageRef | None, str | None]:

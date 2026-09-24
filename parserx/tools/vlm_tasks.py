@@ -56,8 +56,11 @@ _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 
 
 def _json(text: str) -> Any:
+    """The first complete JSON value; text after it (a second object, a remark) is ignored."""
+    body = _FENCE_RE.sub("", text.strip())
     try:
-        return json.loads(_FENCE_RE.sub("", text.strip()))
+        value, _end = json.JSONDecoder().raw_decode(body)
+        return value
     except json.JSONDecodeError as exc:
         raise UnparseableResponse(f"not JSON: {exc}") from exc
 

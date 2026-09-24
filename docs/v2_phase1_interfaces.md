@@ -640,6 +640,7 @@ class ExportResult(IRModel):
 - `review_table`：只支持有页面几何的表格（DOCX 表格来自原生 XML，没有图像证据）；裁剪图登记为 Asset，候选 Observation 的锚点指向它；"没有新证据"＝同一问题针对同一份识别结果（最近一条非复核的 Observation）再次提出；接受门见 §2 与 `content/select.py`。
 - `describe_figure`：已有描述时直接返回（`cached=true`，不发请求）；描述失败时图片保持原样，失败写在 `failures`。
 - `apply_structure`：请求增加 `actor`（写入每条 Decision）；`DecisionStage` 增加 `structure`（移动、待定）。所有被拒或 atomic 下有被拒时不开事务、不改版本。
+- 〔P1-7b，试用后〕`read` 默认只返回当前采用的内容（隐藏 duplicate / merged / excluded 块），`include_hidden` 与 `geometry`（锚点与坐标）按需；`recognize` 默认不返回观察视图（`observations=true` 时返回）；VLM 回答在 JSON 之后附带内容时取第一个完整 JSON；两次都无法解析、或被端点内容策略拒绝时，失败信息写明下一步；复核未采用时写一条 `table_uncertain` 未解决项（附未通过的检查）。
 - 配置新增 `tools`（描述与复核的 reasoning effort、max tokens、`read_dpi`、`crop_pad_pt`、`scan_batch_pages`）；提示词在 `parserx/prompts/`（`describe_figure.md`、`review_table.md`），内容哈希计入缓存键与 `state.prompt_hashes`。
 
 ## 6. 阶段一测试清单（先写测试）

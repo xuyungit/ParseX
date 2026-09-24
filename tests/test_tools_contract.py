@@ -284,3 +284,47 @@ def test_cli_schema_and_invalid_request(ws, monkeypatch, capsys):
         parserx.cli.main()
     assert exit_info.value.code == 2 and json.loads(capsys.readouterr().out)["failures"][0]["code"] == \
         "invalid_request"
+
+
+# ── Trial follow-ups (P1-7b) ────────────────────────────────────────────
+
+
+def test_read_shows_adopted_content_unless_asked(ws):
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"})
+    env, _ = _call("read", ws, {"page": 2})
+    assert all(b.status in ("ok", "degraded") and b.anchors is None for b in env.result.blocks)
+    env, _ = _call("read", ws, {"page": 2, "include_hidden": True, "geometry": True})
+    assert any(b.status == "merged" for b in env.result.blocks) and env.result.blocks[0].anchors
+
+
+def test_recognize_returns_views_only_when_asked(ws):
+    env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"})
+    assert env.result.observations == [] and env.result.observations_total == 5
+
+
+def test_answer_with_trailing_text_is_parsed():
+    from parserx.tools.vlm_tasks import parse_review
+
+    grid, undetermined, problem = parse_review(
+        '{"table_html": "<table><tr><td>a</td></tr></table>", "undetermined": []}\n{"note": "extra"}')
+    assert grid.slot(0, 0).content == "a" and problem is None
+
+
+def test_rejected_review_leaves_an_unresolved_item(ws):
+    class Rewriting(FakeVLM):
+        def describe_image(self, *args, **kwargs):
+            return json.dumps({"table_html": "<table><tr><td>项目</td></tr></table>", "undetermined": []})
+
+    context = _context()
+    rewriting = Rewriting()
+
+    class Context(context):
+        def _new_vlm(self, cfg):
+            return rewriting
+
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=Context)
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    env, _ = _call("review_table", ws, {"block": table.id, "issues": [{"kind": "structure", "note": "rows?"}]},
+                   context=Context)
+    assert env.ok and not env.result.adopted
+    assert env.unresolved[0].kind == "table_uncertain" and "structure_valid" in env.unresolved[0].detail

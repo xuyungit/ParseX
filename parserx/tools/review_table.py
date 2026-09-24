@@ -20,7 +20,7 @@ from parserx.ir.enums import BlockKind, ObservationStatus, TaskKind
 from parserx.ir.observation import Observation
 from parserx.prompts import load_prompt
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
-from parserx.tools.envelope import Change, DocText, FailureCode, ToolFailure
+from parserx.tools.envelope import Change, DocText, FailureCode, ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.imaging import region_crop, write_once
 from parserx.tools.views import TableView, table_view
 from parserx.tools.vlm_tasks import REVIEW_SCHEMA, parse_review
@@ -127,8 +127,18 @@ def run(ctx: ToolContext, req: ReviewTableRequest) -> ToolOutput[ReviewTableResu
         cell_diff = _cell_diff(before, grid) if grid is not None else []
         diff = [Change(target=block.id, field="chosen_observation", before=_prev(block), after=candidate.id)] \
             if outcome.adopted else []
+    unresolved = []
+    if not outcome.adopted:
+        failed = "; ".join(f"{g.name}: {g.detail}" for g in outcome.gate if not g.passed)
+        unresolved.append(Unresolved(target=req.block, kind=UnresolvedKind.TABLE_UNCERTAIN, detail=(
+            f"candidate {candidate.id} not adopted ({failed}); the table keeps its reading — ask a narrower "
+            "question, or mark the block pending with apply_structure")))
+    elif undetermined:
+        unresolved.append(Unresolved(target=req.block, kind=UnresolvedKind.TABLE_UNCERTAIN,
+                                     detail=f"cells the model could not determine: {undetermined}"))
     return output(ReviewTableResult(candidate=candidate.id, grid=table_view(grid), cell_diff=cell_diff,
-                                    undetermined=undetermined, gate=outcome.gate, adopted=outcome.adopted), diff=diff)
+                                    undetermined=undetermined, gate=outcome.gate, adopted=outcome.adopted),
+                  diff=diff, unresolved=unresolved)
 
 
 def _prev(block) -> str | None:

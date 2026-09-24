@@ -20,7 +20,15 @@ from pydantic import BaseModel, ValidationError
 from parserx.cache import CacheMiss, open_cache, service_identity
 from parserx.config.schema import ParserXConfig
 from parserx.ir.state import TokenUsage
-from parserx.scheduling import BudgetExhausted, JobStore, MeteredService, RequestMeter, ServiceGateway, is_retryable
+from parserx.scheduling import (
+    BudgetExhausted,
+    JobStore,
+    MeteredService,
+    RequestMeter,
+    ServiceGateway,
+    UnparseableResponse,
+    is_retryable,
+)
 from parserx.services.llm import create_vlm_service
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools.envelope import BudgetLeft, Change, Cost, Envelope, Failure, FailureCode, ToolFailure, Unresolved
@@ -108,6 +116,14 @@ def service_failure(exc: Exception, targets: list[str]) -> Failure:
         return Failure(code=FailureCode.BUDGET_EXHAUSTED, message=str(exc), retryable=False, targets=targets)
     if isinstance(exc, CacheMiss):
         return Failure(code=FailureCode.CACHE_MISS_OFFLINE, message=str(exc), retryable=False, targets=targets)
+    if isinstance(exc, UnparseableResponse):
+        return Failure(code=FailureCode.SERVICE_ERROR, retryable=False, targets=targets, message=(
+            f"the model's answer could not be parsed, also when asked a second time ({exc}); the same request "
+            "replays the same answers from the cache — change the question (fewer cells, another note) to ask again"))
+    if "flagged as potentially violating" in str(exc):
+        return Failure(code=FailureCode.SERVICE_ERROR, retryable=False, targets=targets, message=(
+            "the VLM endpoint's content policy refused this request; rephrase the issue note and try again, "
+            f"or leave the item unresolved ({type(exc).__name__}: {exc})"))
     if isinstance(exc, TimeoutError) or "Timeout" in type(exc).__name__:
         return Failure(code=FailureCode.TIMEOUT, message=f"{type(exc).__name__}: {exc}", retryable=True,
                        targets=targets)

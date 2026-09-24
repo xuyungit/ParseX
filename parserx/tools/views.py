@@ -52,7 +52,7 @@ class BlockView(IRModel):
     page: int | None  # PDF page or DOCX segment
     text: DocText | None
     table: TableView | None
-    anchors: list[SourceAnchor]
+    anchors: list[SourceAnchor] | None  # only when geometry was asked for
     chosen_observation: str | None
 
 
@@ -70,7 +70,7 @@ class ObservationView(IRModel):
     rec_confidence: float | None
     raw_ref: str | None
     error: str | None
-    anchor: SourceAnchor
+    anchor: SourceAnchor | None  # only when geometry was asked for
 
 
 class OutlineNode(IRModel):
@@ -96,20 +96,21 @@ def table_view(grid: TableGrid | None) -> TableView | None:
                  content=DocText(doc_text=c.content)) for c in grid.cells])
 
 
-def block_view(state: DocumentState, block: Block) -> BlockView:
+def block_view(state: DocumentState, block: Block, *, geometry: bool = True) -> BlockView:
     return BlockView(
         id=block.id, kind=block.kind, order=block.order, status=block.status, level=block.level,
         page=block_unit(state, block), text=DocText(doc_text=block.text) if block.text else None,
-        table=table_view(block.cells), anchors=block.anchors, chosen_observation=block.chosen_observation,
+        table=table_view(block.cells), anchors=block.anchors if geometry else None,
+        chosen_observation=block.chosen_observation,
     )
 
 
-def observation_view(block: Block, obs: Observation) -> ObservationView:
+def observation_view(block: Block, obs: Observation, *, geometry: bool = True) -> ObservationView:
     return ObservationView(
         id=obs.id, block=block.id, engine=obs.engine, engine_version=obs.engine_version, task=obs.task,
         status=obs.status, label=obs.label, text=DocText(doc_text=obs.text) if obs.text else None,
         table=table_view(obs.cells), det_confidence=obs.det_confidence, rec_confidence=obs.rec_confidence,
-        raw_ref=obs.raw_ref, error=obs.error, anchor=obs.anchor,
+        raw_ref=obs.raw_ref, error=obs.error, anchor=obs.anchor if geometry else None,
     )
 
 

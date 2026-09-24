@@ -40,6 +40,7 @@ class RecognizeRequest(IRModel):
     regions: list[RegionRef] = []
     engine: Literal["paddleocr", "vlm", "native", "layout"]
     force: bool = False  # recognise again pages already recognised by this engine (still cached)
+    observations: bool = False  # include the new observations (text) in the result; read gives them per page
 
 
 class SelectionOutcome(IRModel):
@@ -50,7 +51,7 @@ class SelectionOutcome(IRModel):
 
 
 class RecognizeResult(IRModel):
-    observations: list[ObservationView]  # new observations (first OBSERVATION_VIEWS)
+    observations: list[ObservationView]  # new observations when asked for (first OBSERVATION_VIEWS)
     observations_total: int
     pages: list[PageRow]
     selections: list[SelectionOutcome]
@@ -87,9 +88,10 @@ def _pages(ctx: ToolContext, req: RecognizeRequest) -> list[int]:
 def _native(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeResult]:
     pages = set(_pages(ctx, req))
     state = ctx.ws.load()
-    views = [observation_view(b, o) for b in state.blocks if block_unit(state, b) in pages
+    views = [observation_view(b, o, geometry=False) for b in state.blocks if block_unit(state, b) in pages
              for o in b.observations if o.engine in ("native_pdf", "docx")]
-    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS], observations_total=len(views),
+    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
+                                  observations_total=len(views),
                                   pages=[r for r in page_rows(state) if r.n in pages], selections=[]))
 
 
@@ -164,13 +166,14 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                     selections.append(SelectionOutcome(target=f"p{n}", choice="scan_engine", adopted=True,
                                                        reason="native layer failed its quality check"))
         new_blocks = [b for b in state.blocks if b.id in set(new_ids)]
-        views = [observation_view(b, o) for b in new_blocks for o in b.observations]
+        views = [observation_view(b, o, geometry=False) for b in new_blocks for o in b.observations]
         rows = [r for r in page_rows(state) if r.n in set(requested)]
         diff = [Change(target=f"p{p.n}", field="status", before=before[p.n].value, after=p.status.value)
                 for p in state.pages if p.status != before[p.n]]
         unresolved = [u for u in unresolved_items(state) if u.target in {f"p{n}" for n in requested}]
-    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS], observations_total=len(views), pages=rows,
-                                  selections=selections), failures=failures, diff=diff, unresolved=unresolved)
+    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
+                                  observations_total=len(views), pages=rows, selections=selections),
+                  failures=failures, diff=diff, unresolved=unresolved)
 
 
 def _next_block_seq(state, n: int) -> int:

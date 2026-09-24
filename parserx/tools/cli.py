@@ -58,6 +58,8 @@ def _read_opts(p):
     p.add_argument("--dpi", type=int)
     p.add_argument("--pad-pt", type=float)
     p.add_argument("--observations", action="store_true")
+    p.add_argument("--include-hidden", action="store_true", help="also superseded / excluded blocks")
+    p.add_argument("--geometry", action="store_true", help="include anchors and coordinates")
 
 
 def _recognize_opts(p):
@@ -66,6 +68,7 @@ def _recognize_opts(p):
     p.add_argument("--regions", help="JSON file with a list of RegionRef")
     p.add_argument("--engine", choices=("paddleocr", "vlm", "native", "layout"), required=False)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--observations", action="store_true", help="include the new observations (text) in the result")
 
 
 def _review_opts(p):
@@ -118,13 +121,14 @@ def _request(name: str, args) -> dict[str, Any]:
         return _load_json(args.request)
     if name == "read":
         return {k: v for k, v in dict(page=args.page, block=args.block, image=args.image, context=args.context,
-                                      dpi=args.dpi, pad_pt=args.pad_pt, observations=args.observations).items()
+                                      dpi=args.dpi, pad_pt=args.pad_pt, observations=args.observations,
+                                      include_hidden=args.include_hidden, geometry=args.geometry).items()
                 if v is not None}
     if name == "recognize":
         return {"pages": _pages(args.pages) if args.pages else [],
                 "blocks": args.blocks.split(",") if args.blocks else [],
                 "regions": _load_json(args.regions) if args.regions else [],
-                "engine": args.engine, "force": args.force}
+                "engine": args.engine, "force": args.force, "observations": args.observations}
     if name == "review_table":
         return {"block": args.block, "issues": _load_json(args.issues) if args.issues else [],
                 "context": args.context}
