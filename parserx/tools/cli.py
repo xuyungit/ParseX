@@ -80,6 +80,8 @@ def _ask_opts(p):
     p.add_argument("--block", help="ask about this block's image (its crop)")
     p.add_argument("--page", type=int, help="ask about the whole page image")
     p.add_argument("--seam", type=int, help="ask about page N's bottom half above page N+1's top half (PDF)")
+    p.add_argument("--rows", type=int, nargs=2, metavar=("FIRST", "LAST"),
+                   help="with --block of a table: a sharper strip of just these rows (from 0)")
     p.add_argument("--question")
     p.add_argument("--questions", help="JSON file (or -) with a list of {block | page | seam, question}: "
                                        "several at once")
@@ -155,7 +157,7 @@ def _request(name: str, args) -> dict[str, Any]:
     if name == "ask_image":
         if args.questions:
             return {"questions": _load_json(args.questions)}
-        return {k: v for k, v in dict(block=args.block, page=args.page, seam=args.seam,
+        return {k: v for k, v in dict(block=args.block, page=args.page, seam=args.seam, rows=args.rows,
                                       question=args.question).items() if v is not None}
     if name == "correct":
         return {"block": args.block, "image": args.image, "reason": args.reason, "actor": args.actor,

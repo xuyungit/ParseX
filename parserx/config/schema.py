@@ -246,6 +246,7 @@ class ToolsConfig(BaseModel):
     ask_max_tokens: int = 1024
     review_max_tokens: int = 4096
     read_dpi: int = 150  # default page render resolution for ``read``
+    strip_dpi: int = 300  # ``ask_image --rows``: a band of table rows, sharp enough for small digits
     crop_pad_pt: float = 6.0
     scan_batch_pages: int = 100  # pages per scan-engine request (guide §8.2: bounded batches)
 

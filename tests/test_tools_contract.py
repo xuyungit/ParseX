@@ -743,3 +743,24 @@ def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
     md = Path(env.result.markdown).read_text()
     assert "img_in_image_box" not in md and "〔图1〕" in md
     assert md.index("〔图1〕") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.rindex("](images/")
+
+
+def test_ask_about_some_rows_of_a_table_sees_a_sharper_strip(ws):
+    # a whole-table crop of a long table leaves its digits too small for the VLM (round 4, real_doc03_pdf):
+    # asking about rows crops the band of those rows (with a row of margin) at a higher resolution
+    from PIL import Image as _Image
+
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    whole, _ = _call("read", ws, {"block": table.id, "image": "crop"}, context=context)
+    env, _ = _call("ask_image", ws, {"block": table.id, "rows": [1, 1], "question": "第 1 行的数值？"}, context=context)
+    assert env.ok and env.result.image != whole.result.image
+    strip = next(p for p in (ws / "renders").iterdir() if p.stem == env.result.image)
+    with _Image.open(strip) as image:
+        assert image.width >= 1.9 * whole.result.image.width  # 300 dpi against read's 150
+    env2, _ = _call("correct", ws, {"block": table.id, "image": env.result.image, "reason": "图上是 8",
+                                    "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
+    assert env2.result.adopted is True  # the strip is an image of this block
+    bad, code = _call("ask_image", ws, {"block": table.id, "rows": [5, 9], "question": "?"}, context=context)
+    assert not bad.ok and code == 2  # the table has 2 rows
