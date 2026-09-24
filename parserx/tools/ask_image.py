@@ -22,6 +22,7 @@ from parserx.prompts import load_prompt
 from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
+from parserx.tools.imaging import seam_image, write_once
 from parserx.tools.read import ReadRequest, _image
 
 PROMPT = "ask_image"
@@ -30,12 +31,13 @@ PROMPT = "ask_image"
 class Question(IRModel):
     block: str | None = None  # the block's image (its crop, or the figure / scan image itself)
     page: int | None = None  # the whole page image
+    seam: int | None = None  # page N's bottom half above page N + 1's top half: what continues across the break
     question: str
 
     @model_validator(mode="after")
     def _one_target(self) -> "Question":
-        if (self.block is None) == (self.page is None):
-            raise ValueError("give either block or page")
+        if sum(x is not None for x in (self.block, self.page, self.seam)) != 1:
+            raise ValueError("give one of block, page or seam")
         if not self.question.strip():
             raise ValueError("ask a question")
         return self
@@ -44,16 +46,17 @@ class Question(IRModel):
 class AskImageRequest(IRModel):
     block: str | None = None
     page: int | None = None
+    seam: int | None = None
     question: str | None = None
-    questions: list[Question] = []  # several questions in one call (P2-5); or block / page with question
+    questions: list[Question] = []  # several questions in one call (P2-5); or block / page / seam with question
 
     @model_validator(mode="after")
     def _one_form(self) -> "AskImageRequest":
-        single = self.block is not None or self.page is not None or self.question is not None
+        single = any(x is not None for x in (self.block, self.page, self.seam, self.question))
         if single == bool(self.questions):
-            raise ValueError("give block or page with a question, or a list of questions")
+            raise ValueError("give block, page or seam with a question, or a list of questions")
         if single:
-            Question(block=self.block, page=self.page, question=self.question or "")
+            Question(block=self.block, page=self.page, seam=self.seam, question=self.question or "")
         return self
 
 
@@ -61,6 +64,7 @@ class AskAnswer(IRModel):
     block: str | None
     page: int | None
     answer: DocText | None
+    seam: int | None = None
     image: str | None  # the image the answer was read from: pass it to correct as image evidence
 
 
@@ -79,19 +83,31 @@ class _Task:
 
 def run(ctx: ToolContext, req: AskImageRequest) -> ToolOutput[AskImageResult]:
     single = not req.questions
-    asked = [Question(block=req.block, page=req.page, question=req.question or "")] if single else req.questions
+    asked = [Question(block=req.block, page=req.page, seam=req.seam, question=req.question or "")] if single \
+        else req.questions
     state = ctx.ws.load()
     blocks = {b.id: b for b in state.blocks}
     pages = {p.n for p in state.pages}
     failures: list[Failure] = []
     tasks: list[_Task] = []
     for q in asked:
-        target = q.block or f"p{q.page}"
+        target = q.block or (f"p{q.page}" if q.page is not None else f"p{q.seam}-p{(q.seam or 0) + 1}")
         problem = None
         if q.block is not None and q.block not in blocks:
             problem = ToolFailure(FailureCode.NOT_FOUND, f"no block {q.block}", targets=[target])
         elif q.page is not None and q.page not in pages:
             problem = ToolFailure(FailureCode.NOT_FOUND, f"no page {q.page}", targets=[target])
+        elif q.seam is not None and (state.format != "pdf" or q.seam not in pages or q.seam + 1 not in pages):
+            problem = ToolFailure(FailureCode.INVALID_REQUEST, f"no seam after page {q.seam} (PDF pages "
+                                                               f"{q.seam} and {q.seam + 1} are needed)",
+                                  targets=[target])
+        elif q.seam is not None:
+            page = next(p for p in state.pages if p.n == q.seam)
+            asset, data = seam_image(ctx.ws.source_path, q.seam, ctx.config.tools.read_dpi, page.size_pt)
+            path = ctx.ws.root / "renders" / f"{asset.id}.png"
+            write_once(path, data)
+            tasks.append(_Task(q, path, asset.id))
+            continue
         else:
             image, why = _image(ctx, state, ReadRequest(block=q.block, page=q.page,
                                                         image="crop" if q.block else "page"), blocks)
@@ -118,7 +134,7 @@ def run(ctx: ToolContext, req: AskImageRequest) -> ToolOutput[AskImageResult]:
             text = None
         else:
             text = DocText(doc_text=str(outcome.value).strip())
-        answers.append(AskAnswer(block=q.block, page=q.page, answer=text, image=outcome.task.image))
+        answers.append(AskAnswer(block=q.block, page=q.page, seam=q.seam, answer=text, image=outcome.task.image))
     first = answers[0] if single and answers else None
     return output(AskImageResult(answer=first.answer if first else None, image=first.image if first else None,
                                  answers=answers), failures=failures)

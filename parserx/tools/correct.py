@@ -170,8 +170,14 @@ def _images_read(record: dict, image: str) -> list[tuple[str | None, int | None,
         return [(request.get("block"), request.get("page"), request.get("image") == "page")]
     if record.get("tool") == "ask_image":
         answers = result.get("answers") or [{"block": request.get("block"), "page": request.get("page"),
-                                             "image": result.get("image")}]
-        return [(a.get("block"), a.get("page"), a.get("page") is not None) for a in answers if a.get("image") == image]
+                                             "seam": request.get("seam"), "image": result.get("image")}]
+        readings = []
+        for a in (a for a in answers if a.get("image") == image):
+            if a.get("seam") is not None:  # the seam image shows both pages around the break
+                readings += [(None, a["seam"], True), (None, a["seam"] + 1, True)]
+            else:
+                readings.append((a.get("block"), a.get("page"), a.get("page") is not None))
+        return readings
     return []
 
 

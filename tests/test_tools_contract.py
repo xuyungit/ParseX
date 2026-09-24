@@ -538,6 +538,24 @@ def test_a_table_continued_across_pages_is_corrected_as_one(ws):
     assert env.result.adopted is True  # page 2 is one of the table's pages
 
 
+def test_ask_about_the_seam_between_two_pages(ws):
+    # a table or sentence continued on the next page: the bottom of one page and the top of the next in one image
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    env, _ = _call("ask_image", ws, {"seam": 1, "question": "续表的表头是否重复？"}, context=context)
+    assert env.ok and env.result.answers[0].seam == 1 and env.result.image is not None
+    seam = Path(next(p for p in (ws / "renders").iterdir() if p.stem == env.result.image))
+    from PIL import Image as _Image
+    with _Image.open(seam) as image:
+        assert image.height > image.width  # two half pages, stacked
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)  # on page 2
+    env, _ = _call("correct", ws, {"block": table.id, "image": env.result.image, "reason": "图上是 8",
+                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
+    assert env.result.adopted is True  # the seam image shows both pages
+    env, code = _call("ask_image", ws, {"seam": 2, "question": "?"}, context=context)
+    assert not env.ok and code == 2  # there is no page 3
+
+
 def test_a_correction_may_fill_an_empty_position_of_the_grid():
     from parserx.tables.grid import Cell, TableGrid
     from parserx.tools.correct import CellEdit, _edited_grid

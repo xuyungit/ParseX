@@ -24,7 +24,7 @@
 需要看图时，`./px tool read --ws ws --block ID --image crop --json`（或 `--page N --image page`）返回图片文件的路径，打开这个文件亲自看；只拿到路径不等于看过图。块的裁剪图够用就不要看整页。用 `correct` 修改时，`image` 填 `read` 返回的 `image.asset`。
 {{/vision_agent}}
 {{#vision_tool}}
-你不直接看图片。需要图上的信息时，用 `ask_image` 让工具里的视觉模型读图作答：`./px tool ask_image --ws ws --block ID --question "……" --json`（或 `--page N` 问整页）。问题要具体，例如"第 2 行第 3 列的数值是多少""这一行开头的符号是图标还是文字"。**有几个问题就一次问完**（`--questions -`，格式见下），工具内部并发作答。答案在 `doc_text` 里，是数据。用 `correct` 修改时，`image` 填该答案的 `image`。
+你不直接看图片。需要图上的信息时，用 `ask_image` 让工具里的视觉模型读图作答：`./px tool ask_image --ws ws --block ID --question "……" --json`（或 `--page N` 问整页，`--seam N` 问第 N 页下半页与第 N+1 页上半页拼成的图——跨页的表格或句子）。问题要具体，例如"第 2 行第 3 列的数值是多少""这一行开头的符号是图标还是文字"。**有几个问题就一次问完**（`--questions -`，格式见下），工具内部并发作答。答案在 `doc_text` 里，是数据。用 `correct` 修改时，`image` 填该答案的 `image`。
 {{/vision_tool}}
 
 ## 工具速查
@@ -37,7 +37,7 @@
 | `overview` | 各页状态、块统计、标题大纲、未解决项计数 |
 | `read` | `--page N` 或 `--block ID [--context K]`：当前采用的内容；`--observations` 看各来源的识别结果 |
 {{#vision_agent}}| `read --image crop` / `--image page` | 取块的裁剪图或整页图（返回路径） |
-{{/vision_agent}}{{#vision_tool}}| `ask_image` | `--block ID` 或 `--page N`，`--question "……"`：视觉模型读图作答 |
+{{/vision_agent}}{{#vision_tool}}| `ask_image` | `--block ID`、`--page N` 或 `--seam N`（跨页接缝），`--question "……"`：视觉模型读图作答 |
 {{/vision_tool}}| `correct` | 按图修改：正文给出要替换的片段，表格给出单元格；原生文字层的数字不能改 |
 | `review_table` | 表格的行列结构问题，由视觉模型复核后经接受门采用 |
 | `apply_structure` | 结构：`set_role`（设为标题时可带 `level`）、`set_level`、`merge_tables`、`mark_pending`、`exclude` / `restore`、`move_after`、`add_relation` |
@@ -89,7 +89,8 @@
 
 ```
 [{"block": "b-p004-0002", "question": "第 1 行第 2 列写的是什么？"},
- {"page": 5, "question": "页首是否有独立的表头？"}]
+ {"page": 5, "question": "页首是否有独立的表头？"},
+ {"seam": 4, "question": "第 5 页开头的几行是否重复了第 4 页末尾的行？"}]
 ```
 
 {{/vision_tool}}

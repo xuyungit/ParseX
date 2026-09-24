@@ -76,3 +76,25 @@ def image_crop(parent: Asset, data: bytes, bbox_px: BBox, pad_px: float) -> tupl
                              derived_from=parent.id, transform=(1.0, 0.0, 0.0, 1.0, float(box[0]), float(box[1])))
     return asset, out
 
+
+def seam_image(source: Path, n: int, dpi: int, size_pt: tuple[float, float]) -> tuple[Asset, bytes]:
+    """The bottom half of page *n* above the top half of page *n + 1*, with a grey rule between them: what
+    continues across the page break (a table, a sentence) in one image."""
+    halves = []
+    for page, top in ((n, False), (n + 1, True)):
+        data, width, height = page_png(source, page, dpi)
+        with Image.open(io.BytesIO(data)) as image:
+            box = (0, 0, width, height // 2) if top else (0, height - height // 2, width, height)
+            halves.append(image.convert("RGB").crop(box))
+    rule = max(2, dpi // 36)
+    out = Image.new("RGB", (max(h.width for h in halves), sum(h.height for h in halves) + rule), (160, 160, 160))
+    out.paste(halves[0], (0, 0))
+    out.paste(halves[1], (0, halves[0].height + rule))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    data = buf.getvalue()
+    asset = Asset.from_bytes(data, media_type="image/png", width=out.width, height=out.height, role="render",
+                             dpi=float(dpi), source=PdfAnchor(page=n, bbox=(0.0, size_pt[1] / 2, *size_pt),
+                                                              coord_space="page_pt"))
+    return asset, data
+
