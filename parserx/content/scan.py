@@ -78,12 +78,34 @@ def render_page_at(src: fitz.Document, n: int, dpi: int) -> tuple[bytes, int, in
 
 
 def scan_order(boxes: list, orders: list[int | None]) -> list[int]:
-    """Engine reading order; regions outside the text flow (order None) go before the first region below them."""
+    """Engine reading order; regions outside the text flow (order None) are placed by position.
+
+    Unplaced regions that touch vertically (a caption and its table) are placed together, top down, after
+    the latest region in the sequence that starts above them and overlaps them horizontally, so a
+    right-column table follows the right column and a full-width one follows both.  With no such region
+    they go before the first region that starts below them.
+    """
     result = sorted((i for i, o in enumerate(orders) if o is not None), key=lambda i: (orders[i], i))
+    groups: list[list[int]] = []
     for i in sorted((i for i, o in enumerate(orders) if o is None), key=lambda i: (boxes[i][1], boxes[i][0], i)):
-        at = next((k for k, j in enumerate(result) if boxes[j][1] > boxes[i][1]), len(result))
-        result.insert(at, i)
+        if groups and _touches(boxes[groups[-1][-1]], boxes[i], [boxes[j] for j in result]):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    for group in groups:
+        box = (min(boxes[i][0] for i in group), boxes[group[0]][1], max(boxes[i][2] for i in group))
+        above = [k for k, j in enumerate(result) if boxes[j][1] < box[1] and boxes[j][0] < box[2] and boxes[j][2] > box[0]]
+        at = max(above) + 1 if above else next((k for k, j in enumerate(result) if boxes[j][1] > box[1]), len(result))
+        result[at:at] = group
     return result
+
+
+def _touches(a, b, placed: list) -> bool:
+    """*b* sits right under *a* (a gap under half the smaller height), overlapping it, nothing placed between."""
+    gap = b[1] - a[3]
+    if gap > 0.5 * min(a[3] - a[1], b[3] - b[1]) or not (a[0] < b[2] and a[2] > b[0]):
+        return False
+    return not any(a[3] <= p[1] and p[3] <= b[1] and p[0] < max(a[2], b[2]) and p[2] > min(a[0], b[0]) for p in placed)
 
 
 def page_blocks(

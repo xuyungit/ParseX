@@ -42,6 +42,20 @@ def test_unordered_regions_are_placed_by_position():
     assert scan_order([[0, 100, 1, 110], [0, 50, 1, 60]], [1, 2]) == [0, 1]
 
 
+def test_unordered_regions_follow_their_own_column():
+    boxes = [[100, 100, 500, 300], [100, 450, 500, 900],  # left column, engine order 1, 2
+             [600, 100, 900, 200], [600, 220, 900, 300],  # right column, engine order 3, 4
+             [600, 330, 900, 360], [600, 370, 900, 600],  # a caption and a table in the right column, unordered
+             [600, 650, 900, 700]]                        # right column, engine order 5
+    assert scan_order(boxes, [1, 2, 3, 4, None, None, 5]) == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_a_caption_moves_with_its_full_width_table():
+    boxes = [[100, 100, 500, 900], [600, 100, 900, 950],  # two columns, engine order 1, 2
+             [100, 970, 200, 990], [100, 995, 900, 1300]]  # a short caption over a full-width table, unordered
+    assert scan_order(boxes, [1, 2, None, None]) == [0, 1, 2, 3]
+
+
 def test_blocks_ids_kinds_and_coordinates():
     result = page_blocks(_scan(ENTRIES), page_size=(500.0, 700.0), first_seq=4, first_item=7)
     blocks = result.blocks
