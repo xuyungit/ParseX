@@ -548,6 +548,8 @@ class DescribeFigureResult(IRModel):
 
 描述失败时，`semantic` 缺省、图片保留，不影响正文（§6.1）。
 
+〔P1-6〕渲染实现（`parserx/render/`）：`render_markdown(state, image_dir="images")`、`export_sidecar(state)`（DocumentState + 由 `check` 算出的账目汇总，通过 schema 校验）、`sidecar_json`（同一状态逐字节相同，只有 `stats` 随运行变化）、`write_export(state, ws_root, out_dir, name)`（写 `<name>.md`、`<name>.blocks.json`，只复制渲染出来的图片到 `images/`）。规则：级别待定的标题渲染为普通段落（渲染器不臆造结构）；段落内换行按 pandoc `east_asian_line_breaks` 约定合并（两侧都是宽字符时直接相连，否则一个空格）；段首 `#`、`>` 转义；公式没有定界符时包成 `$$…$$`；图片替代文字只写类型与标题（`chart: 标题`、`diagram: 类型`、`photo`，无语义时 `图片`），不重复描述；识别失败的扫描图保持可见（`扫描图像`）；excluded / merged / duplicate / failed 块不渲染。
+
 **〔v1.9〕渲染格式**：语义块必须是紧跟在图片行之后的引用块，首行为 `> [图片语义]`，然后每项一行并标出证据层级。评测的规范化步骤（`parserx/eval/normalize.py`）会把这种结构当作图片描述剔除；换成其他写法，描述会被计入正文分数。
 
 ```

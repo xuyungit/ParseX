@@ -1,0 +1,154 @@
+"""Markdown contract (guide §4.5, docs/v2_phase1_interfaces.md §5.6).
+
+- ATX headings for titles with a level; a title whose level is still
+  pending is a plain paragraph (the renderer never invents structure);
+- no hard line breaks inside a paragraph (CJK-aware joining);
+- tables from ``TableGrid``: GFM, or HTML when GFM cannot express them;
+- figures: ``![<short label>](images/<file>)`` followed by the semantic block
+  ``> [图片语义] …`` with evidence levels — the layout the evaluator strips
+  as a description; the label never repeats the description;
+- ``<!-- PAGE n -->`` for every PDF page; DOCX only has ``<!-- PAGE-BREAK -->``
+  and ``<!-- SECTION k -->`` (no physical pages without a layout engine);
+- hidden blocks (excluded, merged, duplicate) and failed blocks are not
+  rendered; they stay in the sidecar.  A scan image whose recognition failed
+  stays visible.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import PurePosixPath
+
+from parserx.content.text import join_wrapped
+from parserx.ir.anchor import AssetAnchor
+from parserx.ir.asset import Asset
+from parserx.ir.block import Block
+from parserx.ir.enums import BlockKind, BlockStatus, EvidenceLevel
+from parserx.ir.semantic import ChartSemantic, DiagramSemantic, Evidenced, GenericSemantic
+from parserx.ir.state import DocumentState
+from parserx.workspace.queries import block_unit, ordered
+
+_VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
+_LEVEL = {EvidenceLevel.VISIBLE: "可见", EvidenceLevel.ESTIMATED: "估读", EvidenceLevel.INFERRED: "推断",
+          EvidenceLevel.UNKNOWN: "未知"}
+_ARROW = {"forward": "→", "backward": "←", "both": "↔", "unknown": "—"}
+_MARKUP_START = re.compile(r"^(\s*)([#>])")
+_MATH_START = ("$", "\\[", "\\(", "\\begin")
+
+
+def image_file(asset: Asset) -> str:
+    """File name of an asset inside the export's image directory."""
+    return PurePosixPath(asset.path).name
+
+
+def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
+    assets = {a.id: a for a in state.assets}
+    by_unit: dict[int | None, list[Block]] = {}
+    for block in ordered(state):
+        by_unit.setdefault(block_unit(state, block), []).append(block)
+    parts: list[str] = []
+    section = 1
+    for page in state.pages:
+        if state.format == "pdf":
+            parts.append(f"<!-- PAGE {page.n} -->")
+        elif page.starts_with == "page_break":
+            parts.append("<!-- PAGE-BREAK -->")
+        elif page.starts_with == "section_break":
+            section += 1
+            parts.append(f"<!-- SECTION {section} -->")
+        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir))
+    for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
+        parts.extend(_render_all(blocks, assets, image_dir))
+    return "\n\n".join(parts) + "\n"
+
+
+def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str) -> list[str]:
+    out = []
+    for block in blocks:
+        if block.status in _VISIBLE:
+            rendered = _render(block, assets, image_dir)
+            if rendered:
+                out.append(rendered)
+    return out
+
+
+def _render(block: Block, assets: dict[str, Asset], image_dir: str) -> str:
+    kind = block.kind
+    if kind == BlockKind.TABLE:
+        grid = block.cells
+        if grid is None or not grid.cells:
+            return ""
+        return grid.to_html() if grid.needs_html else grid.to_gfm()
+    if kind in (BlockKind.FIGURE, BlockKind.SCAN):
+        asset = next((assets.get(a.asset) for a in block.anchors if isinstance(a, AssetAnchor)), None)
+        if asset is None:
+            return ""
+        label = _label(block) if kind == BlockKind.FIGURE else "扫描图像"
+        image = f"![{label}]({image_dir}/{image_file(asset)})"
+        semantic = _semantic_block(block)
+        return f"{image}\n\n{semantic}" if semantic else image
+    text = join_wrapped(block.text.split("\n"))
+    if not text:
+        return ""
+    if kind == BlockKind.TITLE and block.level is not None:
+        return f"{'#' * block.level} {text}"
+    if kind == BlockKind.FORMULA:
+        return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
+    return _MARKUP_START.sub(r"\1\\\2", text)
+
+
+# ── Figure semantics ────────────────────────────────────────────────────
+
+
+def _label(block: Block) -> str:
+    semantic = block.semantic
+    if isinstance(semantic, ChartSemantic):
+        return f"chart: {_value(semantic.title)}" if semantic.title and semantic.title.value is not None else "chart"
+    if isinstance(semantic, DiagramSemantic):
+        return f"diagram: {_value(semantic.diagram_type)}" if semantic.diagram_type.value is not None else "diagram"
+    if isinstance(semantic, GenericSemantic):
+        return semantic.type
+    return "图片"
+
+
+def _semantic_block(block: Block) -> str:
+    semantic = block.semantic
+    if semantic is None:
+        return ""
+    lines: list[str]
+    if isinstance(semantic, ChartSemantic):
+        lines = [f"[图片语义] chart · {_ev(semantic.chart_type)}"]
+        for name, item in (("标题", semantic.title), ("横轴", semantic.x_axis), ("纵轴", semantic.y_axis),
+                           ("单位", semantic.unit), ("刻度", semantic.axis_scale)):
+            if item is not None and item.value is not None:
+                lines.append(f"{name}：{_ev(item)}")
+        for series in semantic.series:
+            lines.append(f"系列 {_value(series.name)}：" + "；".join(_ev(v) for v in series.values))
+    elif isinstance(semantic, DiagramSemantic):
+        lines = [f"[图片语义] diagram · {_ev(semantic.diagram_type)}"]
+        if semantic.nodes:
+            lines.append("节点：" + "；".join(_ev(n) for n in semantic.nodes))
+        if semantic.edges:
+            edges = []
+            for edge in semantic.edges:
+                label = f"：{_ev(edge.label)}" if edge.label is not None and edge.label.value is not None else ""
+                edges.append(f"{edge.src} {_ARROW[edge.direction]} {edge.dst}{label}")
+            lines.append("连接：" + "；".join(edges))
+    else:
+        lines = [f"[图片语义] {semantic.type}", f"概述：{_ev(semantic.summary)}"]
+        if semantic.visible_text:
+            lines.append("可见文字：" + "；".join(_ev(t) for t in semantic.visible_text))
+    return "\n".join(f"> {' '.join(line.split())}" for line in lines)
+
+
+def _value(item: Evidenced | None) -> str:
+    if item is None or item.value is None:
+        return ""
+    value = item.value
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _ev(item: Evidenced) -> str:
+    return f"{_value(item)}（{_LEVEL[item.level]}）"
