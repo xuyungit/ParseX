@@ -279,6 +279,7 @@ def main() -> None:
                 partial_dir,
                 record=record,
                 outputs={n: m for n, m in run.outputs.items() if n in record["documents"]},
+                sidecars={n: s for n, s in run.sidecars.items() if n in record["documents"]},
                 manifest=build_manifest(
                     run_id=freeze_dir.name, label=args.freeze, config=config, config_path=args.config,
                     gt_dirs=gt_dirs, inventory=inventory, command=sys.argv,

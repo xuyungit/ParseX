@@ -650,6 +650,14 @@ class ExportResult(IRModel):
 - 路由：`routing/image.py`，廉价过滤（短边 < 30 px、像素标准差 < 1、长宽比 ≥ 12、**以及 v1 的"琐碎图"：面积 ≤ 12000 px² 且长边 ≤ 160 px**，见 Q31）→ DECORATIVE；否则按 §6.5 表格；检出区域置信度全低或 t、f 都 < 0.2 → UNCERTAIN。阈值在配置 `routing`。
 - 影子运行＝`recognize --engine layout`：`pages` 对页面渲染图（`layout.page_dpi`，默认 100）检测，每个区域作为 `layout` Observation 挂到重叠最多的块（被取代的 duplicate / merged 块除外，页眉页脚仍可挂），无块可挂的区域计入 warnings；`blocks` 对图片块路由，写 ImageRecord（`shown` 为实际是否渲染）与 `image_route` Decision，区域写成图片像素坐标的 Observation。**只有 DECORATIVE 生效**（块 excluded、账目 excluded、不渲染、不描述）；其余路由的 Decision 以 "shadow" 开头，不改变任何块。已处理的页与图片不重复，`force` 重做（检测仍来自派生缓存）。
 
+### 5.11 〔P1-10〕固定序列运行时
+
+- `parserx/runtimes/pipeline.py`：`run(input, ws, out, config)` 依次调用 workspace init → recognize（paddleocr，只对 pending 页）→ recognize（layout 影子：PDF 全部页面 + 可见图片块）→ describe_figure（可见且未描述的图片，预算耗尽即停）→ 结构（DOCX：`hierarchy/docx_styles.py`；PDF：`runtimes/v1_structure.py`，actor `adapter:v1`，临时）→ apply_structure → check → export。一篇文档的所有工具调用共用一个上下文（一个计数器、一个预算）；信封里的 `cost` 与写回 `state.stats` 的是本次调用的增量。
+- `pipeline: v1 | v2`（配置顶层）；`Pipeline.parse_result` 在 v2 时转给 `runtimes.pipeline.parse_result`，返回同样的 `ParseResult`，另带 `sidecar_json` 与 `document_status`；离线回放缺响应时返回带 `cache_misses` 的结果（评测记为未执行，不记为失败）。`configs/regression_v2.yaml` 继承回归配置并设 `pipeline: v2`；冻结 run 另存 `outputs/<doc>.blocks.json`。工作区默认在临时目录，`runtime.workspace_root` 可保留。
+- DOCX 确定性结构：大纲级别（直接或样式继承，9 为正文）或 `heading N` / `标题 N` 样式 → 标题；`Title` / `标题` 样式为文档标题（H1），存在时其余标题下移一级；带编号而无标题证据的段落 → list。
+- 层级统一（`hierarchy/levels.py`，§6.8 的文档级统一）：同一编号模式取多数层级（并列取浅），再按阅读顺序使每个标题最多比前一个标题深一级；只移动层级，不增删标题。
+- PDF 临时适配器：运行 v1 不调用服务的 provider → metadata → reading order → header/footer → code block → chapter（关闭 LLM 兜底），把与 v2 块文字相同（忽略空白）的标题作为结构变更提交；v1 标题落在更大的 v2 块里时不应用（结构变更不拆分文字）。
+
 ## 6. 阶段一测试清单（先写测试）
 
 | 测试文件 | 覆盖 |

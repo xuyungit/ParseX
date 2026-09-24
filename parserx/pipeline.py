@@ -91,6 +91,10 @@ class Pipeline:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
+        if self._config.pipeline == "v2":  # workspace + toolkit runtime (guide §12: v1 | v2 switch)
+            from parserx.runtimes.pipeline import parse_result as v2_parse_result
+
+            return v2_parse_result(path, self._config)
 
         self._meter.reset()
         self._gateway.budget.reset()

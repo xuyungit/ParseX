@@ -46,6 +46,8 @@ class EvalRunner:
         self.skipped: list[tuple[str, str]] = []
         # Markdown produced per document in the last evaluate_dir call.
         self.outputs: dict[str, str] = {}
+        # v2 only: the sidecar (.blocks.json text) per document.
+        self.sidecars: dict[str, str] = {}
 
     def evaluate_single(
         self, input_path: Path, expected_md_path: Path, name: str = "",
@@ -63,6 +65,8 @@ class EvalRunner:
             missed = ", ".join(f"{k} {v}" for k, v in sorted(parse_result.cache_misses.items()))
             raise NotReplayable(f"cache miss ({missed}); rerun with calls allowed")
         self.outputs[name or input_path.stem] = parse_result.markdown
+        if parse_result.sidecar_json is not None:
+            self.sidecars[name or input_path.stem] = parse_result.sidecar_json
 
         return evaluate_markdown(
             parse_result.markdown,
@@ -102,6 +106,7 @@ class EvalRunner:
         self.not_executed.clear()
         self.skipped.clear()
         self.outputs.clear()
+        self.sidecars.clear()
 
         if (ground_truth_dir / "expected.md").exists():
             doc_dirs = [ground_truth_dir]

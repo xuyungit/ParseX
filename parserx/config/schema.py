@@ -272,6 +272,14 @@ class RoutingConfig(BaseModel):
     low_confidence: float = 0.5  # every detection below → UNCERTAIN
 
 
+class RuntimeConfig(BaseModel):
+    """The v2 fixed-sequence runtime (guide §7, plan P1-10)."""
+
+    describe_figures: bool = True  # describe shown figures (each at most once, within the budget)
+    layout_shadow: bool = True  # run the layout detector and image routing (P1-9)
+    workspace_root: str | None = None  # keep each document's workspace here; None = a temporary directory
+
+
 class ServicesConfig(BaseModel):
     vlm: ServiceConfig = Field(default_factory=ServiceConfig)
     llm: ServiceConfig = Field(default_factory=ServiceConfig)
@@ -309,6 +317,9 @@ class CacheConfig(BaseModel):
 class ParserXConfig(BaseModel):
     """Top-level ParserX configuration."""
 
+    # v1: the processor pipeline; v2: workspace + toolkit through the fixed-sequence runtime.
+    pipeline: Literal["v1", "v2"] = "v1"
+
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)
     processors: ProcessorsConfig = Field(default_factory=ProcessorsConfig)
@@ -320,6 +331,7 @@ class ParserXConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     layout: LayoutConfig = Field(default_factory=LayoutConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

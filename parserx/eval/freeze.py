@@ -126,7 +126,8 @@ def build_manifest(
     }
 
 
-def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], manifest: dict) -> None:
+def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], manifest: dict,
+                     sidecars: dict[str, str] | None = None) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "metrics.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -134,6 +135,8 @@ def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], ma
     out_dir.mkdir(exist_ok=True)
     for name, markdown in outputs.items():
         (out_dir / f"{name}.md").write_text(markdown, encoding="utf-8")
+    for name, sidecar in (sidecars or {}).items():
+        (out_dir / f"{name}.blocks.json").write_text(sidecar, encoding="utf-8")
 
 
 def replay_differences(record: dict, frozen: dict) -> list[str]:

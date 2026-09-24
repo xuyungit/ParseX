@@ -37,6 +37,7 @@ class SuiteRun:
     failed: list[tuple[str, str]] = field(default_factory=list)
     not_executed: list[tuple[str, str]] = field(default_factory=list)
     outputs: dict[str, str] = field(default_factory=dict)
+    sidecars: dict[str, str] = field(default_factory=dict)  # v2: <name>.blocks.json text
     sources: dict[str, Path] = field(default_factory=dict)  # document → its ground-truth dir
 
 
@@ -66,6 +67,7 @@ def run_suite(runner: EvalRunner, gt_dirs: list[Path], include: set[str] | None)
         run.failed += runner.failed_docs
         run.not_executed += runner.not_executed
         run.outputs.update(runner.outputs)
+        run.sidecars.update(runner.sidecars)
 
     where = ", ".join(str(d) for d in gt_dirs)
     run.not_executed += [(name, f"not found in {where}") for name in sorted((include or set()) - set(seen))]

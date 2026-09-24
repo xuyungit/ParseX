@@ -1,0 +1,4 @@
+# v2 regression config (plan P1-10): the regression config with the workspace + toolkit runtime.
+extends: regression.yaml
+
+pipeline: v2

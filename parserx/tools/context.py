@@ -24,6 +24,7 @@ from parserx.scheduling import (
     BudgetExhausted,
     JobStore,
     MeteredService,
+    MeterSnapshot,
     RequestMeter,
     ServiceGateway,
     UnparseableResponse,
@@ -104,8 +105,8 @@ class ToolContext:
                                             identity=service_identity(cfg), gateway=self.gateway)
         return self._vlm[key]
 
-    def cost(self, wall_s: float) -> Cost:
-        snap = self.meter.snapshot()
+    def cost(self, wall_s: float, since: MeterSnapshot | None = None) -> Cost:
+        snap = _delta(self.meter.snapshot(), since)
         left = self.gateway.budget.left()
         return Cost(
             requests=dict(sorted(snap.requests.items())), attempts=dict(sorted(snap.attempts.items())),
@@ -169,6 +170,7 @@ def invoke(
                           message=f"workspace is at version {state.version}, request expected {expect_version}")
         return _fatal(name, state.id, state.version, failure), 0
     ctx = context_factory(ws, config)
+    before = ctx.meter.snapshot()  # a context may be shared by the calls of one run: count this call only
     code = 0
     try:
         out = run(ctx, req)
@@ -188,10 +190,10 @@ def invoke(
         failures = [Failure(code=FailureCode.INTERNAL_ERROR, message=f"{type(exc).__name__}: {exc}",
                             retryable=False)]
     wall = time.monotonic() - started
-    _record_stats(ctx, name, wall)
+    _record_stats(ctx, name, wall, before)
     envelope = Envelope(
         tool=name, doc=state.id, ws_version=ws.load().version, ok=not fatal,
-        result=out.result if out is not None else None, cost=ctx.cost(wall), failures=failures,
+        result=out.result if out is not None else None, cost=ctx.cost(wall, before), failures=failures,
         diff=out.diff if out is not None else [], unresolved=out.unresolved if out is not None else [],
     )
     ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),
@@ -200,8 +202,33 @@ def invoke(
     return envelope, code
 
 
-def _record_stats(ctx: ToolContext, name: str, wall: float) -> None:
-    snap = ctx.meter.snapshot()
+def _delta(after: MeterSnapshot, before: MeterSnapshot | None) -> MeterSnapshot:
+    """What happened between two snapshots of the same meter."""
+    if before is None:
+        return after
+
+    def minus(a: dict, b: dict) -> dict:
+        return {k: v - b.get(k, 0) for k, v in a.items() if v - b.get(k, 0)}
+
+    tokens = {}
+    for service, t in after.tokens.items():
+        old = before.tokens.get(service, {})
+        diff = {k: t[k] - old.get(k, 0) for k in t}
+        if any(diff.values()):
+            tokens[service] = diff
+    if after.cost_usd is None or before.cost_usd is None:
+        cost = None if after.cost_usd is None and tokens else (after.cost_usd or 0.0) - (before.cost_usd or 0.0)
+    else:
+        cost = round(after.cost_usd - before.cost_usd, 8)
+    return MeterSnapshot(requests=minus(after.requests, before.requests), attempts=minus(after.attempts, before.attempts),
+                         pages=minus(after.pages, before.pages), cache_hits=minus(after.cache_hits, before.cache_hits),
+                         cache_misses=minus(after.cache_misses, before.cache_misses),
+                         skipped_budget=minus(after.skipped_budget, before.skipped_budget), tokens=tokens,
+                         cost_usd=cost)
+
+
+def _record_stats(ctx: ToolContext, name: str, wall: float, before: MeterSnapshot | None = None) -> None:
+    snap = _delta(ctx.meter.snapshot(), before)
     if not (snap.requests or snap.cache_hits or snap.cache_misses or snap.skipped_budget):
         return
     with ctx.ws.txn(f"tool:{name}:stats") as state:

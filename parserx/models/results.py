@@ -23,6 +23,9 @@ class ParseResult(BaseModel):
     cache_misses: dict[str, int] = Field(default_factory=dict)
     tokens: dict[str, dict[str, int]] = Field(default_factory=dict)  # service → input / cached_input / output
     cost_usd: float | None = None  # LLM/VLM token cost of the real requests; None = unpriced usage
+    # v2 only: the sidecar (.blocks.json text) and the accounting status of the document
+    sidecar_json: str | None = None
+    document_status: str | None = None
     images_total: int = 0
     images_skipped: int = 0
     llm_fallback_hits: int = 0
