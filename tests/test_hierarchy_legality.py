@@ -137,3 +137,60 @@ def test_appendix_numbering_has_its_own_signature():
     assert numbering_signature("A. 概述") == numbering_signature("B. 方法") == numbering_signature("C. 结果") == "L"
     assert numbering_signature("I. Introduction") == numbering_signature("IV. 结论") == numbering_signature("V. 讨论") == "N"
     assert numbering_signature("a) 前提") == numbering_signature("b) 条件") == "L)"
+
+
+# ── P2-5: role with level, exclude and restore ──────────────────────────
+
+
+def test_set_role_to_title_may_carry_its_level():
+    state = _state()
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "kind": "title", "level": 2,
+                                             "reason": "numbered heading"}), actor="agent")
+    p1 = next(b for b in state.blocks if b.id == "p1")
+    assert outcome.accepted == [0] and (p1.kind, p1.level) == (BlockKind.TITLE, 2)
+    assert [d.stage for d in p1.decisions] == ["heading_role", "heading_level"]
+    assert _rules([{"op": "set_role", "block": "p1", "kind": "title", "level": 3, "reason": "r"}]) == [(0, "level_skip")]
+    assert _rules([{"op": "set_role", "block": "p1", "kind": "text", "level": 2, "reason": "r"}]) == \
+        [(0, "level_on_non_title")]
+
+
+def _ledgered_state():
+    from parserx.ir.state import LedgerEntry
+
+    state = _state()
+    anchor = PdfAnchor(page=1, bbox=(0, 0, 1, 1), coord_space="page_pt")
+    state.ledger = [LedgerEntry(item=f"i-{b.id}", unit="native_line", source=anchor, chars=2, disposition="output",
+                                block=b.id) for b in state.blocks]
+    return state
+
+
+def test_exclude_keeps_the_text_and_accounts_for_it():
+    from parserx.accounting import check
+
+    state = _ledgered_state()
+    outcome = apply_changes(state, _changes({"op": "exclude", "block": "p2", "reason": "图标被识成的字符"}),
+                            actor="agent")
+    p2 = next(b for b in state.blocks if b.id == "p2")
+    assert outcome.accepted == [0] and p2.status == BlockStatus.EXCLUDED and p2.text == "正文"
+    assert p2.decisions[-1].stage == "exclude" and p2.decisions[-1].actor == "agent"
+    assert next(e for e in state.ledger if e.block == "p2").disposition == "excluded"
+    result = check(state)
+    assert result.mismatched == [] and result.accounting.excluded == 1
+    assert _rules([{"op": "exclude", "block": "p2", "reason": ""}]) == [(0, "reason_required")]
+
+
+def test_restore_undoes_an_exclusion_but_not_a_deleted_revision():
+    from parserx.ir.decision import Decision
+
+    state = _ledgered_state()
+    apply_changes(state, _changes({"op": "exclude", "block": "p2", "reason": "r"}), actor="agent")
+    outcome = apply_changes(state, _changes({"op": "restore", "block": "p2", "reason": "是正文"}), actor="agent")
+    p2 = next(b for b in state.blocks if b.id == "p2")
+    assert outcome.accepted == [0] and p2.status == BlockStatus.OK
+    assert next(e for e in state.ledger if e.block == "p2").disposition == "output"
+    assert check_changes(state, _changes({"op": "restore", "block": "p2", "reason": "r"}))[0].rule == "not_excluded"
+    p3 = next(b for b in state.blocks if b.id == "p3")
+    p3.status = BlockStatus.EXCLUDED
+    p3.decisions.append(Decision(stage="exclude", choice="revision_deleted", reason="deleted", evidence={},
+                                 actor="program:content.docx"))
+    assert check_changes(state, _changes({"op": "restore", "block": "p3", "reason": "r"}))[0].rule == "not_restorable"

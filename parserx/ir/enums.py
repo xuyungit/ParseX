@@ -65,6 +65,7 @@ class TaskKind(StrEnum):
     LAYOUT = "layout"
     RECOGNIZE = "recognize"
     REVIEW = "review"
+    CORRECT = "correct"  # the agent's own reading of an image it looked at (P2-5, Q30)
     DESCRIBE = "describe"
     EXPLAIN = "explain"
 

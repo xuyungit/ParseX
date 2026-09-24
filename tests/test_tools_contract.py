@@ -434,3 +434,70 @@ def test_process_does_the_standard_steps_in_one_call(ws):
     assert verify_workspace(ws).ok
     again, _ = _call("process", ws, {}, config=config, context=context)  # nothing left to do: no requests
     assert again.ok and again.cost.requests == {}
+
+
+# ── P2-5: the agent corrects what it read from the image (Q30) ──────────
+
+
+def _looked_at(ws, block_id, context):
+    env, _ = _call("read", ws, {"block": block_id, "image": "crop"}, context=context)
+    return env.result.image.asset
+
+
+def test_agent_corrects_ocr_text_it_has_seen(ws):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
+    image = _looked_at(ws, block.id, context)
+    env, code = _call("correct", ws, {"block": block.id, "image": image, "reason": "图上是 8 件",
+                                      "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
+    data = _assert_contract(env, "correct")
+    assert env.ok and code == 0 and data["result"]["adopted"] is True and data["cost"]["requests"] == {}
+    after = next(b for b in Workspace.open(ws).load().blocks if b.id == block.id)
+    assert after.text == OCR_TEXT.replace("3 件", "8 件") and after.chosen_observation.endswith("agent-1")
+    assert after.decisions[-1].actor == "agent" and len(after.observations) == 2  # the OCR reading stays
+    assert verify_workspace(ws).ok
+
+
+def test_a_correction_needs_the_image_and_keeps_native_numbers(ws):
+    context = _context()
+    native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
+    env, _ = _call("correct", ws, {"block": native.id, "image": "a-0000000000000000", "reason": "r",
+                                   "edits": [{"find": "采购", "replace": "采买"}]}, context=context)
+    assert env.ok and env.result.adopted is False and not env.result.gate[0].passed  # image never read
+    image = _looked_at(ws, native.id, context)
+    env, _ = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
+                                   "edits": [{"find": "100 万元", "replace": "900 万元"}]}, context=context)
+    assert env.result.adopted is False and [g.name for g in env.result.gate if not g.passed] == ["numeric_consistency"]
+    env, _ = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
+                                   "edits": [{"find": "采购", "replace": "采买"}]}, context=context)
+    assert env.result.adopted is True
+    assert any(u.kind == "evidence_conflict" for u in _call("check", ws, context=context)[0].unresolved) is False
+    env, code = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
+                                      "edits": [{"find": "不存在的字", "replace": "x"}]}, context=context)
+    assert not env.ok and code == 2 and env.failures[0].code == "invalid_request"
+
+
+def test_agent_corrects_table_cells(ws):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    image = _looked_at(ws, table.id, context)
+    env, _ = _call("correct", ws, {"block": table.id, "image": image, "reason": "图上是 8",
+                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
+    assert env.result.adopted is True
+    grid = next(b for b in Workspace.open(ws).load().blocks if b.id == table.id).cells
+    assert grid.slot(1, 1).content == "8" and grid.slot(1, 0).content == "SENTINEL-OCR 甲"
+    env, code = _call("correct", ws, {"block": table.id, "image": image, "reason": "r",
+                                      "cells": [{"row": 9, "col": 0, "content": "x"}]}, context=context)
+    assert not env.ok and code == 2
+
+
+def test_a_correction_may_fill_an_empty_position_of_the_grid():
+    from parserx.tables.grid import Cell, TableGrid
+    from parserx.tools.correct import CellEdit, _edited_grid
+
+    grid = TableGrid(n_rows=2, n_cols=2, cells=[Cell(row=0, col=0, content="项目"), Cell(row=0, col=1, content="数值"),
+                                                 Cell(row=1, col=0, content="甲")])  # (1, 1) was not recognized
+    filled = _edited_grid(grid, [CellEdit(row=1, col=1, content="12")], "b")
+    assert filled.slot(1, 1).content == "12" and filled.slot(1, 0).content == "甲"

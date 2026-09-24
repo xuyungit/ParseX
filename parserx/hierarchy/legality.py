@@ -26,17 +26,20 @@ import re
 from parserx.hierarchy.changes import (
     AddRelation,
     ApplyOutcome,
+    Exclude,
     LegalityRule,
     MarkPending,
     MergeTables,
     MoveAfter,
     Rejection,
     RemoveRelation,
+    Restore,
     SetLevel,
     SetRole,
     StructureChange,
 )
 from parserx.ir import ids
+from parserx.ir.anchor import AssetAnchor
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage
@@ -108,8 +111,32 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
     if isinstance(change, RemoveRelation) and all(r.id != change.relation for r in state.relations):
         return LegalityRule.UNKNOWN_BLOCK, f"no relation {change.relation}"
     if isinstance(change, SetRole):
-        if blocks[change.block].kind in _CONTENT_KINDS:
-            return LegalityRule.KIND_NOT_STRUCTURAL, f"{change.block} is a {blocks[change.block].kind}"
+        block = blocks[change.block]
+        if block.kind in _CONTENT_KINDS:
+            return LegalityRule.KIND_NOT_STRUCTURAL, f"{change.block} is a {block.kind}"
+        if change.level is not None:
+            if change.kind != "title":
+                return LegalityRule.LEVEL_ON_NON_TITLE, f"a level needs kind title, not {change.kind}"
+            kind = block.kind
+            block.kind = BlockKind.TITLE  # judge the level as the title it is about to become
+            try:
+                return _level_problem(state, block, change.level)
+            finally:
+                block.kind = kind
+        return None
+    if isinstance(change, Exclude):
+        if not change.reason.strip():
+            return LegalityRule.REASON_REQUIRED, "content leaves the output only with a reason"
+        if blocks[change.block].status in HIDDEN:
+            return LegalityRule.NOT_VISIBLE, f"{change.block} is {blocks[change.block].status}"
+        return None
+    if isinstance(change, Restore):
+        block = blocks[change.block]
+        if block.status != BlockStatus.EXCLUDED:
+            return LegalityRule.NOT_EXCLUDED, f"{change.block} is {block.status}"
+        excluded = [d for d in block.decisions if d.stage == DecisionStage.EXCLUDE]
+        if excluded and excluded[-1].choice == "revision_deleted":
+            return LegalityRule.NOT_RESTORABLE, "text deleted by a revision stays deleted (Q26)"
         return None
     if isinstance(change, SetLevel):
         block = blocks[change.block]
@@ -137,7 +164,7 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
 
 
 def _block_refs(change: StructureChange) -> list[str]:
-    if isinstance(change, (SetRole, SetLevel, MarkPending)):
+    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Restore)):
         return [change.block]
     if isinstance(change, MoveAfter):
         return [change.block] + ([change.after] if change.after else [])
@@ -193,6 +220,13 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
             block.level = None
         block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice=change.kind, reason=change.reason,
                                         evidence=change.evidence, actor=actor))
+        if change.level is not None:
+            block.level = change.level
+            block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
+                                            reason=change.reason, evidence=change.evidence, actor=actor))
+    elif isinstance(change, (Exclude, Restore)):
+        _set_excluded(state, blocks[change.block], isinstance(change, Exclude), change.reason, actor,
+                      getattr(change, "evidence", {}))
     elif isinstance(change, SetLevel):
         block = blocks[change.block]
         block.level = change.level
@@ -221,3 +255,20 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
         block.status = BlockStatus.DEGRADED
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="pending", reason=change.reason,
                                         evidence={}, actor=actor))
+
+
+def _set_excluded(state: DocumentState, block: Block, exclude: bool, reason: str, actor: str, evidence: dict) -> None:
+    """Exclude a block or restore it; its ledger entries and image record follow (text stays in the sidecar)."""
+    block.status = BlockStatus.EXCLUDED if exclude else BlockStatus.OK
+    for entry in state.ledger:
+        if entry.block == block.id:
+            if exclude and entry.disposition in ("output", "merged"):
+                entry.disposition = "excluded"
+            elif not exclude and entry.disposition == "excluded":
+                entry.disposition = "output"
+    assets = {a.asset for a in block.anchors if isinstance(a, AssetAnchor)}
+    for record in state.images:
+        if record.id in assets:
+            record.shown = not exclude
+    block.decisions.append(Decision(stage=DecisionStage.EXCLUDE, choice="excluded" if exclude else "restored",
+                                    reason=reason, evidence=evidence, actor=actor))

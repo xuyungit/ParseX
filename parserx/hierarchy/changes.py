@@ -24,6 +24,7 @@ class SetRole(IRModel):
     op: Literal["set_role"]
     block: str
     kind: StructuralKind
+    level: int | None = Field(None, ge=1, le=6)  # with kind "title": its level in the same change (P2-5)
     reason: str
     evidence: Evidence = {}
 
@@ -73,8 +74,27 @@ class MarkPending(IRModel):
     reason: str
 
 
+class Exclude(IRModel):
+    """Leave a block out of the output (an icon read as a character, interface text …); its text stays in the
+    sidecar, the ledger counts it as excluded and the Decision says why (guide §2.3, Q27; P2-5)."""
+
+    op: Literal["exclude"]
+    block: str
+    reason: str
+    evidence: Evidence = {}
+
+
+class Restore(IRModel):
+    """Undo an exclusion (page furniture, a decorative image, an earlier ``exclude``); text deleted by a revision
+    stays deleted (Q26)."""
+
+    op: Literal["restore"]
+    block: str
+    reason: str
+
+
 StructureChange = Annotated[
-    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables,
+    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables | Exclude | Restore,
     Field(discriminator="op"),
 ]
 
@@ -89,6 +109,10 @@ class LegalityRule(StrEnum):
     DUPLICATE_RELATION = "duplicate_relation"
     NOT_MERGE_CANDIDATE = "not_merge_candidate"
     ROWS_NOT_DUPLICATE = "rows_not_duplicate"
+    REASON_REQUIRED = "reason_required"  # exclude: content leaves the output only with a reason
+    NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
+    NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
+    NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
 
 
 class Rejection(IRModel):

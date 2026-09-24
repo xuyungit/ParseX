@@ -16,7 +16,17 @@ from pydantic import BaseModel
 
 from parserx.accounting import CheckResult
 from parserx.config.schema import ParserXConfig
-from parserx.tools import check_export, describe_figure, overview, process, read, recognize, review_table, structure
+from parserx.tools import (
+    check_export,
+    correct,
+    describe_figure,
+    overview,
+    process,
+    read,
+    recognize,
+    review_table,
+    structure,
+)
 from parserx.tools.context import ToolContext, invoke
 from parserx.tools.envelope import Envelope
 from parserx.tools.init import InitResult, workspace_init
@@ -35,6 +45,7 @@ TOOLS: dict[str, ToolSpec] = {
     "read": ToolSpec(read.ReadRequest, read.ReadResult, read.run),
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),
     "review_table": ToolSpec(review_table.ReviewTableRequest, review_table.ReviewTableResult, review_table.run),
+    "correct": ToolSpec(correct.CorrectRequest, correct.CorrectResult, correct.run),
     "describe_figure": ToolSpec(describe_figure.DescribeFigureRequest, describe_figure.DescribeFigureResult,
                                 describe_figure.run),
     "apply_structure": ToolSpec(structure.ApplyStructureRequest, structure.ApplyStructureResult, structure.run),

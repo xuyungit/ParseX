@@ -164,6 +164,28 @@ def review_text(block: Block, candidate: Observation, *, actor: str) -> ReviewOu
     return _decide(block, candidate, gate, actor)
 
 
+def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: str) -> ReviewOutcome:
+    """Gate the agent's correction of the spans or cells it named (Q30): it must have looked at the image of the
+    block, a native text layer's numbers never change (the edits of OCR text are confined to the named spans by
+    construction), and the result keeps content."""
+    chosen = _chosen(block)
+    native = chosen is not None and chosen.engine in NATIVE_ENGINES
+    if candidate.cells is not None:
+        before = _grid_numbers(block.cells or TableGrid(n_rows=0, n_cols=0), set())
+        after = _grid_numbers(candidate.cells, set())
+        valid = candidate.cells.n_rows > 0 and candidate.cells.n_cols > 0
+    else:
+        before, after = Counter(_NUMBER_RE.findall(block.text)), Counter(_NUMBER_RE.findall(candidate.text or ""))
+        valid = bool((candidate.text or "").strip())
+    gate = [
+        image,
+        GateCheck(name="numeric_consistency", passed=not native or before == after,
+                  detail=_number_diff(before, after, native=True) if native else "edits confined to the named spans"),
+        GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result"),
+    ]
+    return _decide(block, candidate, gate, actor)
+
+
 def _decide(block: Block, candidate: Observation, gate: list[GateCheck], actor: str) -> ReviewOutcome:
     previous = block.chosen_observation
     block.observations.append(candidate)  # adopted or not, the candidate stays as evidence
