@@ -6,16 +6,26 @@ Layout of ``<ws>/``:
 - ``source.<ext>`` — a copy of the input, so tools never depend on the original path;
 - ``assets/``     — content-addressed images (``<asset id>.<ext>``);
 - ``calls.jsonl`` — append-only log of committed transactions and tool calls (guide §7.5);
+- ``head.json``   — version and SHA-256 of the last committed ``state.json`` (plan P2-1);
 - ``.lock``       — ``flock`` target serialising writers across processes.
 
 A transaction reads the latest state under the lock, lets the caller mutate
 it, re-validates the whole state and writes it with ``version + 1``. Any
 exception inside the block leaves ``state.json`` untouched.
+
+Integrity (plan P2-1): each commit records the digest of the bytes it wrote,
+in ``head.json`` and in its ``txn`` record; a transaction refuses to start when
+``state.json`` no longer matches (``WorkspaceTampered``), so a change made
+outside the tools cannot be carried forward by a later commit.  Each call
+record claims the transactions its ``Workspace`` instance committed since the
+previous call record (``txns``), which lets ``verify_workspace`` find commits
+made by anything but a tool call.
 """
 
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -39,6 +49,10 @@ class WorkspaceLocked(TimeoutError):
     pass
 
 
+class WorkspaceTampered(RuntimeError):
+    """``state.json`` differs from what the last transaction committed."""
+
+
 class VersionConflict(RuntimeError):
     def __init__(self, expected: int, actual: int):
         super().__init__(f"workspace is at version {actual}, caller expected {expected}")
@@ -50,6 +64,7 @@ class Workspace:
     def __init__(self, root: Path | str):
         self.root = Path(root)
         self._in_txn = False
+        self._unclaimed: list[int] = []  # versions committed here and not yet claimed by a call record
 
     # ── Paths ───────────────────────────────────────────────────────────
 
@@ -60,6 +75,10 @@ class Workspace:
     @property
     def calls_path(self) -> Path:
         return self.root / "calls.jsonl"
+
+    @property
+    def head_path(self) -> Path:
+        return self.root / "head.json"
 
     @property
     def lock_path(self) -> Path:
@@ -95,8 +114,7 @@ class Workspace:
             _atomic_write(target, data)
         with ws._locked(timeout):
             initial = DocumentState.model_validate({**state.model_dump(), "version": 1})
-            ws._write_state(initial)
-            ws._append({"type": "txn", "actor": "workspace:create", "version": initial.version})
+            ws._commit(initial, "workspace:create")
         return ws
 
     @classmethod
@@ -119,18 +137,42 @@ class Workspace:
         with self._locked(timeout):
             self._in_txn = True
             try:
+                problem = self._tampered()
+                if problem is not None:
+                    raise WorkspaceTampered(problem)
                 state = self.load()
                 if expect_version is not None and state.version != expect_version:
                     raise VersionConflict(expect_version, state.version)
                 yield state
                 committed = DocumentState.model_validate({**state.model_dump(), "version": state.version + 1})
-                self._write_state(committed)
-                self._append({"type": "txn", "actor": actor, "version": committed.version})
+                self._commit(committed, actor)
             finally:
                 self._in_txn = False
 
     def log_call(self, record: dict[str, Any]) -> None:
-        self._append({"type": "call", **record})
+        """Append a call record; it claims the transactions this instance committed since the last one."""
+        self._append({"type": "call", **record, "txns": self._unclaimed})
+        self._unclaimed = []
+
+    # ── Integrity ───────────────────────────────────────────────────────
+
+    def tampered(self, timeout: float = 30.0) -> str | None:
+        """Why ``state.json`` is not what the last transaction committed, or None."""
+        with self._locked(timeout):
+            return self._tampered()
+
+    def _tampered(self) -> str | None:
+        if not self.head_path.is_file():
+            # Workspaces from before head.json have no digest to compare against.
+            if any(r.get("state_sha256") for r in read_records(self.calls_path) if r.get("type") == "txn"):
+                return "head.json is missing"
+            return None
+        head = json.loads(self.head_path.read_text(encoding="utf-8"))
+        digest = hashlib.sha256(self.state_path.read_bytes()).hexdigest()
+        if digest != head.get("state_sha256"):
+            return (f"state.json (sha256 {digest[:12]}) is not what transaction version {head.get('version')} "
+                    f"committed ({str(head.get('state_sha256'))[:12]}): it was changed outside the tools")
+        return None
 
     # ── Assets ──────────────────────────────────────────────────────────
 
@@ -164,14 +206,26 @@ class Workspace:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
-    def _write_state(self, state: DocumentState) -> None:
-        _atomic_write(self.state_path, state.model_dump_json().encode("utf-8"))
+    def _commit(self, state: DocumentState, actor: str) -> None:
+        data = state.model_dump_json().encode("utf-8")
+        digest = hashlib.sha256(data).hexdigest()
+        _atomic_write(self.state_path, data)
+        _atomic_write(self.head_path, json.dumps({"version": state.version, "state_sha256": digest}).encode("utf-8"))
+        self._append({"type": "txn", "actor": actor, "version": state.version, "state_sha256": digest})
+        self._unclaimed.append(state.version)
 
     def _append(self, record: dict[str, Any]) -> None:
         line = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), **record},
                           ensure_ascii=False, default=str)
         with open(self.calls_path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
+
+
+def read_records(path: Path) -> list[dict[str, Any]]:
+    """The records of a ``calls.jsonl`` (empty when it does not exist)."""
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

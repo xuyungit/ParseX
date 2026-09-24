@@ -413,6 +413,11 @@ def _load_raw_config(path: Path, seen: set[Path]) -> dict[str, Any]:
     return _deep_merge_dicts(merged, raw)
 
 
+def load_raw_config(path: str | Path) -> dict[str, Any]:
+    """The config file with its ``extends`` chain merged and ``${VAR}`` references left unresolved."""
+    return _load_raw_config(Path(path), seen=set())
+
+
 def load_config(path: str | Path | None = None) -> ParserXConfig:
     """Backward-compatible wrapper for config-only callers."""
     return load_config_with_result(path).config

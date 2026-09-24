@@ -33,7 +33,7 @@ from parserx.scheduling import (
 from parserx.services.llm import create_vlm_service
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools.envelope import BudgetLeft, Change, Cost, Envelope, Failure, FailureCode, ToolFailure, Unresolved
-from parserx.workspace import VersionConflict, Workspace, WorkspaceLocked
+from parserx.workspace import VersionConflict, Workspace, WorkspaceLocked, WorkspaceTampered
 
 log = logging.getLogger(__name__)
 R = TypeVar("R")
@@ -164,6 +164,15 @@ def invoke(
         ws = Workspace.open(ws_dir)
     except FileNotFoundError as exc:
         return _fatal(name, "", 0, Failure(code=FailureCode.NOT_FOUND, message=str(exc), retryable=False)), 0
+    try:
+        problem = ws.tampered()
+    except WorkspaceLocked as exc:
+        return _fatal(name, "", 0, Failure(code=FailureCode.TIMEOUT, message=str(exc), retryable=True)), 0
+    if problem is not None:
+        envelope = _fatal(name, "", 0, _tampered(problem))
+        ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),
+                     "envelope": envelope.model_dump(mode="json", exclude={"result"}), "result": None})
+        return envelope, 0
     state = ws.load()
     if expect_version is not None and state.version != expect_version:
         failure = Failure(code=FailureCode.VERSION_CONFLICT, retryable=True,
@@ -184,6 +193,9 @@ def invoke(
     except WorkspaceLocked as exc:
         out, fatal = None, True
         failures = [Failure(code=FailureCode.TIMEOUT, message=str(exc), retryable=True)]
+    except WorkspaceTampered as exc:  # changed by something else while this call ran
+        out, fatal = None, True
+        failures = [_tampered(str(exc))]
     except Exception as exc:  # noqa: BLE001 - a defect: reported, never swallowed
         log.exception("tool %s failed", name)
         out, fatal, code = None, True, 1
@@ -250,6 +262,12 @@ def _record_stats(ctx: ToolContext, name: str, wall: float, before: MeterSnapsho
         else:
             stats.cost_usd = round((stats.cost_usd or 0.0) + snap.cost_usd, 8)
         stats.wall_time_s = round(stats.wall_time_s + wall, 3)
+
+
+def _tampered(problem: str) -> Failure:
+    return Failure(code=FailureCode.WORKSPACE_TAMPERED, retryable=False, message=(
+        f"{problem}; the tools no longer work on this workspace and it cannot be exported — "
+        "change a workspace only through the tools"))
 
 
 def _fatal(name: str, doc: str, version: int, failure: Failure) -> Envelope:

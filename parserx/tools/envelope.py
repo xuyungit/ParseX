@@ -49,6 +49,7 @@ class FailureCode(StrEnum):
     CACHE_MISS_OFFLINE = "cache_miss_offline"
     CHECK_FAILED = "check_failed"
     VERSION_CONFLICT = "version_conflict"
+    WORKSPACE_TAMPERED = "workspace_tampered"  # state.json changed outside the tools (plan P2-1)
     INTERNAL_ERROR = "internal_error"
 
 

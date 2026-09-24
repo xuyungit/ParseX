@@ -323,7 +323,7 @@ class Sidecar(DocumentState):       # 〔P1-1〕导出形式 = DocumentState + �
 
 **账目单位 〔增补〕**：指导 §2.3 原则 1 所说的"已发现内容"落到这些条目：原生 PDF 的文本行、OOXML 的段落 / 表格 / 图片节点、检测区域、OCR 块。每个条目只能有一个去向，`disposition=None` 就是未归属。`check` 要求 `discovered = output + merged + duplicate + excluded + failed` 且没有未归属条目。以行而不是字符为单位，是为了让账目规模可控，同时仍能发现整行丢失。行内丢字交给评测的字符指标发现。
 
-**持久化 〔增补〕**：`<ws>/state.json`（`DocumentState`）+ `<ws>/assets/` + `<ws>/calls.jsonl`（每次工具调用的请求、信封、diff 与证据引用，§7.5）+ 文件锁。〔P1-2〕另存 `<ws>/source.<ext>`（输入文件副本，工具不依赖原路径，实验目录只需工作区本身）；`Workspace.create` 算作第一次提交（version 1）；`txn(actor, expect_version=, timeout=)` 在锁内读取最新状态、提交前整体重新校验（列表修改绕过赋值校验）、失败不写；`calls.jsonl` 同时记录提交（`type=txn`，actor 与新版本号）与工具调用（`type=call`）；资源按内容寻址（`assets/<asset id>.<ext>`，重复写入幂等）。查询函数在 `workspace/queries.py`（阅读顺序、邻近块、按页 / 段取块、标题树）。先用 JSON 文件；几百页文档的 state.json 若超过约 50 MB，或写入明显拖慢速度，再换 SQLite，届时只改 `workspace/` 内部。
+**持久化 〔增补〕**：`<ws>/state.json`（`DocumentState`）+ `<ws>/assets/` + `<ws>/calls.jsonl`（每次工具调用的请求、信封、diff 与证据引用，§7.5）+ 文件锁。〔P1-2〕另存 `<ws>/source.<ext>`（输入文件副本，工具不依赖原路径，实验目录只需工作区本身）；`Workspace.create` 算作第一次提交（version 1）；`txn(actor, expect_version=, timeout=)` 在锁内读取最新状态、提交前整体重新校验（列表修改绕过赋值校验）、失败不写；`calls.jsonl` 同时记录提交（`type=txn`，actor 与新版本号）与工具调用（`type=call`）；资源按内容寻址（`assets/<asset id>.<ext>`，重复写入幂等）。查询函数在 `workspace/queries.py`（阅读顺序、邻近块、按页 / 段取块、标题树）。〔P2-1〕完整性：每次提交把写入的 `state.json` 字节的 SHA-256 记在 `head.json`（`version`、`state_sha256`）与该条 `txn` 记录里；事务开始前若 `state.json` 与 `head.json` 不符即抛 `WorkspaceTampered`，后续提交因此无法把工具之外的改写带进新版本；每条 `call` 记录带 `txns`——该调用的 `Workspace` 实例自上一条调用记录以来提交的版本号。`workspace/integrity.py` 的 `verify_workspace(root)` 做完整核对：`state.json` 与 `head.json`、最后一条事务一致；事务版本 1…N 连续；每个版本恰好被一条调用记录认领（没人认领的提交来自工具以外，例如脚本直接调用工作区接口）；资源文件与输入副本的摘要不变（.doc 输入的副本是转换后的 .docx，不比）。先用 JSON 文件；几百页文档的 state.json 若超过约 50 MB，或写入明显拖慢速度，再换 SQLite，届时只改 `workspace/` 内部。
 
 ## 3. TableGrid（§4.3，阶段零 P0-1 落地）
 
@@ -380,6 +380,7 @@ class FailureCode(StrEnum):
     INVALID_REQUEST="invalid_request"; NOT_FOUND="not_found"; BUDGET_EXHAUSTED="budget_exhausted"
     SERVICE_ERROR="service_error"; TIMEOUT="timeout"; CACHE_MISS_OFFLINE="cache_miss_offline"
     CHECK_FAILED="check_failed"; VERSION_CONFLICT="version_conflict"
+    WORKSPACE_TAMPERED="workspace_tampered"   # 〔P2-1〕state.json 被工具以外的方式改写；所有工具拒绝，不能导出
 
 class Failure(IRModel):
     code: FailureCode
@@ -649,6 +650,8 @@ class ExportResult(IRModel):
 - 〔P1-7b，试用后〕`read` 默认只返回当前采用的内容（隐藏 duplicate / merged / excluded 块），`include_hidden` 与 `geometry`（锚点与坐标）按需；`recognize` 默认不返回观察视图（`observations=true` 时返回）；VLM 回答在 JSON 之后附带内容时取第一个完整 JSON；两次都无法解析、或被端点内容策略拒绝时，失败信息写明下一步；复核未采用时写一条 `table_uncertain` 未解决项（附未通过的检查）。
 - 配置新增 `tools`（描述与复核的 reasoning effort、max tokens、`read_dpi`、`crop_pad_pt`、`scan_batch_pages`）；提示词在 `parserx/prompts/`（`describe_figure.md`、`review_table.md`），内容哈希计入缓存键与 `state.prompt_hashes`。
 
+- 〔P2-1〕每次调用先核对工作区完整性（`Workspace.tampered`，在锁内比较 `state.json` 与 `head.json`）；不一致时所有工具（包括 `check`、`export`）返回 `workspace_tampered`（`retryable: false`），不提交、不导出，调用仍记入 `calls.jsonl`。
+
 ### 5.10 〔P1-9〕版面检测与图片路由（影子运行）
 
 - 检测器：`layout/detector.py`，rapid-layout 1.2.1 的 pp_doc_layoutv3（CPU，单页约 0.24 s，进程内只加载一次）；标签与 PaddleOCR-VL 同为 25 类，映射在 `layout/labels.py`（`LAYOUT`；另有 `DOCX` 元素到 BlockKind 的映射，DOCX 读取器的块类型经它取得）。检测结果是本地计算，存入 `.parserx_cache/derived/layout/`（键＝模型版本 + 图片字节），离线回放不加载模型。单元测试用假检测器；真实模型的用例标 `live_layout`，默认不跑。
@@ -663,6 +666,13 @@ class ExportResult(IRModel):
 - DOCX 确定性结构：大纲级别（直接或样式继承，9 为正文）或 `heading N` / `标题 N` 样式 → 标题；`Title` / `标题` 样式为文档标题（H1），存在时其余标题下移一级；带编号而无标题证据的段落 → list。
 - 层级统一（`hierarchy/levels.py`，§6.8 的文档级统一）：同一编号模式取多数层级（并列取浅），再按阅读顺序使每个标题最多比前一个标题深一级；只移动层级，不增删标题。
 - PDF 临时适配器：运行 v1 不调用服务的 provider → metadata → reading order → header/footer → code block → chapter（关闭 LLM 兜底），把与 v2 块文字相同（忽略空白）的标题作为结构变更提交；v1 标题落在更大的 v2 块里时不应用（结构变更不拆分文字）。
+
+### 5.12 〔P2-1〕Agent 实验装置
+
+- `runtimes/codex.py`：`exec_command` 生成 `codex exec` 命令行——模型与推理强度显式传入；`--sandbox workspace-write` 并允许网络；`--ephemeral --ignore-user-config --ignore-rules`，关闭 memories、插件、应用、浏览器、电脑操作、图片生成、子 Agent、目标、hooks 与网页搜索，只留下沙箱里的 shell；`usage_from_events` 从 `--json` 事件流读轮数、各类条目数、命令数（失败数）与 token（输入 / 缓存 / 输出 / 推理）；`audit_events` 是卫生审计：命令里出现的绝对路径、`..` 与 `~` 路径必须在实验目录或系统位置（`/tmp`、`/usr` 等），出现答案关键词（`expected.md`、`ground_truth`、`eval_runs` …）、仓库、实验根目录（其他文档、工具快照）或 `~/.codex` / `~/.claude` / `~/.config` 为 forbidden，其余目录外路径为 outside；shell 以外的工具条目（网页搜索、MCP、子 Agent）与直接编辑 `ws/`、`out/` 的文件修改也使运行作废；未知条目类型只记为待查。
+- `runtimes/px.py`：实验目录中 `./px` 的实现。只允许 `workspace init`、`tool <七个工具之一>`、`tool schema` 与 `python`（快照的 Python，用于只读分析）；配置固定（拒绝 `--config`，自动加实验目录的 `parserx.yaml`）；服务密钥从实验目录以外的 env 文件读入，只存在于工具进程，`px python` 的环境里去掉这些变量与名字像密钥的变量。
+- `runtimes/experiment.py`：`doc_config`（响应缓存放在实验目录内，`${VAR}` 保持占位）、`prepare_doc_dir`（只写 `input.<ext>`、`px`、`parserx.yaml`、`AGENTS.md`、`skills/`，返回各文件摘要）、`listing_problems`、`config_problems`（不得含仓库路径与密钥值）、`render_task`（`{{#rN}}…{{/rN}}` 按轮次取舍、`{{name}}` 必须都有值）、`verify_run`（在快照里运行：工作区完整性、导出核对——最后一次写入 `out/` 的成功导出、其 Markdown 是否等于最终状态的渲染、`out/` 中不是导出写的文件——、`check` 摘要与未解决项、各工具调用次数与失败码、服务请求与费用）。任务模板在 `runtimes/agent_task.md`。
+- `scripts/agent_explore.py`：`snapshot`（干净的 HEAD 经 `git archive` 构建 wheel，按 `uv.lock` 装进仓库外的虚拟环境并预编译，复制版面模型，生成 `px-run`；记录提交、wheel 与依赖摘要、Codex 版本、主 Agent 与服务层模型、配置指纹、Skill 与模板摘要）、`run`（每篇新建实验目录并做事前检查；Codex 进程的环境去掉 `.env` 中的变量与名字像密钥的变量；截止时间按 Q39；一轮之内 Codex 版本与模型必须与快照一致；`--rerun` 把旧目录改名为 `.void<N>` 并记入人工介入）、`verify`（写 `run/record.json`：运行条件、主 Agent 用量、工具用量、结果、评分（有标注时，指标版本同冻结 run）、卫生结论、人工介入）、`summary`。
 
 ## 6. 阶段一测试清单（先写测试）
 

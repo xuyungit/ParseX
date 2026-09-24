@@ -14,7 +14,7 @@ from parserx.config.schema import CacheConfig, OCRBuilderConfig, ParserXConfig, 
 from parserx.ir.enums import BlockKind, PageStatus
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools import TOOLS, ToolContext, call_tool, tool_schema, workspace_init
-from parserx.workspace import Workspace
+from parserx.workspace import Workspace, verify_workspace
 
 NATIVE = "SENTINEL-NATIVE 采购金额为 100 万元"
 OCR_TEXT = "SENTINEL-OCR 扫描文字 3 件"
@@ -192,6 +192,18 @@ def test_session_through_every_tool(ws, tmp_path):
     assert state.stats.requests == {"ocr": 1, "vlm": 2} and state.stats.cost_usd == pytest.approx(2 * (1000 * 0.10 + 100 * 0.50) / 1e6)
     calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
     assert [c["tool"] for c in calls if c["type"] == "call"][:3] == ["workspace_init", "overview", "read"]
+    assert verify_workspace(ws).ok  # every commit came from a tool call
+
+
+def test_a_workspace_changed_outside_the_tools_is_refused(ws, tmp_path):
+    raw = json.loads((ws / "state.json").read_text())
+    raw["blocks"][0]["text"] = "SENTINEL-NATIVE 改写"
+    (ws / "state.json").write_text(json.dumps(raw, ensure_ascii=False))
+    for name, request in (("check", {}), ("export", {"out": str(tmp_path / "out")}), ("overview", {})):
+        env, code = _call(name, ws, request)
+        assert not env.ok and code == 0 and env.failures[0].code == "workspace_tampered", name
+        assert not env.failures[0].retryable
+    assert not (tmp_path / "out").exists()
 
 
 def test_requests_carry_no_text_for_structure_and_schemas_exist():
