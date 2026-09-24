@@ -9,7 +9,10 @@ Checks are correctness constraints, not guesses about meaning:
   successor at most one level deeper than it);
 - titles sharing a numbering pattern (``1.2`` / ``1.3`` → ``N.N``,
   ``第二章`` → ``第N章``) share a level within the document;
-- reordering cannot form a cycle; relations are not duplicated.
+- reordering cannot form a cycle; relations are not duplicated;
+- tables merge only when the second can continue the first
+  (``tables.merge.merge_candidate``), and only rows that repeat the first
+  table's header are dropped.
 
 Changes are checked one by one against the state as the earlier accepted
 changes of the batch leave it, so a batch can set a role and then a level.
@@ -24,6 +27,7 @@ from parserx.hierarchy.changes import (
     ApplyOutcome,
     LegalityRule,
     MarkPending,
+    MergeTables,
     MoveAfter,
     Rejection,
     RemoveRelation,
@@ -37,6 +41,7 @@ from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState
+from parserx.tables.merge import merge_candidate, merge_tables, repeats_header
 from parserx.workspace.queries import HIDDEN, ordered
 
 _CONTENT_KINDS = frozenset({BlockKind.TABLE, BlockKind.FIGURE, BlockKind.FORMULA, BlockKind.SCAN})
@@ -114,6 +119,14 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
     if isinstance(change, AddRelation):
         if any((r.kind, r.src, r.dst) == (change.kind, change.src, change.dst) for r in state.relations):
             return LegalityRule.DUPLICATE_RELATION, f"{change.kind} {change.src} → {change.dst} exists"
+    if isinstance(change, MergeTables):
+        first, second = blocks[change.first], blocks[change.second]
+        if merge_candidate(state, first, second) is None:
+            return (LegalityRule.NOT_MERGE_CANDIDATE, f"{change.second} cannot continue {change.first}: tables with "
+                    "the same columns on consecutive pages, only page furniture between them")
+        if change.drop_rows and not repeats_header(first.cells, second.cells, change.drop_rows):
+            return (LegalityRule.ROWS_NOT_DUPLICATE,
+                    f"the first {change.drop_rows} rows of {change.second} do not repeat the header of {change.first}")
     return None
 
 
@@ -124,6 +137,8 @@ def _block_refs(change: StructureChange) -> list[str]:
         return [change.block] + ([change.after] if change.after else [])
     if isinstance(change, AddRelation):
         return [change.src, change.dst]
+    if isinstance(change, MergeTables):
+        return [change.first, change.second]
     return []
 
 
@@ -192,6 +207,9 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
                                         src=change.src, dst=change.dst, confidence=change.confidence))
     elif isinstance(change, RemoveRelation):
         state.relations[:] = [r for r in state.relations if r.id != change.relation]
+    elif isinstance(change, MergeTables):
+        merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
+                     evidence=change.evidence)
     elif isinstance(change, MarkPending):
         block = blocks[change.block]
         block.status = BlockStatus.DEGRADED

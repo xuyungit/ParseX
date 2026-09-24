@@ -12,6 +12,7 @@ from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, Observation
 from parserx.ir.observation import Observation
 from parserx.ir.state import DocumentState
 from parserx.tables.grid import TableGrid
+from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, outline
 
@@ -145,6 +146,10 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
         elif block.status == BlockStatus.DEGRADED and any(d.choice == "pending" for d in block.decisions):
             items.append(Unresolved(target=block.id, kind=UnresolvedKind.STRUCTURE_PENDING,
                                     detail="structure left pending"))
+    for candidate in merge_candidates(state):
+        items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,
+                                detail=f"may continue {candidate.first}: "
+                                       + ", ".join(f"{k}={v}" for k, v in candidate.evidence.items())))
     return items
 
 

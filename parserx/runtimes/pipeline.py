@@ -4,8 +4,9 @@
 2. ``recognize`` (paddleocr) — only pages whose native layer failed;
 3. ``recognize`` (layout) — shadow detection of pages, routing of figures;
 4. ``describe_figure`` — every shown figure, within the budget;
-5. structure — DOCX: styles and outline levels; PDF: ``adapter:v1`` (both
-   through ``apply_structure``);
+5. structure (all through ``apply_structure``) — confirmed cross-page table
+   continuations (``tables.merge``); then titles: DOCX styles and outline
+   levels, PDF ``adapter:v1``;
 6. ``check`` and 7. ``export``.
 
 All tool calls of one document share one context: one meter and one budget.
@@ -27,12 +28,14 @@ from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_stru
 from parserx.ir.enums import BlockKind, PageStatus
 from parserx.models.results import ParseResult
 from parserx.runtimes import v1_structure
+from parserx.tables.merge import propose_merges
 from parserx.tools import ToolContext, call_tool, workspace_init
 from parserx.tools.envelope import Envelope
 from parserx.workspace import Workspace
 from parserx.workspace.queries import HIDDEN
 
 log = logging.getLogger(__name__)
+MERGE_ACTOR = "program:tables.merge"
 
 
 class RuntimeFailure(RuntimeError):
@@ -99,6 +102,11 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
             envelope = call("describe_figure", {"block": block.id})
             if any(f.code == "budget_exhausted" for f in envelope.failures):
                 break
+
+    state = Workspace.open(ws_dir).load()
+    merges = propose_merges(state)
+    if merges:
+        call("apply_structure", {"changes": merges, "actor": MERGE_ACTOR})
 
     state = Workspace.open(ws_dir).load()
     if state.format == "docx":

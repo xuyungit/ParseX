@@ -5,6 +5,7 @@ from parserx.hierarchy.changes import (
     ApplyOutcome,
     LegalityRule,
     MarkPending,
+    MergeTables,
     MoveAfter,
     Rejection,
     RemoveRelation,
@@ -16,7 +17,7 @@ from parserx.hierarchy.changes import (
 from parserx.hierarchy.legality import apply_changes, check_changes, numbering_signature
 
 __all__ = [
-    "AddRelation", "ApplyOutcome", "LegalityRule", "MarkPending", "MoveAfter", "Rejection", "RemoveRelation",
+    "AddRelation", "ApplyOutcome", "LegalityRule", "MarkPending", "MergeTables", "MoveAfter", "Rejection", "RemoveRelation",
     "SetLevel", "SetRole", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
     "numbering_signature",
 ]

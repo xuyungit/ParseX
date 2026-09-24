@@ -56,6 +56,17 @@ class RemoveRelation(IRModel):
     relation: str
 
 
+class MergeTables(IRModel):
+    """``second`` continues ``first`` on the next page (guide §6.9): its rows are appended to ``first``."""
+
+    op: Literal["merge_tables"]
+    first: str
+    second: str
+    drop_rows: int = Field(0, ge=0)  # leading rows of ``second`` repeating the header of ``first``
+    reason: str
+    evidence: Evidence = {}
+
+
 class MarkPending(IRModel):
     op: Literal["mark_pending"]
     block: str
@@ -63,7 +74,8 @@ class MarkPending(IRModel):
 
 
 StructureChange = Annotated[
-    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending, Field(discriminator="op")
+    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables,
+    Field(discriminator="op"),
 ]
 
 
@@ -75,6 +87,8 @@ class LegalityRule(StrEnum):
     NUMBERING_LEVEL_INCONSISTENT = "numbering_level_inconsistent"
     ORDER_CYCLE = "order_cycle"
     DUPLICATE_RELATION = "duplicate_relation"
+    NOT_MERGE_CANDIDATE = "not_merge_candidate"
+    ROWS_NOT_DUPLICATE = "rows_not_duplicate"
 
 
 class Rejection(IRModel):

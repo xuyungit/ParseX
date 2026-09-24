@@ -70,6 +70,7 @@ class UnresolvedKind(StrEnum):
     PAGE_PENDING = "page_pending"
     BLOCK_FAILED = "block_failed"
     TABLE_UNCERTAIN = "table_uncertain"
+    TABLE_MERGE_CANDIDATE = "table_merge_candidate"
     EVIDENCE_CONFLICT = "evidence_conflict"
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"

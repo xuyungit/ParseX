@@ -394,6 +394,7 @@ class UnresolvedKind(StrEnum):
     PAGE_PENDING="page_pending"; BLOCK_FAILED="block_failed"; TABLE_UNCERTAIN="table_uncertain"
     EVIDENCE_CONFLICT="evidence_conflict"; STRUCTURE_PENDING="structure_pending"
     BUDGET_SKIPPED="budget_skipped"; ASSET_MISSING="asset_missing"
+    TABLE_MERGE_CANDIDATE="table_merge_candidate"   # 〔Q33〕未合并的跨页续表候选（见 §5.7）
 
 class Unresolved(IRModel):
     target: str; kind: UnresolvedKind; detail: str
@@ -576,8 +577,9 @@ class MoveAfter(IRModel):    op: Literal["move_after"]; block: str; after: str |
 class AddRelation(IRModel):  op: Literal["add_relation"]; kind: RelationKind; src: str; dst: str; confidence: float | None = None
 class RemoveRelation(IRModel): op: Literal["remove_relation"]; relation: str
 class MarkPending(IRModel):  op: Literal["mark_pending"]; block: str; reason: str   # 证据不足：保留正文，块记为 degraded，结构待定
+class MergeTables(IRModel):  op: Literal["merge_tables"]; first: str; second: str; drop_rows: int = 0; reason: str; evidence: dict[str, float | int | str | bool] = {}   # 〔Q33〕跨页续表
 
-StructureChange = Annotated[SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending, Field(discriminator="op")]
+StructureChange = Annotated[SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables, Field(discriminator="op")]
 
 class ApplyStructureRequest(IRModel):
     changes: list[StructureChange]
@@ -588,6 +590,7 @@ class LegalityRule(StrEnum):
     LEVEL_ON_NON_TITLE="level_on_non_title"; LEVEL_SKIP="level_skip"
     NUMBERING_LEVEL_INCONSISTENT="numbering_level_inconsistent"
     ORDER_CYCLE="order_cycle"; DUPLICATE_RELATION="duplicate_relation"
+    NOT_MERGE_CANDIDATE="not_merge_candidate"; ROWS_NOT_DUPLICATE="rows_not_duplicate"   # 〔Q33〕
 
 class Rejection(IRModel):
     index: int; rule: LegalityRule; detail: str
@@ -599,6 +602,8 @@ class ApplyStructureResult(IRModel):
 ```
 
 请求模型里根本没有文本字段，"结构变更永不改原文"因此由 schema 保证，不需要运行时检查。每条被接受的变更都会在对应块上写一条 Decision（heading_role / heading_level，actor = 调用方）。
+
+〔Q33〕跨页续表（`parserx/tables/merge.py`，指导 §6.9）：`merge_candidate(state, a, b) -> MergeCandidate | None`、`merge_candidates(state)`、`propose_merges(state)`。**候选**＝两个可见表格列数相同、b 在 a 最后一页的下一页、阅读顺序中两者之间只有页面装饰（页眉页脚页码类块；原生页还没有装饰标签，所以页面上下 12% 区域内、高度不超过页高 3% 的短行，若是单独的页码或去掉数字后在另一页同一区域重复出现，也按装饰跳过——只用于判断相邻，不隐藏）。**确认**＝左右边缘与页宽之比的偏差都不超过 0.05，且 b 没有与 a 不同的自有表头；b 开头若逐字重复 a 的表头行（空白除外），合并时去掉（`drop_rows`）。`merge_tables` 的合法性：必须是候选（`not_merge_candidate`），只能去掉逐字重复表头的行（`rows_not_duplicate`）。应用：a 追加 b 的行、保留两者全部锚点，b 标 `merged`，写 `continues` 关系与 `structure` Decision（`merge_table` / `merged_into`），b 的 output 账目条目改为 merged 到 a。固定序列运行时在标题之前以 actor `program:tables.merge` 合并已确认的候选；未确认或未合并的候选在 `unresolved` 中以 `table_merge_candidate` 列出，留给能看图的运行时。`apply_structure` 的 diff 增加表格行数（字段 `rows`）。
 
 ### 5.8 check / export
 
