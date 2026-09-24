@@ -23,12 +23,13 @@ from parserx.content.text import join_wrapped
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, EvidenceLevel
+from parserx.ir.enums import BlockKind, BlockStatus, EvidenceLevel, RelationKind
 from parserx.ir.semantic import ChartSemantic, DiagramSemantic, Evidenced, GenericSemantic
 from parserx.ir.state import DocumentState
 from parserx.workspace.queries import block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
+_JOINABLE = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.FOOTNOTE, BlockKind.OTHER})
 _LEVEL = {EvidenceLevel.VISIBLE: "可见", EvidenceLevel.ESTIMATED: "估读", EvidenceLevel.INFERRED: "推断",
           EvidenceLevel.UNKNOWN: "未知"}
 _ARROW = {"forward": "→", "backward": "←", "both": "↔", "unknown": "—"}
@@ -43,8 +44,14 @@ def image_file(asset: Asset) -> str:
 
 def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
     assets = {a.id: a for a in state.assets}
+    joined = _continuations(state)  # a paragraph continued in later blocks is rendered once, at its start
+    skipped = {b.id for chain in joined.values() for b in chain[1:]}
     by_unit: dict[int | None, list[Block]] = {}
     for block in ordered(state):
+        if block.id in skipped:
+            continue
+        if block.id in joined:
+            block = block.model_copy(update={"text": "\n".join(b.text for b in joined[block.id])})
         by_unit.setdefault(block_unit(state, block), []).append(block)
     parts: list[str] = []
     section = 1
@@ -60,6 +67,30 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
         parts.extend(_render_all(blocks, assets, image_dir))
     return "\n\n".join(parts) + "\n"
+
+
+def _continuations(state: DocumentState) -> dict[str, list[Block]]:
+    """Chains of visible text blocks linked by ``continues`` (earlier → later, guide §6.9), by their first block."""
+    blocks = {b.id: b for b in state.blocks}
+
+    def joinable(block_id: str) -> bool:
+        block = blocks.get(block_id)
+        return block is not None and block.status in _VISIBLE and block.kind in _JOINABLE
+
+    following = {r.src: r.dst for r in sorted(state.relations, key=lambda r: r.id)
+                 if r.kind == RelationKind.CONTINUES and joinable(r.src) and joinable(r.dst)}
+    continued = set(following.values())
+    chains: dict[str, list[Block]] = {}
+    for head in sorted(following):
+        if head in continued:
+            continue
+        chain, seen = [blocks[head]], {head}
+        while chain[-1].id in following and following[chain[-1].id] not in seen:
+            nxt = following[chain[-1].id]
+            chain.append(blocks[nxt])
+            seen.add(nxt)
+        chains[head] = chain
+    return chains
 
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str) -> list[str]:

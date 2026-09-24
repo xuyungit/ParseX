@@ -25,6 +25,7 @@
 - 用 `apply_structure` 提交变更：`set_role`（设为标题时可同时带 `level`）、`set_level`、`move_after`、`add_relation`、`merge_tables`、`mark_pending`、`exclude` / `restore`，每条写明理由（`reason`）和证据（`evidence`）。
 - 程序会检查合法性：只能引用存在的块；表格、图片、公式不能改角色；层级不得跳级（H1 之后不能直接 H3）；同一编号模式必须同级；顺序不能成环。被拒绝的变更会给出规则名与原因，据此修正后再提交。
 - 正文误用了标题样式、真正的标题只做了加粗，都可以指出并修正，但要写明依据。
+- 同一段文字被分页或换行拆成了几块时，用 `add_relation`（`kind: continues`，`src` 为前一块、`dst` 为后一块）把它们连起来，输出会合成一段，块的原文不变。
 
 ## 停止条件
 

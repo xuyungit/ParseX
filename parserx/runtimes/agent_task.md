@@ -71,6 +71,7 @@
 {"op": "restore", "block": ID, "reason": "……"}                             # 撤销页眉页脚、装饰图或 exclude 的判定
 {"op": "move_after", "block": ID, "after": ID, "reason": "……"}             # after 为 null 表示移到最前
 {"op": "add_relation", "kind": "continues|captions|footnotes|contains|follows|belongs_to_section|duplicate_of", "src": ID, "dst": ID}
+{"op": "add_relation", "kind": "continues", "src": 前一块, "dst": 后一块}   # 同一段被分页或换行拆成两块：输出合成一段，原文不变
 ```
 
 `set_role` 的 `level` 只在 `kind` 为 `title` 时使用，可省。除 `add_relation` 外，每条都可以另带 `"evidence": {"page": 3, "image": "a-…"}`——一个字典，值为文字、数字或真假值，可省；依据主要写在 `reason` 里。被拒绝的变更会给出规则名与原因。

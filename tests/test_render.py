@@ -149,3 +149,17 @@ def test_export_writes_markdown_sidecar_and_shown_images(tmp_path):
     assert md_path.read_text() == render_markdown(state)
     assert (tmp_path / "out" / "images" / ASSET.path.split("/")[-1]).read_bytes() == b"\x89PNG-img"
     assert validate_sidecar(json.loads(sidecar_path.read_text())) == []
+
+
+def test_blocks_joined_by_continues_render_as_one_paragraph():
+    from parserx.ir.relation import Relation
+
+    blocks = [_block("a", BlockKind.TEXT, 0, page=1, text="跨页的句子前半"), _block("x", BlockKind.TEXT, 1, page=1, text="页末"),
+              _block("b", BlockKind.TEXT, 2, page=2, text="后半，完。"), _block("c", BlockKind.TEXT, 3, page=2, text="新段")]
+    state = _state(blocks)
+    state.relations = [Relation(id="r-continues-a-b", kind="continues", src="a", dst="b")]
+    md = render_markdown(state)
+    assert "跨页的句子前半后半，完。" in md and md.count("后半") == 1
+    assert md.index("跨页的句子前半后半") < md.index("<!-- PAGE 2 -->") < md.index("新段")
+    state.relations = []
+    assert "跨页的句子前半\n\n页末" in render_markdown(state)  # without the relation nothing changes
