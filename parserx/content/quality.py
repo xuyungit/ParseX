@@ -34,7 +34,7 @@ class PageSignals:
 @dataclass(frozen=True)
 class NativeVerdict:
     ok: bool
-    reason: str  # ok | no_text_layer | vector_text | ocr_text_layer | garbled
+    reason: str  # ok | no_text_layer | image_content | vector_text | ocr_text_layer | garbled
     evidence: dict[str, float | int]
 
 
@@ -50,6 +50,9 @@ def assess_native_layer(s: PageSignals) -> NativeVerdict:
         return NativeVerdict(False, "ocr_text_layer", evidence)
     if s.text_chars < 50 and s.image_coverage > 0.5:
         return NativeVerdict(False, "no_text_layer", evidence)
+    if s.text_chars < 200 and s.image_coverage > 0.3:
+        # v1's "mixed page": the images carry what the page says (e.g. a scan placed with wide margins).
+        return NativeVerdict(False, "image_content", evidence)
     if s.text_chars < 500 and s.drawings > 200:
         return NativeVerdict(False, "vector_text", evidence)
     if s.text_chars and s.dominant_image_ratio > 0.5 and s.chars_in_dominant_image / s.text_chars > 0.7:

@@ -134,6 +134,9 @@ def _signals(**kw):
     (_signals(replacement_chars=60), "garbled"),
     (_signals(private_use_chars=60), "garbled"),
     (_signals(invisible_chars=700), "ocr_text_layer"),
+    (_signals(text_chars=0, image_coverage=0.45, dominant_image_ratio=0.45), "image_content"),
+    (_signals(text_chars=150, image_coverage=0.35, dominant_image_ratio=0.2), "image_content"),
+    (_signals(text_chars=150, image_coverage=0.25, dominant_image_ratio=0.2), "ok"),  # a figure with a caption
 ])
 def test_native_layer_verdicts(signals, reason):
     verdict = assess_native_layer(signals)
