@@ -550,7 +550,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 ### 9.4 运行时对比协议（阶段三）
 
 - **难例集**：每类至少一篇且不在核心集内：密集中文表格、跨页表格、混合扫描页、手工排版 Word、复杂标题层级、照片与正文混排。
-- **控制变量**：同一底层模型（能做到时）、同一套七个工具、同一预算与截止时间；避免把"换了更强模型"误认为架构优势；模型不同的对比（Codex 对 Claude Code）只比较完整系统效果。
+- **控制变量**：主 Agent 用同一底层模型（能做到时）、工具内部的服务层模型固定不变（Q40）、同一套七个工具、同一预算与截止时间；避免把"换了更强模型"误认为架构优势；模型不同的对比（Codex 对 Claude Code）只比较完整系统效果。
 - **观察项**：
 
 | 维度 | 指标 |
@@ -598,7 +598,14 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | gpt-6-luna（默认 VLM） | 0.10 | 0.01 | 0.50 | 整页转录 `effort=none` 2.9 s、248 token，charF1 0.927 |
 | gpt-6-sol | 2.00 | 0.20 | 10.00 | 服务层未测 |
 
-注意区分两种用途：上表是 ParserX 服务层（OCR 之外的 LLM/VLM 调用）经官方端点使用的模型，默认仍是 gpt-6-luna；阶段二探索中主 Agent 的模型是 Codex 里的 gpt-6-sol（Q35），经 Codex 账号调用，不经服务层，用量由实验装置从 Codex 事件流记账。
+**模型分工（Q40）**：ParserX 用到两类模型，分别选型、分别更换，不互相替代：
+
+| 角色 | 做什么 | 选型原则 | 当前 |
+|---|---|---|---|
+| 主 Agent 的模型 | 读概况、决定下一步、判断标题与结构、决定何时复核、看图核对 | 能力优先 | gpt-6-sol（Codex，Q35） |
+| 服务层的 LLM / VLM | 工具内部的转录、复核、图片描述、表格解释、结构判断等单项任务 | 经济、速度优先；某类任务确实不够时才按任务升级，并记录依据 | gpt-6-luna（`parserx.yaml`，经官方端点） |
+
+上表的价格与实测针对服务层。主 Agent 经 Codex 账号调用，不经服务层，用量由实验装置从 Codex 事件流记账（§5.2 的分开计数）；探索与对比实验中，服务层模型保持不变，只让主 Agent 的模型按实验设计变化。
 
 接口事实（已在 `services/llm.py` 处理；`parserx.yaml` 对 gpt-6-luna 显式设 `send_temperature: false`，不靠 400 探测）：gpt-5.6-*/gpt-6-* 拒绝 `temperature`；Chat Completions 两代模型都拒绝 `max_tokens`，要求 `max_completion_tokens`；推理 token 会耗尽过小的输出预算返回空文本；`reasoning.effort` 支持 none/low/medium，不支持 minimal。实现方式不按模型名维护能力表，而是后端 400 "Unsupported parameter/value" 时去掉或改名该参数、记入实例并重试一次；`ServiceConfig` 新增 `reasoning_effort`、`send_temperature`、`min_output_tokens`；`parserx.yaml` vlm `none` + 1024，llm `none` + 256。luna 无法设 temperature，同一输入两次输出有差异（receipt char_f1 0.962 / 0.954，gpt-5.4-mini 两次均 0.971），复现性只能靠缓存。
 
@@ -754,6 +761,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q37 | 阶段三的未见集与标注 | ✅ 隔离集三篇加 3 篇新文档（补齐密集中文表格、跨页表格、手工排版 Word）；新文档由用户提供或从未使用的样例中挑选，标注由 Claude 起草、用户审核后写入 `ground_truth/`，与探索并行（2026-09-24） |
 | Q38 | 探索中 Agent 的自由度 | ✅ 第一轮允许只读分析脚本，工作区只经工具修改，结果必须经 export；第二轮禁止为单篇文档写转换逻辑；绕过工具的运行作废并记为发现（2026-09-24） |
 | Q39 | 每篇预算与人工介入 | ✅ 每篇截止时间：100 页以内 30 分钟，更大 90 分钟；服务预算用默认配置；运行中不提示；只因基础设施问题重跑并记入人工介入（2026-09-24） |
+| Q40 | 模型分工：主 Agent 的模型与服务层 LLM / VLM 的模型如何选 | ✅ 用户决定（2026-09-24）：两类模型分开选型、分开更换。主 Agent 的模型能力优先（阶段二为 gpt-6-sol）；服务层的 LLM / VLM 经济、速度优先（gpt-6-luna），只有某类任务确实不够时才按任务升级并记录依据。实验中服务层模型固定，只变主 Agent 的模型（§10.3） |
 
 ## 15. 变更记录
 
@@ -798,3 +806,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-24 | v1.13 | **阶段二开始：分解草稿**。启动检查全部通过（服务三项 OK；L0 720 通过 + 4 个已知失败；v1 与 v2 的 L1 PASS；两个冻结 run 回放 PASS）。写出 [v2_phase2_plan.md](v2_phase2_plan.md)：进入阶段二时的事实（Codex 沙箱不限制读，卫生靠工具快照隔离与事后审计；工作区需要能发现绕过工具的改写；主 Agent 用量由实验装置从事件流记账）、探索设计（每轮工具快照、每篇独立实验目录、两轮：探索与接近验收条件、对照为固定流水线 v2 与 v1）、探索集与阶段三未见集、P2-1 至 P2-9、退出条件。新增待决问题 Q35–Q39 |
 | 2026-09-24 | v1.13 | **阶段二分解确认**：Q35–Q39 全部按建议确认（Codex 与 P1-7b 同一模型；探索集 12 篇，text_pic01 不加入；阶段三未见集为隔离集加 3 篇新文档，标注由 Claude 起草、用户审核；两轮的自由度与每篇预算按草稿）。下一项 P2-1 实验装置 |
 | 2026-09-24 | v1.13 | **Q35 改定**：阶段二的 Agent 运行时为 Codex CLI 0.156.0，主力模型由用户指定为 gpt-6-sol（综合能力较好；原建议 gpt-6-astra 未采用），推理强度 high，每次运行在命令行上显式指定（本机 Codex 默认仍是 gpt-6-astra）；无头调用实测可用。出现问题再考虑换模型，换模型的记录与重跑规则写入 v2_phase2_plan.md §2.1。§0.2、§7.4、§10.1、§12、§14 同步更新 |
+| 2026-09-24 | v1.13 | **Q40 模型分工**（用户决定）：主 Agent 的模型能力优先（gpt-6-sol，经 Codex），服务层 LLM / VLM 经济、速度优先（gpt-6-luna，经官方端点），两者分开选型与更换；§10.3 改写为模型分工表，§9.4 的控制变量补充"服务层模型固定"，v2_phase2_plan.md §2.1、§2.2、§2.4 同步 |
