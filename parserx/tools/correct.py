@@ -142,6 +142,7 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
     if not known:
         return _no_evidence(image)
     containers = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS and r.dst == block.id}
+    parts = _merged_parts(state, block.id)  # a table merged across pages: its continuations' crops show it too
     for record in reversed(read_records(ctx.ws.calls_path)):
         if record.get("type") != "call":
             continue
@@ -151,6 +152,9 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
             if target_block in containers:
                 return GateCheck(name="image_evidence", passed=True,
                                  detail=f"read the image {image} this block was read from")
+            if target_block in parts:
+                return GateCheck(name="image_evidence", passed=True,
+                                 detail=f"read the image {image} of {target_block}, merged into this block")
             if whole_page:
                 if target_page is None and target_block is not None:
                     other = next((b for b in state.blocks if b.id == target_block), None)
@@ -159,6 +163,22 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
                     return GateCheck(name="image_evidence", passed=True,
                                      detail=f"read the image {image} of page {target_page}")
     return _no_evidence(image)
+
+
+def _merged_parts(state, block_id: str) -> set[str]:
+    """Blocks merged into *block_id* (continuations of a table across pages, followed through chains)."""
+    merged = {b.id for b in state.blocks if b.status == BlockStatus.MERGED}
+    following: dict[str, list[str]] = {}
+    for r in state.relations:
+        if r.kind == RelationKind.CONTINUES and r.dst in merged:
+            following.setdefault(r.src, []).append(r.dst)
+    parts, todo = set(), [block_id]
+    while todo:
+        for part in following.get(todo.pop(), []):
+            if part not in parts:
+                parts.add(part)
+                todo.append(part)
+    return parts
 
 
 def _images_read(record: dict, image: str) -> list[tuple[str | None, int | None, bool]]:

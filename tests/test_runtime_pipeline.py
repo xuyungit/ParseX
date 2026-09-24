@@ -235,3 +235,32 @@ def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
     assert (out / "report.md").read_text() == "# Background\n\nBody text.\n"
     summary = json.loads((out / "report.json").read_text())
     assert summary["status"] == "complete" and summary["outline"][0]["text"] == "Background"
+
+
+def test_v1_docx_headings_do_not_render_drawings(tmp_path, monkeypatch):
+    # Docling renders a drawing (a shape, a chart) through LibreOffice; in a sandbox that cannot run LibreOffice
+    # its whole read failed.  The adapter only needs the headings: drawings are skipped.
+    import docling.backend.docx.drawingml.utils as dml
+    from docx.oxml import parse_xml
+
+    from parserx.config.schema import load_config
+    from parserx.runtimes.v1_structure import v1_headings_docx
+
+    def no_libreoffice(*args, **kwargs):
+        raise RuntimeError("LibreOffice unavailable")
+
+    monkeypatch.setattr(dml.subprocess, "run", no_libreoffice)
+    doc = Document()
+    doc.add_paragraph("第一章 总则", style="Heading 1")
+    doc.element.body[-1].addprevious(parse_xml(
+        '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:r><w:drawing><wp:inline>'
+        '<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Shape"/><a:graphic>'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"/></a:graphic>'
+        '</wp:inline></w:drawing></w:r></w:p>'))
+    doc.add_paragraph("本规范适用于桥梁支座。")
+    doc.save(tmp_path / "shape.docx")
+    headings = v1_headings_docx(tmp_path / "shape.docx", load_config(None))
+    assert [text for _, text in headings] == ["第一章 总则"]
+

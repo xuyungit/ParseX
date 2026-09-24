@@ -536,6 +536,10 @@ def test_a_table_continued_across_pages_is_corrected_as_one(ws):
     env, _ = _call("correct", ws, {"block": "t-first", "image": page2.result.image, "reason": "图上是 8",
                                    "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
     assert env.result.adopted is True  # page 2 is one of the table's pages
+    part, _ = _call("ask_image", ws, {"block": second.id, "question": "续表第 1 行的数值？"}, context=context)
+    env, _ = _call("correct", ws, {"block": "t-first", "image": part.result.image, "reason": "图上是 9",
+                                   "cells": [{"row": 1, "col": 1, "content": "9"}]}, context=context)
+    assert env.result.adopted is True  # the crop of a part merged into the table is evidence for the table
 
 
 def test_ask_about_the_seam_between_two_pages(ws):

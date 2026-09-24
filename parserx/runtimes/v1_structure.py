@@ -94,8 +94,17 @@ def v1_headings_docx(path: Path, config: ParserXConfig) -> list[tuple[int, str]]
     from parserx.processors.chapter import ChapterProcessor
     from parserx.providers.docx import DOCXProvider
 
+    import docling.backend.msword_backend as msword
+
     chapter = config.processors.chapter.model_copy(update={"llm_fallback": False})
-    doc = DOCXProvider().extract(path)
+    # Docling renders each drawing (shape, chart) through LibreOffice — slow, and in a sandbox where LibreOffice
+    # cannot create its profile the whole read fails.  Headings do not need drawings: none are rendered here.
+    converter = msword.get_docx_to_pdf_converter
+    msword.get_docx_to_pdf_converter = lambda: None
+    try:
+        doc = DOCXProvider().extract(path)
+    finally:
+        msword.get_docx_to_pdf_converter = converter
     doc = MetadataBuilder(config.builders.metadata).build(doc)
     doc = ChapterProcessor(chapter, llm_service=None).process(doc)
     return [(int(e.metadata["heading_level"]), e.content)
