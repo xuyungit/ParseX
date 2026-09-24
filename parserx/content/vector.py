@@ -5,10 +5,15 @@ LibreOffice the user has open does not interfere); PyMuPDF then renders what is 
 it on is left out — at a fixed resolution.  The result is local and byte-stable for the same versions.  A drawing
 LibreOffice cannot read (it then opens the bytes as a text document, not as a drawing), or a machine without
 LibreOffice, gives no rendering: the caller keeps the original.
+
+LibreOffice's own fontconfig may come without a configuration (the macOS build): it then sees only the fonts it
+ships, none of them Chinese, and draws no Chinese text.  ``soffice_env`` gives it one — the system configuration
+where there is one, plus the usual font folders.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +36,25 @@ class Rendered:
     version: str | None = None  # the LibreOffice that rendered them
 
 
+_FONT_DIRS = ("/System/Library/Fonts", "/Library/Fonts", "~/Library/Fonts", "/usr/share/fonts", "/usr/local/share/fonts",
+              "~/.fonts", "~/.local/share/fonts")
+
+
+def soffice_env(scratch: Path) -> dict[str, str]:
+    """The environment for a LibreOffice that draws text: a fontconfig file unless one is already given."""
+    env = dict(os.environ)
+    if env.get("FONTCONFIG_FILE"):
+        return env
+    scratch.mkdir(parents=True, exist_ok=True)
+    dirs = "".join(f"<dir>{d}</dir>" for d in _FONT_DIRS)
+    (scratch / "fonts.conf").write_text(
+        '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+        f'<include ignore_missing="yes">/etc/fonts/fonts.conf</include>{dirs}'
+        f"<cachedir>{scratch / 'cache'}</cachedir></fontconfig>\n", encoding="utf-8")
+    env["FONTCONFIG_FILE"] = str(scratch / "fonts.conf")
+    return env
+
+
 def render_vectors(items: dict[str, tuple[bytes, str]]) -> Rendered:
     """Render each item (name → (bytes, media type)); the ones that cannot be rendered are left out."""
     out = Rendered()
@@ -48,7 +72,7 @@ def render_vectors(items: dict[str, tuple[bytes, str]]) -> Rendered:
         try:
             subprocess.run(["soffice", f"-env:UserInstallation={(root / 'profile').as_uri()}", "--headless",
                             "--convert-to", "pdf", "--outdir", str(root / "pdf"), *map(str, sources)],
-                           capture_output=True, timeout=300)
+                           capture_output=True, timeout=300, env=soffice_env(root / "fontconfig"))
         except (OSError, subprocess.SubprocessError):
             return out
         for name, source in zip(names, sources):

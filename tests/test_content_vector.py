@@ -116,3 +116,16 @@ def test_without_libreoffice_the_original_is_kept_with_a_warning(tmp_path, monke
     _figure, asset = _figure_asset(ext)
     assert asset.media_type == "image/x-wmf"
     assert any("EMF / WMF" in w for w in ext.warnings)
+
+
+def test_libreoffice_is_given_the_system_fonts(tmp_path, monkeypatch):
+    # its own fontconfig may have no configuration (macOS build): only its bundled fonts, no Chinese
+    monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
+    env = vector.soffice_env(tmp_path)
+    conf = (tmp_path / "fonts.conf").read_text()
+    assert env["FONTCONFIG_FILE"] == str(tmp_path / "fonts.conf")
+    assert "/etc/fonts/fonts.conf" in conf and "<dir>/System/Library/Fonts</dir>" in conf
+    assert "<dir>/usr/share/fonts</dir>" in conf
+    monkeypatch.setenv("FONTCONFIG_FILE", "/somewhere/fonts.conf")
+    assert vector.soffice_env(tmp_path / "other")["FONTCONFIG_FILE"] == "/somewhere/fonts.conf"
+
