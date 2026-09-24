@@ -582,7 +582,8 @@ def cmd_summary(args) -> int:
     v1 = json.loads(V1_BASELINE.read_text())["documents"] if V1_BASELINE.is_file() else {}
     order = [d["name"] for d in _explore_set()]
     pattern = "_control/*/record.json" if args.control else "*/run/record.json"
-    records = [json.loads(p.read_text()) for p in _round_dir(args).glob(pattern)]
+    # voided runs (<doc>.voidN, kept after --rerun) are not results
+    records = [json.loads(p.read_text()) for p in _round_dir(args).glob(pattern) if ".void" not in p.parts[-3]]
     records.sort(key=lambda r: (order.index(r["conditions"]["doc"]) if r["conditions"]["doc"] in order else 99,
                                 r["conditions"]["doc"]))
 
