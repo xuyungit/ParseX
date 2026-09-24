@@ -515,7 +515,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 层 | 内容 | 何时跑 | 目标耗时 | 服务调用 |
 |---|---|---|---|---|
-| L0 单元测试 | `uv run pytest -q`，全部离线；需要服务的用例标 `live_e2e` 默认跳过 | 每次改动 | < 15 s | 无 |
+| L0 单元测试 | `uv run pytest -q --ignore=tests/test_live_e2e.py`，全部离线；需要服务的用例标 `live_e2e`，单独运行（`uv run pytest tests/test_live_e2e.py -q`，不用响应缓存） | 每次改动 | < 15 s | 无 |
 | L1 核心回归（回放） | `scripts/regression_test.py --core`，文档列表在 `configs/regression_core.txt`，响应来自缓存 | 每个任务结束、每次提交前 | 缓存命中 < 1 min；全未命中约 3 min | 缓存未命中时才调用 |
 | L2 全量回归（冻结 run） | 全部 ground truth（含隔离验证集与 `ground_truth_public/` 子集），真实调用 | 阶段退出、发布、改提示词或换模型后 | 约 20 min | 全部 |
 
@@ -848,4 +848,5 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-24 | v1.14 | **P2-5 段落续接（A3）**：渲染器把 `continues` 相连的正文类块输出为一段（块文字不变，放在第一块的位置），Agent 可用 `add_relation` 连接被分页或换行拆开的段落；任务说明与结构 Skill 写明用法。固定流水线自动提出跨页正文续接（§6.9）改为 P2-7 的候选通用算法，先在全量语料上验证。现有输出不变（此前只有已隐藏的续表块有 `continues`）。L0 762 通过 + 4 个已知失败；v1 与 v2 的 L1 PASS；v2 冻结 run 回放 PASS |
 | 2026-09-24 | v1.14 | **Q42 输出包（A 部分）**：`export` 与 `parserx parse <文档> -o <目录> --pipeline v2` 写出同一个包——`<名称>.md`、`images/`（提取出的全部图片，包括不显示的装饰图）、信息摘要 `<名称>.json`（来源、状态与缺失项、标题大纲、表格数、每张图片是否显示与描述摘要、引擎与模型、请求与费用、警告）、块级 sidecar。Markdown 与 sidecar 不变（冻结 run 回放 PASS）。暂缓两项并说明原因：WMF / EMF 转 PNG 并入阶段四 OOXML 边界（Q9，需要可复现的转换与沙箱内的 LibreOffice 配置，目前只在一篇文档出现一张）；误识表格还原为正文与图片索引图在 `exclude` 与经 `ask_image` 看图之后价值变低，留到需要时再做。L0 763 通过 + 4 个已知失败；v1 与 v2 的 L1 PASS |
 | 2026-09-24 | v1.14 | **Q42 B 部分：嵌入图片中文字与表格的转录**：路由为 SCAN / MIXED 的嵌入图片（PDF 与 DOCX）经扫描页引擎转录（多张图拼成一个 PDF、一次提交），转录内容成为紧跟在图片之后的块（`contains` 关系、账目 `ocr_block`、渲染时加 `<!-- 以下转录自上图 -->`，图片保持显示）；`process` 自动执行，Agent 可经 `recognize --blocks` 指定任意图片；已转录的 SCAN 图不再描述；图片内被标为标题的块不进入自动大纲（全量参考运行中截图里的界面标题曾被当成章节标题）。全量语料参考运行（开发缓存，含本轮全部修订）：27 篇中 4 篇变化——patent01 补回 2 张表格图片（漏表 2→0，表格 F1 0→1.0，char_f1 0.847→0.913，v1 0.880）；text_pic02 char_f1 0.858→0.876，但截图中的表格被转录后多出 6 张表（标注未收录，按 Q42 保留），表格 F1 0.629→0.417；ocr01 表格 F1 0.725→0.743；real_doc01 表格 F1 0.989→1.000。char_f1 平均 0.943（v1 0.893），与 v1 比变差 8、变好 10、持平 9（此前 9 / 9 / 9）。验收文档输出不变。L0 768 通过 + 4 个已知失败；v1 与 v2 的 L1 PASS；v2 冻结 run 回放 PASS |
+| 2026-09-24 | v1.14 | **P2-5 WMF / EMF（C4）**：本机有 LibreOffice（.doc 转换已依赖它），不再推迟到阶段四。DOCX 中 EMF / WMF 图片经 LibreOffice 转成单页 PDF、PyMuPDF 按绘制范围渲染成 PNG（`content/vector.py`，每篇一个进程约 1 s，字节稳定；LibreOffice 打不开时会当作文字文档，这类结果按 PDF 的 creator 排除），之后与其他图片一样描述、路由与转录；没有 LibreOffice 时保留原文件并写 warning。语料中 real_doc01（1 张，企业标志）与 real_doc02（5 张）受影响：real_doc01 的标志现在可描述与转录（char_f1 0.9935→0.9933，转录出的标志文字不在标注中），其余指标不变；验收文档与 L1 文档不含矢量图，输出不变。另：本次发现 L0 若不排除 `test_live_e2e.py` 会发出真实请求并写入响应缓存，第二次运行命中缓存而失败——live 测试改为不用缓存（缺陷修正），§9.1 写明 L0 的命令。L0 774 通过 + 4 个已知失败（15 s）；v1 与 v2 的 L1 PASS；v2 冻结 run 回放 PASS |
 

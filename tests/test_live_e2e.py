@@ -41,6 +41,7 @@ def _load_live_config():
     config = load_config(ROOT / "parserx.yaml")
     # Keep verification focused on parsing behavior; avoid unrelated warning flakiness.
     config.verification.hallucination_detection = False
+    config.cache.mode = "off"  # these tests check real requests: a recorded response would be replayed instead
     return config
 
 

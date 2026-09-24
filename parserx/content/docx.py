@@ -42,6 +42,7 @@ from pathlib import Path
 from lxml import etree
 from PIL import Image
 
+from parserx.content import vector
 from parserx.content.extraction import Extraction
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, DocxAnchor
@@ -511,6 +512,8 @@ class _Reader:
         self.unsupported: Counter[str] = Counter()
         self.carry: tuple[str, list[str]] | None = None  # text and ledger items of paragraphs whose mark was deleted
         self.notes_seen: set[tuple[str, str]] = set()
+        self.vectors: dict[str, bytes] | None = None  # EMF / WMF part → PNG rendering, made on first use
+        self.unrendered = 0
 
     def _related(self, suffix: str) -> str | None:
         return next((t for t, kind in self.rels.values() if kind.endswith(f"/{suffix}")), None)
@@ -713,15 +716,24 @@ class _Reader:
         data = self.pkg.zip.read(target)
         media = (self.pkg.content_type(target) or "application/octet-stream").replace("image/jpg", "image/jpeg")
         width, height = piece.extent or (0, 0)
+        rendered: dict[str, str | int | float | bool] = {}
         try:
             with Image.open(io.BytesIO(data)) as image:
                 width, height = image.size
-                if media in ("image/x-emf", "image/x-wmf", "image/emf", "image/wmf"):
+                if media in vector.VECTOR_MEDIA:
                     buf = io.BytesIO()
                     image.save(buf, "PNG")
+                    rendered = {"rendered_from": media, "renderer": "pillow"}
                     data, media = buf.getvalue(), "image/png"
-        except Exception:  # noqa: BLE001 - unreadable here (e.g. EMF on macOS): the original bytes are kept
+        except Exception:  # noqa: BLE001 - unreadable here (e.g. EMF outside Windows): LibreOffice below
             pass
+        if media in vector.VECTOR_MEDIA:
+            png = self._vector(target)
+            if png is not None:
+                with Image.open(io.BytesIO(png)) as image:
+                    width, height = image.size
+                rendered = {"rendered_from": media, "renderer": vector.RENDERER}
+                data, media = png, "image/png"
         anchor = self._anchor(piece.path)
         asset = self.ext.add_asset(Asset.from_bytes(data, media_type=media, width=max(width, 1), height=max(height, 1),
                                                     role="original", source=anchor), data)
@@ -730,8 +742,22 @@ class _Reader:
             id=block_id, kind=labels.to_kind(ENGINE, "image"), order=len(self.ext.blocks),
             anchors=[anchor, AssetAnchor(asset=asset.id, bbox=(0, 0, asset.width, asset.height),
                                          image_size=(asset.width, asset.height))],
-            decisions=[_source()]))
+            decisions=[_source(rendered)]))
         self._ledger("docx_image", anchor, 0, "output", block_id)
+
+    def _vector(self, target: str) -> bytes | None:
+        """The PNG rendering of an EMF / WMF part; all of the package's are rendered in one go on first use."""
+        if self.vectors is None:
+            items = {name: (self.pkg.zip.read(name), media) for name in sorted(self.pkg.names)
+                     if (media := self.pkg.content_type(name)) in vector.VECTOR_MEDIA}
+            rendered = vector.render_vectors(items)
+            self.vectors = rendered.images
+            if rendered.version is not None:
+                self.ext.engines[vector.RENDERER] = rendered.version
+        png = self.vectors.get(target)
+        if png is None:
+            self.unrendered += 1
+        return png
 
     def _note(self, piece: _Piece) -> None:
         kind = piece.kind
@@ -900,6 +926,10 @@ class _Reader:
                 f"document contains tracked changes ({self.revisions['inserted']} insertions kept, "
                 f"{self.revisions['deleted']} deletions and {self.revisions['moved']} move sources excluded); "
                 "output is the final view with all changes accepted")
+        if self.unrendered:
+            self.ext.warnings.append(
+                f"{self.unrendered} EMF / WMF image(s) could not be rendered to PNG (LibreOffice missing or unable "
+                "to read them); the original files are kept and cannot be described")
         for what, count in sorted(self.unsupported.items()):
             self.ext.warnings.append(
                 f"{count} {what.replace('_', ' ')}(s) not supported by the Phase 1 DOCX reader; "
@@ -913,9 +943,9 @@ def extract_docx(path: Path | str) -> Extraction:
 # ── helpers ─────────────────────────────────────────────────────────────
 
 
-def _source() -> Decision:
-    return Decision(stage=DecisionStage.CONTENT_SOURCE, choice="docx", reason="read from OOXML", evidence={},
-                    actor=ACTOR)
+def _source(evidence: dict[str, str | int | float | bool] | None = None) -> Decision:
+    return Decision(stage=DecisionStage.CONTENT_SOURCE, choice="docx", reason="read from OOXML",
+                    evidence=evidence or {}, actor=ACTOR)
 
 
 def _clean(text: str) -> str:
