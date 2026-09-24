@@ -164,3 +164,13 @@ def test_rendered_tables_are_found_in_markdown():
     spans = find_tables(md)
     assert [s.fmt for s in spans] == ["gfm", "html"]
     assert spans[0].grid == _plain_grid() and spans[1].grid == _spanned_grid()
+
+
+def test_html_without_marked_header_uses_the_first_row_like_gfm():
+    grid = TableGrid(n_rows=3, n_cols=2, cells=[
+        Cell(row=0, col=0, content="种类"), Cell(row=0, col=1, content="数值"),
+        Cell(row=1, col=0, rowspan=2, content="甲"), Cell(row=1, col=1, content="1"), Cell(row=2, col=1, content="2")])
+    html = grid.to_html()
+    assert html.splitlines()[1] == "<tr><th>种类</th><th>数值</th></tr>"
+    again = TableGrid.from_html(html)
+    assert again.header_rows == 1 and [c.content for c in again.cells if c.is_header] == ["种类", "数值"]

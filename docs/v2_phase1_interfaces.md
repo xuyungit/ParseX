@@ -355,7 +355,7 @@ class TableGrid(IRModel):
 def find_tables(markdown: str) -> list[TableSpan]: ...     # TableSpan(start, end, fmt: "gfm"|"html", grid)
 ```
 
-渲染规则（§4.5）：没有合并单元格输出 GFM，有则输出 HTML。〔P1-1〕GFM 只能表达一行表头，所以判据是 `needs_html = has_spans or header_rows > 1`，`to_gfm()` 在 `needs_html` 时抛 ValueError，避免丢掉表头结构；没有标记表头的网格按 GFM 要求以第一行作表头（与 v1 相同；补一行空表头会让整张表的行位置错位）。`to_html()` 表头行用 `<th>`，未被任何单元格覆盖的位置输出空 `<td>`。
+渲染规则（§4.5）：没有合并单元格输出 GFM，有则输出 HTML。〔P1-1〕GFM 只能表达一行表头，所以判据是 `needs_html = has_spans or header_rows > 1`，`to_gfm()` 在 `needs_html` 时抛 ValueError，避免丢掉表头结构；没有标记表头的网格按 GFM 要求以第一行作表头（与 v1 相同；补一行空表头会让整张表的行位置错位）。`to_html()` 表头行用 `<th>`，未被任何单元格覆盖的位置输出空 `<td>`；〔P1-11〕没有标记表头的网格与 `to_gfm` 一样以第一行作表头（扫描页引擎的 HTML 表格全是 `<td>`，此前 HTML 输出因此没有表头，jtg3362 的表头关联正确率从 v1 的 0.733 降到 0.067）。
 
 ## 4. 工具返回信封（§5.2）
 

@@ -80,8 +80,12 @@ class TableGrid(IRModel):
         return "\n".join([rows[0], delimiter, *rows[1:]])
 
     def to_html(self) -> str:
-        """HTML table keeping spans; header rows use ``<th>``, uncovered positions an empty ``<td>``."""
+        """HTML table keeping spans; header rows use ``<th>``, uncovered positions an empty ``<td>``.
+
+        Like ``to_gfm``, a grid without marked header rows renders its first row as the header.
+        """
         matrix = self.slot_matrix()
+        header_rows = self.header_rows or (1 if self.n_rows > 1 else 0)
         lines = ["<table>"]
         for r, row in enumerate(matrix):
             parts: list[str] = []
@@ -91,7 +95,7 @@ class TableGrid(IRModel):
                     continue
                 if (cell.row, cell.col) != (r, c):
                     continue  # covered by a span
-                tag = "th" if cell.is_header or r < self.header_rows else "td"
+                tag = "th" if cell.is_header or r < header_rows else "td"
                 attrs = (f' rowspan="{cell.rowspan}"' if cell.rowspan > 1 else "") + (
                     f' colspan="{cell.colspan}"' if cell.colspan > 1 else ""
                 )
