@@ -75,6 +75,16 @@ class ToolContext:
             raise ToolFailure(FailureCode.SERVICE_ERROR, "VLM service not configured (services.vlm)")
         return create_vlm_service(cfg)
 
+    def _new_detector(self):
+        from parserx.layout.detector import RapidLayoutDetector
+
+        return RapidLayoutDetector(self.config.layout.model, self.config.layout.conf_thresh)
+
+    def detector(self):
+        if getattr(self, "_detector", None) is None:
+            self._detector = self._new_detector()
+        return self._detector
+
     def ocr(self) -> PaddleOCRService:
         if self._ocr is None:
             service = self._new_ocr()

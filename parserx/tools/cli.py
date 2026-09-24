@@ -12,7 +12,6 @@ go to stderr.  Exit code 0: an envelope was returned (see ``ok`` and
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import sys

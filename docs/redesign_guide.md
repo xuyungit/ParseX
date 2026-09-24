@@ -338,7 +338,7 @@ Skill 说明目标、取证方法、输出要求和停止条件，不写"字号�
 
 原则：**廉价判断只决定"值不值得调用识别"，不直接决定删除资源。**
 
-1. **廉价过滤只做标记**：短边 < 30 px、像素标准差 < 1.0、长宽比 ≥ 12 的图片标为 `decorative_candidate`，资源照常保存，默认不调用识别、不显示。"装饰性"与"看不清、未识别"是两种状态，后者标 `unrecognized`，永远保留原图链接。
+1. **廉价过滤只做标记**：短边 < 30 px、像素标准差 < 1.0、长宽比 ≥ 12 的图片标为 `decorative_candidate`，资源照常保存，默认不调用识别、不显示。阶段一另加 v1 自 Iter 12 起使用的"琐碎图"规则（面积 ≤ 12000 px² 且长边 ≤ 160 px，图标与标志），见 Q31。"装饰性"与"看不清、未识别"是两种状态，后者标 `unrecognized`，永远保留原图链接。
 2. **版面检测**：对图片像素跑 §6.2 检测器。
 3. **面积统计**：分母是整图面积；分子是同类检测框的并集面积；文字类 `t` = text+title+list+table 的并集，图形类 `f` = figure/chart 的并集；被 figure 框包含的文字框只计入 `f`；留白不计入任何一类。
 4. **路由**（阈值是起点，只在整个语料上调，并单独统计"有信息图片被丢弃"）：
@@ -610,7 +610,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | docling 2.84.0 | 仅 DOCX provider | 阶段四移除 |
 | pdfplumber 0.11.9 | 仅 `tool_eval/adapters.py` | 移到 `bench` 可选依赖 |
 | pypdf、llama-parse | 无引用 | 删除 |
-| rapid-layout、onnxruntime | 新增 | 阶段一 |
+| rapid-layout 1.2.1、onnxruntime | ✅ 已加入（P1-9） | 阶段一；pp_doc_layoutv3 模型首次使用时下载到 rapid-layout 包目录 |
+| jsonschema | ✅ 已显式加入（P1-1） | sidecar schema 校验（原先只经 docling-core 间接安装） |
 | rapidfuzz | 新增（2026-09-23） | 评测的 LCS 与精确编辑距离（Q21） |
 
 ## 11. 代码迁移清单
@@ -684,7 +685,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 阶段 | 目标 | 产出 | 退出条件 | 状态 |
 |---|---|---|---|---|
 | 0 冻结现状与修验收工具 | 评测可信、快速、可复现 | ✅ 默认端点切换、OCR 恢复、`llm.py` 适配并切到 gpt-6-luna；✅ 分解与阶段一接口确认；✅ P0-1 §9.2 指标修复与硬检查（指标版本 2.0，[报告](../eval_reports/2026-09-23_p0-1_metric_fix.md)）；✅ P0-2 回归配置 `configs/regression.yaml` 关闭全部 LLM（含质量检查），核心集实测 LLM 请求为 0；✅ P0-3 缓存层（OCR、VLM、LLM；核心集离线回放 0 请求、输出逐字节一致，[报告](../eval_reports/2026-09-23_p0-3_cache.md)）；✅ P0-4 回归分层（`--core` 默认离线回放、`--allow-calls`、`--repeat`、多 ground truth 目录；核心集回放两次一致，整条命令 4.2 s）；✅ P0-5 冻结 v1 基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（27 篇、提交 78556f4、两次离线回放逐项一致，[报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)）并划出隔离验证集（patent01、paper01、text_pic02） | 五个反例全部被指标或硬检查捕获 ✅；核心集回放两次一致 ✅；冻结 run 存档于本地 `eval_runs/`（不入 git）✅ | ✅ |
-| 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | 🟡 P1-1 ✅ P1-2 ✅ P1-3 ✅ P1-4 ✅（含指标 2.1） P1-5 ✅ P1-6 ✅ P1-7 ✅（含 7b 试用） P1-8 ✅ |
+| 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | 🟡 P1-1 ✅ P1-2 ✅ P1-3 ✅ P1-4 ✅（含指标 2.1） P1-5 ✅ P1-6 ✅ P1-7 ✅（含 7b 试用） P1-8 ✅ P1-9 ✅ |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI 挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | ⬜ |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生 | §9.4 报告入库；Q13 决定默认运行时 | ⬜ |
 | 4 能力完善 | 按结论补齐处理能力 | 图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
@@ -740,6 +741,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q28 | 表格指标对合并单元格的计法：单元格要求 (rowspan, colspan) 一致，而 GFM 标注无法表达合并（jtg3362 把合并值写在其中一行、其余留空；real_doc01 每行重复）。v2 按 §4.5 用 HTML rowspan 输出正确的合并，被计为错误：jtg3362 表格 F1 0.732（v1 0.764），尽管 v2 逐行数值正确而 v1 表 2 行错位 | ✅ 指标 2.1：标注表格没有任何合并单元格（GFM 全是如此）时，输出单元格与它覆盖范围内任一内容相同的标注单元格配对即算正确，不比较跨度，召回按标注单元格、精确率按不同的输出单元格计；有合并的标注仍按 2.0；文本拼接时与正上方或左侧相同的单元格只写一次。v1 基线离线重算为 `eval_runs/2026-09-23_p0_v1_gpt-6-luna.rescored-2.1.json`（输出逐字节不变，表格分数不变，文本分数小幅变动）；冻结 run 本身不改，回放在指标版本不同时只比较输出（2026-09-24） |
 | Q29 | DOCX 自动编号是否写入正文：标注几乎都省略自动编号（simple_doc01 30 处中 29 处），§6.8 说 numbering.xml 用于渲染编号；v2 目前按 Word 显示写入（如"1.1. 智慧支座概述"），只影响 char_f1 精确率，标题匹配允许子串 | ✅ 保留：正文按 Word 显示写入编号，同时记在 `TextStyle.numbering`（2026-09-24） |
 | Q30 | 工具形态试用中 Agent 提出、阶段一未做的能力：Agent 直接提交带图像证据的文字 / 单元格候选（仍经接受门）、导出前的 Markdown 预览、公式等价与转义检查、分开报告"处理完成"与"质量复核完成" | ❓ 阶段二探索时评估（2026-09-24） |
+| Q31 | 阶段一的装饰图判定：(a) §6.5 的廉价过滤是否加入 v1 的"琐碎图"规则（面积 ≤ 12000 px² 且长边 ≤ 160 px）；(b) 阶段一其余路由为影子运行时，装饰图判定是否照 §6.5 生效（保存、不显示、不描述）。依据：receipt 的 5 张图中 3 张是 70×84、48×48、120×34 的图标，§6.5 原规则一张也标不出，固定序列会发 5 次描述请求（v1 为 2 次），超出"真实请求数不超过 v1"；v1 用此规则描述了另外 2 张 | ❓ 待用户确认；实现默认 (a)(b) 都开启（`routing.trivial_max_area`，设为 null 即关闭）（2026-09-24） |
 
 ## 15. 变更记录
 
@@ -771,3 +773,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-24 | v1.10 | **P1-7 完成**：`parserx/tools/`——统一信封（DocText、Cost 含文档级剩余预算、failures 列表、diff、unresolved；新增 `internal_error`）；七个工具与 `workspace init`（.doc 经 LibreOffice 转换到临时目录，不再写到输入旁边）；`parserx tool <name> --json` / `tool schema` / `workspace init` CLI，stdout 只有信封；`hierarchy/legality.py`（七条合法性规则，编号模式签名如 `N.N`、`第N章`）；`prompts/`（描述与表格复核，内容哈希计入缓存键）；预算与统计经 `state.stats` 跨调用持续；`read` 不改变版本。契约测试覆盖信封 schema、文档文字只在 DocText 中、九种失败码、版本冲突、合法性规则、CLI。CLI 冒烟：jtg3362 init → recognize（命中缓存 0 请求）→ check（平衡、complete）→ export 通过；recognize 信封 36 KB（4 页 61 条观察，视图截至 50 条），留给 Q25 试用评估。L0 665 通过 + 4 个已知失败；v1 L1 PASS |
 | 2026-09-24 | v1.10 | **P1-8 完成**：`parserx/skills/` 三份草稿（忠实转录与纠错、图片理解与描述、文档结构与章节组织），各写明目标、取证方法（对应到七个工具的用法）、输出要求、停止条件，不写阈值规则；文件头注明"草稿，阶段二修订"；`load_skill(name) -> SkillText(name, text, sha256)`。L0 670 通过 + 4 个已知失败 |
 | 2026-09-24 | v1.10 | **P1-7b（Q25）工具形态试用完成**：Codex CLI（gpt-6-astra，workspace-write 沙箱）在 ocr_scan_jtg3362 上 2 分 53 秒完成、无人工介入；图片确实进入视觉上下文（报告了水印、跨三行的 390 等只有看图才知道的细节）；自行发现并使用 review_table 与 apply_structure。问题与处置：读页与识别返回过长 → `read` 默认只给采用内容、坐标按需，`recognize` 默认不给观察视图（27.7 KB→1.4 KB，读页 18–20 KB→5–8 KB）；VLM 在 JSON 后附加内容导致解析失败 → 取第一个完整 JSON，失败信息说明缓存重放与下一步；端点内容策略误拦 → 失败信息注明；复核未采用而无未解决项 → 写 `table_uncertain`。其余需求记为 Q30。报告 `eval_reports/2026-09-24_p1-7b_tool_trial.md` |
+| 2026-09-24 | v1.10 | **P1-9 完成**：版面检测（rapid-layout pp_doc_layoutv3，派生缓存，离线回放不加载模型）、三套标签映射（检测器与 PaddleOCR 同为 25 类；DOCX 元素）、面积统计 t/f、§6.5 路由表与廉价过滤、`recognize --engine layout` 影子运行（页面检测挂到重叠块、图片路由写 ImageRecord 与 image_route Decision，只有装饰图生效）。真实运行：receipt 5 张图中 3 张图标判为装饰（琐碎图规则），另 2 张 UNCERTAIN（检测器在应用图标上没有区域），3 页 26 个区域全部挂上块，1.7 s；jtg3362 4 页 61 个区域全部挂上块（页眉页码也可挂）。新增 Q31（装饰图判定）。L0 693 通过 + 4 个已知失败；v1 L1 PASS |

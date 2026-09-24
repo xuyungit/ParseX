@@ -3,7 +3,6 @@
 import io
 
 import fitz
-import pytest
 from PIL import Image
 
 from parserx.content.scan import PageScan, batch_pdf, page_blocks, scan_order

@@ -643,6 +643,13 @@ class ExportResult(IRModel):
 - 〔P1-7b，试用后〕`read` 默认只返回当前采用的内容（隐藏 duplicate / merged / excluded 块），`include_hidden` 与 `geometry`（锚点与坐标）按需；`recognize` 默认不返回观察视图（`observations=true` 时返回）；VLM 回答在 JSON 之后附带内容时取第一个完整 JSON；两次都无法解析、或被端点内容策略拒绝时，失败信息写明下一步；复核未采用时写一条 `table_uncertain` 未解决项（附未通过的检查）。
 - 配置新增 `tools`（描述与复核的 reasoning effort、max tokens、`read_dpi`、`crop_pad_pt`、`scan_batch_pages`）；提示词在 `parserx/prompts/`（`describe_figure.md`、`review_table.md`），内容哈希计入缓存键与 `state.prompt_hashes`。
 
+### 5.10 〔P1-9〕版面检测与图片路由（影子运行）
+
+- 检测器：`layout/detector.py`，rapid-layout 1.2.1 的 pp_doc_layoutv3（CPU，单页约 0.24 s，进程内只加载一次）；标签与 PaddleOCR-VL 同为 25 类，映射在 `layout/labels.py`（`LAYOUT`；另有 `DOCX` 元素到 BlockKind 的映射，DOCX 读取器的块类型经它取得）。检测结果是本地计算，存入 `.parserx_cache/derived/layout/`（键＝模型版本 + 图片字节），离线回放不加载模型。单元测试用假检测器；真实模型的用例标 `live_layout`，默认不跑。
+- 面积：`layout/area.py` 的 `coverage` 在整图上求并集面积；文字类（text/title/list/table/caption/footnote/formula 与页眉页脚页码）为 t，图形类（image/chart/seal）为 f；落在图形框内（面积 ≥ 90%）的文字框只算 f。
+- 路由：`routing/image.py`，廉价过滤（短边 < 30 px、像素标准差 < 1、长宽比 ≥ 12、**以及 v1 的"琐碎图"：面积 ≤ 12000 px² 且长边 ≤ 160 px**，见 Q31）→ DECORATIVE；否则按 §6.5 表格；检出区域置信度全低或 t、f 都 < 0.2 → UNCERTAIN。阈值在配置 `routing`。
+- 影子运行＝`recognize --engine layout`：`pages` 对页面渲染图（`layout.page_dpi`，默认 100）检测，每个区域作为 `layout` Observation 挂到重叠最多的块（被取代的 duplicate / merged 块除外，页眉页脚仍可挂），无块可挂的区域计入 warnings；`blocks` 对图片块路由，写 ImageRecord（`shown` 为实际是否渲染）与 `image_route` Decision，区域写成图片像素坐标的 Observation。**只有 DECORATIVE 生效**（块 excluded、账目 excluded、不渲染、不描述）；其余路由的 Decision 以 "shadow" 开头，不改变任何块。已处理的页与图片不重复，`force` 重做（检测仍来自派生缓存）。
+
 ## 6. 阶段一测试清单（先写测试）
 
 | 测试文件 | 覆盖 |

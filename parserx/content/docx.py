@@ -48,6 +48,7 @@ from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, TaskKind
 from parserx.ir.observation import Numbering, Observation, TextStyle
 from parserx.ir.state import LedgerEntry, Missing, PageState
+from parserx.layout import labels
 from parserx.tables.grid import Cell, TableGrid
 
 ENGINE = "docx"
@@ -604,8 +605,8 @@ class _Reader:
         obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
                           task=TaskKind.EXTRACT, anchor=anchor, text=text, style=style, status=ObservationStatus.OK)
         self.ext.blocks.append(Block(
-            id=block_id, kind=BlockKind.TEXT, order=len(self.ext.blocks), anchors=[anchor], observations=[obs],
-            chosen_observation=obs.id, text=text, decisions=[_source()]))
+            id=block_id, kind=labels.to_kind(ENGINE, "paragraph"), order=len(self.ext.blocks), anchors=[anchor],
+            observations=[obs], chosen_observation=obs.id, text=text, decisions=[_source()]))
         own = len("".join(text.split())) - sum(chars for _, chars in items)
         for item_path, chars in items:
             self._ledger("docx_paragraph", self._anchor(item_path), chars, "merged", block_id)
@@ -625,8 +626,8 @@ class _Reader:
                               engine_version=ENGINE_VERSION, task=TaskKind.EXTRACT, anchor=anchor, text=carried,
                               status=ObservationStatus.OK)
             self.ext.blocks.append(Block(
-                id=block_id, kind=BlockKind.TEXT, order=len(self.ext.blocks), anchors=[anchor], observations=[obs],
-                chosen_observation=obs.id, text=carried, decisions=[_source()]))
+                id=block_id, kind=labels.to_kind(ENGINE, "paragraph"), order=len(self.ext.blocks), anchors=[anchor],
+                observations=[obs], chosen_observation=obs.id, text=carried, decisions=[_source()]))
             for item_path, chars in items:
                 self._ledger("docx_paragraph", self._anchor(item_path), chars, "output", block_id)
         self.carry = None
@@ -681,7 +682,7 @@ class _Reader:
             elif piece.kind in ("footnote", "endnote", "comment"):
                 self._note(piece)
             else:
-                self._failed(piece.kind, piece.path, piece.text, BlockKind.OTHER)
+                self._failed(piece.kind, piece.path, piece.text, labels.to_kind(ENGINE, piece.kind))
 
     def _excluded_revision(self, piece: _Piece) -> None:
         block_id = self._block_id()
@@ -689,8 +690,8 @@ class _Reader:
         reason = ("tracked deletion; the output is the final view with all changes accepted" if piece.kind == "deleted"
                   else "tracked move source; the moved text appears at its destination")
         self.ext.blocks.append(Block(
-            id=block_id, kind=BlockKind.TEXT, order=len(self.ext.blocks), status=BlockStatus.EXCLUDED,
-            anchors=[anchor], text=piece.text, decisions=[Decision(
+            id=block_id, kind=labels.to_kind(ENGINE, "deleted"), order=len(self.ext.blocks),
+            status=BlockStatus.EXCLUDED, anchors=[anchor], text=piece.text, decisions=[Decision(
                 stage=DecisionStage.EXCLUDE, choice="revision_deleted", reason=reason,
                 evidence={"revision": "w:del" if piece.kind == "deleted" else "w:moveFrom",
                           "chars": len("".join(piece.text.split()))}, actor=ACTOR)]))
@@ -699,7 +700,7 @@ class _Reader:
     def _image(self, piece: _Piece) -> None:
         target, _kind = self.rels.get(piece.rid or "", ("", ""))
         if not target or target not in self.pkg.names:
-            self._failed("missing_image", piece.path, "", BlockKind.FIGURE)
+            self._failed("missing_image", piece.path, "", labels.to_kind(ENGINE, "missing_image"))
             return
         data = self.pkg.zip.read(target)
         media = (self.pkg.content_type(target) or "application/octet-stream").replace("image/jpg", "image/jpeg")
@@ -718,7 +719,7 @@ class _Reader:
                                                     role="original", source=anchor), data)
         block_id = self._block_id()
         self.ext.blocks.append(Block(
-            id=block_id, kind=BlockKind.FIGURE, order=len(self.ext.blocks),
+            id=block_id, kind=labels.to_kind(ENGINE, "image"), order=len(self.ext.blocks),
             anchors=[anchor, AssetAnchor(asset=asset.id, bbox=(0, 0, asset.width, asset.height),
                                          image_size=(asset.width, asset.height))],
             decisions=[_source()]))
@@ -739,8 +740,7 @@ class _Reader:
                     text = "\n".join(t for t in (_plain_text(p) for p in note.iter(_w("p"))) if t)
                     note_path = f"/w:{kind}s/w:{kind}[@w:id='{piece.note_id}']"
                     break
-        self._failed(kind, note_path, text, BlockKind.FOOTNOTE if kind != "comment" else BlockKind.OTHER,
-                     part=part if root is not None else None)
+        self._failed(kind, note_path, text, labels.to_kind(ENGINE, kind), part=part if root is not None else None)
 
     def _failed(self, what: str, path: str, text: str, kind: BlockKind, part: str | None = None) -> None:
         self.unsupported[what] += 1
@@ -819,8 +819,8 @@ class _Reader:
         obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
                           task=TaskKind.EXTRACT, anchor=anchor, cells=grid, status=ObservationStatus.OK)
         self.ext.blocks.append(Block(
-            id=block_id, kind=BlockKind.TABLE, order=len(self.ext.blocks), anchors=[anchor], observations=[obs],
-            chosen_observation=obs.id, cells=grid, decisions=[_source()]))
+            id=block_id, kind=labels.to_kind(ENGINE, "table"), order=len(self.ext.blocks), anchors=[anchor],
+            observations=[obs], chosen_observation=obs.id, cells=grid, decisions=[_source()]))
         chars = sum(len("".join(c.content.split())) for c in grid.cells)
         self._ledger("docx_table", anchor, chars, "output", block_id)
         self._pieces(pieces, path)
@@ -871,7 +871,7 @@ class _Reader:
             root = self.pkg.xml(target)
             if root is None:
                 continue
-            block_kind = BlockKind.HEADER if local == "header" else BlockKind.FOOTER
+            block_kind = labels.to_kind(ENGINE, local)
             root_name = _qname(root)
             for index, p in enumerate(root.iter(_w("p")), 1):
                 text = _plain_text(p)

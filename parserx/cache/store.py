@@ -65,6 +65,31 @@ class ResponseCache:
         entry = json.loads(path.read_text(encoding="utf-8"))
         return True, entry["response"]
 
+    def derived_path(self, kind: str, key: str) -> Path:
+        return self.root / "derived" / kind / key[:2] / f"{key}.json"
+
+    def get_derived(self, kind: str, key: str) -> tuple[bool, Any]:
+        """A locally computed result (e.g. layout detections); never a network response."""
+        path = self.derived_path(kind, key)
+        if self.mode == "refresh" or not path.exists():
+            return False, None
+        return True, json.loads(path.read_text(encoding="utf-8"))["value"]
+
+    def put_derived(self, kind: str, key: str, value: Any) -> None:
+        if self.mode == "read_only":
+            return
+        path = self.derived_path(kind, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump({"cache_schema": CACHE_SCHEMA_VERSION, "kind": kind, "key": key, "value": value}, handle,
+                          ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
     def put(self, service: str, key: str, response: Any, request: dict[str, Any]) -> None:
         if not self.writable:
             return

@@ -245,6 +245,33 @@ class ToolsConfig(BaseModel):
     scan_batch_pages: int = 100  # pages per scan-engine request (guide §8.2: bounded batches)
 
 
+class LayoutConfig(BaseModel):
+    """Local layout detector (guide §6.2). Phase 1 runs it in shadow: it records, it does not decide."""
+
+    model: str = "pp_doc_layoutv3"
+    conf_thresh: float = 0.5
+    page_dpi: int = 100  # page renders for detection (A4 ≈ 827 × 1169 px)
+
+
+class RoutingConfig(BaseModel):
+    """Embedded image routing (guide §6.5). Thresholds are starting points, tuned only on the whole corpus."""
+
+    # Cheap filter: decorative candidates are saved but neither recognised nor shown.
+    decorative_short_side: int = 30  # px
+    decorative_std: float = 1.0  # pixel standard deviation (blank images)
+    decorative_aspect: float = 12.0  # long / short edge (rules, bars)
+    # Trivial images (v1's rule since Iter 12): icons and logos small in both area and long edge.
+    trivial_max_area: int | None = 12000  # px²; None disables
+    trivial_max_long_edge: int = 160  # px
+    # Routing by detected areas (t = text-like, f = figure-like, both over the whole image).
+    scan_min_t: float = 0.6
+    scan_max_f: float = 0.2
+    figure_min_f: float = 0.5
+    figure_max_t: float = 0.2
+    low: float = 0.2  # t and f both below → UNCERTAIN
+    low_confidence: float = 0.5  # every detection below → UNCERTAIN
+
+
 class ServicesConfig(BaseModel):
     vlm: ServiceConfig = Field(default_factory=ServiceConfig)
     llm: ServiceConfig = Field(default_factory=ServiceConfig)
@@ -291,6 +318,8 @@ class ParserXConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    layout: LayoutConfig = Field(default_factory=LayoutConfig)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

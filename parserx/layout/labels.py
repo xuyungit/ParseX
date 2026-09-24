@@ -41,7 +41,26 @@ PADDLEOCR: dict[str, BlockKind] = {
     "number": BlockKind.PAGE_NUMBER,
 }
 
-SOURCES: dict[str, dict[str, BlockKind]] = {"paddleocr": PADDLEOCR}
+# The local layout detector (pp_doc_layoutv3 via rapid-layout) emits the same PP-DocLayout label set.
+LAYOUT: dict[str, BlockKind] = dict(PADDLEOCR)
+
+# OOXML content the DOCX reader distinguishes (structure, not pixels: the detector never sees DOCX text).
+DOCX: dict[str, BlockKind] = {
+    "paragraph": BlockKind.TEXT,
+    "table": BlockKind.TABLE,
+    "image": BlockKind.FIGURE,
+    "deleted": BlockKind.TEXT,  # tracked deletion, excluded from the final view
+    "textbox": BlockKind.OTHER,
+    "footnote": BlockKind.FOOTNOTE,
+    "endnote": BlockKind.FOOTNOTE,
+    "comment": BlockKind.OTHER,
+    "linked_image": BlockKind.FIGURE,
+    "missing_image": BlockKind.FIGURE,
+    "header": BlockKind.HEADER,
+    "footer": BlockKind.FOOTER,
+}
+
+SOURCES: dict[str, dict[str, BlockKind]] = {"paddleocr": PADDLEOCR, "layout": LAYOUT, "docx": DOCX}
 
 # Kinds that are page furniture: not rendered, recorded as excluded (guide §6.3).
 FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER})
