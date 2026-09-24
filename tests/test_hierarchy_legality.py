@@ -202,3 +202,23 @@ def test_a_title_with_a_level_can_become_text_again():
                             actor="agent")
     h1 = next(b for b in state.blocks if b.id == "h1")
     assert outcome.accepted == [0] and (h1.kind, h1.level) == (BlockKind.TEXT, None)
+
+
+def _titled(*titles):
+    blocks = [_b(f"t{i}", i, BlockKind.TITLE, text, level=level) for i, (text, level) in enumerate(titles)]
+    return DocumentState(id="d", source="x", source_sha256="0" * 64, format="pdf", status=DocumentStatus.IN_PROGRESS,
+                         blocks=blocks)
+
+
+def test_numbering_consistency_holds_within_the_same_section_only():
+    # Q43: an attachment that restarts its numbering is not compared with the main text
+    state = _titled(("1 总则", 1), ("1.1 范围", 2), ("1.1.1 适用", 3), ("2 术语", 1), ("附件3 检测报告", 1),
+                    ("1 概述", None), ("1.2 定义", None))
+    rules = [(r.index, r.rule) for r in check_changes(state, _changes(
+        {"op": "set_level", "block": "t5", "level": 2, "reason": "附件中另起的编号"},
+        {"op": "set_level", "block": "t6", "level": 3, "reason": "附件里的小节"}))]
+    assert rules == []
+    # within the main text, 1.2 must be the level of 1.1
+    state = _titled(("1 总则", 1), ("1.1 范围", 2), ("1.1.1 适用", 3), ("1.2 定义", None), ("2 术语", 1))
+    assert [r.rule for r in check_changes(state, _changes(
+        {"op": "set_level", "block": "t3", "level": 3, "reason": "r"}))] == ["numbering_level_inconsistent"]

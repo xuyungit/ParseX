@@ -186,12 +186,36 @@ def _level_problem(state: DocumentState, block: Block, level: int) -> tuple[Lega
         return LegalityRule.LEVEL_SKIP, f"H{level} → H{after}"
     signature = numbering_signature(block.text)
     if signature is not None:
-        for other in titles:
+        for index, other in enumerate(titles):
             if other.id != block.id and other.level is not None and other.level != level \
-                    and numbering_signature(other.text) == signature:
+                    and numbering_signature(other.text) == signature \
+                    and _same_section(titles, position, index, level, other.level, signature):
                 return (LegalityRule.NUMBERING_LEVEL_INCONSISTENT,
                         f"pattern {signature!r} is H{other.level} at {other.id}")
     return None
+
+
+def _family(signature: str) -> str:
+    """Numbering systems: 1 / 1.1 / 1.1.1 are one, the appendix's C / C.1 another, every other shape its own."""
+    if re.fullmatch(r"N(\.N)*", signature):
+        return "decimal"
+    if re.fullmatch(r"L(\.N)*", signature):
+        return "letter"
+    return signature
+
+
+def _same_section(titles: list[Block], i: int, j: int, level_i: int, level_j: int, signature: str) -> bool:
+    """Q43: two titles of one numbering pattern belong to the same section unless a title of another numbering
+    system, no deeper than the shallower of the two, lies between them (an attachment restarting "1 …")."""
+    family = _family(signature)
+    bound = min(level_i, level_j)
+    for other in titles[min(i, j) + 1:max(i, j)]:
+        if other.level is None or other.level > bound:
+            continue
+        other_signature = numbering_signature(other.text)
+        if other_signature is None or _family(other_signature) != family:
+            return False
+    return True
 
 
 def _moves_into_itself(state: DocumentState, change: MoveAfter) -> bool:
