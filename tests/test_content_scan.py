@@ -180,3 +180,29 @@ def test_image_scan_becomes_blocks_anchored_in_the_image():
         ("i-b-d00007-r001", "ocr_block", "output", "b-d00007-r001"),
         ("i-b-d00007-r002", "ocr_block", "output", "b-d00007-r002"),
         ("i-b-d00007-r003", "ocr_block", "merged", "b-d00007")]  # a picture inside the image: shown by the image
+
+
+def test_pictures_inside_a_table_cell_become_figures_after_the_table():
+    # the engine leaves a picture inside a cell as a reference to its own crop (img_in_image_box_x0_y0_x1_y1):
+    # a link to nothing in our package — the picture is cut from our page render and follows the table
+    cell = '<img src="imgs/img_in_image_box_100_300_300_400.jpg" alt="Image" /> 跨中部分'
+    table = f"<table><tr><td>结构</td><td>图示</td></tr><tr><td>简支梁</td><td>{cell}</td></tr></table>"
+    text = "如图 ![Image](imgs/img_in_image_box_100_600_200_700.jpg) 所示。"
+    img = Image.new("RGB", (1000, 1400), "white")
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    result = page_blocks(_scan([_entry("table", table, [100, 280, 900, 500], 1), _entry("text", text, [100, 520, 900, 760], 2)]),
+                         page_size=(500.0, 700.0), first_seq=1, first_item=1, page_image=(buf.getvalue(), 1000, 1400, 144.0))
+    ids = [b.id for b in result.blocks]
+    assert ids == ["b-p002-0001", "b-p002-0001-p01", "b-p002-0002", "b-p002-0002-p01"]
+    grid = result.blocks[0].cells
+    assert grid.slot(1, 1).content == "〔图1〕 跨中部分" and "img_in_image_box" not in result.blocks[2].text
+    assert result.blocks[2].text == "如图 〔图1〕 所示。"
+    picture = result.blocks[1]
+    crop = next(a for a in result.assets if a.id == next(x for x in picture.anchors if isinstance(x, AssetAnchor)).asset)
+    assert picture.kind == BlockKind.FIGURE and (crop.width, crop.height) == (200, 100)
+    assert picture.anchors[0].bbox == (50.0, 150.0, 150.0, 200.0)  # page points
+    assert [(r.kind.value, r.src, r.dst) for r in result.relations] == [
+        ("contains", "b-p002-0001", "b-p002-0001-p01"), ("contains", "b-p002-0002", "b-p002-0002-p01")]
+    assert [b.order for b in result.blocks] == [0, 1, 2, 3]
+    assert {e.block for e in result.ledger} == set(ids)

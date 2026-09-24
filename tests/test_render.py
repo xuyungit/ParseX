@@ -180,3 +180,14 @@ def test_blocks_joined_by_continues_render_as_one_paragraph():
     assert md.index("跨页的句子前半后半") < md.index("<!-- PAGE 2 -->") < md.index("新段")
     state.relations = []
     assert "跨页的句子前半\n\n页末" in render_markdown(state)  # without the relation nothing changes
+
+
+def test_pictures_taken_from_a_table_follow_it_with_a_note():
+    from parserx.ir.relation import Relation
+
+    state = _state([_block("t", BlockKind.TABLE, 0, cells=_PLAIN), _figure("f", 1), _block("p", BlockKind.TEXT, 2, text="后文")],
+                   pages=1)
+    state.relations = [Relation(id="r-contains-t-f", kind="contains", src="t", dst="f")]
+    md = render_markdown(state)
+    assert md.index("| 甲 | 10 |") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.index("![图片]") < md.index("后文")
+

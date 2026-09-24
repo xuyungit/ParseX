@@ -91,6 +91,7 @@ def integrate_scan_page(state: DocumentState, n: int, result) -> list[str]:
     state.assets.extend(a for a in result.assets if a.id not in known_assets)
     state.blocks.extend(new_blocks)
     state.ledger.extend(result.ledger)
+    state.relations.extend(result.relations)  # pictures cut from a table or text
     state.warnings.extend(result.warnings)
     state.missing[:] = [m for m in state.missing if m.block not in dispositions]
     _page(state, n).status = PageStatus.DONE

@@ -24,8 +24,9 @@ from parserx.ir.asset import Asset
 from parserx.ir.base import BBox
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, TaskKind
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
+from parserx.ir.relation import Relation
 from parserx.ir.state import LedgerEntry
 from parserx.layout import labels
 from parserx.tables.grid import TableGrid
@@ -52,6 +53,25 @@ class PageScanResult:
     assets: list[Asset] = field(default_factory=list)
     asset_bytes: dict[str, bytes] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    relations: list[Relation] = field(default_factory=list)  # a table or text ``contains`` the pictures cut from it
+
+
+# A picture inside a table cell or a paragraph: the engine leaves a reference to its own crop, named by the box in
+# its page pixels (``imgs/img_in_image_box_x0_y0_x1_y1.jpg``), as an HTML <img> or a Markdown image.
+_PICTURE = re.compile(r'<img[^>]*?src="[^"]*?img_in_image_box_(\d+)_(\d+)_(\d+)_(\d+)\.\w+"[^>]*>'
+                      r"|!\[[^\]]*\]\([^)\s]*?img_in_image_box_(\d+)_(\d+)_(\d+)_(\d+)\.\w+\)")
+
+
+def take_pictures(content: str) -> tuple[str, list[BBox]]:
+    """The content with each picture reference replaced by 〔图k〕, and the pictures' boxes in engine pixels."""
+    boxes: list[BBox] = []
+
+    def mark(match: re.Match) -> str:
+        values = [int(v) for v in match.groups() if v is not None]
+        boxes.append((float(values[0]), float(values[1]), float(values[2]), float(values[3])))
+        return f"〔图{len(boxes)}〕"
+
+    return _PICTURE.sub(mark, content), boxes
 
 
 def batch_pdf(src: fitz.Document, pages: list[int]) -> bytes:
@@ -129,7 +149,7 @@ def page_blocks(
     transform = (sx, 0.0, 0.0, sy, 0.0, 0.0)
     render: Asset | None = None
     if page_image is not None and any(labels.to_kind(ENGINE, e.get("block_label", "")) in _FIGURE_KINDS
-                                      for e in entries):
+                                      or _PICTURE.search(str(e.get("block_content") or "")) for e in entries):
         data, rw, rh, dpi = page_image
         render = _add(out, Asset.from_bytes(data, media_type="image/png", width=rw, height=rh, role="render", dpi=dpi,
                                             source=PdfAnchor(page=scan.page, bbox=(0, 0, *page_size),
@@ -147,7 +167,7 @@ def page_blocks(
         page_box = (round(box[0] * sx, 2), round(box[1] * sy, 2), round(box[2] * sx, 2), round(box[3] * sy, 2))
         pixel_anchor = PdfAnchor(page=scan.page, bbox=box, coord_space="image_px", image_size=(width, height),
                                  transform=transform)
-        content = str(entry.get("block_content") or "")
+        content, pictures = take_pictures(str(entry.get("block_content") or ""))
         grid, status = None, BlockStatus.OK
         content = engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n")
         if kind == BlockKind.TABLE:
@@ -180,7 +200,7 @@ def page_blocks(
                                        image_size=(crop.width, crop.height), transform=crop.transform))
         # A figure's in-image text is evidence for its description, not body text.
         out.blocks.append(Block(
-            id=block_id, kind=kind, order=offset, status=status, anchors=anchors, observations=[obs],
+            id=block_id, kind=kind, order=len(out.blocks), status=status, anchors=anchors, observations=[obs],
             chosen_observation=None if figure else obs.id,
             text="" if figure or grid is not None else content, cells=grid, decisions=decisions,
         ))
@@ -189,7 +209,35 @@ def page_blocks(
             item=ids.ledger_item_pdf(scan.page, first_item + offset), unit="ocr_block",
             source=pixel_anchor, chars=chars,
             disposition="excluded" if status == BlockStatus.EXCLUDED else "output", block=block_id))
+        if render is not None and status != BlockStatus.EXCLUDED:
+            for k, pbox in enumerate(pictures, 1):
+                _picture(out, scan, block_id, k, pbox, render, page_image[0], (sx, sy), (width, height), transform)
     return out
+
+
+def _picture(out: PageScanResult, scan: PageScan, parent: str, k: int, box: BBox, render: Asset, render_png: bytes,
+             scale: tuple[float, float], size: tuple[int, int], transform) -> None:
+    """A picture of *parent* (〔图k〕 in its text): a figure block right after it, cut from the page render."""
+    block_id = f"{parent}-p{k:02d}"
+    page_box = (round(box[0] * scale[0], 2), round(box[1] * scale[1], 2), round(box[2] * scale[0], 2),
+                round(box[3] * scale[1], 2))
+    pixel_anchor = PdfAnchor(page=scan.page, bbox=box, coord_space="image_px", image_size=size, transform=transform)
+    crop = _crop(out, render, render_png, box, scan.page, page_box)
+    obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=scan.engine_version,
+                      task=TaskKind.RECOGNIZE, anchor=pixel_anchor, raw_ref=scan.raw_ref, label="image",
+                      status=ObservationStatus.EMPTY)
+    out.blocks.append(Block(
+        id=block_id, kind=BlockKind.FIGURE, order=len(out.blocks), observations=[obs],
+        anchors=[PdfAnchor(page=scan.page, bbox=page_box, coord_space="page_pt"),
+                 AssetAnchor(asset=crop.id, bbox=(0, 0, crop.width, crop.height),
+                             image_size=(crop.width, crop.height), transform=crop.transform)],
+        decisions=[Decision(stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine", actor=ACTOR, refs=[obs.id],
+                            reason=f"picture inside {parent} (〔图{k}〕 there), cut from the page render",
+                            evidence={"parent": parent, "marker": k})]))
+    out.ledger.append(LedgerEntry(item=f"i-{block_id}", unit="ocr_block", source=pixel_anchor, chars=0,
+                                  disposition="output", block=block_id))
+    out.relations.append(Relation(id=ids.relation_id(RelationKind.CONTAINS, parent, block_id),
+                                  kind=RelationKind.CONTAINS, src=parent, dst=block_id))
 
 
 def image_batch_pdf(images: list[tuple[bytes, int, int]]) -> bytes:
@@ -230,7 +278,8 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
                                           block=figure))
             continue
         block_id = f"{figure}-r{offset:03d}"
-        content = engine_text(str(entry.get("block_content") or ""),
+        # a picture inside it is shown by the image itself: its reference becomes the marker only
+        content = engine_text(take_pictures(str(entry.get("block_content") or ""))[0],
                               line_break="<br>" if kind == BlockKind.TABLE else "\n")
         grid, status = None, BlockStatus.OK
         if kind == BlockKind.TABLE:

@@ -95,29 +95,33 @@ def _continuations(state: DocumentState) -> dict[str, list[Block]]:
 
 
 TRANSCRIBED_FROM_IMAGE = "<!-- 以下转录自上图 -->"
+PICTURES_FROM_ABOVE = "<!-- 以下是上方〔图 n〕处的图片 -->"
 
 
-def _transcription_starts(state: DocumentState) -> set[str]:
-    """First shown block read inside each shown image (Q42): the transcription follows the image with a note."""
+def _transcription_starts(state: DocumentState) -> dict[str, str]:
+    """The note before the first shown block contained by a shown block: the text read inside an image (Q42), or
+    the pictures cut from a table cell or a paragraph (marked 〔图n〕 there)."""
     blocks = {b.id: b for b in state.blocks}
     children: dict[str, list[Block]] = {}
     for relation in state.relations:
         src, dst = blocks.get(relation.src), blocks.get(relation.dst)
         if relation.kind == RelationKind.CONTAINS and src is not None and dst is not None \
-                and src.kind == BlockKind.FIGURE and src.status in _VISIBLE and dst.status in _VISIBLE:
+                and src.status in _VISIBLE and dst.status in _VISIBLE:
             children.setdefault(src.id, []).append(dst)
-    return {min(kids, key=lambda b: (b.order, b.id)).id for kids in children.values()}
+    return {min(kids, key=lambda b: (b.order, b.id)).id:
+            TRANSCRIBED_FROM_IMAGE if blocks[src].kind == BlockKind.FIGURE else PICTURES_FROM_ABOVE
+            for src, kids in children.items()}
 
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
-                transcribed: set[str] = frozenset()) -> list[str]:
+                notes: dict[str, str] | None = None) -> list[str]:
     out = []
     for block in blocks:
         if block.status in _VISIBLE:
             rendered = _render(block, assets, image_dir)
             if rendered:
-                if block.id in transcribed:
-                    out.append(TRANSCRIBED_FROM_IMAGE)
+                if notes and block.id in notes:
+                    out.append(notes[block.id])
                 out.append(rendered)
     return out
 

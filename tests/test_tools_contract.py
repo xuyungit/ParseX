@@ -723,3 +723,19 @@ def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     markdown = (tmp_path / "outd" / "scan.md").read_text()
     assert markdown.index("正文在图片之前") < markdown.index("<!-- 以下转录自上图 -->") < \
         markdown.index("SENTINEL-OCR 扫描文字") < markdown.index("正文在图片之后")
+
+
+def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
+    # the recognize tool renders the page for a picture the engine left inside a cell (not only for figures)
+    def page():
+        cell = '<img src="imgs/img_in_image_box_100_300_300_400.jpg" alt="Image" /> 跨中'
+        return {"prunedResult": {"width": 1000, "height": 1400, "parsing_res_list": [
+            {"block_label": "table", "block_content": f"<table><tr><td>图示</td></tr><tr><td>{cell}</td></tr></table>",
+             "block_bbox": [100, 280, 900, 500], "block_order": 1}]}}
+
+    context = _context(page=page)
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    env, _ = _call("export", ws, {"out": str(ws.parent / "outp")}, context=context)
+    md = Path(env.result.markdown).read_text()
+    assert "img_in_image_box" not in md and "〔图1〕" in md
+    assert md.index("〔图1〕") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.rindex("](images/")

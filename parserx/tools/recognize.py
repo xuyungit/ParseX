@@ -159,7 +159,9 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                 for n, result in zip(batch, results):
                     page = result.raw["layoutParsingResults"][0]
                     pruned = page.get("prunedResult") or {}
+                    # figures, and pictures inside tables or text, are cut from the page render
                     has_figures = any(scan.labels.to_kind(scan.ENGINE, e.get("block_label", "")) == BlockKind.FIGURE
+                                      or scan.take_pictures(str(e.get("block_content") or ""))[1]
                                       for e in pruned.get("parsing_res_list") or [])
                     image = scan.render_page(doc, n, int(pruned.get("width") or 0)) if has_figures and \
                         pruned.get("width") else None
