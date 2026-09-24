@@ -489,7 +489,8 @@ def _print_record(record: dict) -> None:
     if a.get("timing"):
         tm = a["timing"]
         print(f"  time   model {tm['model_s']} s in {tm['steps']} steps (median {tm['median_step_s']} s, "
-              f"longest {tm['longest_step_s']} s), commands {tm['command_s']} s")
+              f"longest {tm['longest_step_s']} s), commands {tm['command_s']} s"
+              + (f" ({tm['yielded']} yielded before finishing)" if tm.get("yielded") else ""))
     print(f"  tools  calls {t.get('calls')} failures {t.get('failures')} requests {t.get('requests')} "
           f"cost {t.get('cost_usd')}")
     if record["scores"]:

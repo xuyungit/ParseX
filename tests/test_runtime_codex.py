@@ -121,4 +121,26 @@ def test_timing_separates_model_steps_from_running_commands():
     ]
     timing = timing_from_events([e for e, _ in events], [t for _, t in events])
     assert timing.steps == 3 and timing.model_s == 13.5 and timing.command_s == 3.0
-    assert timing.longest_step_s == 6.5 and timing.wall_s == 16.5
+    assert timing.longest_step_s == 6.5 and timing.wall_s == 16.5 and timing.yielded == 0
+
+
+def test_a_command_that_yields_is_closed_when_the_agent_acts_again():
+    # Codex hands a long command's partial output back after its yield time and never reports it completed
+    from parserx.runtimes.codex import timing_from_events
+
+    def started(n):
+        return {"type": "item.started", "item": {"id": f"item_{n}", "type": "command_execution",
+                                                 "command": "./px tool ask_image"}}
+
+    events = [
+        ({"type": "turn.started"}, 0.0),
+        (started(1), 2.0),                     # model step: 2 s; the command yields, no completion event
+        (started(2), 40.0),                    # the agent acts again: command 1 counted until here
+        (_cmd(2, "./px tool check"), 41.0),
+        ({"type": "item.completed", "item": {"id": "item_1", "type": "command_execution", "command": "x",
+                                             "status": "completed"}}, 50.0),  # a late report changes nothing
+        ({"type": "turn.completed", "usage": {}}, 53.0),  # model step: 12 s
+    ]
+    timing = timing_from_events([e for e, _ in events], [t for _, t in events])
+    assert timing.yielded == 1 and timing.steps == 2 and timing.model_s == 14.0 and timing.command_s == 39.0
+    assert timing.model_s + timing.command_s == timing.wall_s
