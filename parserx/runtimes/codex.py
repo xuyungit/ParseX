@@ -36,8 +36,12 @@ DISABLED_FEATURES = (
 )
 
 
-def exec_command(*, model: str, effort: str, doc_dir: Path, last_message: Path, prompt: str) -> list[str]:
-    disabled = [arg for feature in DISABLED_FEATURES for arg in ("--disable", feature)]
+def exec_command(*, model: str, effort: str, doc_dir: Path, last_message: Path, prompt: str,
+                 vision: str = "agent") -> list[str]:
+    """*vision*: ``agent`` — the agent opens images itself; ``tool`` — its own image viewing is off and it reads
+    images only through the ``ask_image`` tool (a text-only main model, P2-5)."""
+    features = DISABLED_FEATURES + (("view_image",) if vision == "tool" else ())
+    disabled = [arg for feature in features for arg in ("--disable", feature)]
     return [
         "codex", "exec", "-m", model, "-c", f"model_reasoning_effort={effort}",
         "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true",

@@ -239,6 +239,8 @@ class ToolsConfig(BaseModel):
     describe_reasoning_effort: str | None = "low"
     review_reasoning_effort: str | None = None
     describe_max_tokens: int = 2048
+    ask_reasoning_effort: str | None = "low"  # ask_image: the agent's questions about an image (P2-5)
+    ask_max_tokens: int = 1024
     review_max_tokens: int = 4096
     read_dpi: int = 150  # default page render resolution for ``read``
     crop_pad_pt: float = 6.0

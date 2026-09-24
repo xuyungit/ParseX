@@ -88,12 +88,22 @@ _BLOCK = re.compile(r"\{\{#(\w+)\}\}(.*?)\{\{/\1\}\}", re.S)
 _VALUE = re.compile(r"\{\{(\w+)\}\}")
 
 
-def render_task(template: str, *, round_name: str, values: dict[str, Any]) -> str:
-    """The task (AGENTS.md) for one round: ``{{#rN}}…{{/rN}}`` blocks of other rounds are dropped."""
-    rounds = {m.group(1) for m in _BLOCK.finditer(template)}
+_ROUND = re.compile(r"r\d+")
+
+
+def render_task(template: str, *, round_name: str, values: dict[str, Any], options: set[str] = frozenset()) -> str:
+    """The task (AGENTS.md) for one round: ``{{#rN}}…{{/rN}}`` blocks of other rounds are dropped, and so are the
+    other ``{{#name}}…{{/name}}`` blocks unless *name* is one of the chosen *options* (e.g. ``vision_tool``)."""
+    names = {m.group(1) for m in _BLOCK.finditer(template)}
+    rounds = {n for n in names if _ROUND.fullmatch(n)}
     if round_name not in rounds:
         raise KeyError(f"the template has no block for round {round_name!r} (has {sorted(rounds)})")
-    text = _BLOCK.sub(lambda m: m.group(2) if m.group(1) == round_name else "", template)
+
+    def keep(m: re.Match) -> str:
+        name = m.group(1)
+        return m.group(2) if (name == round_name if _ROUND.fullmatch(name) else name in options) else ""
+
+    text = _BLOCK.sub(keep, template)
 
     def value(m: re.Match) -> str:
         if m.group(1) not in values:

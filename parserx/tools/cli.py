@@ -20,7 +20,7 @@ from typing import Any
 
 from parserx.config.schema import load_config
 
-TOOL_NAMES = ("process", "overview", "read", "recognize", "review_table", "correct", "describe_figure",
+TOOL_NAMES = ("process", "overview", "read", "ask_image", "recognize", "review_table", "correct", "describe_figure",
               "apply_structure", "check", "export")
 
 
@@ -76,6 +76,12 @@ def _review_opts(p):
     p.add_argument("--context", choices=("table", "table+caption", "page"), default="table")
 
 
+def _ask_opts(p):
+    p.add_argument("--block", help="ask about this block's image (its crop)")
+    p.add_argument("--page", type=int, help="ask about the whole page image")
+    p.add_argument("--question")
+
+
 def _correct_opts(p):
     p.add_argument("--block")
     p.add_argument("--image", help="the asset id that read --image returned for this block or its page")
@@ -104,7 +110,7 @@ def _export_opts(p):
 
 _TOOL_OPTIONS = {
     "process": lambda p: None, "overview": lambda p: None, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
-    "describe_figure": _describe_opts, "correct": _correct_opts, "apply_structure": _structure_opts, "check": lambda p: None,
+    "describe_figure": _describe_opts, "correct": _correct_opts, "ask_image": _ask_opts, "apply_structure": _structure_opts, "check": lambda p: None,
     "export": _export_opts,
 }
 
@@ -143,6 +149,9 @@ def _request(name: str, args) -> dict[str, Any]:
     if name == "review_table":
         return {"block": args.block, "issues": _load_json(args.issues) if args.issues else [],
                 "context": args.context}
+    if name == "ask_image":
+        return {k: v for k, v in dict(block=args.block, page=args.page, question=args.question).items()
+                if v is not None}
     if name == "correct":
         return {"block": args.block, "image": args.image, "reason": args.reason, "actor": args.actor,
                 "edits": _load_json(args.edits) if args.edits else [],

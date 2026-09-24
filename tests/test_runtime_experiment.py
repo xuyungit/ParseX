@@ -160,9 +160,14 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
     assert outside_rules(r1) == outside_rules(r2) and r1 != r2
     for text in (r1, r2):
         assert "{{" not in text and "input.pdf" in text and "30 分钟" in text
-        for tool in ("overview", "read", "recognize", "review_table", "describe_figure", "apply_structure",
-                     "check", "export", "tool schema", "doc_text"):
+        for tool in ("process", "overview", "read", "recognize", "review_table", "correct", "describe_figure",
+                     "apply_structure", "check", "export", "tool schema", "doc_text"):
             assert tool in text
+    # the two ways of seeing images differ only where images are read
+    agent = render_task(template, round_name="r1", values=values, options={"vision_agent"})
+    tool = render_task(template, round_name="r1", values=values, options={"vision_tool"})
+    assert "--image crop" in agent and "ask_image" not in agent
+    assert "ask_image" in tool and "--image crop" not in tool
 
 
 def test_control_runs_the_fixed_sequence_in_an_experiment_directory(tmp_path):
@@ -177,3 +182,9 @@ def test_control_runs_the_fixed_sequence_in_an_experiment_directory(tmp_path):
     report = verify_run(doc_dir)
     assert report.integrity.ok and report.export.exported and report.export.current
     assert "# SENTINEL 标题" in (doc_dir / "out" / "input.md").read_text()
+
+
+def test_task_template_keeps_the_blocks_of_the_chosen_options():
+    template = "{{#r1}}r1\n{{/r1}}{{#vision_agent}}look yourself\n{{/vision_agent}}{{#vision_tool}}ask the tool\n{{/vision_tool}}"
+    assert render_task(template, round_name="r1", values={}, options={"vision_tool"}) == "r1\nask the tool\n"
+    assert render_task(template, round_name="r1", values={}, options={"vision_agent"}) == "r1\nlook yourself\n"

@@ -128,12 +128,14 @@ def _edited_grid(grid: TableGrid, edits: list[CellEdit], block: str) -> TableGri
 
 
 def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
-    """The image must be one ``read`` produced in this workspace for this block, or the page it is on."""
+    """The image must have been read in this workspace — by the agent (``read --image``) or by the service VLM
+    (``ask_image``) — for this block, or for the page it is on."""
     page = block_unit(state, block)
     for record in reversed(read_records(ctx.ws.calls_path)):
-        if record.get("type") != "call" or record.get("tool") != "read":
+        if record.get("type") != "call" or record.get("tool") not in ("read", "ask_image"):
             continue
-        shown = ((record.get("result") or {}).get("image") or {}).get("asset")
+        result = record.get("result") or {}
+        shown = result.get("image") if record["tool"] == "ask_image" else (result.get("image") or {}).get("asset")
         if shown != image:
             continue
         request = record.get("request") or {}
@@ -144,8 +146,10 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
             if asked is None and request.get("block"):
                 other = next((b for b in state.blocks if b.id == request["block"]), None)
                 asked = block_unit(state, other) if other is not None else None
-            passed = request.get("image") == "page" and asked == page
+            whole_page = request.get("image") == "page" or (record["tool"] == "ask_image" and request.get("page"))
+            passed = bool(whole_page) and asked == page
         if passed and (ctx.ws.root / "renders" / f"{image}.png").is_file():
             return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of this block")
     return GateCheck(name="image_evidence", passed=False,
-                     detail=f"{image} is not an image read for this block or its page (use read --image crop first)")
+                     detail=f"{image} is not an image read for this block or its page "
+                            "(read --image crop, or ask_image, first)")

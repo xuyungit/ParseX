@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from parserx.accounting import CheckResult
 from parserx.config.schema import ParserXConfig
 from parserx.tools import (
+    ask_image,
     check_export,
     correct,
     describe_figure,
@@ -46,6 +47,7 @@ TOOLS: dict[str, ToolSpec] = {
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),
     "review_table": ToolSpec(review_table.ReviewTableRequest, review_table.ReviewTableResult, review_table.run),
     "correct": ToolSpec(correct.CorrectRequest, correct.CorrectResult, correct.run),
+    "ask_image": ToolSpec(ask_image.AskImageRequest, ask_image.AskImageResult, ask_image.run),
     "describe_figure": ToolSpec(describe_figure.DescribeFigureRequest, describe_figure.DescribeFigureResult,
                                 describe_figure.run),
     "apply_structure": ToolSpec(structure.ApplyStructureRequest, structure.ApplyStructureResult, structure.run),

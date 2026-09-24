@@ -299,7 +299,7 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     raw = load_raw_config(CONFIG)
     config = doc_config(raw, doc_dir)
     template = TEMPLATE.read_text(encoding="utf-8")
-    agents_md = render_task(template, round_name=snapshot["rules"],
+    agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}"},
                             values={"input_name": f"input{input_path.suffix.lower()}", "budget_minutes": minutes})
     skills_json = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-m", "parserx.runtimes.experiment",
                         "skills"]).stdout
@@ -320,9 +320,9 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
         shutil.rmtree(runs)
     runs.mkdir(parents=True)
     argv = exec_command(model=args.model, effort=args.effort, doc_dir=doc_dir,
-                        last_message=runs / "last_message.md", prompt=PROMPT)
+                        last_message=runs / "last_message.md", prompt=PROMPT, vision=args.vision)
     print(f"[{_utc()}] {doc}: {pages} pages, deadline {minutes} min, codex {codex_version}, "
-          f"{args.model} ({args.effort})", flush=True)
+          f"{args.model} ({args.effort}), vision {args.vision}", flush=True)
     # Codex and the agent's shell get no service settings: only px-run loads them, inside the tool process.
     dotenv_names = set(dotenv_values(ENV_FILE)) | set(dotenv_values(Path.home() / ".config" / "parserx" / ".env"))
     env = {k: v for k, v in os.environ.items() if k not in dotenv_names and not _SECRET_NAME.search(k)}
@@ -359,7 +359,8 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     ended, wall = _utc(), time.monotonic() - t0
     shutil.move(str(runs), str(doc_dir / "run"))
     meta = {
-        "round": args.round, "doc": doc, "codex_version": codex_version, "input": input_path.name, "input_sha256": _sha256(input_path),
+        "round": args.round, "doc": doc, "codex_version": codex_version, "vision": args.vision,
+        "input": input_path.name, "input_sha256": _sha256(input_path),
         "pages": pages, "deadline_min": minutes, "started": started, "ended": ended, "wall_s": round(wall, 1),
         "exit_code": exit_code, "timed_out": timed_out, "command": argv[:-1] + ["<prompt>"], "prompt": PROMPT,
         "files": files, "interventions": interventions, "has_ground_truth": expected is not None,
@@ -416,6 +417,7 @@ def _verify(args, doc_dir: Path, expected: Path | None, doc: str | None = None) 
             "agents_md_sha256": meta["files"]["AGENTS.md"],
             "codex_version": meta.get("codex_version", snapshot["codex_version"]),
             "agent_model": snapshot["agent"]["model"], "agent_reasoning_effort": snapshot["agent"]["reasoning_effort"],
+            "vision": meta.get("vision", "agent"),
             "service_models": snapshot["services"], "started": meta["started"], "ended": meta["ended"],
             "deadline_min": meta["deadline_min"], "exit_code": meta["exit_code"], "timed_out": meta["timed_out"],
             "input": meta["input"], "input_sha256": meta["input_sha256"], "pages": meta["pages"],
@@ -586,15 +588,18 @@ def cmd_summary(args) -> int:
                   f"| {rec['outcome']['wall_s']:.0f} s | {json.dumps(t.get('requests', {}))} | {_fmt(t.get('cost_usd'), 4)} "
                   f"| {scores(rec)} |")
         return 0
-    print("| 文档 | 卫生 | 状态 | 导出 | 耗时 | 命令 | Agent token 输入/缓存/输出 | Agent 标价 | 工具请求 | 工具费用 "
-          "| char_f1（v1） | 表格 F1（v1） | heading_f1（v1） | 人工介入 |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| 文档 | 看图 | 卫生 | 状态 | 导出 | 耗时 | 模型步骤 | 命令 | Agent token 输入/缓存/输出 | Agent 标价 "
+          "| 工具请求 | 工具费用 | char_f1（v1） | 表格 F1（v1） | heading_f1（v1） | 人工介入 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for rec in records:
         c, a, t, r = rec["conditions"], rec["agent"], rec["tools"] or {}, rec["result"]
         export = "✅" if r["export"]["exported"] and r["export"]["current"] else (
             "旧" if r["export"]["exported"] else "—")
-        print(f"| {c['doc']} | {'✅' if rec['hygiene']['valid'] else '❌'} | {_fmt((r['check'] or {}).get('document_status'))} "
-              f"| {export} | {a['wall_s']:.0f} s{' ⏱' if c['timed_out'] else ''} | {a['commands']} "
+        tm = a.get("timing") or {}
+        steps = f"{tm['steps']} 步 / {tm['model_s']:.0f} s" if tm else "—"
+        print(f"| {c['doc']} | {c.get('vision', 'agent')} | {'✅' if rec['hygiene']['valid'] else '❌'} "
+              f"| {_fmt((r['check'] or {}).get('document_status'))} "
+              f"| {export} | {a['wall_s']:.0f} s{' ⏱' if c['timed_out'] else ''} | {steps} | {a['commands']} "
               f"| {a['input_tokens']:,}/{a['cached_input_tokens']:,}/{a['output_tokens']:,} "
               f"| {_fmt(a.get('usd_at_list_price'), 2)} | {json.dumps(t.get('requests', {}))} | {_fmt(t.get('cost_usd'), 4)} "
               f"| {scores(rec)} | {len(rec['interventions'])} |")
@@ -619,6 +624,8 @@ def main() -> int:
     which_run.add_argument("--doc", action="append", help="document name(s), repeatable or comma-separated")
     which_run.add_argument("--all", action="store_true", help="every document of the exploration set")
     run.add_argument("--jobs", type=int, default=1, help="documents run at the same time (default 1)")
+    run.add_argument("--vision", choices=("agent", "tool"), default="agent",
+                     help="agent: the agent opens images itself; tool: only through ask_image (its viewing is off)")
     run.add_argument("--input", type=Path, help="input file for a document without ground truth")
     run.add_argument("--timeout-min", type=int, help="override the Q39 deadline")
     run.add_argument("--rerun", metavar="REASON", help="void the existing run of this document and start over")

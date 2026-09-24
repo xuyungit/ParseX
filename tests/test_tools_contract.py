@@ -69,6 +69,8 @@ class FakeVLM:
         self.schemas.append(json_schema)
         if self.usage_hook:
             self.usage_hook("gpt-6-luna", 1000, 0, 100)
+        if json_schema_name == "parserx_ask_image":
+            return "SENTINEL-VLM 图上写的是：扫描文字 8 件"
         if json_schema_name == "parserx_review_table":
             return json.dumps({"table_html": "<table><tr><td>项目</td><td>数值</td></tr>"
                                              "<tr><td>SENTINEL-OCR 甲</td><td>8</td></tr></table>",
@@ -501,3 +503,23 @@ def test_a_correction_may_fill_an_empty_position_of_the_grid():
                                                  Cell(row=1, col=0, content="甲")])  # (1, 1) was not recognized
     filled = _edited_grid(grid, [CellEdit(row=1, col=1, content="12")], "b")
     assert filled.slot(1, 1).content == "12" and filled.slot(1, 0).content == "甲"
+
+
+# ── P2-5: the agent asks the service VLM about an image (vision through a tool) ──
+
+
+def test_ask_image_answers_from_the_block_image(ws):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
+    env, code = _call("ask_image", ws, {"block": block.id, "question": "这一行的数字是几？"}, context=context)
+    data = _assert_contract(env, "ask_image")
+    assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 1}
+    assert data["result"]["answer"]["doc_text"].startswith("SENTINEL-VLM") and data["result"]["image"]
+    assert context.fake_vlm.calls[-1] == "parserx_ask_image"
+    # the VLM's reading is image evidence for a correction: the agent never looked itself
+    env, _ = _call("correct", ws, {"block": block.id, "image": data["result"]["image"], "reason": "VLM 读图为 8 件",
+                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
+    assert env.result.adopted is True
+    env, code = _call("ask_image", ws, {"page": 1, "question": "页面上有几张表？"}, context=context)
+    assert env.ok and env.result.image
