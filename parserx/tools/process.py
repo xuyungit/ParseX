@@ -4,7 +4,9 @@ The fixed sequence of the pipeline runtime, as a tool the agent calls first:
 
 1. ``recognize`` (paddleocr) — pages whose native layer failed;
 2. ``recognize`` (layout) — shadow detection of pages, routing of figures;
-3. ``describe_figure`` — every shown figure without a description, in one concurrent batch;
+2b. ``recognize`` (paddleocr) on embedded images routed SCAN or MIXED (Q42): their text and tables follow them;
+3. ``describe_figure`` — every shown figure without a description, in one concurrent batch, except images
+   routed SCAN whose content was transcribed;
 4. confirmed cross-page table continuations (``tables.merge``);
 5. titles through ``apply_structure``: DOCX styles and outline levels; PDF ``adapter:v1`` on native text and the
    scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
@@ -27,7 +29,8 @@ from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_stru
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
 from parserx.hierarchy.levels import title_changes, unify_levels
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, DocumentStatus, PageStatus
+from parserx.ir.anchor import AssetAnchor
+from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
 from parserx.ir.state import AccountingSummary, DocumentState
 from parserx.tables.merge import propose_merges
 from parserx.tools import check_export, describe_figure, recognize, structure
@@ -93,10 +96,19 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             failures += out.failures
             steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
 
+    state = ctx.ws.load()
+    candidates = _textual_images(state)
+    if candidates:
+        out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
+        failures += out.failures
+        steps.append(StepSummary(step="transcribe_images",
+                                 detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
+
     if ctx.config.runtime.describe_figures and req.describe_figures:
         state = ctx.ws.load()
-        todo = [b.id for b in state.blocks
-                if b.kind == BlockKind.FIGURE and b.status not in HIDDEN and b.semantic is None]
+        read_as_text = _transcribed_scans(state)
+        todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
+                and b.semantic is None and b.id not in read_as_text]
         if todo:
             out = describe_figure.run(ctx, describe_figure.DescribeFigureRequest(blocks=todo))
             failures += out.failures
@@ -121,6 +133,27 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
     state = ctx.ws.load()
     return output(_summary(state, steps, checked), failures=failures, unresolved=unresolved_items(state))
+
+
+def _image_asset(state: DocumentState, block) -> str | None:
+    return next((a.asset for a in block.anchors if isinstance(a, AssetAnchor)), None)
+
+
+def _textual_images(state: DocumentState) -> list[str]:
+    """Shown embedded images (not crops of scanned pages) routed SCAN or MIXED and not yet transcribed (Q42)."""
+    routes = {r.id: r.route for r in state.images}
+    roles = {a.id: a.role for a in state.assets}
+    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    return [b.id for b in ordered(state) if b.kind == BlockKind.FIGURE and b.status not in HIDDEN and b.id not in done
+            and roles.get(_image_asset(state, b)) == "original"
+            and routes.get(_image_asset(state, b)) in (ImageRoute.SCAN, ImageRoute.MIXED)]
+
+
+def _transcribed_scans(state: DocumentState) -> set[str]:
+    """Images routed SCAN whose content now follows them as text: a description would repeat it."""
+    routes = {r.id: r.route for r in state.images}
+    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    return {b.id for b in state.blocks if b.id in done and routes.get(_image_asset(state, b)) == ImageRoute.SCAN}
 
 
 def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: list[Failure], *,

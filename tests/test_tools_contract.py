@@ -542,3 +542,71 @@ def test_ask_image_takes_several_questions_in_one_call(ws):
     env, _ = _call("correct", ws, {"block": block.id, "image": answers[0]["image"], "reason": "r",
                                    "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
     assert env.result.adopted is True
+
+
+# ── Q42: text and tables inside embedded images become content after the image ──
+
+
+def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
+    context = _context()
+    figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
+    env, code = _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    data = _assert_contract(env, "recognize")
+    assert env.ok and code == 0 and data["cost"]["requests"] == {"ocr": 1}
+    state = Workspace.open(ws).load()
+    children = [r.dst for r in state.relations if r.kind == "contains" and r.src == figure.id]
+    order = [b.id for b in sorted(state.blocks, key=lambda b: b.order)]
+    at = order.index(figure.id)
+    assert children and order[at + 1:at + 1 + len(children)] == children  # right after the image
+    assert figure.id not in [b.id for b in state.blocks if b.status != "ok"]  # the image stays shown (Q42)
+    assert verify_workspace(ws).ok
+    env, _ = _call("check", ws, context=context)
+    assert env.result.accounting.unassigned == 0 and env.result.mismatched == []
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
+    markdown = (tmp_path / "out" / "doc.md").read_text()
+    image_line = next(line for line in markdown.splitlines() if line.startswith("![") and figure.anchors[-1].asset in line)
+    after = markdown[markdown.index(image_line):]
+    assert after.index("<!-- 以下转录自上图 -->") < after.index("SENTINEL-OCR 扫描文字")
+    again, _ = _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    assert again.cost.requests == {} and again.failures and "already" in again.failures[0].message
+
+
+def test_process_transcribes_scan_and_mixed_images_and_does_not_describe_scans(ws):
+    from parserx.ir.enums import ImageRoute
+    from parserx.ir.state import ImageRecord
+
+    config = _config()
+    config.runtime.layout_shadow = False
+    context = _context()
+    workspace = Workspace.open(ws)
+    figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
+    asset = figure.anchors[-1].asset
+    with workspace.txn("test:route") as state:  # as the layout step would have routed it
+        state.images = [ImageRecord(id=asset, route=ImageRoute.SCAN, shown=True, t=0.8, f=0.0, regions=3)]
+    env, _ = _call("process", ws, {}, config=config, context=context)
+    assert env.ok and "transcribe_images" in [s.step for s in env.result.steps]
+    state = Workspace.open(ws).load()
+    assert any(r.kind == "contains" and r.src == figure.id for r in state.relations)
+    assert next(b for b in state.blocks if b.id == figure.id).semantic is None  # its content is the transcription
+    assert next(r for r in state.images if r.id == asset).complete is True
+
+
+def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("正文在图片之前")
+    document.add_picture(io.BytesIO(_png(300, 200, (230, 230, 230))))
+    document.add_paragraph("正文在图片之后")
+    path = tmp_path / "scan.docx"
+    document.save(path)
+    workspace_init(path, tmp_path / "wsd", config=_config())
+    context = _context()
+    figure = next(b for b in Workspace.open(tmp_path / "wsd").load().blocks if b.kind == BlockKind.FIGURE)
+    env, _ = _call("recognize", tmp_path / "wsd", {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    assert env.ok and env.cost.requests == {"ocr": 1}
+    env, _ = _call("export", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
+    markdown = (tmp_path / "outd" / "scan.md").read_text()
+    assert markdown.index("正文在图片之前") < markdown.index("<!-- 以下转录自上图 -->") < \
+        markdown.index("SENTINEL-OCR 扫描文字") < markdown.index("正文在图片之后")

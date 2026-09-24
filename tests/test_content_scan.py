@@ -139,3 +139,44 @@ def test_engine_line_breaks_outside_formulas_become_real_line_breaks():
     assert "HRB400、HRB500<br>HRBF400" in grid.to_html()
     text = next(b for b in result.blocks if b.kind == BlockKind.TEXT).text
     assert text == "泊松比 $\\nu_{c}$ 可采用0.2。\n下一行"
+
+
+# ── Q42: text and tables inside embedded images ─────────────────────────
+
+
+def _png_bytes(w, h, color=(240, 240, 240)):
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_images_batch_into_a_stable_pdf_one_page_each():
+    from parserx.content.scan import image_batch_pdf
+
+    images = [(_png_bytes(400, 200), 400, 200), (_png_bytes(300, 600), 300, 600)]
+    data = image_batch_pdf(images)
+    assert data == image_batch_pdf(images)
+    with fitz.open(stream=data, filetype="pdf") as pdf:
+        assert [(round(p.rect.width), round(p.rect.height)) for p in pdf] == [(400, 200), (300, 600)]
+
+
+def test_image_scan_becomes_blocks_anchored_in_the_image():
+    from parserx.content.scan import image_blocks
+    from parserx.ir.asset import Asset
+
+    asset = Asset.from_bytes(_png_bytes(500, 700), media_type="image/png", width=500, height=700, role="original")
+    entries = [_entry("text", "证书编号：12345", [100, 100, 900, 160], 1),
+               _entry("table", _TABLE, [100, 200, 900, 500], 2),
+               _entry("image", "", [100, 600, 400, 900], None)]
+    scan = PageScan(page=0, raw={"prunedResult": {"width": 1000, "height": 1400, "parsing_res_list": entries}},
+                    raw_ref="k" * 64, engine_version="PaddleOCR-VL-1.6")
+    result = image_blocks(scan, asset, figure="b-d00007")
+    assert [b.id for b in result.blocks] == ["b-d00007-r001", "b-d00007-r002"]
+    text, table = result.blocks
+    assert text.text == "证书编号：12345" and table.kind == BlockKind.TABLE and table.cells.slot(1, 1).content == "250"
+    anchor = text.anchors[0]
+    assert isinstance(anchor, AssetAnchor) and anchor.asset == asset.id and anchor.bbox == (50.0, 50.0, 450.0, 80.0)
+    assert [(e.item, e.unit, e.disposition, e.block) for e in result.ledger] == [
+        ("i-b-d00007-r001", "ocr_block", "output", "b-d00007-r001"),
+        ("i-b-d00007-r002", "ocr_block", "output", "b-d00007-r002"),
+        ("i-b-d00007-r003", "ocr_block", "merged", "b-d00007")]  # a picture inside the image: shown by the image

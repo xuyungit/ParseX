@@ -4,6 +4,10 @@ Phase 1 engines: ``paddleocr`` (whole pages, batched; the pages whose native
 layer failed), ``native`` (reports the native readings, no request),
 ``layout`` (shadow detection, see P1-9).  ``vlm`` region transcription is a
 Phase 4 engine (guide §6.4).
+
+``paddleocr`` with figure ``blocks`` reads the text and tables inside those
+embedded images (Q42, PDF and DOCX): images are batched one per page into a
+PDF, and what is read becomes blocks right after the image.
 """
 
 from __future__ import annotations
@@ -13,10 +17,10 @@ from typing import Literal
 import fitz
 
 from parserx.content import scan
-from parserx.content.select import integrate_scan_page, mark_scan_failed
+from parserx.content.select import integrate_image, integrate_scan_page, mark_scan_failed
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, PageStatus
+from parserx.ir.enums import BlockKind, PageStatus, RelationKind
 from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.envelope import Change, Failure, FailureCode, ToolFailure
@@ -97,6 +101,9 @@ def _native(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeResu
 
 def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeResult]:
     state = ctx.ws.load()
+    kinds = {b.id: b.kind for b in state.blocks}
+    if req.blocks and not req.pages and not req.regions and all(kinds.get(b) == BlockKind.FIGURE for b in req.blocks):
+        return _transcribe_images(ctx, req)
     if state.format != "pdf":
         raise ToolFailure(FailureCode.INVALID_REQUEST, "the scan engine reads PDF pages; DOCX images come in Phase 4")
     requested = _pages(ctx, req)
@@ -174,6 +181,64 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
     return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
                                   observations_total=len(views), pages=rows, selections=selections),
                   failures=failures, diff=diff, unresolved=unresolved)
+
+
+_SCAN_ENGINE_MEDIA = frozenset({"image/png", "image/jpeg"})
+
+
+def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeResult]:
+    state = ctx.ws.load()
+    blocks = {b.id: b for b in state.blocks}
+    assets = {a.id: a for a in state.assets}
+    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    failures: list[Failure] = []
+    tasks = []
+    for block_id in dict.fromkeys(req.blocks):
+        anchor = next((a for a in blocks[block_id].anchors if isinstance(a, AssetAnchor) and a.asset in assets), None)
+        problem = None
+        if anchor is None:
+            problem = f"{block_id} has no image"
+        elif block_id in done:
+            problem = f"{block_id} is already transcribed"
+        elif assets[anchor.asset].media_type not in _SCAN_ENGINE_MEDIA:
+            problem = f"{assets[anchor.asset].media_type} images cannot be read by the scan engine"
+        if problem:
+            failures.append(Failure(code=FailureCode.INVALID_REQUEST, message=problem, retryable=False,
+                                    targets=[block_id]))
+        else:
+            tasks.append((block_id, assets[anchor.asset]))
+    if not tasks:
+        return output(RecognizeResult(observations=[], observations_total=0, pages=[], selections=[]),
+                      failures=failures)
+    size = ctx.config.tools.scan_batch_pages
+    batches = [tasks[i:i + size] for i in range(0, len(tasks), size)]
+    ocr = ctx.ocr()
+
+    def fetch(batch):
+        data = scan.image_batch_pdf([((ctx.ws.root / a.path).read_bytes(), a.width, a.height) for _, a in batch])
+        return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
+
+    outcomes = run_ordered(batches, fetch, max_workers=2)
+    selections: list[SelectionOutcome] = []
+    new_ids: list[str] = []
+    with ctx.ws.txn("tool:recognize:images") as state:
+        for outcome in outcomes:  # batch order
+            if outcome.status != "ok":
+                failures.append(service_failure(outcome.exception, [b for b, _ in outcome.task]))
+                continue
+            raw_ref, results = outcome.value
+            for (block_id, asset), result in zip(outcome.task, results):
+                page = result.raw["layoutParsingResults"][0]
+                read = scan.image_blocks(scan.PageScan(page=0, raw=page, raw_ref=raw_ref, engine_version=ocr.model),
+                                         asset, figure=block_id)
+                new_ids += integrate_image(state, block_id, read)
+                selections.append(SelectionOutcome(target=block_id, choice="transcribed", adopted=True,
+                                                   reason=f"{len(read.blocks)} blocks read inside the image"))
+        new_blocks = [b for b in state.blocks if b.id in set(new_ids)]
+        views = [observation_view(b, o, geometry=False) for b in new_blocks for o in b.observations]
+    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
+                                  observations_total=len(views), pages=[], selections=selections),
+                  failures=failures)
 
 
 def _next_block_seq(state, n: int) -> int:

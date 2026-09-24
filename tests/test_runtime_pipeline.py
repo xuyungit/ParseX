@@ -163,6 +163,14 @@ def test_scan_engine_title_labels_propose_levels():
                                   title("b3", "1.1 Scope", "paragraph_title"), title("b4", "2 Method", "paragraph_title"),
                                   title("b5", "Native heading", None, engine="native_pdf")])
     assert [(b, lv) for b, _, lv, _ in engine_titles(state)] == [("b1", 1), ("b2", 2), ("b3", 3), ("b4", 2)]
+    # a title read inside an embedded image is the image's own layout, not the document outline (Q42)
+    from parserx.ir.anchor import AssetAnchor
+
+    inside = title("b6", "Settings", "paragraph_title")
+    inside = inside.model_copy(update={"anchors": [AssetAnchor(asset="a-0000000000000000", bbox=(0, 0, 9, 9),
+                                                               image_size=(10, 10))]})
+    state.blocks.append(inside)
+    assert "b6" not in [b for b, _, _, _ in engine_titles(state)]
 
 
 def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):

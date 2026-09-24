@@ -192,6 +192,77 @@ def page_blocks(
     return out
 
 
+def image_batch_pdf(images: list[tuple[bytes, int, int]]) -> bytes:
+    """One page per image (the page is the image's pixel size in points), for the scan engine; stable bytes."""
+    doc = fitz.open()
+    for data, width, height in images:
+        page = doc.new_page(width=width, height=height)
+        page.insert_image(page.rect, stream=data)
+    out = doc.tobytes(no_new_id=True)
+    doc.close()
+    return out
+
+
+def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult:
+    """Text and tables the scan engine read inside an embedded image (Q42, guide §6.5 SCAN / MIXED routes).
+
+    Each region becomes a block anchored in the image's pixels (the image's own position is on its Asset), with
+    ids and ledger items derived from the figure block (``<figure>-rNNN``).  A picture region inside the image is
+    shown by the image itself: its ledger item is merged into the figure block.  Page furniture labels are
+    excluded, as on scanned pages.
+    """
+    pruned = scan.raw.get("prunedResult") or {}
+    width, height = int(pruned.get("width") or 0), int(pruned.get("height") or 0)
+    entries = pruned.get("parsing_res_list") or []
+    out = PageScanResult()
+    sx = asset.width / width if width else 1.0
+    sy = asset.height / height if height else 1.0
+    boxes = [_bbox(e) for e in entries]
+    for offset, index in enumerate(scan_order(boxes, [e.get("block_order") for e in entries]), 1):
+        entry, box = entries[index], boxes[index]
+        label = str(entry.get("block_label", ""))
+        kind = labels.to_kind(ENGINE, label)
+        item = f"i-{figure}-r{offset:03d}"
+        image_box = (round(box[0] * sx, 2), round(box[1] * sy, 2), round(box[2] * sx, 2), round(box[3] * sy, 2))
+        anchor = AssetAnchor(asset=asset.id, bbox=image_box, image_size=(asset.width, asset.height))
+        if kind in _FIGURE_KINDS:
+            out.ledger.append(LedgerEntry(item=item, unit="ocr_block", source=anchor, chars=0, disposition="merged",
+                                          block=figure))
+            continue
+        block_id = f"{figure}-r{offset:03d}"
+        content = engine_text(str(entry.get("block_content") or ""),
+                              line_break="<br>" if kind == BlockKind.TABLE else "\n")
+        grid, status = None, BlockStatus.OK
+        if kind == BlockKind.TABLE:
+            try:
+                grid = TableGrid.from_html(content)
+            except ValueError as exc:
+                kind, status = BlockKind.OTHER, BlockStatus.DEGRADED
+                out.warnings.append(f"{block_id}: table HTML not convertible ({exc}); kept as text")
+        obs = Observation(
+            id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=scan.engine_version,
+            task=TaskKind.RECOGNIZE, anchor=anchor, raw_ref=scan.raw_ref, label=label,
+            text=None if grid is not None else content, cells=grid,
+            status=ObservationStatus.OK if content.strip() else ObservationStatus.EMPTY)
+        decisions = [Decision(stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine",
+                              reason=f"{ENGINE} region labelled {label!r} inside image {figure}",
+                              evidence={"label": label, "engine_order": entry.get("block_order") or -1},
+                              actor=ACTOR, refs=[obs.id])]
+        if kind in labels.FURNITURE:
+            status = BlockStatus.EXCLUDED
+            decisions.append(Decision(stage=DecisionStage.EXCLUDE, choice=kind.value,
+                                      reason=f"page furniture: engine label {label!r}", evidence={"label": label},
+                                      actor=ACTOR, refs=[obs.id]))
+        out.blocks.append(Block(id=block_id, kind=kind, order=0, status=status, anchors=[anchor],
+                                observations=[obs], chosen_observation=obs.id,
+                                text="" if grid is not None else content, cells=grid, decisions=decisions))
+        chars = _grid_chars(grid) if grid is not None else len("".join(content.split()))
+        out.ledger.append(LedgerEntry(item=item, unit="ocr_block", source=anchor, chars=chars,
+                                      disposition="excluded" if status == BlockStatus.EXCLUDED else "output",
+                                      block=block_id))
+    return out
+
+
 _MATH = re.compile(r"(\$\$.*?\$\$|\$[^$]*\$)", re.S)
 
 

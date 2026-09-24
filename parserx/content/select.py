@@ -98,6 +98,34 @@ def integrate_scan_page(state: DocumentState, n: int, result) -> list[str]:
     return [b.id for b in new_blocks]
 
 
+def integrate_image(state: DocumentState, figure: str, result) -> list[str]:
+    """Q42 / guide §6.5: the text and tables read inside an embedded image follow the image in reading order
+    (the image itself stays shown); ``contains`` relations tie them to it.  Returns the new block ids."""
+    blocks = {b.id: b for b in state.blocks}
+    image = blocks[figure]
+    new = result.blocks
+    for block in state.blocks:  # make room right after the image
+        if block.order > image.order:
+            block.order += len(new)
+    for offset, block in enumerate(new, 1):
+        block.order = image.order + offset
+        state.blocks.append(block)
+        state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTAINS, figure, block.id),
+                                        kind=RelationKind.CONTAINS, src=figure, dst=block.id))
+    state.ledger.extend(result.ledger)
+    state.warnings.extend(result.warnings)
+    complete = all(b.observations[0].status.value == "ok" for b in new if b.status != BlockStatus.EXCLUDED)
+    image.decisions.append(Decision(
+        stage=DecisionStage.IMAGE_ROUTE, choice="transcribed", actor=ACTOR,
+        reason=f"text and tables inside the image read by the scan engine: {len(new)} blocks follow the image",
+        evidence={"blocks": len(new), "complete": complete}, refs=[b.id for b in new]))
+    anchor = next((a for a in image.anchors if isinstance(a, AssetAnchor)), None)
+    for record in state.images:
+        if anchor is not None and record.id == anchor.asset:
+            record.complete = complete
+    return [b.id for b in new]
+
+
 def mark_scan_failed(state: DocumentState, n: int, reason: str, *, skipped: bool) -> None:
     """No scan result for page *n*: keep the fallbacks visible and list what is missing."""
     _page(state, n).status = PageStatus.SKIPPED if skipped else PageStatus.FAILED
