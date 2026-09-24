@@ -1,6 +1,6 @@
 # 阶段一"文档工具包 v1"工作分解
 
-> 状态：**已确认**（2026-09-24；Q23–Q26 按建议确认，见指导 §14）。依据 [redesign_guide.md](redesign_guide.md) v1.9 的 §3–§6、§8、§11、§12，接口以 [v2_phase1_interfaces.md](v2_phase1_interfaces.md) 为准。新会话开始时先确认 §6 的待决问题，再按 §3 的顺序实施；每完成一项更新指导 §12 与 §15。
+> 状态：**已完成**（2026-09-24；Q23–Q32 的决定见指导 §14；[验收报告](../eval_reports/2026-09-24_p1_toolkit_acceptance.md)）。依据 [redesign_guide.md](redesign_guide.md) v1.9 的 §3–§6、§8、§11、§12，接口以 [v2_phase1_interfaces.md](v2_phase1_interfaces.md) 为准。新会话开始时先确认 §6 的待决问题，再按 §3 的顺序实施；每完成一项更新指导 §12 与 §15。
 
 ## 0. 目标与退出条件
 
