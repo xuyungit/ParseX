@@ -5,7 +5,8 @@ Proposed title levels are made legal before they are applied:
 1. titles sharing a numbering pattern (``1.2`` / ``1.3`` → ``N.N``) take the
    level most of them have (ties: the shallower);
 2. walking in reading order, a title is at most one level deeper than the
-   title before it (the first title keeps its level).
+   title before it (the first title keeps its level); a numbering pattern
+   pulled up this way stays at that level for the titles that follow.
 
 Both steps only move levels toward consistency; they never add or remove a
 title.
@@ -31,8 +32,10 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
     for block_id, text, level in titles:
         signature = numbering_signature(text)
         level = agreed.get(signature, level) if signature is not None else level
-        if previous is not None:
-            level = min(level, previous + 1)
+        if previous is not None and level > previous + 1:
+            level = previous + 1
+            if signature is not None:
+                agreed[signature] = level  # the rest of the pattern follows (one level per pattern)
         level = max(1, min(6, level))
         unified[block_id] = level
         previous = level

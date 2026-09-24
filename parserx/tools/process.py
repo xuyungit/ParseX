@@ -124,7 +124,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     applied = _apply(ctx, changes, failures)
     state = ctx.ws.load()
     if state.format == "docx":
-        titles = [(DOCX_ACTOR, propose_docx_structure(state))]
+        titles = docx_titles(ctx.ws.source_path, state, ctx.config)
     else:
         titles = pdf_titles(ctx.ws.source_path, state, ctx.config)
     applied += _apply(ctx, titles, failures, retry_level_skips=True)
@@ -183,6 +183,25 @@ def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: li
                     {"changes": changes, "actor": actor}))
                 accepted += len(out.result.accepted)
     return accepted
+
+
+def docx_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
+    """DOCX titles (Q48): those the styles and outline levels declare first; the ones a hand-formatted document
+    leaves undeclared (bold or larger numbered lines) from v1's typographic detection, placed in the same outline.
+    A block the styles already make a title or a list item keeps that."""
+    from parserx.runtimes import v1_structure  # the temporary adapter (Phase 4 removes it)
+
+    declared = propose_docx_structure(state)
+    taken = {c["block"] for c in declared if c["op"] == "set_role"}
+    found = [t for t in v1_structure.matched_titles_docx(source, state, config) if t[0] not in taken]
+    if not found:
+        return [(DOCX_ACTOR, declared)]
+    position = {b.id: i for i, b in enumerate(ordered(state))}
+    texts = {b.id: b.text for b in state.blocks}
+    combined = sorted([(c["block"], texts[c["block"]], c["level"]) for c in declared if c["op"] == "set_level"]
+                      + [t[:3] for t in found], key=lambda t: position[t[0]])
+    return [(DOCX_ACTOR, declared),
+            (v1_structure.ACTOR, title_changes(found, unify_levels(combined), reason=v1_structure.REASON))]
 
 
 def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:

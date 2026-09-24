@@ -108,6 +108,47 @@ def test_docx_structure_from_styles(tmp_path):
     assert list_block["kind"] == "list"
 
 
+def test_docx_headings_the_styles_do_not_declare_join_the_outline(tmp_path, monkeypatch):
+    # Q48: a hand-formatted document — v1's typographic detection (stubbed here) supplies the undeclared titles,
+    # matched in reading order (the table-of-contents line "1.1 范围 3" is not the heading), in one outline
+    from parserx.runtimes import v1_structure
+
+    doc = Document()
+    doc.add_paragraph("目录")
+    doc.add_paragraph("1.1 范围 3")
+    doc.add_paragraph("第一章 总则", style="Heading 1")
+    doc.add_paragraph("1.1 范围")
+    doc.add_paragraph("本规范适用于桥梁支座。")
+    doc.add_paragraph("1.2 术语")
+    doc.add_paragraph("下列术语适用于本规范。")
+    path = tmp_path / "doc.docx"
+    doc.save(path)
+    monkeypatch.setattr(v1_structure, "v1_headings_docx",
+                        lambda p, c: [(1, "第一章 总则"), (3, "1.1 范围"), (3, "1.2 术语")])
+    outcome = run(path, tmp_path / "ws", tmp_path / "out", _config(), context_factory=_Session(_context()))
+    assert outcome.markdown == ("目录\n\n1.1 范围 3\n\n# 第一章 总则\n\n## 1.1 范围\n\n本规范适用于桥梁支座。\n\n"
+                                "## 1.2 术语\n\n下列术语适用于本规范。\n")
+    actors = {b["text"]: [d["actor"] for d in b["decisions"] if d["stage"] in ("heading_role", "heading_level")]
+              for b in json.loads(outcome.sidecar_json)["blocks"]}
+    assert "adapter:v1" in actors["1.1 范围"] and "adapter:v1" not in actors["第一章 总则"]
+
+
+def test_v1_failing_on_a_docx_leaves_the_declared_titles(tmp_path, monkeypatch):
+    from parserx.runtimes import v1_structure
+
+    def broken(path, config):
+        raise ValueError("unreadable")
+
+    doc = Document()
+    doc.add_paragraph("Background", style="Heading 1")
+    doc.add_paragraph("Body text.")
+    doc.save(tmp_path / "doc.docx")
+    monkeypatch.setattr(v1_structure, "v1_headings_docx", broken)
+    outcome = run(tmp_path / "doc.docx", tmp_path / "ws", tmp_path / "out", _config(),
+                  context_factory=_Session(_context()))
+    assert outcome.markdown == "# Background\n\nBody text.\n"
+
+
 def test_v2_switch_returns_a_parse_result_with_sidecar(tmp_path):
     doc = fitz.open()
     doc.new_page().insert_text((72, 72), "Native only", fontsize=11)
@@ -127,6 +168,9 @@ def test_levels_unify_numbering_and_skips():
     levels = unify_levels([("a", "第一章 总则", 1), ("b", "1.1 范围", 3), ("c", "1.2 术语", 2), ("d", "1.3 符号", 2),
                            ("e", "附录", 4)])
     assert levels == {"a": 1, "b": 2, "c": 2, "d": 2, "e": 3}
+    # a pattern pulled up by the step rule stays at that level for the rest of the document
+    levels = unify_levels([("a", "第一章 总则", 1), ("b", "1.1 范围", 3), ("c", "1.2 术语", 3)])
+    assert levels == {"a": 1, "b": 2, "c": 2}
 
 
 def test_docx_title_shifts_headings_and_body_outline_is_ignored(tmp_path):
