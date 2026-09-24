@@ -12,6 +12,7 @@ from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, Observation
 from parserx.ir.observation import Observation
 from parserx.ir.state import DocumentState
 from parserx.tables.grid import TableGrid
+from parserx.content.text_audit import suspicious_characters
 from parserx.tables.arithmetic import arithmetic_issues
 from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
@@ -149,6 +150,14 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
         elif block.status == BlockStatus.DEGRADED and any(d.choice == "pending" for d in block.decisions):
             items.append(Unresolved(target=block.id, kind=UnresolvedKind.STRUCTURE_PENDING,
                                     detail="structure left pending"))
+    shown = [b for b in ordered(state) if b.status not in HIDDEN]
+    texts = {b.id: _all_text(b) for b in shown}
+    document = list(texts.values())
+    for block in shown:  # characters no reader can use: font encodings without Unicode, stray scripts
+        found = suspicious_characters(texts[block.id], document) if texts[block.id] else None
+        if found:
+            items.append(Unresolved(target=block.id, kind=UnresolvedKind.TEXT_SUSPICIOUS,
+                                    detail=found + "; compare with the image"))
     for block in ordered(state):  # recognized tables whose own arithmetic points at a misread digit
         if block.kind == BlockKind.TABLE and block.cells is not None and block.status not in HIDDEN \
                 and _chosen_engine(block) not in NATIVE_ENGINES:
@@ -159,6 +168,11 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
                                 detail=f"may continue {candidate.first}: "
                                        + ", ".join(f"{k}={v}" for k, v in candidate.evidence.items())))
     return items
+
+
+def _all_text(block: Block) -> str:
+    cells = " ".join(c.content for c in block.cells.cells) if block.cells is not None else ""
+    return (block.text or "") + (" " + cells if cells else "")
 
 
 def _chosen_engine(block: Block) -> str | None:
