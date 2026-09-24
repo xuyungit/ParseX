@@ -709,4 +709,5 @@ class ExportResult(IRModel):
 - 〔Q48〕DOCX 标题：`process` 先用样式与大纲级别声明的标题（`docx_styles`），再把临时适配器 `adapter:v1`（阶段四移除）按排版检测出的其余标题并入同一大纲（`tools/process.py::docx_titles`、`runtimes/v1_structure.py::matched_titles_docx`：v1 的 DOCX 读取、元数据与章节处理，关闭 LLM；按阅读顺序与同文字的正文块匹配，目录行因带页码不匹配；读自嵌入图片的块不参与；已被样式定为标题或列表的块不动；v1 读取失败时只用声明的标题）。`unify_levels` 修正：编号模式被"最多比前一个标题深一级"拉浅后，同一模式随后的标题跟随该层级（此前后续标题仍取拉浅前的层级，被编号一致性检查拒绝，成为没有层级的标题）。
 - 〔P2-7〕表格单元格或段落中的图片：扫描页引擎把它们留成指向自己裁图的引用（`imgs/img_in_image_box_x0_y0_x1_y1.jpg`，HTML `<img>` 或 Markdown 图片），此前原样进入输出、成为指向不存在文件的链接。现在 `content/scan.py::take_pictures` 把引用换成标记〔图k〕，按文件名中的框从本方页面渲染图裁出图片，成为紧跟在该表格或段落之后的图片块（`<父块>-pNN`，`contains` 关系，账目 `i-<父块>-pNN`），照常保存、描述；渲染时第一张图前加 `<!-- 以下是上方〔图 n〕处的图片 -->`。嵌入图片里的这类引用只留标记（图片本身已经显示）。`recognize` 在页面有这类引用时也渲染页面图。
 - 〔第三轮发现〕`correct` 的看图证据也接受已合并进本表的续表块的裁剪图（沿 `continues` 链找到的 `merged` 块）。`adapter:v1` 读取 DOCX 时不再让 Docling 经 LibreOffice 渲染绘图（形状、图表）：标题检测不需要，且在写不了主目录的沙箱里 LibreOffice 起不来，整个读取失败（第三轮 real_doc03_docx）；关掉后 real_doc03.docx 8.7 s（此前 11.5 s）。
+- 〔Q30 第 4 项〕文档摘要 `<名称>.json` 新增 `review`：`open`（未解决项数）、`by_kind`、`items`（最多 200 条，页 / 块顺序：待识别页、失败块、没有层级的标题、留待定的结构、可能的续表）。`status` 表示处理是否完成，`review` 表示是否还有需要核对的地方，两者分开报告。
 

@@ -166,6 +166,19 @@ def test_export_writes_the_package(tmp_path):
     assert images["f"]["shown"] is True and images["f"]["type"] == "photo" and images["f"]["summary"] == "一座桥"
     assert images["icon"]["shown"] is False and images["icon"]["file"].startswith("images/")
     assert summary["files"] == {"markdown": "doc.md", "blocks": "doc.blocks.json", "images": "images/"}
+    assert summary["review"] == {"open": 0, "by_kind": {}, "items": []}  # processing done, nothing left to check
+
+
+def test_the_summary_lists_what_is_left_to_check_apart_from_the_status(tmp_path):
+    # Q30: "processing complete" (status) and "review complete" (no open items) are reported separately
+    ws = tmp_path / "ws"
+    (ws / "assets").mkdir(parents=True)
+    (ws / ASSET.path).write_bytes(b"\x89PNG-img")
+    state = _state([_block("h", BlockKind.TITLE, 0, text="待定标题")], pages=1)  # a title whose level is open
+    paths = write_export(state, ws, tmp_path / "out", "doc")
+    summary = json.loads(paths.summary.read_text())
+    assert summary["status"] == "complete" and summary["review"]["open"] == 1
+    assert summary["review"]["items"][0]["target"] == "h" and sum(summary["review"]["by_kind"].values()) == 1
 
 
 def test_blocks_joined_by_continues_render_as_one_paragraph():

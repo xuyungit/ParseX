@@ -41,6 +41,24 @@ class ImageEntry(IRModel):
     summary: str | None
 
 
+class OpenItem(IRModel):
+    target: str  # block id or page ("p3")
+    kind: str
+    detail: str
+
+
+class Review(IRModel):
+    """What is left to check (Q30): the status says whether processing finished; this says whether anything is
+    still open — pages pending, failed blocks, titles without a level, possible table continuations."""
+
+    open: int
+    by_kind: dict[str, int]
+    items: list[OpenItem]  # in page / block order, at most REVIEW_ITEMS_MAX
+
+
+REVIEW_ITEMS_MAX = 200
+
+
 class Processing(IRModel):
     engines: dict[str, str]  # engine → version / model, from the readings the document uses
     requests: dict[str, int]
@@ -61,6 +79,7 @@ class DocumentSummary(IRModel):
     tables: int
     images: list[ImageEntry]
     processing: Processing
+    review: Review
     warnings: list[str]
     files: dict[str, str]
 
@@ -77,6 +96,7 @@ def document_summary(state: DocumentState, name: str, image_dir: str = "images")
         images=image_entries(state, image_dir),
         processing=Processing(engines=_engines(state), requests=dict(sorted(state.stats.requests.items())),
                               cost_usd=state.stats.cost_usd, wall_time_s=state.stats.wall_time_s),
+        review=_review(state),
         warnings=state.warnings,
         files={"markdown": f"{name}.md", "blocks": f"{name}.blocks.json", "images": f"{image_dir}/"},
     )
@@ -112,6 +132,17 @@ def image_entries(state: DocumentState, image_dir: str = "images") -> list[Image
             type=block.semantic.type if block is not None and block.semantic is not None else None,
             route=routes.get(asset.id), shown=visible, summary=_summary(block)))
     return entries
+
+
+def _review(state: DocumentState) -> Review:
+    from parserx.tools.views import unresolved_items  # the tools import this module (export)
+
+    items = unresolved_items(state)
+    by_kind: dict[str, int] = {}
+    for item in items:
+        by_kind[item.kind.value] = by_kind.get(item.kind.value, 0) + 1
+    return Review(open=len(items), by_kind=dict(sorted(by_kind.items())),
+                  items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail) for i in items[:REVIEW_ITEMS_MAX]])
 
 
 def _summary(block: Block | None) -> str | None:
