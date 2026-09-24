@@ -48,7 +48,7 @@ def _continued(second_rows, second_bbox=(50, 60, 550, 400), between=()):
     return _state(
         [_block("intro", 1, (50, 50, 550, 70), text="Table 1 Parts"),
          _block("t1", 1, (50, 80, 550, 760), BlockKind.TABLE, rows=_rows(1, 20)),
-         _block("pn1", 1, (295, 775, 305, 785), text="5")],
+         _block("pn1", 1, (295, 775, 305, 785), BlockKind.PAGE_NUMBER, text="5")],
         [*between, _block("t2", 2, second_bbox, BlockKind.TABLE, rows=second_rows),
          _block("after", 2, (50, 420, 550, 440), text="Body text after the table.")],
     )

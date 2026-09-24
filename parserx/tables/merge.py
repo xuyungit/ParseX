@@ -3,11 +3,8 @@
 A **candidate** is what makes a merge possible at all: two visible tables with
 the same number of columns, the second on the page right after the first
 table's last page, with nothing between them in reading order except page
-furniture (running headers, footers, page numbers).  Native pages have no
-furniture labels yet, so a short line in the top or bottom margin band that is a
-bare page number, or whose text (digits aside) recurs in the same band on
-another page, also counts as furniture here.  It is only skipped when judging
-adjacency, never hidden.
+furniture (running headers, footers, page numbers: excluded by the scan
+engine's labels or by ``content/furniture.py`` on native pages).
 
 **Confirmation** needs more evidence: the left and right table edges line up
 and the second table has no header of its own that differs from the first
@@ -38,10 +35,7 @@ from parserx.layout.labels import FURNITURE
 from parserx.tables.grid import Cell, TableGrid
 from parserx.workspace.queries import HIDDEN, ordered
 
-MARGIN_BAND = 0.12  # share of the page height at the top and bottom where furniture sits
-MARGIN_MAX_HEIGHT = 0.03  # a furniture line is at most this share of the page height
 MAX_X_OFFSET = 0.05  # confirmed: both table edges within this share of the page width
-_PAGE_NUMBER_RE = re.compile(r"[\s\-–—·•|()（）\[\]]*(?:\d{1,4}|[ivxlcdm]{1,6})[\s\-–—·•|()（）\[\]]*", re.IGNORECASE)
 
 Evidence = dict[str, float | int | str | bool]
 
@@ -58,12 +52,11 @@ class MergeCandidate:
 def merge_candidates(state: DocumentState) -> list[MergeCandidate]:
     """Candidates between each visible table and the next non-furniture block, in reading order."""
     sequence = [b for b in ordered(state) if b.status not in HIDDEN]
-    recurring = _recurring(state, sequence)
     out: list[MergeCandidate] = []
     for i, block in enumerate(sequence):
         if block.kind != BlockKind.TABLE:
             continue
-        following = next((b for b in sequence[i + 1:] if not _is_furniture(state, b, recurring)), None)
+        following = next((b for b in sequence[i + 1:] if not _is_furniture(b)), None)
         if following is not None:
             candidate = merge_candidate(state, block, following)
             if candidate is not None:
@@ -176,43 +169,8 @@ def _page_size(state: DocumentState, n: int) -> tuple[float, float] | None:
     return page.size_pt if page is not None else None
 
 
-def _is_furniture(state: DocumentState, block: Block, recurring: set[tuple[str, str]]) -> bool:
-    if block.kind in FURNITURE:
-        return True
-    band = _band(state, block)
-    if band is None:
-        return False
-    return bool(_PAGE_NUMBER_RE.fullmatch(block.text)) or (band, _shape(block.text)) in recurring
-
-
-def _band(state: DocumentState, block: Block) -> str | None:
-    """"top" / "bottom" for a short text line inside a margin band of its page, else None."""
-    if block.kind not in (BlockKind.TEXT, BlockKind.OTHER) or not block.text.strip():
-        return None
-    page = _first_page(block)
-    size = _page_size(state, page) if page is not None else None
-    box = _box_on(block, page) if page is not None else None
-    if not size or box is None or box[3] - box[1] > MARGIN_MAX_HEIGHT * size[1]:
-        return None
-    if box[3] <= MARGIN_BAND * size[1]:
-        return "top"
-    if box[1] >= (1 - MARGIN_BAND) * size[1]:
-        return "bottom"
-    return None
-
-
-def _recurring(state: DocumentState, sequence: list[Block]) -> set[tuple[str, str]]:
-    """(band, text shape) pairs found in the same margin band on at least two pages."""
-    pages: dict[tuple[str, str], set[int]] = {}
-    for block in sequence:
-        band = _band(state, block)
-        if band is not None:
-            pages.setdefault((band, _shape(block.text)), set()).add(_first_page(block))
-    return {key for key, found in pages.items() if len(found) > 1}
-
-
-def _shape(text: str) -> str:
-    return re.sub(r"\d+", "#", re.sub(r"\s+", "", text))
+def _is_furniture(block: Block) -> bool:
+    return block.kind in FURNITURE
 
 
 def _adjacent(state: DocumentState, first: Block, second: Block) -> bool:
@@ -220,8 +178,7 @@ def _adjacent(state: DocumentState, first: Block, second: Block) -> bool:
     sequence = [b for b in ordered(state) if b.status not in HIDDEN]
     ids_ = [b.id for b in sequence]
     i, j = ids_.index(first.id), ids_.index(second.id)
-    recurring = _recurring(state, sequence)
-    return i < j and all(_is_furniture(state, b, recurring) for b in sequence[i + 1:j])
+    return i < j and all(_is_furniture(b) for b in sequence[i + 1:j])
 
 
 def _x_offset(state: DocumentState, first: Block, second: Block, first_page: int, second_page: int) -> float | None:

@@ -9,6 +9,8 @@ One pass over PyMuPDF's ``rawdict`` per page:
   inside a table are accounted to it;
 - placed images become Assets and FIGURE blocks (a page-covering image on a
   page without a usable text layer is a SCAN block);
+- repeated margin text (running headers, footers, page numbers) is excluded
+  as page furniture (``content/furniture.py``);
 - the native layer quality check decides whether the page's content comes
   from here (page ``done``) or from the scan engine (page ``pending``); the
   native blocks of a pending page stay as the fallback until the scan engine
@@ -32,6 +34,7 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")  # PyMuPDF prints 
 import fitz  # noqa: E402
 
 from parserx.content.extraction import Extraction  # noqa: E402
+from parserx.content.furniture import mark_furniture  # noqa: E402
 from parserx.content.order import reading_order, row_order  # noqa: E402
 from parserx.content.quality import NativeVerdict, PageSignals, assess_native_layer  # noqa: E402
 from parserx.content.text import join_wrapped  # noqa: E402
@@ -80,6 +83,7 @@ def extract_pdf(path: Path | str) -> Extraction:
     with fitz.open(path) as doc:
         for index in range(doc.page_count):
             _extract_page(doc, doc[index], index + 1, ext)
+    mark_furniture(ext)
     return ext
 
 

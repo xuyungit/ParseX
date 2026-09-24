@@ -213,3 +213,42 @@ def test_invisible_text_over_tiled_images_is_an_ocr_layer(tmp_path):
     assert ext.pages[0].status == PageStatus.PENDING
     assert sorted(b.kind for b in ext.blocks) == [BlockKind.SCAN, BlockKind.SCAN, BlockKind.TEXT]
     assert ext.blocks[0].decisions[0].reason.startswith("ocr_text_layer")
+
+
+def _paged_pdf(tmp_path, pages, header=None, footer=None, name="paged.pdf"):
+    doc = fitz.open()
+    for n in range(1, pages + 1):
+        page = doc.new_page(width=595, height=842)
+        if header:
+            page.insert_text((57, 40), header(n), fontsize=9)
+        for i in range(5):
+            page.insert_text((57, 120 + 16 * i), f"Body text of page {n}, line {i}, with enough words.", fontsize=10)
+        if footer:
+            page.insert_text((290, 815), footer(n), fontsize=9)
+    path = tmp_path / name
+    doc.save(path)
+    return path
+
+
+def test_running_headers_and_page_numbers_are_excluded(tmp_path):
+    path = _paged_pdf(tmp_path, 3, header=lambda n: "Annual Report 2025 | Example Company",
+                      footer=lambda n: f"- {n} -")
+    ext = extract_pdf(path)
+    by_text = {b.text: b for b in ext.blocks}
+    header, number = by_text["Annual Report 2025 | Example Company"], by_text["- 2 -"]
+    assert (header.kind, header.status) == (BlockKind.HEADER, "excluded")
+    assert (number.kind, number.status) == (BlockKind.PAGE_NUMBER, "excluded")
+    assert number.decisions[-1].stage == "exclude" and number.decisions[-1].evidence["pages"] == 3
+    body = [b for b in ext.blocks if b.text.startswith("Body text")]
+    assert body and all(b.kind == BlockKind.TEXT and b.status == "ok" for b in body)
+    furniture = {b.id for b in ext.blocks if b.status == "excluded"}
+    assert all(e.disposition == "excluded" for e in ext.ledger if e.block in furniture)
+    assert len(furniture) == 6
+
+
+def test_margin_text_that_does_not_repeat_stays(tmp_path):
+    single = _paged_pdf(tmp_path, 1, footer=lambda n: "7", name="single.pdf")
+    assert all(b.status == "ok" for b in extract_pdf(single).blocks)
+    varying = _paged_pdf(tmp_path, 3, footer=lambda n: ["Contact us", "See the appendix", "End of report"][n - 1],
+                         name="varying.pdf")
+    assert all(b.status == "ok" for b in extract_pdf(varying).blocks)
