@@ -1,0 +1,178 @@
+"""``process``: the standard processing in one call (plan P2-5, guide §7 — the agent stays in charge).
+
+The fixed sequence of the pipeline runtime, as a tool the agent calls first:
+
+1. ``recognize`` (paddleocr) — pages whose native layer failed;
+2. ``recognize`` (layout) — shadow detection of pages, routing of figures;
+3. ``describe_figure`` — every shown figure without a description, in one concurrent batch;
+4. confirmed cross-page table continuations (``tables.merge``);
+5. titles through ``apply_structure``: DOCX styles and outline levels; PDF ``adapter:v1`` on native text and the
+   scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
+   other source is sent again once both are in place);
+6. ``check``.
+
+It returns a compact summary and the worklist — what is left for judgment (unresolved items: pending pages, failed
+blocks, uncertain tables, merge candidates, pending structure …) — so the agent need not read every page to find
+the problems.  Steps already done are skipped: calling it again costs nothing.  One call, one call record: the
+steps run on this call's context, so the requests are counted once.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from pathlib import Path
+
+from parserx.config.schema import ParserXConfig
+from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
+from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
+from parserx.hierarchy.levels import title_changes, unify_levels
+from parserx.ir.base import IRModel
+from parserx.ir.enums import BlockKind, DocumentStatus, PageStatus
+from parserx.ir.state import AccountingSummary, DocumentState
+from parserx.tables.merge import propose_merges
+from parserx.tools import check_export, describe_figure, recognize, structure
+from parserx.tools.context import ToolContext, ToolOutput, output
+from parserx.tools.envelope import Failure
+from parserx.tools.views import unresolved_items
+from parserx.workspace.queries import HIDDEN, ordered
+
+MERGE_ACTOR = "program:tables.merge"
+WORKLIST_MAX = 200
+
+
+class ProcessRequest(IRModel):
+    describe_figures: bool = True  # also subject to config runtime.describe_figures
+
+
+class StepSummary(IRModel):
+    step: str
+    detail: str
+
+
+class WorkItem(IRModel):
+    target: str
+    kind: str
+    detail: str
+
+
+class CheckBrief(IRModel):
+    exportable: bool
+    document_status: DocumentStatus
+    accounting: AccountingSummary
+
+
+class ProcessResult(IRModel):
+    steps: list[StepSummary]
+    pages: dict[str, int]  # page status → count
+    blocks_by_kind: dict[str, int]
+    figures: dict[str, int]  # described / failed / not_described (shown figures only; zero counts omitted)
+    titles: dict[str, int]  # with_level / pending
+    check: CheckBrief
+    worklist: list[WorkItem]  # at most WORKLIST_MAX, in page / block order
+    worklist_total: int
+
+
+def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
+    steps: list[StepSummary] = []
+    failures: list[Failure] = []
+
+    state = ctx.ws.load()
+    pending = [p.n for p in state.pages if p.status == PageStatus.PENDING]
+    if pending:
+        out = recognize.run(ctx, recognize.RecognizeRequest(pages=pending, engine="paddleocr"))
+        failures += out.failures
+        steps.append(StepSummary(step="recognize", detail=f"scan engine on {len(pending)} pages, "
+                                                          f"{len(out.failures)} failures"))
+
+    state = ctx.ws.load()
+    figures = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN]
+    if ctx.config.runtime.layout_shadow and (figures or state.format == "pdf"):
+        pages = [p.n for p in state.pages] if state.format == "pdf" else []
+        if pages or figures:
+            out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
+            failures += out.failures
+            steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
+
+    if ctx.config.runtime.describe_figures and req.describe_figures:
+        state = ctx.ws.load()
+        todo = [b.id for b in state.blocks
+                if b.kind == BlockKind.FIGURE and b.status not in HIDDEN and b.semantic is None]
+        if todo:
+            out = describe_figure.run(ctx, describe_figure.DescribeFigureRequest(blocks=todo))
+            failures += out.failures
+            steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
+                                                                    "figures described"))
+
+    state = ctx.ws.load()
+    merges = propose_merges(state)
+    changes: list[tuple[str, list[dict]]] = [(MERGE_ACTOR, merges)] if merges else []
+    applied = _apply(ctx, changes, failures)
+    state = ctx.ws.load()
+    if state.format == "docx":
+        titles = [(DOCX_ACTOR, propose_docx_structure(state))]
+    else:
+        titles = pdf_titles(ctx.ws.source_path, state, ctx.config)
+    applied += _apply(ctx, titles, failures, retry_level_skips=True)
+    if applied:
+        steps.append(StepSummary(step="structure", detail=f"{applied} changes accepted"
+                                                          + (f", {len(merges)} table continuations" if merges else "")))
+
+    checked = check_export._checked(ctx)
+    steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
+    state = ctx.ws.load()
+    return output(_summary(state, steps, checked), failures=failures, unresolved=unresolved_items(state))
+
+
+def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: list[Failure], *,
+           retry_level_skips: bool = False) -> int:
+    """Apply structure changes per actor; with *retry_level_skips*, levels refused only as a skip are sent again
+    once every batch is in (a title may depend on one of the other source)."""
+    accepted = 0
+    held: list[tuple[str, list[dict]]] = []
+    for actor, changes in batches:
+        if not changes:
+            continue
+        out = structure.run(ctx, structure.ApplyStructureRequest.model_validate({"changes": changes, "actor": actor}))
+        failures += out.failures
+        accepted += len(out.result.accepted)
+        held.append((actor, [changes[r.index] for r in out.result.rejected if r.rule == "level_skip"]))
+    if retry_level_skips:
+        for actor, changes in held:
+            if changes:
+                out = structure.run(ctx, structure.ApplyStructureRequest.model_validate(
+                    {"changes": changes, "actor": actor}))
+                accepted += len(out.result.accepted)
+    return accepted
+
+
+def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
+    """PDF titles from two sources, unified as one outline: v1's detection on native text, the scan engine's labels."""
+    from parserx.runtimes import v1_structure  # the temporary adapter (Phase 4 removes it)
+
+    native = v1_structure.matched_titles(source, state, config)
+    scanned = engine_titles(state)
+    position = {b.id: i for i, b in enumerate(ordered(state))}
+    combined = sorted(native + scanned, key=lambda t: position[t[0]])
+    levels = unify_levels([t[:3] for t in combined])
+    return [(v1_structure.ACTOR, title_changes(native, levels, reason=v1_structure.REASON)),
+            (ENGINE_ACTOR, title_changes(scanned, levels, reason=ENGINE_REASON))]
+
+
+def _summary(state: DocumentState, steps: list[StepSummary], checked) -> ProcessResult:
+    shown = [b for b in state.blocks if b.status not in HIDDEN]
+    figures = Counter()
+    for block in shown:
+        if block.kind == BlockKind.FIGURE:
+            failed = any(o.task.value == "describe" and o.status.value == "failed" for o in block.observations)
+            figures["described" if block.semantic is not None else "failed" if failed else "not_described"] += 1
+    titles = Counter("with_level" if b.level is not None else "pending" for b in shown if b.kind == BlockKind.TITLE)
+    work = unresolved_items(state)
+    return ProcessResult(
+        steps=steps, pages=dict(sorted(Counter(p.status.value for p in state.pages).items())),
+        blocks_by_kind=dict(sorted(Counter(b.kind.value for b in shown).items())),
+        figures=dict(sorted(figures.items())), titles=dict(sorted(titles.items())),
+        check=CheckBrief(exportable=checked.exportable, document_status=checked.document_status,
+                         accounting=checked.accounting),
+        worklist=[WorkItem(target=u.target, kind=u.kind.value, detail=u.detail) for u in work[:WORKLIST_MAX]],
+        worklist_total=len(work),
+    )

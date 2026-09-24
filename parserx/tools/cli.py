@@ -20,8 +20,8 @@ from typing import Any
 
 from parserx.config.schema import load_config
 
-TOOL_NAMES = ("overview", "read", "recognize", "review_table", "describe_figure", "apply_structure", "check",
-              "export")
+TOOL_NAMES = ("process", "overview", "read", "recognize", "review_table", "describe_figure", "apply_structure",
+              "check", "export")
 
 
 def add_parsers(sub) -> None:
@@ -78,6 +78,7 @@ def _review_opts(p):
 
 def _describe_opts(p):
     p.add_argument("--block")
+    p.add_argument("--blocks", help="comma-separated block ids: several figures in one call")
     p.add_argument("--schema", choices=("auto", "chart", "diagram", "photo", "seal", "other"), default="auto")
 
 
@@ -93,7 +94,7 @@ def _export_opts(p):
 
 
 _TOOL_OPTIONS = {
-    "overview": lambda p: None, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
+    "process": lambda p: None, "overview": lambda p: None, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
     "describe_figure": _describe_opts, "apply_structure": _structure_opts, "check": lambda p: None,
     "export": _export_opts,
 }
@@ -134,6 +135,8 @@ def _request(name: str, args) -> dict[str, Any]:
         return {"block": args.block, "issues": _load_json(args.issues) if args.issues else [],
                 "context": args.context}
     if name == "describe_figure":
+        if args.blocks:
+            return {"blocks": args.blocks.split(","), "schema": args.schema}
         return {"block": args.block, "schema": args.schema}
     if name == "apply_structure":
         return {"changes": _load_json(args.changes) if args.changes else [], "atomic": args.atomic,

@@ -667,7 +667,12 @@ class ExportResult(IRModel):
 - 层级统一（`hierarchy/levels.py`，§6.8 的文档级统一）：同一编号模式取多数层级（并列取浅），再按阅读顺序使每个标题最多比前一个标题深一级；只移动层级，不增删标题。
 - PDF 临时适配器：运行 v1 不调用服务的 provider → metadata → reading order → header/footer → code block → chapter（关闭 LLM 兜底），把与 v2 块文字相同（忽略空白）的标题作为结构变更提交；v1 标题落在更大的 v2 块里时不应用（结构变更不拆分文字）。
 
-### 5.12 〔P2-1〕Agent 实验装置
+### 5.12 〔P2-5〕process 与批量描述
+
+- `process`（`tools/process.py`）：一次调用完成标准处理——待识别页的扫描页引擎、版面影子运行、未描述图片的批量描述、已确认的跨页续表、标题（DOCX 样式；PDF 的 `adapter:v1` 与引擎标题统一层级，因依赖另一来源而被判跳级的层级在两者都写入后再发一次）、`check`。各步直接在本次调用的上下文里运行，只有一条调用记录、请求只计一次；已完成的步骤跳过，再次调用不发请求。结果是摘要：`steps`（执行了的步骤与简述）、`pages`、`blocks_by_kind`、`figures`（described / failed / not_described）、`titles`（with_level / pending）、`check`（exportable、状态、账目），以及 `worklist`——未解决项（最多 200 条，另给 `worklist_total`），Agent 据此处理需要判断的地方，不必逐页通读。固定序列运行时改为 `workspace init → process → export`（v2 冻结 run 回放逐字节一致）。
+- `describe_figure --blocks a,b,…`（请求字段 `blocks`，与 `block` 二选一）：请求并发（`services.vlm.max_concurrent`），结果按给出的块顺序在一次事务中生效；某一块的问题（不是图片、没有图像、格式不能发送）只作为该块的失败；有请求数预算时按块顺序截断，结果不随完成顺序变化。结果增加 `items`（每块的类型、渲染后的描述、是否已有描述）。`--schema` 指定类型时，JSON Schema 只允许该类型。
+
+### 5.13 〔P2-1〕Agent 实验装置
 
 - `runtimes/codex.py`：`exec_command` 生成 `codex exec` 命令行——模型与推理强度显式传入；`--sandbox workspace-write` 并允许网络；`--ephemeral --ignore-user-config --ignore-rules`，关闭 memories、插件、应用、浏览器、电脑操作、图片生成、子 Agent、目标、hooks 与网页搜索，只留下沙箱里的 shell；`usage_from_events` 从 `--json` 事件流读轮数、各类条目数、命令数（失败数）与 token（输入 / 缓存 / 输出 / 推理）；`audit_events` 是卫生审计：命令里出现的绝对路径、`..` 与 `~` 路径必须在实验目录或系统位置（`/tmp`、`/usr` 等），出现答案关键词（`expected.md`、`ground_truth`、`eval_runs` …）、仓库、实验根目录（其他文档、工具快照）或 `~/.codex` / `~/.claude` / `~/.config` 为 forbidden，其余目录外路径为 outside；shell 以外的工具条目（网页搜索、MCP、子 Agent）与直接编辑 `ws/`、`out/` 的文件修改也使运行作废；未知条目类型只记为待查。
 - `runtimes/px.py`：实验目录中 `./px` 的实现。只允许 `workspace init`、`tool <七个工具之一>`、`tool schema` 与 `python`（快照的 Python，用于只读分析）；配置固定（拒绝 `--config`，自动加实验目录的 `parserx.yaml`）；服务密钥从实验目录以外的 env 文件读入，只存在于工具进程，`px python` 的环境里去掉这些变量与名字像密钥的变量。

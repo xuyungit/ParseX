@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from parserx.accounting import CheckResult
 from parserx.config.schema import ParserXConfig
-from parserx.tools import check_export, describe_figure, overview, read, recognize, review_table, structure
+from parserx.tools import check_export, describe_figure, overview, process, read, recognize, review_table, structure
 from parserx.tools.context import ToolContext, invoke
 from parserx.tools.envelope import Envelope
 from parserx.tools.init import InitResult, workspace_init
@@ -30,6 +30,7 @@ class ToolSpec:
 
 
 TOOLS: dict[str, ToolSpec] = {
+    "process": ToolSpec(process.ProcessRequest, process.ProcessResult, process.run),
     "overview": ToolSpec(overview.OverviewRequest, overview.OverviewResult, overview.run),
     "read": ToolSpec(read.ReadRequest, read.ReadResult, read.run),
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),

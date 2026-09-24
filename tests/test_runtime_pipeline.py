@@ -75,9 +75,9 @@ def test_pdf_runs_through_every_step_and_balances(pdf, tmp_path):
     assert outcome.status == "complete"
     sidecar = json.loads(outcome.sidecar_json)
     assert validate_sidecar(sidecar) == [] and sidecar["accounting"]["unassigned"] == 0
-    tools = [e.tool for e in outcome.envelopes]
-    assert tools == ["workspace_init", "recognize", "recognize", "describe_figure", "describe_figure",
-                     "apply_structure", "apply_structure", "check", "export"]
+    assert [e.tool for e in outcome.envelopes] == ["workspace_init", "process", "export"]
+    steps = [s.step for s in outcome.envelopes[1].result.steps]
+    assert steps == ["recognize", "layout", "describe_figure", "structure", "check"]
     assert "SENTINEL-OCR 扫描文字 3 件" in outcome.markdown and "> [图片语义] photo" in outcome.markdown
     assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# Annual Report")  # adapter:v1 title
     assert "\n## SENTINEL-OCR 标题\n" in outcome.markdown  # the scan engine's paragraph_title, under it

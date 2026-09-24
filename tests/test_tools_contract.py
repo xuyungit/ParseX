@@ -3,6 +3,7 @@
 import io
 import json
 import sys
+from pathlib import Path
 
 import fitz
 import pytest
@@ -366,3 +367,70 @@ def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
         parserx.cli.main()
     failure = json.loads(capsys.readouterr().out)["failures"][0]
     assert exit_info.value.code == 2 and "standard input is empty" in failure["message"]
+
+
+# ── P2-5: batches and the standard processing ───────────────────────────
+
+
+def test_describe_figures_in_one_batch(ws):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)  # page 2 brings a second figure
+    figures = [b.id for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE and b.status == "ok"]
+    text = next(b.id for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TEXT)
+    assert len(figures) == 2
+    env, code = _call("describe_figure", ws, {"blocks": [*figures, text]}, context=context)
+    data = _assert_contract(env, "describe_figure")
+    assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 2}
+    assert [i["block"] for i in data["result"]["items"]] == figures and all(i["type"] == "photo" for i in data["result"]["items"])
+    assert [f["targets"] for f in data["failures"]] == [[text]] and data["failures"][0]["code"] == "invalid_request"
+    state = Workspace.open(ws).load()
+    assert all(b.semantic is not None for b in state.blocks if b.id in figures)
+    env, _ = _call("describe_figure", ws, {"blocks": figures}, context=context)
+    assert env.cost.requests == {} and all(i.cached for i in env.result.items)
+
+
+def test_batch_results_do_not_depend_on_completion_order(ws, monkeypatch):
+    import threading
+    import time as _time
+
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    figures = [b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE and b.status == "ok"]
+    fake = context.fake_vlm
+    original = fake.describe_image
+    first = threading.Event()
+
+    def slow_first(image_path, prompt, **kw):
+        # the first figure answers last; each answer names its own image
+        if str(image_path).endswith(figures[0].anchors[-1].asset + ".png") or not first.is_set():
+            first.set()
+            _time.sleep(0.2)
+        answer = json.loads(original(image_path, prompt, **kw))
+        answer["summary"]["value"] = f"SENTINEL-VLM {Path(image_path).stem}"
+        return json.dumps(answer)
+
+    monkeypatch.setattr(fake, "describe_image", slow_first)
+    env, _ = _call("describe_figure", ws, {"blocks": [f.id for f in figures]}, context=context)
+    state = Workspace.open(ws).load()
+    for block in (b for b in state.blocks if b.id in {f.id for f in figures}):
+        asset = next(a.asset for a in block.anchors if hasattr(a, "asset"))
+        assert block.semantic.summary.value.endswith(asset)
+
+
+def test_process_does_the_standard_steps_in_one_call(ws):
+    config = _config()
+    config.runtime.layout_shadow = False  # the layout step has its own tests (fake detector)
+    context = _context()
+    env, code = _call("process", ws, {}, config=config, context=context)
+    data = _assert_contract(env, "process")
+    result = data["result"]
+    assert env.ok and code == 0 and data["cost"]["requests"] == {"ocr": 1, "vlm": 2}
+    assert result["pages"] == {"done": 2} and result["figures"] == {"described": 2}
+    assert result["check"]["exportable"] and result["check"]["document_status"] == "complete"
+    assert [s["step"] for s in result["steps"]] == ["recognize", "describe_figure", "structure", "check"]
+    assert all(set(w) == {"target", "kind", "detail"} for w in result["worklist"])
+    calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
+    assert [c["tool"] for c in calls if c["type"] == "call"] == ["workspace_init", "process"]
+    assert verify_workspace(ws).ok
+    again, _ = _call("process", ws, {}, config=config, context=context)  # nothing left to do: no requests
+    assert again.ok and again.cost.requests == {}
