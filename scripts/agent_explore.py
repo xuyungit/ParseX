@@ -298,15 +298,20 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     minutes = args.timeout_min or (LARGE_MIN if pages and pages > LARGE_PAGES else SMALL_MIN)
     raw = load_raw_config(CONFIG)
     config = doc_config(raw, doc_dir)
-    template = TEMPLATE.read_text(encoding="utf-8")
-    agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}"},
-                            values={"input_name": f"input{input_path.suffix.lower()}", "budget_minutes": minutes})
+    # the round's own template (shipped in the snapshot), so every run of a round gets the same task
+    template = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-m", "parserx.runtimes.experiment",
+                     "template"]).stdout
     skills_json = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-m", "parserx.runtimes.experiment",
                         "skills"]).stdout
+    skills = json.loads(skills_json)  # the snapshot's skills, also inlined in the task (one step fewer)
+    agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}"},
+                            values={"input_name": f"input{input_path.suffix.lower()}", "budget_minutes": minutes,
+                                    "skills": "\n\n".join(skills[name].strip() for name in
+                                                             ("transcription", "figure", "structure"))})
     px_text = ("#!/bin/sh\n# The ParserX tools of this experiment: ./px --help\n"
                f'exec "{_toolkit(args) / "px-run"}" "$(cd "$(dirname "$0")" && pwd)" "$@"\n')
     files = prepare_doc_dir(doc_dir, input_path=input_path, config=config, px_text=px_text, agents_md=agents_md,
-                            skills=json.loads(skills_json))
+                            skills=skills)
     ParserXConfig.model_validate(_resolve_env_vars(config))  # the file keeps ${VAR}; resolved, it must be valid
     secrets = [v for k, v in dotenv_values(ENV_FILE).items() if v and _SECRET_NAME.search(k)]
     problems = listing_problems(doc_dir) + config_problems(

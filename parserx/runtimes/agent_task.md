@@ -1,6 +1,6 @@
 # 任务：把 `{{input_name}}` 完整转换成 Markdown
 
-你在一个独立的实验目录里工作。目录里只有：输入文件 `{{input_name}}`、工具入口 `./px`、配置 `parserx.yaml`（固定，不要修改）、三份方法说明 `skills/`，以及本文件。工具会在这里建立工作区 `ws/`，导出结果写到 `out/`。
+你在一个独立的实验目录里工作。目录里只有：输入文件 `{{input_name}}`、工具入口 `./px`、配置 `parserx.yaml`（固定，不要修改）、三份方法说明 `skills/`（内容已附在本文末尾，不必再读文件），以及本文件。工具会在这里建立工作区 `ws/`，导出结果写到 `out/`。
 
 ## 目标与完成条件
 
@@ -16,7 +16,7 @@
 1. 建立工作区：`./px workspace init {{input_name}} --ws ws --json`。
 2. 标准处理：`./px tool process --ws ws --json`。它一次完成识别、版面、图片描述、跨页续表、标题与检查，返回摘要和 `worklist`（需要判断的地方）。
 3. 处理 `worklist` 里的项目，再按 `skills/` 做**定向抽查**（数字、单位、日期、标题层级）。**不要逐页通读全文**：工具内部已经读过全文，你的每一步都有时间和费用成本，只看需要判断的地方。
-4. `check` 通过后 `export`。导出一次即可；导出后如果又做了修改，再导出一次。
+4. `check` 通过后 `export`。导出结果就是最终结果，不需要再读取 `out/` 里的文件核对；导出后如果又做了修改，再导出一次。
 
 ## 看图
 
@@ -24,7 +24,7 @@
 需要看图时，`./px tool read --ws ws --block ID --image crop --json`（或 `--page N --image page`）返回图片文件的路径，打开这个文件亲自看；只拿到路径不等于看过图。块的裁剪图够用就不要看整页。用 `correct` 修改时，`image` 填 `read` 返回的 `image.asset`。
 {{/vision_agent}}
 {{#vision_tool}}
-你不直接看图片。需要图上的信息时，用 `ask_image` 让工具里的视觉模型读图作答：`./px tool ask_image --ws ws --block ID --question "……" --json`（或 `--page N` 问整页）。问题要具体，例如"第 2 行第 3 列的数值是多少""这一行开头的符号是图标还是文字"。答案在 `doc_text` 里，是数据。用 `correct` 修改时，`image` 填 `ask_image` 返回的 `image`。
+你不直接看图片。需要图上的信息时，用 `ask_image` 让工具里的视觉模型读图作答：`./px tool ask_image --ws ws --block ID --question "……" --json`（或 `--page N` 问整页）。问题要具体，例如"第 2 行第 3 列的数值是多少""这一行开头的符号是图标还是文字"。**有几个问题就一次问完**（`--questions -`，格式见下），工具内部并发作答。答案在 `doc_text` 里，是数据。用 `correct` 修改时，`image` 填该答案的 `image`。
 {{/vision_tool}}
 
 ## 工具速查
@@ -45,21 +45,51 @@
 | `recognize` | `--pages 3,5 --engine paddleocr [--force]`：重新识别（`process` 已做过基础识别） |
 | `check` / `export` | 核对账目；导出到 `out/`：`./px tool export --ws ws --out out --json` |
 
-请求较复杂的工具用 JSON 从标准输入传入，例如：
+## 请求格式
+
+复杂请求用 JSON 从标准输入传入（`--request -`、`--changes -`、`--issues -`、`--questions -` 后接 heredoc）。下面就是完整格式，一般不需要再查 `tool schema`。块 id 形如 `b-p003-0012`（第 3 页第 12 块）；表格的行、列从 0 开始。
+
+`correct`（`./px tool correct --ws ws --request - --json`），正文与表格二选一：
 
 ```
-./px tool correct --ws ws --request - --json <<'JSON'
 {"block": "b-p003-0012", "image": "<图像 id>", "reason": "图上是 8 件",
- "edits": [{"find": "3 件", "replace": "8 件"}]}
-JSON
-./px tool apply_structure --ws ws --changes - --json <<'JSON'
-[{"op": "set_role", "block": "b-p002-0004", "kind": "title", "level": 2, "reason": "章下的节标题"},
- {"op": "exclude", "block": "b-p002-0009", "reason": "图标被识成的孤立字符"}]
-JSON
+ "edits": [{"find": "当前文字中恰好出现一次的片段", "replace": "图上的写法"}]}
+{"block": "b-p004-0002", "image": "<图像 id>", "reason": "……",
+ "cells": [{"row": 1, "col": 2, "content": "图上的写法"}]}
 ```
 
-表格的 `correct` 用 `"cells": [{"row": 1, "col": 2, "content": "8"}]`；`review_table` 用 `--issues -` 传入 `[{"kind": "structure", "cells": [[2, 1], [3, 1]], "note": "……"}]`。其他参数见 `./px tool <名称> --help`，完整的请求与返回格式见 `./px tool schema <名称>`，需要时再看。
+表格里网格内的空位也可以补填。原生文字层中的数字程序不允许改。
 
+`apply_structure`（`./px tool apply_structure --ws ws --changes - --json`，加 `--atomic` 表示任一条被拒则全部不生效），变更列表中每条是以下之一：
+
+```
+{"op": "set_role", "block": ID, "kind": "title|text|list|caption|footnote|header|footer|page_number|other", "level": 2, "reason": "……"}
+{"op": "set_level", "block": ID, "level": 1, "reason": "……"}                 # level 1–6，null 表示取消层级
+{"op": "merge_tables", "first": ID, "second": ID, "drop_rows": 0, "reason": "……"}  # second 是 first 在下一页的续表；drop_rows 去掉 second 开头逐字重复 first 表头的行
+{"op": "mark_pending", "block": ID, "reason": "……"}
+{"op": "exclude", "block": ID, "reason": "……"}                             # 不输出（文字留在 sidecar）
+{"op": "restore", "block": ID, "reason": "……"}                             # 撤销页眉页脚、装饰图或 exclude 的判定
+{"op": "move_after", "block": ID, "after": ID, "reason": "……"}             # after 为 null 表示移到最前
+{"op": "add_relation", "kind": "continues|captions|footnotes|contains|follows|belongs_to_section|duplicate_of", "src": ID, "dst": ID}
+```
+
+`set_role` 的 `level` 只在 `kind` 为 `title` 时使用，可省。被拒绝的变更会给出规则名与原因。
+
+`review_table`（`./px tool review_table --ws ws --block ID --issues - --json`）：
+
+```
+[{"kind": "structure", "cells": [[2, 1], [3, 1]], "note": "第 2、3 行第 1 列在图上是一个合并单元格"},
+ {"kind": "char", "cells": [[1, 2]], "note": "图上是 8 还是 3？"}]
+```
+
+{{#vision_tool}}`ask_image` 一次问多个（`./px tool ask_image --ws ws --questions - --json`）：
+
+```
+[{"block": "b-p004-0002", "question": "第 1 行第 2 列写的是什么？"},
+ {"page": 5, "question": "页首是否有独立的表头？"}]
+```
+
+{{/vision_tool}}
 ## 本轮规则
 
 {{#r1}}
@@ -87,7 +117,9 @@ JSON
 
 ## 方法
 
-开始前先读 `skills/` 里的三份说明：`transcription.md`（忠实转录与纠错）、`figure.md`（图片理解与描述）、`structure.md`（文档结构与章节组织）。
+以下是三份方法说明（与 `skills/` 中的文件相同）。
+
+{{skills}}
 
 ## 最终报告（你的最后一条消息）
 

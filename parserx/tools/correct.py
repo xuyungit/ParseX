@@ -131,25 +131,39 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
     """The image must have been read in this workspace — by the agent (``read --image``) or by the service VLM
     (``ask_image``) — for this block, or for the page it is on."""
     page = block_unit(state, block)
+    if not (ctx.ws.root / "renders" / f"{image}.png").is_file():
+        return _no_evidence(image)
     for record in reversed(read_records(ctx.ws.calls_path)):
-        if record.get("type") != "call" or record.get("tool") not in ("read", "ask_image"):
+        if record.get("type") != "call":
             continue
-        result = record.get("result") or {}
-        shown = result.get("image") if record["tool"] == "ask_image" else (result.get("image") or {}).get("asset")
-        if shown != image:
-            continue
-        request = record.get("request") or {}
-        if request.get("block") == block.id:
-            passed = True
-        else:
-            asked = request.get("page")
-            if asked is None and request.get("block"):
-                other = next((b for b in state.blocks if b.id == request["block"]), None)
-                asked = block_unit(state, other) if other is not None else None
-            whole_page = request.get("image") == "page" or (record["tool"] == "ask_image" and request.get("page"))
-            passed = bool(whole_page) and asked == page
-        if passed and (ctx.ws.root / "renders" / f"{image}.png").is_file():
-            return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of this block")
+        for target_block, target_page, whole_page in _images_read(record, image):
+            if target_block == block.id:
+                return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of this block")
+            if whole_page:
+                if target_page is None and target_block is not None:
+                    other = next((b for b in state.blocks if b.id == target_block), None)
+                    target_page = block_unit(state, other) if other is not None else None
+                if target_page == page:
+                    return GateCheck(name="image_evidence", passed=True,
+                                     detail=f"read the image {image} of page {page}")
+    return _no_evidence(image)
+
+
+def _images_read(record: dict, image: str) -> list[tuple[str | None, int | None, bool]]:
+    """(block, page, whole page?) of every reading of *image* in a call record."""
+    result, request = record.get("result") or {}, record.get("request") or {}
+    if record.get("tool") == "read":
+        if ((result.get("image") or {}).get("asset")) != image:
+            return []
+        return [(request.get("block"), request.get("page"), request.get("image") == "page")]
+    if record.get("tool") == "ask_image":
+        answers = result.get("answers") or [{"block": request.get("block"), "page": request.get("page"),
+                                             "image": result.get("image")}]
+        return [(a.get("block"), a.get("page"), a.get("page") is not None) for a in answers if a.get("image") == image]
+    return []
+
+
+def _no_evidence(image: str) -> GateCheck:
     return GateCheck(name="image_evidence", passed=False,
                      detail=f"{image} is not an image read for this block or its page "
                             "(read --image crop, or ask_image, first)")

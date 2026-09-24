@@ -279,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify", help="Post-run check of one experiment directory (JSON on stdout)")
     verify.add_argument("--doc-dir", type=Path, required=True)
     sub.add_parser("skills", help="The skills shipped in this installation (JSON on stdout)")
+    sub.add_parser("template", help="The task template shipped in this installation (text on stdout)")
     control = sub.add_parser("control", help="Fixed-sequence runtime on an experiment directory (JSON on stdout)")
     control.add_argument("--doc-dir", type=Path, required=True)
     control.add_argument("--env-file", type=Path, required=True, help="service settings (kept outside the directory)")
@@ -290,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
 
         os.environ.update({k: v for k, v in dotenv_values(args.env_file).items() if v is not None})
         print(json.dumps(run_control(args.doc_dir)))
+    elif args.command == "template":
+        sys.stdout.write((Path(__file__).parent / "agent_task.md").read_text(encoding="utf-8"))
     else:
         print(json.dumps(shipped_skills(), ensure_ascii=False))
     return 0

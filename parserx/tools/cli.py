@@ -80,6 +80,7 @@ def _ask_opts(p):
     p.add_argument("--block", help="ask about this block's image (its crop)")
     p.add_argument("--page", type=int, help="ask about the whole page image")
     p.add_argument("--question")
+    p.add_argument("--questions", help="JSON file (or -) with a list of {block | page, question}: several at once")
 
 
 def _correct_opts(p):
@@ -150,6 +151,8 @@ def _request(name: str, args) -> dict[str, Any]:
         return {"block": args.block, "issues": _load_json(args.issues) if args.issues else [],
                 "context": args.context}
     if name == "ask_image":
+        if args.questions:
+            return {"questions": _load_json(args.questions)}
         return {k: v for k, v in dict(block=args.block, page=args.page, question=args.question).items()
                 if v is not None}
     if name == "correct":

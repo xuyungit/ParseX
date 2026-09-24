@@ -524,3 +524,21 @@ def test_ask_image_answers_from_the_block_image(ws):
     assert env.result.adopted is True
     env, code = _call("ask_image", ws, {"page": 1, "question": "页面上有几张表？"}, context=context)
     assert env.ok and env.result.image
+
+
+def test_ask_image_takes_several_questions_in_one_call(ws):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
+    questions = [{"block": block.id, "question": "数字是几？"}, {"page": 1, "question": "有几张表？"},
+                 {"block": "b-missing", "question": "？"}]
+    env, code = _call("ask_image", ws, {"questions": questions}, context=context)
+    data = _assert_contract(env, "ask_image")
+    assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 2}
+    answers = data["result"]["answers"]
+    assert [a["block"] for a in answers] == [block.id, None] and [a["page"] for a in answers] == [None, 1]
+    assert all(a["answer"]["doc_text"].startswith("SENTINEL-VLM") and a["image"] for a in answers)
+    assert [f["targets"] for f in data["failures"]] == [["b-missing"]] and data["failures"][0]["code"] == "not_found"
+    env, _ = _call("correct", ws, {"block": block.id, "image": answers[0]["image"], "reason": "r",
+                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
+    assert env.result.adopted is True

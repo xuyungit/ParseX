@@ -147,7 +147,7 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
     from importlib.resources import files
 
     template = (files("parserx.runtimes") / "agent_task.md").read_text(encoding="utf-8")
-    values = {"input_name": "input.pdf", "budget_minutes": 30}
+    values = {"input_name": "input.pdf", "budget_minutes": 30, "skills": "SKILL-TEXT"}
     r1 = render_task(template, round_name="r1", values=values)
     assert r1 == render_task(template, round_name="r1", values=values)  # stable
     r2 = render_task(template, round_name="r2", values=values)
@@ -159,7 +159,7 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
 
     assert outside_rules(r1) == outside_rules(r2) and r1 != r2
     for text in (r1, r2):
-        assert "{{" not in text and "input.pdf" in text and "30 分钟" in text
+        assert "{{" not in text and "input.pdf" in text and "30 分钟" in text and "SKILL-TEXT" in text
         for tool in ("process", "overview", "read", "recognize", "review_table", "correct", "describe_figure",
                      "apply_structure", "check", "export", "tool schema", "doc_text"):
             assert tool in text
