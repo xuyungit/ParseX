@@ -222,3 +222,16 @@ def test_numbering_consistency_holds_within_the_same_section_only():
     state = _titled(("1 总则", 1), ("1.1 范围", 2), ("1.1.1 适用", 3), ("1.2 定义", None), ("2 术语", 1))
     assert [r.rule for r in check_changes(state, _changes(
         {"op": "set_level", "block": "t3", "level": 3, "reason": "r"}))] == ["numbering_level_inconsistent"]
+
+
+def test_titles_read_inside_an_image_number_on_their_own():
+    # an embedded scanned document ("一、" inside the image) is not held to the main text's "一、" at H1
+    state = _titled(("一、总则", 1), ("二、要求", 1), ("附件", 2), ("一、概况", None), ("二、结论", None))
+    state.blocks.append(_b("fig", 99, BlockKind.FIGURE))
+    state.relations = [Relation(id=f"r-contains-fig-t{i}", kind="contains", src="fig", dst=f"t{i}") for i in (3, 4)]
+    assert check_changes(state, _changes({"op": "set_level", "block": "t3", "level": 3, "reason": "图中文件的小节"},
+                                         {"op": "set_level", "block": "t4", "level": 3, "reason": "同上"})) == []
+    # inside the image the pattern still has one level
+    assert [r.rule for r in check_changes(state, _changes(
+        {"op": "set_level", "block": "t3", "level": 3, "reason": "r"},
+        {"op": "set_level", "block": "t4", "level": 4, "reason": "r"}))] == ["numbering_level_inconsistent"]

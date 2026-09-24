@@ -703,4 +703,5 @@ class ExportResult(IRModel):
 
 合成输入都是 Block 级的（几行文本、一张生成的图片、手写的区域列表），不依赖整篇文档（§13）。
 - 〔P2-6〕服务层：流式回答（Responses API）两段数据之间超过 `services.*.stream_idle_timeout`（默认 60 s）即视为卡住，按传输错误重试（不必等到 `timeout`）；流中途断开时 httpx 直接抛出的 `TransportError`（SDK 只包装建立请求时的错误）也列为可重试。换行合并（`content/text.py::join_wrapped`）：字母后的连字符断行不加空格、保留连字符（`character-istics`、`well-known`）。
+- 〔P2-6 第二轮发现的缺陷〕(1) 图片是否已转录以 `image_route` 的 `transcribed` Decision 为准（`content/select.py::transcribed`），不再只看 `contains` 关系：图中读不出文字（只有并回图片本身的图片区域）时没有 `contains`，此前第二次 `process` 会再次转录、账目条目重复，`check` 不通过。`process` 只在还有未检测的页或未路由的图片时调用版面步骤（`layout_shadow.py::layout_todo`），摘要不再误报。(2) 读自嵌入图片的块（锚点为父图片像素坐标）：`read --image crop` 与 `ask_image` 裁剪父图片（`imaging.py::image_crop`，留白按 `crop_pad_pt` 与 `read_dpi` 换算为像素）；`correct` 的看图证据接受工作区里的图片资源本身，并把"读过这块所在的整张图片"（`contains` 的来源图片块）视同读过整页。(3) 编号一致性（Q43）按范围比较：读自同一张嵌入图片的标题只与同图的标题比较，图中文件自己的"一、"不受正文"一、"的层级约束。
 

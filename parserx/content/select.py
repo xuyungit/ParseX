@@ -98,6 +98,12 @@ def integrate_scan_page(state: DocumentState, n: int, result) -> list[str]:
     return [b.id for b in new_blocks]
 
 
+def transcribed(state: DocumentState) -> set[str]:
+    """Figures whose image the scan engine has read (``integrate_image``), whether or not text came out of it."""
+    return {b.id for b in state.blocks
+            if any(d.stage == DecisionStage.IMAGE_ROUTE and d.choice == "transcribed" for d in b.decisions)}
+
+
 def integrate_image(state: DocumentState, figure: str, result) -> list[str]:
     """Q42 / guide §6.5: the text and tables read inside an embedded image follow the image in reading order
     (the image itself stays shown); ``contains`` relations tie them to it.  Returns the new block ids."""

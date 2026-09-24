@@ -82,7 +82,7 @@ class FakeVLM:
                            "chart": None, "diagram": None})
 
 
-def _context(ocr_behaviour=None):
+def _context(ocr_behaviour=None, page=None):
     vlm = FakeVLM()
 
     class Context(ToolContext):
@@ -93,7 +93,7 @@ def _context(ocr_behaviour=None):
                 if ocr_behaviour is not None:
                     raise ocr_behaviour
                 with fitz.open(stream=file_bytes, filetype="pdf") as sub:
-                    return {"layoutParsingResults": [_ocr_page() for _ in sub]}
+                    return {"layoutParsingResults": [(page or _ocr_page)() for _ in sub]}
 
             service._run_job = run_job
             return service
@@ -606,6 +606,59 @@ def test_process_transcribes_scan_and_mixed_images_and_does_not_describe_scans(w
     assert any(r.kind == "contains" and r.src == figure.id for r in state.relations)
     assert next(b for b in state.blocks if b.id == figure.id).semantic is None  # its content is the transcription
     assert next(r for r in state.images if r.id == asset).complete is True
+
+
+def test_an_image_with_nothing_to_read_is_not_read_again(ws):
+    # a photo: the engine finds only an image region, which folds back into the figure — no block follows it
+    from parserx.ir.enums import ImageRoute
+    from parserx.ir.state import ImageRecord
+
+    def photo():
+        return {"prunedResult": {"width": 1000, "height": 1400, "parsing_res_list": [
+            {"block_label": "image", "block_content": "", "block_bbox": [0, 0, 1000, 1400], "block_order": None}]}}
+
+    config = _config()
+    config.runtime.layout_shadow = False
+    context = _context(page=photo)
+    workspace = Workspace.open(ws)
+    figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
+    with workspace.txn("test:route") as state:
+        state.images = [ImageRecord(id=figure.anchors[-1].asset, route=ImageRoute.MIXED, shown=True, t=0.3, f=0.2,
+                                    regions=2)]
+    first, _ = _call("process", ws, {}, config=config, context=context)
+    assert "transcribe_images" in [s.step for s in first.result.steps]
+    again, _ = _call("process", ws, {}, config=config, context=context)
+    assert "transcribe_images" not in [s.step for s in again.result.steps] and again.cost.requests == {}
+    assert again.result.check.exportable
+    env, _ = _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    assert env.failures[0].message.endswith("already transcribed") and env.cost.requests == {}
+
+
+def test_text_read_inside_an_image_can_be_looked_at_and_corrected(ws):
+    # a block read inside an embedded image is anchored in the image's pixels: its crop comes from the image, and a
+    # reading of the whole image (the figure) is evidence for it, as a whole page is for a block on the page
+    from parserx.ir.enums import ImageRoute
+    from parserx.ir.state import ImageRecord
+
+    config = _config()
+    config.runtime.layout_shadow = False
+    context = _context()
+    workspace = Workspace.open(ws)
+    figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
+    with workspace.txn("test:route") as state:
+        state.images = [ImageRecord(id=figure.anchors[-1].asset, route=ImageRoute.SCAN, shown=True, t=0.8, f=0.0,
+                                    regions=3)]
+    _call("process", ws, {}, config=config, context=context)
+    state = Workspace.open(ws).load()
+    inside = next(b for b in state.blocks if b.id.startswith(figure.id + "-") and b.text == OCR_TEXT)
+    env, _ = _call("read", ws, {"block": inside.id, "image": "crop"}, context=context)
+    assert env.ok and Path(env.result.image.path).is_file() and env.result.image.height < 100  # a line of the 128×100 image
+    env, _ = _call("ask_image", ws, {"block": inside.id, "question": "这一行写的是什么？"}, context=context)
+    assert env.ok and env.result.image is not None
+    whole, _ = _call("ask_image", ws, {"block": figure.id, "question": "图中的件数是多少？"}, context=context)
+    env, _ = _call("correct", ws, {"block": inside.id, "image": whole.result.image, "reason": "图上是 8 件",
+                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
+    assert env.ok and "8 件" in next(b for b in Workspace.open(ws).load().blocks if b.id == inside.id).text
 
 
 def test_an_image_in_a_docx_is_transcribed_too(tmp_path):

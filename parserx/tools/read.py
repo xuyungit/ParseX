@@ -11,7 +11,7 @@ from parserx.ir.base import IRModel
 from parserx.ir.enums import BlockKind
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
-from parserx.tools.imaging import page_render, region_crop, write_once
+from parserx.tools.imaging import image_crop, page_render, region_crop, write_once
 from parserx.tools.views import BlockView, ImageRef, ObservationView, block_view, observation_view
 from parserx.workspace.queries import HIDDEN, block_map, block_unit, ordered
 
@@ -98,6 +98,16 @@ def _image(ctx: ToolContext, state, req: ReadRequest, blocks_by_id) -> tuple[Ima
             return ImageRef(asset=asset.id, path=str((ctx.ws.root / asset.path).resolve()), width=asset.width,
                             height=asset.height, transform=transform), None
     first = block.anchors[0]
+    if isinstance(first, AssetAnchor) and first.asset in assets:  # read inside an embedded image: crop the image
+        parent = assets[first.asset]
+        try:
+            crop, data = image_crop(parent, (ctx.ws.root / parent.path).read_bytes(), first.bbox, pad * dpi / 72.0)
+        except OSError:
+            return None, f"the image {parent.id} ({parent.media_type}) cannot be cropped"
+        path = renders / f"{crop.id}.png"
+        write_once(path, data)
+        return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,
+                        transform=None), None
     if state.format != "pdf" or not isinstance(first, PdfAnchor):
         return None, "this block has no page geometry to crop (DOCX text)"
     page = next(p for p in state.pages if p.n == first.page)

@@ -17,7 +17,7 @@ from parserx.content.select import GateCheck
 from parserx.content.select import correct as correct_gate
 from parserx.ir import ids
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, ObservationStatus, TaskKind
+from parserx.ir.enums import BlockKind, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
@@ -129,16 +129,22 @@ def _edited_grid(grid: TableGrid, edits: list[CellEdit], block: str) -> TableGri
 
 def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
     """The image must have been read in this workspace — by the agent (``read --image``) or by the service VLM
-    (``ask_image``) — for this block, or for the page it is on."""
+    (``ask_image``) — for this block, for the page it is on, or, for a block read inside an embedded image, for
+    that whole image (its figure)."""
     page = block_unit(state, block)
-    if not (ctx.ws.root / "renders" / f"{image}.png").is_file():
+    known = (ctx.ws.root / "renders" / f"{image}.png").is_file() or any(a.id == image for a in state.assets)
+    if not known:
         return _no_evidence(image)
+    containers = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS and r.dst == block.id}
     for record in reversed(read_records(ctx.ws.calls_path)):
         if record.get("type") != "call":
             continue
         for target_block, target_page, whole_page in _images_read(record, image):
             if target_block == block.id:
                 return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of this block")
+            if target_block in containers:
+                return GateCheck(name="image_evidence", passed=True,
+                                 detail=f"read the image {image} this block was read from")
             if whole_page:
                 if target_page is None and target_block is not None:
                     other = next((b for b in state.blocks if b.id == target_block), None)

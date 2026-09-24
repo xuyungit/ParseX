@@ -42,7 +42,7 @@ from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, RelationKind
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState
 from parserx.tables.merge import merge_candidate, merge_tables, repeats_header
@@ -186,9 +186,12 @@ def _level_problem(state: DocumentState, block: Block, level: int) -> tuple[Lega
         return LegalityRule.LEVEL_SKIP, f"H{level} → H{after}"
     signature = numbering_signature(block.text)
     if signature is not None:
+        # a document inside an embedded image numbers on its own (Q42, Q43): compare within the same image only
+        container = {r.dst: r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+        scope = container.get(block.id)
         for index, other in enumerate(titles):
             if other.id != block.id and other.level is not None and other.level != level \
-                    and numbering_signature(other.text) == signature \
+                    and container.get(other.id) == scope and numbering_signature(other.text) == signature \
                     and _same_section(titles, position, index, level, other.level, signature):
                 return (LegalityRule.NUMBERING_LEVEL_INCONSISTENT,
                         f"pattern {signature!r} is H{other.level} at {other.id}")

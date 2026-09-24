@@ -60,3 +60,19 @@ def write_once(path: Path, data: bytes) -> None:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(data)
         tmp.replace(path)
+
+
+def image_crop(parent: Asset, data: bytes, bbox_px: BBox, pad_px: float) -> tuple[Asset, bytes]:
+    """Crop of a region inside an image (a block read inside an embedded image), in the image's own pixels."""
+    with Image.open(io.BytesIO(data)) as image:
+        x0, y0 = max(0, int(bbox_px[0] - pad_px)), max(0, int(bbox_px[1] - pad_px))
+        box = (x0, y0, max(x0 + 1, min(image.width, int(round(bbox_px[2] + pad_px)))),
+               max(y0 + 1, min(image.height, int(round(bbox_px[3] + pad_px)))))
+        crop = image.convert("RGB").crop(box)
+    buf = io.BytesIO()
+    crop.save(buf, "PNG")
+    out = buf.getvalue()
+    asset = Asset.from_bytes(out, media_type="image/png", width=crop.width, height=crop.height, role="crop",
+                             derived_from=parent.id, transform=(1.0, 0.0, 0.0, 1.0, float(box[0]), float(box[1])))
+    return asset, out
+

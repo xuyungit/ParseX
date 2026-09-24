@@ -27,6 +27,7 @@ from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
 from parserx.content.continuation import ACTOR as CONTINUATION_ACTOR, propose_continuations
+from parserx.content.select import transcribed
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
 from parserx.hierarchy.levels import title_changes, unify_levels
@@ -38,6 +39,7 @@ from parserx.tables.merge import propose_merges
 from parserx.tools import check_export, describe_figure, recognize, structure
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure
+from parserx.tools.layout_shadow import layout_todo
 from parserx.tools.views import unresolved_items
 from parserx.workspace.queries import HIDDEN, ordered
 
@@ -90,9 +92,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                                           f"{len(out.failures)} failures"))
 
     state = ctx.ws.load()
-    figures = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN]
-    if ctx.config.runtime.layout_shadow and (figures or state.format == "pdf"):
-        pages = [p.n for p in state.pages] if state.format == "pdf" else []
+    if ctx.config.runtime.layout_shadow:
+        pages, figures = layout_todo(state)
         if pages or figures:
             out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
             failures += out.failures
@@ -149,7 +150,7 @@ def _textual_images(state: DocumentState) -> list[str]:
     """Shown embedded images (not crops of scanned pages) routed SCAN or MIXED and not yet transcribed (Q42)."""
     routes = {r.id: r.route for r in state.images}
     roles = {a.id: a.role for a in state.assets}
-    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    done = transcribed(state)
     return [b.id for b in ordered(state) if b.kind == BlockKind.FIGURE and b.status not in HIDDEN and b.id not in done
             and roles.get(_image_asset(state, b)) == "original"
             and routes.get(_image_asset(state, b)) in (ImageRoute.SCAN, ImageRoute.MIXED)]

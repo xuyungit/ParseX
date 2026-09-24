@@ -17,7 +17,7 @@ from typing import Literal
 import fitz
 
 from parserx.content import scan
-from parserx.content.select import integrate_image, integrate_scan_page, mark_scan_failed
+from parserx.content.select import integrate_image, integrate_scan_page, mark_scan_failed, transcribed
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
 from parserx.ir.enums import BlockKind, PageStatus, RelationKind
@@ -190,7 +190,7 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
     state = ctx.ws.load()
     blocks = {b.id: b for b in state.blocks}
     assets = {a.id: a for a in state.assets}
-    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    done = transcribed(state)  # an image with nothing to read has no contains relation: read once all the same
     failures: list[Failure] = []
     tasks = []
     for block_id in dict.fromkeys(req.blocks):

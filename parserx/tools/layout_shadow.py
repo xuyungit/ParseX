@@ -37,6 +37,21 @@ ACTOR = "program:routing.image"
 _SUPERSEDED = frozenset({BlockStatus.DUPLICATE, BlockStatus.MERGED})
 
 
+def layout_todo(state) -> tuple[list[int], list[str]]:
+    """What a layout call would still do: PDF pages not detected yet, shown figures whose image is not routed."""
+    done = _pages_done(state)
+    pages = [p.n for p in state.pages if p.n not in done] if state.format == "pdf" else []
+    routed = {r.id for r in state.images}
+    figures = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
+               and any(isinstance(a, AssetAnchor) and a.asset not in routed for a in b.anchors)]
+    return pages, figures
+
+
+def _pages_done(state) -> set[int | None]:
+    return {block_unit(state, b) for b in state.blocks for o in b.observations if o.task == TaskKind.LAYOUT
+            and isinstance(o.anchor, PdfAnchor)}
+
+
 def run_layout(ctx: ToolContext, req) -> ToolOutput:
     from parserx.tools.recognize import OBSERVATION_VIEWS, RecognizeResult, SelectionOutcome
 
@@ -56,8 +71,7 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
         failures.append(Failure(code=FailureCode.INVALID_REQUEST, retryable=False,
                                 message="DOCX has no page images; only embedded images are routed"))
     elif req.pages:
-        done = {block_unit(state, b) for b in state.blocks for o in b.observations if o.task == TaskKind.LAYOUT
-                and isinstance(o.anchor, PdfAnchor)}
+        done = _pages_done(state)
         pages = [n for n in sorted(set(req.pages)) if req.force or n not in done]
     routed = {r.id for r in state.images}
     assets = {a.id: a for a in state.assets}
