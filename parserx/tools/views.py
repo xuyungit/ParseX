@@ -12,9 +12,12 @@ from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, Observation
 from parserx.ir.observation import Observation
 from parserx.ir.state import DocumentState
 from parserx.tables.grid import TableGrid
+from parserx.tables.arithmetic import arithmetic_issues
 from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
-from parserx.workspace.queries import HIDDEN, block_unit, outline
+from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
+
+NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
 PREVIEW = 80  # characters of document text in outline previews
 
@@ -146,11 +149,21 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
         elif block.status == BlockStatus.DEGRADED and any(d.choice == "pending" for d in block.decisions):
             items.append(Unresolved(target=block.id, kind=UnresolvedKind.STRUCTURE_PENDING,
                                     detail="structure left pending"))
+    for block in ordered(state):  # recognized tables whose own arithmetic points at a misread digit
+        if block.kind == BlockKind.TABLE and block.cells is not None and block.status not in HIDDEN \
+                and _chosen_engine(block) not in NATIVE_ENGINES:
+            items += [Unresolved(target=block.id, kind=UnresolvedKind.TABLE_ARITHMETIC, detail=issue)
+                      for issue in arithmetic_issues(block.cells)]
     for candidate in merge_candidates(state):
         items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,
                                 detail=f"may continue {candidate.first}: "
                                        + ", ".join(f"{k}={v}" for k, v in candidate.evidence.items())))
     return items
+
+
+def _chosen_engine(block: Block) -> str | None:
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    return chosen.engine if chosen is not None else None
 
 
 def unresolved_counts(state: DocumentState) -> dict[UnresolvedKind, int]:
