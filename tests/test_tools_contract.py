@@ -67,6 +67,7 @@ class FakeVLM:
                        structured_output_mode="off", json_schema=None, json_schema_name="x"):
         self.calls.append(json_schema_name)
         self.schemas.append(json_schema)
+        image_path.read_bytes()  # like the real service: the image file is read (a str path would fail here)
         if self.usage_hook:
             self.usage_hook("gpt-6-luna", 1000, 0, 100)
         if json_schema_name == "parserx_ask_image":

@@ -194,3 +194,11 @@ def test_restore_undoes_an_exclusion_but_not_a_deleted_revision():
     p3.decisions.append(Decision(stage="exclude", choice="revision_deleted", reason="deleted", evidence={},
                                  actor="program:content.docx"))
     assert check_changes(state, _changes({"op": "restore", "block": "p3", "reason": "r"}))[0].rule == "not_restorable"
+
+
+def test_a_title_with_a_level_can_become_text_again():
+    state = _state()
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "h1", "kind": "text", "reason": "封面标识"}),
+                            actor="agent")
+    h1 = next(b for b in state.blocks if b.id == "h1")
+    assert outcome.accepted == [0] and (h1.kind, h1.level) == (BlockKind.TEXT, None)

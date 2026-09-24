@@ -9,6 +9,8 @@ image evidence for a later ``correct`` of that block (or of any block on that pa
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import model_validator
 
 from parserx.ir.base import IRModel
@@ -53,7 +55,7 @@ def run(ctx: ToolContext, req: AskImageRequest) -> ToolOutput[AskImageResult]:
     prompt, _ = load_prompt(PROMPT)
     vlm = ctx.vlm(ctx.config.tools.ask_reasoning_effort)
     try:
-        answer = vlm.call("describe_image", image.path, prompt, context=f"问题：{req.question}", temperature=0.0,
+        answer = vlm.call("describe_image", Path(image.path), prompt, context=f"问题：{req.question}", temperature=0.0,
                           max_tokens=ctx.config.tools.ask_max_tokens, structured_output_mode="off",
                           json_schema_name="parserx_ask_image")
     except Exception as exc:  # noqa: BLE001 - reported per target, nothing changed

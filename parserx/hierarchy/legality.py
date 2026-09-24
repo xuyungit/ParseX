@@ -215,9 +215,9 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
     blocks = {b.id: b for b in state.blocks}
     if isinstance(change, SetRole):
         block = blocks[change.block]
+        if change.kind != "title":
+            block.level = None  # before the kind: a text block never holds a level, not even in between
         block.kind = BlockKind(change.kind)
-        if block.kind != BlockKind.TITLE:
-            block.level = None
         block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice=change.kind, reason=change.reason,
                                         evidence=change.evidence, actor=actor))
         if change.level is not None:
