@@ -86,7 +86,15 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
 
 def parse_result(path: Path | str, config: ParserXConfig) -> ParseResult:
     """``Pipeline.parse_result`` for ``pipeline: v2``: same result type, plus the sidecar."""
-    path = Path(path)
+    return _parse(Path(path), config, None)
+
+
+def parse_to_dir(path: Path | str, out_dir: Path | str, config: ParserXConfig) -> ParseResult:
+    """``parserx parse <doc> -o <dir>`` for ``pipeline: v2``: the output package in *out_dir* (guide §4.5, Q42)."""
+    return _parse(Path(path), config, Path(out_dir))
+
+
+def _parse(path: Path, config: ParserXConfig, out_dir: Path | None) -> ParseResult:
     started = time.monotonic()
     root = config.runtime.workspace_root
     with tempfile.TemporaryDirectory(prefix="parserx-v2-") as scratch:
@@ -101,7 +109,8 @@ def parse_result(path: Path | str, config: ParserXConfig) -> ParseResult:
             ws_dir = Path(scratch) / "ws"
         session = _Session()
         try:
-            outcome = run(path, ws_dir, Path(scratch) / "out", config, name=path.stem, context_factory=session)
+            outcome = run(path, ws_dir, out_dir or Path(scratch) / "out", config, name=path.stem,
+                          context_factory=session)
         except RuntimeFailure:
             snap = session.context.meter.snapshot() if session.context else None
             if snap and snap.cache_misses:  # offline replay without recorded responses: not a parse failure
@@ -121,4 +130,5 @@ def parse_result(path: Path | str, config: ParserXConfig) -> ParseResult:
         tokens=snap.tokens if snap else {}, cost_usd=snap.cost_usd if snap else None,
         images_total=len(figures), images_skipped=sum(1 for b in figures if b.status in HIDDEN),
         warnings=warnings, sidecar_json=outcome.sidecar_json, document_status=outcome.status,
+        markdown_path=outcome.markdown_path if out_dir is not None else None,
     )

@@ -142,6 +142,10 @@ class Pipeline:
         output_dir = Path(output_dir)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {path}")
+        if self._config.pipeline == "v2":  # the output package (guide §4.5, Q42)
+            from parserx.runtimes.pipeline import parse_to_dir as v2_parse_to_dir
+
+            return v2_parse_to_dir(path, output_dir, self._config)
 
         self._meter.reset()
         self._gateway.budget.reset()

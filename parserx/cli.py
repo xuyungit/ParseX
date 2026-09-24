@@ -33,6 +33,8 @@ def main() -> None:
         help="Output directory (default: ./output/<filename>/)",
     )
     parse_cmd.add_argument("-c", "--config", type=Path, help="Config YAML path")
+    parse_cmd.add_argument("--pipeline", choices=("v1", "v2"),
+                           help="v2: workspace + toolkit, writes the output package (default: from the config)")
     parse_cmd.add_argument(
         "--set", dest="overrides", action="append", default=[],
         help="Override config with dotted.path=value (repeatable)",
@@ -314,6 +316,8 @@ def _cmd_parse(args: argparse.Namespace) -> None:
 
     loaded = load_config_with_result(args.config)
     config = apply_overrides(loaded.config, all_overrides)
+    if getattr(args, "pipeline", None):
+        config.pipeline = args.pipeline
 
     # Chapter splitting: honour both --split-chapters flag and config default
     if args.split_chapters:

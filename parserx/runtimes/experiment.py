@@ -216,7 +216,8 @@ def _export_check(doc_dir: Path, calls: list[dict], state, integrity_ok: bool) -
         if call.get("tool") != "export" or not envelope.get("ok") or not result:
             continue
         md, sidecar = Path(result["markdown"]), Path(result["sidecar"])
-        written += [md.resolve(), sidecar.resolve()]
+        written += [md.resolve(), sidecar.resolve()] + ([Path(result["summary"]).resolve()] if result.get("summary")
+                                                        else [])
         if md.resolve().parent == out_dir:
             last = result
     problems: list[str] = []

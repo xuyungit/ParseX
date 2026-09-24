@@ -140,15 +140,32 @@ def test_sidecar_passes_the_schema_and_is_byte_stable():
     assert json.loads(sidecar_json(state)) == data
 
 
-def test_export_writes_markdown_sidecar_and_shown_images(tmp_path):
+def test_export_writes_the_package(tmp_path):
+    # Q42: Markdown, every extracted image (hidden ones too), the document summary and the block sidecar
+    decorative = Asset.from_bytes(b"\x89PNG-icon", media_type="image/png", width=20, height=20, role="original")
     ws = tmp_path / "ws"
     (ws / "assets").mkdir(parents=True)
     (ws / ASSET.path).write_bytes(b"\x89PNG-img")
-    state = _state([_figure("f", 0), _figure("hidden", 1, status=BlockStatus.EXCLUDED)], pages=1)
-    md_path, sidecar_path = write_export(state, ws, tmp_path / "out", "doc")
-    assert md_path.read_text() == render_markdown(state)
-    assert (tmp_path / "out" / "images" / ASSET.path.split("/")[-1]).read_bytes() == b"\x89PNG-img"
-    assert validate_sidecar(json.loads(sidecar_path.read_text())) == []
+    (ws / decorative.path).write_bytes(b"\x89PNG-icon")
+    icon = Block(id="icon", kind=BlockKind.FIGURE, order=2, status=BlockStatus.EXCLUDED,
+                 anchors=[_pdf(1, 2), AssetAnchor(asset=decorative.id, bbox=(0, 0, 20, 20), image_size=(20, 20))])
+    photo = GenericSemantic(type="photo", summary=Evidenced(value="一座桥", level=EvidenceLevel.INFERRED))
+    state = _state([_block("h", BlockKind.TITLE, 0, text="第一章", level=1), _figure("f", 1, semantic=photo), icon],
+                   pages=1)
+    state.assets = [ASSET, decorative]
+    paths = write_export(state, ws, tmp_path / "out", "doc")
+    assert paths.markdown.read_text() == render_markdown(state)
+    assert sorted(p.name for p in (tmp_path / "out" / "images").iterdir()) == sorted(
+        [ASSET.path.split("/")[-1], decorative.path.split("/")[-1]])
+    assert decorative.path.split("/")[-1] not in paths.markdown.read_text()
+    assert validate_sidecar(json.loads(paths.sidecar.read_text())) == []
+    summary = json.loads(paths.summary.read_text())
+    assert paths.summary.name == "doc.json" and summary["status"] == "complete" and summary["pages"] == 1
+    assert summary["outline"] == [{"level": 1, "text": "第一章", "block": "h", "page": 1}]
+    images = {i["block"]: i for i in summary["images"]}
+    assert images["f"]["shown"] is True and images["f"]["type"] == "photo" and images["f"]["summary"] == "一座桥"
+    assert images["icon"]["shown"] is False and images["icon"]["file"].startswith("images/")
+    assert summary["files"] == {"markdown": "doc.md", "blocks": "doc.blocks.json", "images": "images/"}
 
 
 def test_blocks_joined_by_continues_render_as_one_paragraph():

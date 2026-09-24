@@ -163,3 +163,23 @@ def test_scan_engine_title_labels_propose_levels():
                                   title("b3", "1.1 Scope", "paragraph_title"), title("b4", "2 Method", "paragraph_title"),
                                   title("b5", "Native heading", None, engine="native_pdf")])
     assert [(b, lv) for b, _, lv, _ in engine_titles(state)] == [("b1", 1), ("b2", 2), ("b3", 3), ("b4", 2)]
+
+
+def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
+    # Q42: `parserx parse <doc> -o <dir> --pipeline v2` gives Markdown, images/, the summary and the sidecar
+    import sys
+
+    import parserx.cli
+
+    doc = Document()
+    doc.add_paragraph("Background", style="Heading 1")
+    doc.add_paragraph("Body text.")
+    path = tmp_path / "report.docx"
+    doc.save(path)
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["parserx", "parse", str(path), "-o", str(out), "--pipeline", "v2"])
+    parserx.cli.main()
+    assert sorted(p.name for p in out.iterdir()) == ["report.blocks.json", "report.json", "report.md"]
+    assert (out / "report.md").read_text() == "# Background\n\nBody text.\n"
+    summary = json.loads((out / "report.json").read_text())
+    assert summary["status"] == "complete" and summary["outline"][0]["text"] == "Background"

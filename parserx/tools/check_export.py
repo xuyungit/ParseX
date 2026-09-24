@@ -26,6 +26,7 @@ class ExportRequest(IRModel):
 class ExportResult(IRModel):
     markdown: str
     sidecar: str
+    summary: str  # <name>.json, the document summary (Q42)
     status: DocumentStatus
     missing: list[Missing]
 
@@ -56,6 +57,7 @@ def run_export(ctx: ToolContext, req: ExportRequest) -> ToolOutput[ExportResult]
         raise ToolFailure(FailureCode.CHECK_FAILED, "check does not pass: " + ", ".join(problems),
                           targets=result.unassigned + result.mismatched)
     state = ctx.ws.load()
-    md, sidecar = write_export(state, ctx.ws.root, Path(req.out), req.name or state.id)
-    return output(ExportResult(markdown=str(md.resolve()), sidecar=str(sidecar.resolve()), status=state.status,
-                               missing=state.missing), unresolved=unresolved_items(state))
+    paths = write_export(state, ctx.ws.root, Path(req.out), req.name or state.id)
+    return output(ExportResult(markdown=str(paths.markdown.resolve()), sidecar=str(paths.sidecar.resolve()),
+                               summary=str(paths.summary.resolve()), status=state.status, missing=state.missing),
+                  unresolved=unresolved_items(state))
