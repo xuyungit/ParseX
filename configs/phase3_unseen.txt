@@ -1,0 +1,10 @@
+# Phase 3 unseen set (guide §14 Q37, §9.4). Not run during development.
+# The isolation set lives in ground_truth/ (reported apart in development runs);
+# the new documents live in ground_truth_unseen/, which development runs do not scan.
+# Phase 3: regression_test.py --gt-dir ground_truth --gt-dir ground_truth_unseen --list configs/phase3_unseen.txt
+patent01
+paper01
+text_pic02
+unseen_word_spec01
+unseen_pdf_tables01
+unseen_scan_form01
