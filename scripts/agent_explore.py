@@ -100,6 +100,10 @@ def _run(argv: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(argv, check=True, text=True, capture_output=True, **kw)
 
 
+# The snapshot's Python is always started with -P: with -m it would otherwise put the working directory (the
+# repository, when the harness runs there) first on sys.path and import the repository's parserx, not the round's.
+
+
 def _codex_version() -> str:
     return _run(["codex", "--version"]).stdout.strip()
 
@@ -164,10 +168,10 @@ def cmd_snapshot(args) -> int:
         "#!/bin/sh\n"
         f"# ParserX tool snapshot {state['commit'][:12]} for round {args.round} (scripts/agent_explore.py).\n"
         'doc="$1"; shift\n'
-        f'exec "{python}" -m parserx.runtimes.px --env-file "{ENV_FILE}" --config "$doc/parserx.yaml" -- "$@"\n',
+        f'exec "{python}" -P -m parserx.runtimes.px --env-file "{ENV_FILE}" --config "$doc/parserx.yaml" -- "$@"\n',
         encoding="utf-8")
     px_run.chmod(0o755)
-    skills = json.loads(_run([str(python), "-m", "parserx.runtimes.experiment", "skills"]).stdout)
+    skills = json.loads(_run([str(python), "-P", "-m", "parserx.runtimes.experiment", "skills"]).stdout)
     config = load_config(CONFIG)
     snapshot = {
         "round": args.round, "created": _utc(), "commit": state["commit"], "dirty": state["dirty"],
@@ -299,9 +303,9 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     raw = load_raw_config(CONFIG)
     config = doc_config(raw, doc_dir)
     # the round's own template (shipped in the snapshot), so every run of a round gets the same task
-    template = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-m", "parserx.runtimes.experiment",
+    template = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-P", "-m", "parserx.runtimes.experiment",
                      "template"]).stdout
-    skills_json = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-m", "parserx.runtimes.experiment",
+    skills_json = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-P", "-m", "parserx.runtimes.experiment",
                         "skills"]).stdout
     skills = json.loads(skills_json)  # the snapshot's skills, also inlined in the task (one step fewer)
     agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}"},
@@ -457,7 +461,7 @@ def _scores(doc: str, expected: Path | None, export: dict) -> dict | None:
 
 def _snapshot_verify(args, doc_dir: Path) -> dict:
     python = _toolkit(args) / "venv" / "bin" / "python"
-    return json.loads(_run([str(python), "-m", "parserx.runtimes.experiment", "verify",
+    return json.loads(_run([str(python), "-P", "-m", "parserx.runtimes.experiment", "verify",
                             "--doc-dir", str(doc_dir)]).stdout)
 
 
@@ -535,7 +539,7 @@ def _control(args, snapshot: dict, doc: str) -> int:
     print(f"[{_utc()}] control {doc} ({input_path.name}, {_pages(input_path)} pages) …", flush=True)
     started, t0 = _utc(), time.monotonic()
     try:
-        proc = subprocess.run([str(python), "-m", "parserx.runtimes.experiment", "control", "--doc-dir",
+        proc = subprocess.run([str(python), "-P", "-m", "parserx.runtimes.experiment", "control", "--doc-dir",
                                str(doc_dir), "--env-file", str(ENV_FILE)], capture_output=True, text=True,
                               timeout=args.timeout_min * 60)
         (doc_dir / "control.log").write_text(proc.stderr, encoding="utf-8")
