@@ -623,6 +623,8 @@ class ExportResult(IRModel):
     missing: list[Missing]
 ```
 
+〔P1-5〕实现（`parserx/accounting/check.py`，`check(state, root=None)`）：`CheckResult` 增加 `mismatched`——去向与块状态不一致的账目条目（例如标为 output 的条目指向 duplicate / excluded 块，即静默丢失）；去向允许的块状态：output→ok/degraded，merged→ok/degraded/merged，duplicate→duplicate，excluded→excluded，failed→failed 或可见的回退块。非法引用覆盖：重复 id、账目指向的块、Relation 两端、AssetAnchor、Decision.refs、`derived_from`、页面渲染图、ImageRecord、missing。`missing` = 已记录的缺失 + 尚未记录的 failed 块（原因取其最后一条 Decision）。文档状态：有 pending 页为 in_progress；没有任何条目进入输出（output / merged）为 failed（§4.5"提取本身失败"）；有缺失、失败或跳过的页、failed 条目为 partial；否则 complete。`exportable` = 无未归属、无不一致、无非法引用、无缺失资源文件、无 pending 页。`PageRow` 定义在 `workspace/views.py`（overview 与 check 共用）。
+
 `export` 在 `exportable=False` 时返回 `check_failed`，不写文件。预算耗尽导致的失败或跳过，只要已经记入账目，仍可导出，状态为 `partial`。这样区分了"已知的缺失"和"静默丢失"两种情况。
 
 ## 6. 阶段一测试清单（先写测试）
