@@ -22,7 +22,7 @@ from parserx.prompts import load_prompt
 from parserx.render.markdown import _semantic_block
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.envelope import Change, DocText, Failure, FailureCode, ToolFailure
-from parserx.tools.vlm_tasks import DESCRIBE_SCHEMA, parse_describe
+from parserx.tools.vlm_tasks import describe_schema, parse_describe
 from parserx.workspace.queries import neighbors
 
 PROMPT = "describe_figure"
@@ -70,7 +70,8 @@ def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigu
     vlm = ctx.vlm(ctx.config.tools.describe_reasoning_effort)
     image_path = ctx.ws.root / asset.path
     kwargs = dict(context=context, temperature=0.0, max_tokens=ctx.config.tools.describe_max_tokens,
-                  structured_output_mode="json_schema", json_schema=DESCRIBE_SCHEMA,
+                  structured_output_mode="json_schema",
+                  json_schema=describe_schema(None if req.schema_ == "auto" else req.schema_),
                   json_schema_name="parserx_describe_figure")
     try:
         semantic = vlm.call("describe_image", image_path, prompt, parse=parse_describe, **kwargs)

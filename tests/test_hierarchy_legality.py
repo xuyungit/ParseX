@@ -127,3 +127,13 @@ def test_move_mark_pending_and_relations_apply():
 def test_requests_carry_no_text_field():
     for model in StructureChange.__args__[0].__args__:
         assert not {"text", "content"} & set(model.model_fields)
+
+
+def test_appendix_numbering_has_its_own_signature():
+    # "C.1" is appendix C, section 1: neither a Roman numeral nor the pattern of chapter "1".
+    assert numbering_signature("C.1 一般规定") == numbering_signature("A.2 材料") == "L.N"
+    assert numbering_signature("C.0.1 说明") == "L.N.N" and numbering_signature("1 总则") == "N"
+    # letter sequences share one pattern; I, V, X are Roman numerals
+    assert numbering_signature("A. 概述") == numbering_signature("B. 方法") == numbering_signature("C. 结果") == "L"
+    assert numbering_signature("I. Introduction") == numbering_signature("IV. 结论") == numbering_signature("V. 讨论") == "N"
+    assert numbering_signature("a) 前提") == numbering_signature("b) 条件") == "L)"

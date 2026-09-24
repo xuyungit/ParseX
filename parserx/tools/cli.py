@@ -101,6 +101,8 @@ _TOOL_OPTIONS = {
 
 def _load_json(value: str) -> Any:
     text = sys.stdin.read() if value == "-" else Path(value).read_text(encoding="utf-8")
+    if value == "-" and not text.strip():
+        raise ValueError("standard input is empty: pipe the JSON into the command (e.g. a heredoc) or give a file")
     return json.loads(text)
 
 

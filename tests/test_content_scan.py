@@ -126,3 +126,16 @@ def test_batch_pdf_is_byte_stable(tmp_path):
     assert a == b
     with fitz.open(stream=a, filetype="pdf") as sub:
         assert [p.get_text().strip() for p in sub] == ["page 1", "page 3"]
+
+
+def test_engine_line_breaks_outside_formulas_become_real_line_breaks():
+    # The engine writes an in-cell line break as a literal backslash-n; inside $…$ it is LaTeX (\nu).
+    table = r"<table><tr><td>种类</td><td>值</td></tr><tr><td>HRB400、HRB500\nHRBF400</td><td>$\nu_c$</td></tr></table>"
+    entries = [_entry("table", table, [100, 100, 900, 400], 1),
+               _entry("text", r"泊松比 $\nu_{c}$ 可采用0.2。\n下一行", [100, 420, 900, 480], 2)]
+    result = page_blocks(_scan(entries), page_size=(500.0, 700.0), first_seq=1, first_item=1)
+    grid = next(b for b in result.blocks if b.kind == BlockKind.TABLE).cells
+    assert grid.slot(1, 0).content == "HRB400、HRB500\nHRBF400" and grid.slot(1, 1).content == r"$\nu_c$"
+    assert "HRB400、HRB500<br>HRBF400" in grid.to_html()
+    text = next(b for b in result.blocks if b.kind == BlockKind.TEXT).text
+    assert text == "泊松比 $\\nu_{c}$ 可采用0.2。\n下一行"

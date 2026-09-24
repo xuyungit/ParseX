@@ -60,10 +60,12 @@ class FakeVLM:
         self.attempt_hook = None
         self.usage_hook = None
         self.calls = []
+        self.schemas = []
 
     def describe_image(self, image_path, prompt, *, context="", temperature=0.1, max_tokens=8192,
                        structured_output_mode="off", json_schema=None, json_schema_name="x"):
         self.calls.append(json_schema_name)
+        self.schemas.append(json_schema)
         if self.usage_hook:
             self.usage_hook("gpt-6-luna", 1000, 0, 100)
         if json_schema_name == "parserx_review_table":
@@ -340,3 +342,27 @@ def test_rejected_review_leaves_an_unresolved_item(ws):
                    context=Context)
     assert env.ok and not env.result.adopted
     assert env.unresolved[0].kind == "table_uncertain" and "structure_valid" in env.unresolved[0].detail
+
+
+def test_read_a_block_with_its_page_image(ws):
+    block = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TEXT)
+    env, code = _call("read", ws, {"block": block.id, "image": "page"})
+    assert env.ok and code == 0 and env.failures == []
+    by_page, _ = _call("read", ws, {"page": 1, "image": "page"})
+    assert env.result.image.asset == by_page.result.image.asset  # the page the block is on
+
+
+def test_a_named_figure_schema_is_enforced(ws):
+    context = _context()
+    figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
+    _call("describe_figure", ws, {"block": figure.id, "schema": "diagram"}, context=context)
+    assert context.fake_vlm.schemas[-1]["properties"]["type"]["enum"] == ["diagram"]
+
+
+def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "review_table", "--ws", str(ws), "--request", "-", "--json"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    with pytest.raises(SystemExit) as exit_info:
+        parserx.cli.main()
+    failure = json.loads(capsys.readouterr().out)["failures"][0]
+    assert exit_info.value.code == 2 and "standard input is empty" in failure["message"]

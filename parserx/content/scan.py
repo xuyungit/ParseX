@@ -12,6 +12,7 @@ from a page render and keep the engine's in-image text as evidence.
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 
 import fitz
@@ -148,6 +149,7 @@ def page_blocks(
                                  transform=transform)
         content = str(entry.get("block_content") or "")
         grid, status = None, BlockStatus.OK
+        content = engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n")
         if kind == BlockKind.TABLE:
             try:
                 grid = TableGrid.from_html(content)
@@ -188,6 +190,19 @@ def page_blocks(
             source=pixel_anchor, chars=chars,
             disposition="excluded" if status == BlockStatus.EXCLUDED else "output", block=block_id))
     return out
+
+
+_MATH = re.compile(r"(\$\$.*?\$\$|\$[^$]*\$)", re.S)
+
+
+def engine_text(content: str, *, line_break: str = "\n") -> str:
+    """The engine writes a line break inside a table cell or text as a literal backslash-n; inside a formula
+    (``$…$``) the same two characters are LaTeX (``\\nu``), so only the text outside formulas changes.
+    Table HTML gets ``<br>``, which the cell parser keeps as an in-cell line break."""
+    if "\\n" not in content:
+        return content
+    parts = _MATH.split(content)
+    return "".join(part if i % 2 else part.replace("\\n", line_break) for i, part in enumerate(parts))
 
 
 def _add(out: PageScanResult, asset: Asset, data: bytes) -> Asset:

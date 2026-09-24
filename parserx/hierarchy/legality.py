@@ -50,6 +50,7 @@ _NUMERAL = r"[0-9０-９]+|[一二三四五六七八九十百千零〇两]+|[IVX
 _NUMBERING_RE = re.compile(
     r"^\s*(?:"
     r"第\s*(?:[0-9０-９]+|[一二三四五六七八九十百千零〇两]+)\s*[章节条篇部编]"  # 第三章
+    r"|[A-Za-z]\s*[.．]\s*[0-9０-９]+(?:\s*[.．]\s*[0-9０-９]+)*"  # C.1 / C.0.1 (appendix), before Roman C.
     r"|[0-9０-９]+(?:\s*[.．]\s*[0-9０-９]+)+\.?"  # 1.2 / 1.2.3.
     r"|[(（]\s*(?:" + _NUMERAL + r")\s*[)）]"  # （一） (3)
     r"|(?:" + _NUMERAL + r")\s*[、.．)）]"  # 一、 3. 3)
@@ -66,7 +67,10 @@ def numbering_signature(text: str) -> str | None:
     if not match:
         return None
     token = re.sub(r"\s+", "", match.group(0)).rstrip(".．")
-    token = re.sub(r"^[A-Za-z](?=[.)])", "L", token)
+    # A leading letter before a delimiter is a letter sequence (A., b), C.1), except I / V / X: Roman numerals.
+    letter = re.match(r"(?![IVXivx](?:[.．)]|$))[A-Za-z](?=[.．)]|$)", token)
+    if letter:
+        return "L" + _NUMERAL_RE.sub("N", token[1:]).replace("．", ".")
     return _NUMERAL_RE.sub("N", token).replace("．", ".")
 
 

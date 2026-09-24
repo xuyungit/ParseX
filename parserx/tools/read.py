@@ -76,7 +76,10 @@ def _image(ctx: ToolContext, state, req: ReadRequest, blocks_by_id) -> tuple[Ima
     if req.image == "page":
         if state.format != "pdf":
             return None, "DOCX has no page images; figure blocks can be read with image=crop"
-        page = next(p for p in state.pages if p.n == req.page)
+        n = req.page if req.page is not None else block_unit(state, blocks_by_id[req.block])
+        page = next((p for p in state.pages if p.n == n), None)
+        if page is None:
+            return None, f"block {req.block} has no page to render"
         asset, data, transform = page_render(ctx.ws.source_path, page.n, dpi, page.size_pt)
         path = renders / f"{asset.id}.png"
         write_once(path, data)

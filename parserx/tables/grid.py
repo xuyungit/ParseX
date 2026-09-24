@@ -124,7 +124,7 @@ class TableGrid(IRModel):
     def from_html(cls, html: str) -> "TableGrid":
         """Parse the first ``<table>`` in *html*. Raises ValueError on malformed spans."""
         try:
-            grid = _build_table_grid(_collect_rows(_get_table(html)))
+            grid = _build_table_grid(_collect_rows(_get_table(html), line_join="\n"))  # in-cell line breaks kept
         except _TableConversionError as exc:
             raise ValueError(str(exc)) from exc
         cells = [

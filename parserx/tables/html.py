@@ -134,7 +134,8 @@ def _get_table(html: str) -> _HTMLNode:
     return tables[0]
 
 
-def _extract_cell_text(node: _HTMLNode) -> str:
+def _extract_cell_text(node: _HTMLNode, line_join: str = " / ") -> str:
+    """Cell text; lines (``<br>``, block elements) are joined with *line_join* (v1: " / "; TableGrid: a newline)."""
     parts: list[str] = []
 
     def walk(current: _HTMLNode) -> None:
@@ -159,7 +160,7 @@ def _extract_cell_text(node: _HTMLNode) -> str:
     text = text.replace(" \n ", "\n").replace("\n ", "\n").replace(" \n", "\n")
     lines = [_normalize_html_text(line) for line in text.split("\n")]
     lines = [line for line in lines if line]
-    return " / ".join(lines) if lines else ""
+    return line_join.join(lines) if lines else ""
 
 
 def _infer_table_section(node: _HTMLNode) -> str:
@@ -175,13 +176,14 @@ def _parse_row(
     tr: _HTMLNode,
     section: str,
     row_index: int,
+    line_join: str = " / ",
 ) -> list[_TableCell]:
     cells: list[_TableCell] = []
     for child in tr.children:
         if child.tag not in _CELL_TAGS:
             continue
         cells.append(_TableCell(
-            text=_extract_cell_text(child),
+            text=_extract_cell_text(child, line_join),
             is_header=child.tag == "th",
             rowspan=_safe_int(child.attrs.get("rowspan"), 1),
             colspan=_safe_int(child.attrs.get("colspan"), 1),
@@ -193,21 +195,21 @@ def _parse_row(
     return cells
 
 
-def _collect_rows(table: _HTMLNode) -> list[tuple[str, list[_TableCell]]]:
+def _collect_rows(table: _HTMLNode, line_join: str = " / ") -> list[tuple[str, list[_TableCell]]]:
     rows: list[tuple[str, list[_TableCell]]] = []
     direct = [child for child in table.children if child.tag in _SECTION_TAGS or child.tag == "tr"]
     if not direct:
         direct = table.children
     for child in direct:
         if child.tag == "tr":
-            rows.append(("tbody", _parse_row(child, "tbody", len(rows))))
+            rows.append(("tbody", _parse_row(child, "tbody", len(rows), line_join)))
         elif child.tag in _SECTION_TAGS:
             for tr in [grandchild for grandchild in child.children if grandchild.tag == "tr"]:
-                rows.append((child.tag, _parse_row(tr, child.tag, len(rows))))
+                rows.append((child.tag, _parse_row(tr, child.tag, len(rows), line_join)))
     if not rows:
         for tr in table.descendants("tr"):
             section = _infer_table_section(tr)
-            rows.append((section, _parse_row(tr, section, len(rows))))
+            rows.append((section, _parse_row(tr, section, len(rows), line_join)))
     return rows
 
 

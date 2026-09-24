@@ -7,6 +7,7 @@ JSON but does not fit the task is final and reported as a failure.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from typing import Any
@@ -44,6 +45,17 @@ DESCRIBE_SCHEMA: dict[str, Any] = {
         "diagram": {"anyOf": [{"type": "null"}, _DIAGRAM]},
     },
 }
+
+
+def describe_schema(figure_type: str | None = None) -> dict[str, Any]:
+    """The description schema; a caller-named type is the only type the model may answer."""
+    if figure_type is None:
+        return DESCRIBE_SCHEMA
+    schema = copy.deepcopy(DESCRIBE_SCHEMA)
+    schema["properties"]["type"]["enum"] = [figure_type]
+    return schema
+
+
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False, "required": ["table_html", "undetermined"],
     "properties": {
