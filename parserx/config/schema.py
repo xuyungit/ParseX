@@ -231,6 +231,20 @@ class SchedulingConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
 
+class ToolsConfig(BaseModel):
+    """Document toolkit settings (guide §5)."""
+
+    # Figure description and table review use the VLM service with their own reasoning effort
+    # (guide §10.3: transcription / review ``none``, description ``low``); None keeps the service's.
+    describe_reasoning_effort: str | None = "low"
+    review_reasoning_effort: str | None = None
+    describe_max_tokens: int = 2048
+    review_max_tokens: int = 4096
+    read_dpi: int = 150  # default page render resolution for ``read``
+    crop_pad_pt: float = 6.0
+    scan_batch_pages: int = 100  # pages per scan-engine request (guide §8.2: bounded batches)
+
+
 class ServicesConfig(BaseModel):
     vlm: ServiceConfig = Field(default_factory=ServiceConfig)
     llm: ServiceConfig = Field(default_factory=ServiceConfig)
@@ -276,6 +290,7 @@ class ParserXConfig(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
 
 # ── Loader ──────────────────────────────────────────────────────────────

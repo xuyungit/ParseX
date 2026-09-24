@@ -110,6 +110,10 @@ class PaddleOCRService:
         # Submitted jobs by request key (in memory unless the pipeline gives a directory).
         self.job_store: JobStore = JobStore()
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def recognize(self, image_path: Path) -> OCRResult:
         """OCR a single image."""
         result = self._run_with_retries(image_path.read_bytes(), image_path.name, "image/png")
@@ -125,6 +129,19 @@ class PaddleOCRService:
 
     # ── Transport ─────────────────────────────────────────────────────
 
+    def request_key(self, file_bytes: bytes, mime: str) -> str:
+        """Cache key of the job for *file_bytes* (recorded as ``raw_ref`` on the Observations it yields)."""
+        return request_key("ocr", self._material(file_bytes, mime))
+
+    def _material(self, file_bytes: bytes, mime: str) -> dict:
+        return {
+            "endpoint": endpoint_identity(self._url),
+            "model": self._model,
+            "options": _OPTIONS,
+            "mime": mime,
+            "file_sha256": bytes_digest(file_bytes),
+        }
+
     def _run_with_retries(self, file_bytes: bytes, filename: str, mime: str) -> dict:
         """The single transport exit: raw merged result for one file, via the gateway.
 
@@ -132,13 +149,7 @@ class PaddleOCRService:
         pipeline options; the upload filename (often a temp name) is not part
         of the request semantics.  Transport retries happen in the gateway.
         """
-        material = {
-            "endpoint": endpoint_identity(self._url),
-            "model": self._model,
-            "options": _OPTIONS,
-            "mime": mime,
-            "file_sha256": bytes_digest(file_bytes),
-        }
+        material = self._material(file_bytes, mime)
         pages = _page_count(file_bytes, mime)
         job_key = request_key("ocr", material)
         return self.gateway.call(

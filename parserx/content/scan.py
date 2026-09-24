@@ -71,6 +71,12 @@ def render_page(src: fitz.Document, n: int, width_px: int) -> tuple[bytes, int, 
     return pix.tobytes("png"), pix.width, pix.height, float(round(dpi))
 
 
+def render_page_at(src: fitz.Document, n: int, dpi: int) -> tuple[bytes, int, int]:
+    """PNG of page *n* at *dpi*; (bytes, width, height)."""
+    pix = src[n - 1].get_pixmap(dpi=dpi)
+    return pix.tobytes("png"), pix.width, pix.height
+
+
 def scan_order(boxes: list, orders: list[int | None]) -> list[int]:
     """Engine reading order; regions outside the text flow (order None) go before the first region below them."""
     result = sorted((i for i, o in enumerate(orders) if o is not None), key=lambda i: (orders[i], i))

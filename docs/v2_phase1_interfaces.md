@@ -629,6 +629,19 @@ class ExportResult(IRModel):
 
 `export` 在 `exportable=False` 时返回 `check_failed`，不写文件。预算耗尽导致的失败或跳过，只要已经记入账目，仍可导出，状态为 `partial`。这样区分了"已知的缺失"和"静默丢失"两种情况。
 
+### 5.9 〔P1-7〕实现与偏离
+
+- 入口：`parserx.tools.call_tool(name, ws, request, config=)`（进程内，固定序列运行时用）与 `parserx tool <name> … --json`、`parserx workspace init`、`parserx tool schema <name>`（CLI）。每次调用写一条 `calls.jsonl`（请求、信封）。
+- **文档文字一律在 `DocText` 中**：块文字、观察文字、表格单元格（`TableView` / `CellView.content`）、大纲预览、复核的单元格差异，以及 `describe_figure` 的结果——结果的 `semantic` 是渲染后的 `> [图片语义]` 文本（`DocText`），另给 `type`；类型化的语义在 sidecar 的块上（〔偏离〕接口原写 `semantic: FigureSemantic`：图中可见文字的转录也是文档文字）。
+- 失败码增加 `internal_error`（退出码 1）。请求校验失败退出码 2；找不到工作区、块或页为 `not_found`。
+- 预算与统计跨调用持续：`state.stats` 保存累计请求、token、费用与耗时，每次调用的上下文据此预载文档预算，调用结束后把本次用量加回。
+- `read` 生成的页面渲染图与裁剪图写在 `<ws>/renders/`（按内容命名），**不登记到状态**，读取不改变工作区版本；DOCX 没有页面图，只有图片块能取图。
+- `recognize`：`paddleocr` 只识别整页，只处理原生层判定失败（pending / failed / skipped）的页；原生层通过的页返回非致命的 `invalid_request`（选择步骤会保留原生文字）；`force` 重新识别已由扫描页引擎识别的页；`native` 只返回已有的原生观察；`layout` 见 P1-9；`vlm` 在阶段四。结果最多 50 条观察视图，另给 `observations_total`，保持 JSON 长度有界。
+- `review_table`：只支持有页面几何的表格（DOCX 表格来自原生 XML，没有图像证据）；裁剪图登记为 Asset，候选 Observation 的锚点指向它；"没有新证据"＝同一问题针对同一份识别结果（最近一条非复核的 Observation）再次提出；接受门见 §2 与 `content/select.py`。
+- `describe_figure`：已有描述时直接返回（`cached=true`，不发请求）；描述失败时图片保持原样，失败写在 `failures`。
+- `apply_structure`：请求增加 `actor`（写入每条 Decision）；`DecisionStage` 增加 `structure`（移动、待定）。所有被拒或 atomic 下有被拒时不开事务、不改版本。
+- 配置新增 `tools`（描述与复核的 reasoning effort、max tokens、`read_dpi`、`crop_pad_pt`、`scan_batch_pages`）；提示词在 `parserx/prompts/`（`describe_figure.md`、`review_table.md`），内容哈希计入缓存键与 `state.prompt_hashes`。
+
 ## 6. 阶段一测试清单（先写测试）
 
 | 测试文件 | 覆盖 |

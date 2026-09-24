@@ -55,6 +55,7 @@ class DecisionStage(StrEnum):
     HEADING_LEVEL = "heading_level"
     EXCLUDE = "exclude"
     BUDGET = "budget"
+    STRUCTURE = "structure"  # reading order, relations, "structure pending" (apply_structure)
 
 
 class TaskKind(StrEnum):

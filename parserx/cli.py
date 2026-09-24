@@ -171,11 +171,21 @@ def main() -> None:
     # parserx init
     sub.add_parser("init", help="Create global config directory (~/.config/parserx/)")
 
+    # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
+    from parserx.tools.cli import add_parsers as _add_tool_parsers
+
+    _add_tool_parsers(sub)
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.command in ("tool", "workspace"):
+        from parserx.tools.cli import main as _tool_main
+
+        sys.exit(_tool_main(args))
 
     level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")

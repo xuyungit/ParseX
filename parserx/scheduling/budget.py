@@ -51,6 +51,13 @@ class Budget:
             self._spent = 0.0
             self._reserved = 0.0
 
+    def preload(self, used: Mapping[str, int], usd: float, elapsed_s: float) -> None:
+        """Continue a document whose earlier requests were made by another process (tool calls)."""
+        with self._lock:
+            self._used.update({k: v for k, v in used.items() if v})
+            self._spent += usd
+            self._start -= elapsed_s
+
     def reserve(self, service: str) -> Reservation:
         limits = self.limits
         with self._lock:

@@ -209,19 +209,28 @@ class MeteredService:
         if hasattr(inner, "usage_hook"):
             inner.usage_hook = self._gateway.record_usage
 
+    def call(self, method: str, *args: Any, parse: Callable[[Any], Any] | None = None, **kwargs: Any) -> Any:
+        """One request method through the gateway, with an optional parser (see ``ServiceGateway.call``)."""
+        attr = getattr(self._inner, method)
+        material = self._material(method, args, kwargs)
+        return self._gateway.call(self._service, material, lambda: attr(*args, **kwargs), parse=parse)
+
+    def request_key(self, method: str, *args: Any, **kwargs: Any) -> str:
+        """Cache key of this request (recorded as an Observation's ``raw_ref``)."""
+        return request_key(self._service, self._material(method, args, kwargs))
+
+    def _material(self, method: str, args: tuple, kwargs: dict) -> dict[str, Any]:
+        bound = inspect.signature(getattr(self._inner, method)).bind(*args, **kwargs)
+        bound.apply_defaults()
+        return {"method": method, **self._identity, "args": digest_arguments(dict(bound.arguments))}
+
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
         if name not in _REQUEST_METHODS or not callable(attr):
             return attr
 
         def through_gateway(*args: Any, **kwargs: Any) -> Any:
-            bound = inspect.signature(attr).bind(*args, **kwargs)
-            bound.apply_defaults()
-            material = {
-                "method": name,
-                **self._identity,
-                "args": digest_arguments(dict(bound.arguments)),
-            }
+            material = self._material(name, args, kwargs)
             return self._gateway.call(self._service, material, lambda: attr(*args, **kwargs))
 
         return through_gateway

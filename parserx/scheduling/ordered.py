@@ -10,7 +10,7 @@ request is sent.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Generic, Iterable, Literal, TypeVar
 
 from parserx.cache import CacheMiss
@@ -31,6 +31,7 @@ class TaskOutcome(Generic[T, R]):
     value: R | None = None
     error: str | None = None
     retryable: bool = False
+    exception: BaseException | None = field(default=None, repr=False)  # for callers that map failure types
 
 
 def run_ordered(
@@ -50,12 +51,12 @@ def run_ordered(
             try:
                 value = future.result()
             except BudgetExhausted as exc:
-                outcomes.append(TaskOutcome(index, task, "skipped_budget", error=str(exc)))
+                outcomes.append(TaskOutcome(index, task, "skipped_budget", error=str(exc), exception=exc))
             except CacheMiss as exc:
-                outcomes.append(TaskOutcome(index, task, "cache_miss", error=str(exc)))
+                outcomes.append(TaskOutcome(index, task, "cache_miss", error=str(exc), exception=exc))
             except Exception as exc:
                 outcomes.append(TaskOutcome(index, task, "failed", error=f"{type(exc).__name__}: {exc}",
-                                            retryable=is_retryable(exc)))
+                                            retryable=is_retryable(exc), exception=exc))
             else:
                 if apply is not None:
                     apply(task, value)
