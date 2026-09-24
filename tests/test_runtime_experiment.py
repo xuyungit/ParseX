@@ -164,3 +164,16 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
                      "check", "export", "tool schema", "doc_text"):
             assert tool in text
 
+
+def test_control_runs_the_fixed_sequence_in_an_experiment_directory(tmp_path):
+    from parserx.runtimes.experiment import run_control
+
+    doc_dir = tmp_path / "control"
+    doc_dir.mkdir()
+    _docx(doc_dir / "input.docx")
+    (doc_dir / "parserx.yaml").write_text(yaml.safe_dump(doc_config({"pipeline": "v2"}, doc_dir)))
+    outcome = run_control(doc_dir)
+    assert outcome["status"] == "complete" and outcome["error"] is None
+    report = verify_run(doc_dir)
+    assert report.integrity.ok and report.export.exported and report.export.current
+    assert "# SENTINEL 标题" in (doc_dir / "out" / "input.md").read_text()

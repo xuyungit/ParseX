@@ -208,9 +208,10 @@ def invoke(
         result=out.result if out is not None else None, cost=ctx.cost(wall, before), failures=failures,
         diff=out.diff if out is not None else [], unresolved=out.unresolved if out is not None else [],
     )
-    ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),
-                 "envelope": envelope.model_dump(mode="json", exclude={"result"}),
-                 "result": envelope.model_dump(mode="json")["result"]})
+    # The context's workspace committed this call's transactions (a runtime may share one context across calls).
+    ctx.ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),
+                     "envelope": envelope.model_dump(mode="json", exclude={"result"}),
+                     "result": envelope.model_dump(mode="json")["result"]})
     return envelope, code
 
 

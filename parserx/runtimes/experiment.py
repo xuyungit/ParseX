@@ -14,6 +14,9 @@ After the run the harness adds ``run/`` (events, last message, record).
 the export is compared with that snapshot's own rendering.
 
     python -m parserx.runtimes.experiment verify --doc-dir DIR   → JSON on stdout
+
+The control (plan P2-3) is the fixed-sequence runtime on the same snapshot,
+input and config, in a directory of the same layout (``run_control``).
 """
 
 from __future__ import annotations
@@ -22,8 +25,10 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -241,15 +246,40 @@ def shipped_skills() -> dict[str, str]:
     return {name: load_skill(name).text for name in SKILLS}
 
 
+def run_control(doc_dir: Path) -> dict[str, Any]:
+    """The fixed-sequence runtime on an experiment directory's input and config (plan P2-3)."""
+    from parserx.config.schema import load_config
+    from parserx.runtimes.pipeline import RuntimeFailure, run
+
+    doc_dir = Path(doc_dir)
+    source = next(doc_dir.glob("input.*"))
+    config = load_config(doc_dir / "parserx.yaml")
+    started = time.monotonic()
+    try:
+        outcome = run(source, doc_dir / "ws", doc_dir / "out", config)
+        status, error = outcome.status, None
+    except RuntimeFailure as exc:
+        status, error = None, str(exc)
+    return {"status": status, "error": error, "wall_s": round(time.monotonic() - started, 1)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m parserx.runtimes.experiment")
     sub = parser.add_subparsers(dest="command", required=True)
     verify = sub.add_parser("verify", help="Post-run check of one experiment directory (JSON on stdout)")
     verify.add_argument("--doc-dir", type=Path, required=True)
     sub.add_parser("skills", help="The skills shipped in this installation (JSON on stdout)")
+    control = sub.add_parser("control", help="Fixed-sequence runtime on an experiment directory (JSON on stdout)")
+    control.add_argument("--doc-dir", type=Path, required=True)
+    control.add_argument("--env-file", type=Path, required=True, help="service settings (kept outside the directory)")
     args = parser.parse_args(argv)
     if args.command == "verify":
         print(verify_run(args.doc_dir).model_dump_json())
+    elif args.command == "control":
+        from dotenv import dotenv_values
+
+        os.environ.update({k: v for k, v in dotenv_values(args.env_file).items() if v is not None})
+        print(json.dumps(run_control(args.doc_dir)))
     else:
         print(json.dumps(shipped_skills(), ensure_ascii=False))
     return 0

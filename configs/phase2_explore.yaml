@@ -1,0 +1,24 @@
+# Phase 2 exploration set (guide §14 Q36, docs/v2_phase2_plan.md §3.1).
+# Documents with ground truth are found by name in ground_truth/ or
+# ground_truth_public/ (input preference .pdf, .docx, .doc, as in the
+# evaluation runner).  Documents without ground truth come from the legacy
+# sample directory, given as --sample-dir or PARSERX_SAMPLE_DOCS; only file
+# names are kept here.  The isolation set and text_pic01 are not used.
+documents:
+  - name: ocr_scan_jtg3362                         # scanned pages, dense tables, heading levels (4 p)
+  - name: pdf_text01_tables                        # cross-page and dense Chinese tables (5 p)
+  - name: ocr01                                    # mixed scanned pages, cross-page table (9 p)
+  - name: real_doc01                               # hand-formatted Word, headings without styles
+  - name: text_report01                            # hand-formatted Word, bold paragraphs as headings
+  - name: paper_chn01                              # two columns, formulas, garbled page 1 (7 p)
+  - name: omnidoc_book_zh_text_02                  # scanned page recognition (1 p)
+  - name: omnidoc_academic_literature_en_text_01   # scanned page recognition (1 p)
+  - name: deepseek                                 # printed web page: interface elements (1 p)
+  - name: jtg3362_full                             # scale: 268 scanned pages with an OCR layer
+    sample: "公路钢筋混凝土及预应力混凝土桥涵设计规范（JTG 3362—2018）(OCR).pdf"
+  - name: real_doc03_docx                          # scale, hand-formatted Word (87 p); same document as below
+    sample: real_doc03.docx
+  - name: real_doc03_pdf
+    sample: real_doc03.pdf
+  - name: thesis_eng01                             # English thesis, many figures (19 p)
+    sample: thesis_eng01.pdf

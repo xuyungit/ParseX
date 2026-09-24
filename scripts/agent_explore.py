@@ -4,7 +4,8 @@
     uv run python scripts/agent_explore.py snapshot --round r1 --rules r1
     uv run python scripts/agent_explore.py run      --round r1 --doc text_table01 [--input PATH]
     uv run python scripts/agent_explore.py verify   --round r1 --doc text_table01
-    uv run python scripts/agent_explore.py summary  --round r1
+    uv run python scripts/agent_explore.py control  --round r1 --doc ocr01      (or --all)
+    uv run python scripts/agent_explore.py summary  --round r1 [--control]
 
 - ``snapshot``: the round's tool snapshot outside the repository — a wheel
   built from ``git archive`` of the (clean) HEAD, installed with the locked
@@ -17,7 +18,14 @@
   the event stream, usage of the agent and of the tools, scores for documents
   with ground truth (computed here; the agent never sees them) →
   ``<doc>/run/record.json``.
-- ``summary``: one table over a round's records.
+- ``control``: the fixed-sequence runtime v2 on the same snapshot, input and
+  config, in ``<round>/_control/<doc>/`` (plan P2-3); verified and scored the
+  same way → ``record.json`` there.
+- ``summary``: one table over a round's records, with the v1 frozen baseline.
+
+Documents are named as in ``configs/phase2_explore.yaml``: ground-truth
+documents by name, the others from the legacy sample directory
+(``--sample-dir`` or ``PARSERX_SAMPLE_DOCS``).
 
 A voided run (failed audit or integrity, infrastructure failure) is kept as
 ``<doc>.void<N>``; ``run --rerun REASON`` starts over and records the reason.
@@ -66,6 +74,9 @@ CONFIG = REPO_ROOT / "configs" / "regression_v2.yaml"  # the fixed-sequence v2 c
 ENV_FILE = REPO_ROOT / ".env"
 TEMPLATE = REPO_ROOT / "parserx" / "runtimes" / "agent_task.md"
 GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public")
+EXPLORE_SET = REPO_ROOT / "configs" / "phase2_explore.yaml"
+V1_BASELINE = REPO_ROOT / "eval_runs" / "2026-09-23_p0_v1_gpt-6-luna.rescored-2.1.json"
+INPUT_ORDER = (".pdf", ".docx", ".doc")  # as the evaluation runner picks them
 MODEL, EFFORT = "gpt-6-sol", "high"  # Q35: explicit on every run
 PROMPT = "Follow the task in AGENTS.md in the current directory. Work only with the files in this directory."
 LARGE_PAGES, SMALL_MIN, LARGE_MIN = 100, 30, 90  # Q39
@@ -190,15 +201,39 @@ def _expected(doc: str) -> Path | None:
     return None
 
 
-def _find_input(doc: str, explicit: Path | None) -> tuple[Path, Path | None]:
+def _explore_set() -> list[dict]:
+    import yaml
+
+    return yaml.safe_load(EXPLORE_SET.read_text(encoding="utf-8"))["documents"]
+
+
+def _sample_dir(args) -> Path | None:
+    value = args.sample_dir or os.environ.get("PARSERX_SAMPLE_DOCS")
+    return Path(value).resolve() if value else None
+
+
+def _find_input(args, doc: str) -> tuple[Path, Path | None]:
     """(input file, expected.md or None)."""
+    if getattr(args, "input", None):
+        return args.input.resolve(), _expected(doc)
     for gt in GT_DIRS:
-        inputs = sorted((gt / doc).glob("input.*")) if (gt / doc).is_dir() else []
-        if inputs:
-            return (explicit or inputs[0]), _expected(doc)
-    if explicit is None:
-        sys.exit(f"{doc} has no ground-truth directory: give --input")
-    return explicit, None
+        for ext in INPUT_ORDER:
+            if (gt / doc / f"input{ext}").is_file():
+                return gt / doc / f"input{ext}", _expected(doc)
+    entry = next((d for d in _explore_set() if d["name"] == doc and d.get("sample")), None)
+    if entry is not None:
+        sample_dir = _sample_dir(args)
+        if sample_dir is None:
+            sys.exit(f"{doc} comes from the sample directory: give --sample-dir or PARSERX_SAMPLE_DOCS")
+        return sample_dir / entry["sample"], None
+    sys.exit(f"{doc}: no ground truth, not in {EXPLORE_SET.name}; give --input")
+
+
+def _forbidden(args) -> dict[str, Path]:
+    roots = {"repository": REPO_ROOT, "experiment root": args.exp_root.resolve()}
+    if _sample_dir(args) is not None:
+        roots["sample documents"] = _sample_dir(args)
+    return roots
 
 
 def _pages(path: Path) -> int | None:
@@ -233,7 +268,7 @@ def cmd_run(args) -> int:
                  "a round never mixes versions (start a new round)")
     if (args.model, args.effort) != (snapshot["agent"]["model"], snapshot["agent"]["reasoning_effort"]):
         sys.exit(f"the round uses {snapshot['agent']}: a round never mixes models (guide §14 Q35)")
-    input_path, expected = _find_input(args.doc, args.input)
+    input_path, expected = _find_input(args, args.doc)
     round_dir = _round_dir(args)
     doc_dir = round_dir / args.doc
     interventions = list(args.intervention or [])
@@ -309,26 +344,18 @@ def cmd_run(args) -> int:
 def _verify(args, doc_dir: Path, expected: Path | None) -> int:
     snapshot = _snapshot(args)
     meta = json.loads((doc_dir / "run" / "meta.json").read_text())
-    python = _toolkit(args) / "venv" / "bin" / "python"
-    verification = json.loads(_run([str(python), "-m", "parserx.runtimes.experiment", "verify",
-                                    "--doc-dir", str(doc_dir)]).stdout)
+    verification = _snapshot_verify(args, doc_dir)
     events, bad_lines = read_events(doc_dir / "run" / "events.jsonl")
     usage = usage_from_events(events)
     audit = audit_events(events, doc_dir=doc_dir, home=Path.home(),
-                         forbidden={"repository": REPO_ROOT, "experiment root": args.exp_root.resolve()})
+                         forbidden=_forbidden(args))
     scratch = sorted(
         str(p.relative_to(doc_dir)) for p in doc_dir.rglob("*")
         if p.is_file() and p.relative_to(doc_dir).parts[0] not in ("ws", "out", "run", ".parserx_cache")
         and str(p.relative_to(doc_dir)) not in meta["files"]
     )
-    scores = None
     export = verification["export"]
-    if expected is not None and export["exported"]:
-        markdown = Path(export["markdown"]).read_text(encoding="utf-8")
-        result = evaluate_markdown(markdown, expected.read_text(encoding="utf-8"), name=args.doc)
-        scores = {"metric_version": METRIC_VERSION, **document_scores(result)}
-        for key in ("requests", "ocr_pages", "attempts", "cache_hits", "wall_time_seconds", "cost_usd"):
-            scores.pop(key)  # cost comes from the tools' own accounting below
+    scores = _scores(args.doc, expected, export)
     record = {
         "conditions": {
             "round": args.round, "rules": snapshot["rules"], "doc": args.doc, "toolkit_commit": snapshot["commit"],
@@ -339,7 +366,8 @@ def _verify(args, doc_dir: Path, expected: Path | None) -> int:
             "deadline_min": meta["deadline_min"], "exit_code": meta["exit_code"], "timed_out": meta["timed_out"],
             "input": meta["input"], "input_sha256": meta["input_sha256"], "pages": meta["pages"],
         },
-        "agent": {**usage.model_dump(), "wall_s": meta["wall_s"], "event_lines_not_json": bad_lines},
+        "agent": {**usage.model_dump(), "wall_s": meta["wall_s"], "event_lines_not_json": bad_lines,
+                  "usd_at_list_price": _list_price(snapshot["agent"]["model"], usage)},
         "tools": verification["tools"],
         "result": {"check": verification["check"], "export": export, "scratch_files": scratch},
         "scores": scores,
@@ -350,6 +378,34 @@ def _verify(args, doc_dir: Path, expected: Path | None) -> int:
     (doc_dir / "run" / "record.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     _print_record(record)
     return 0 if record["hygiene"]["valid"] else 1
+
+
+def _scores(doc: str, expected: Path | None, export: dict) -> dict | None:
+    """Metrics of the exported Markdown (same metric version as the frozen runs); cost is recorded apart."""
+    if expected is None or not export["exported"]:
+        return None
+    markdown = Path(export["markdown"]).read_text(encoding="utf-8")
+    result = evaluate_markdown(markdown, expected.read_text(encoding="utf-8"), name=doc)
+    scores = {"metric_version": METRIC_VERSION, **document_scores(result)}
+    for key in ("requests", "ocr_pages", "attempts", "cache_hits", "wall_time_seconds", "cost_usd"):
+        scores.pop(key)
+    return scores
+
+
+def _snapshot_verify(args, doc_dir: Path) -> dict:
+    python = _toolkit(args) / "venv" / "bin" / "python"
+    return json.loads(_run([str(python), "-m", "parserx.runtimes.experiment", "verify",
+                            "--doc-dir", str(doc_dir)]).stdout)
+
+
+def _list_price(model: str, usage) -> float | None:
+    """The agent's tokens at the model's API list price (it runs on the Codex account; for comparison only)."""
+    price = load_config(CONFIG).scheduling.prices.get(model)
+    if price is None:
+        return None
+    fresh = usage.input_tokens - usage.cached_input_tokens
+    return round((fresh * price.input + usage.cached_input_tokens * price.cached_input
+                  + usage.output_tokens * price.output) / 1e6, 4)
 
 
 def cmd_verify(args) -> int:
@@ -381,37 +437,115 @@ def _print_record(record: dict) -> None:
         print(f"  note   {note['detail']} [{note['item']}]")
 
 
+# ── control ─────────────────────────────────────────────────────────────
+
+
+def cmd_control(args) -> int:
+    snapshot = _snapshot(args)
+    docs = [d["name"] for d in _explore_set()] if args.all else [args.doc]
+    failed = 0
+    for doc in docs:
+        failed += _control(args, snapshot, doc)
+    return 1 if failed else 0
+
+
+def _control(args, snapshot: dict, doc: str) -> int:
+    import yaml
+
+    input_path, expected = _find_input(args, doc)
+    doc_dir = _round_dir(args) / "_control" / doc
+    if (doc_dir / "record.json").is_file() and not args.rerun:
+        print(f"{doc}: control already recorded (use --rerun to repeat it)")
+        return 0
+    if doc_dir.exists():
+        shutil.rmtree(doc_dir)
+    doc_dir.mkdir(parents=True)
+    shutil.copyfile(input_path, doc_dir / f"input{input_path.suffix.lower()}")
+    (doc_dir / "parserx.yaml").write_text(
+        yaml.safe_dump(doc_config(load_raw_config(CONFIG), doc_dir), allow_unicode=True, sort_keys=False))
+    python = _toolkit(args) / "venv" / "bin" / "python"
+    print(f"[{_utc()}] control {doc} ({input_path.name}, {_pages(input_path)} pages) …", flush=True)
+    started, t0 = _utc(), time.monotonic()
+    try:
+        proc = subprocess.run([str(python), "-m", "parserx.runtimes.experiment", "control", "--doc-dir",
+                               str(doc_dir), "--env-file", str(ENV_FILE)], capture_output=True, text=True,
+                              timeout=args.timeout_min * 60)
+        (doc_dir / "control.log").write_text(proc.stderr, encoding="utf-8")
+        lines = proc.stdout.strip().splitlines()
+        outcome = json.loads(lines[-1]) if proc.returncode == 0 and lines else {
+            "status": None, "error": f"exit {proc.returncode}: {proc.stderr[-1500:]}"}
+    except subprocess.TimeoutExpired:
+        outcome = {"status": None, "error": f"deadline of {args.timeout_min} min"}
+    wall = round(time.monotonic() - t0, 1)
+    verification = _snapshot_verify(args, doc_dir)
+    record = {
+        "conditions": {"round": args.round, "doc": doc, "runtime": "pipeline v2 (fixed sequence)",
+                       "toolkit_commit": snapshot["commit"], "config_fingerprint": snapshot["config"]["fingerprint"],
+                       "service_models": snapshot["services"], "started": started, "ended": _utc(),
+                       "input": input_path.name, "input_sha256": _sha256(input_path), "pages": _pages(input_path)},
+        "outcome": {**outcome, "wall_s": wall},
+        "tools": verification["tools"],
+        "result": {"check": verification["check"], "export": verification["export"]},
+        "scores": _scores(doc, expected, verification["export"]),
+        "integrity": verification["integrity"],
+    }
+    (doc_dir / "record.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    t, sc = record["tools"] or {}, record["scores"] or {}
+    print(f"  status {outcome.get('status')} error {outcome.get('error')} {wall} s requests {t.get('requests')} "
+          f"cost {t.get('cost_usd')} char_f1 {sc.get('char_f1')} table_f1 {sc.get('table_cell_f1')} "
+          f"heading_f1 {sc.get('heading_f1')}", flush=True)
+    return 0 if outcome.get("status") else 1
+
+
 # ── summary ─────────────────────────────────────────────────────────────
 
 
+def _fmt(value, digits: int = 3) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.{digits}f}" if isinstance(value, float) else str(value)
+
+
 def cmd_summary(args) -> int:
-    rows = []
-    for path in sorted(_round_dir(args).glob("*/run/record.json")):
-        rec = json.loads(path.read_text())
-        c, a, t, r, s = rec["conditions"], rec["agent"], rec["tools"] or {}, rec["result"], rec["scores"] or {}
+    v1 = json.loads(V1_BASELINE.read_text())["documents"] if V1_BASELINE.is_file() else {}
+    order = [d["name"] for d in _explore_set()]
+    pattern = "_control/*/record.json" if args.control else "*/run/record.json"
+    records = [json.loads(p.read_text()) for p in _round_dir(args).glob(pattern)]
+    records.sort(key=lambda r: (order.index(r["conditions"]["doc"]) if r["conditions"]["doc"] in order else 99,
+                                r["conditions"]["doc"]))
 
-        def f(v, d=3):
-            return "—" if v is None else (f"{v:.{d}f}" if isinstance(v, float) else str(v))
+    def scores(rec) -> str:
+        s, base = rec["scores"] or {}, v1.get(rec["conditions"]["doc"], {})
+        return " | ".join(f"{_fmt(s.get(k))} ({_fmt(base.get(k))})" for k in ("char_f1", "table_cell_f1", "heading_f1"))
 
-        rows.append("| " + " | ".join([
-            c["doc"], "✅" if rec["hygiene"]["valid"] else "❌", f((r["check"] or {}).get("document_status")),
-            "✅" if r["export"]["exported"] and r["export"]["current"] else ("stale" if r["export"]["exported"] else "—"),
-            f"{a['wall_s']:.0f} s" + (" ⏱" if c["timed_out"] else ""), str(a["commands"]),
-            f"{a['input_tokens']:,}/{a['cached_input_tokens']:,}/{a['output_tokens']:,}",
-            json.dumps(t.get("requests", {})), f(t.get("cost_usd"), 4),
-            f(s.get("char_f1")), f(s.get("table_cell_f1")), f(s.get("heading_f1")),
-            str(len(rec["interventions"])),
-        ]) + " |")
-    print("| 文档 | 卫生 | 状态 | 导出 | 耗时 | 命令 | Agent token 输入/缓存/输出 | 工具请求 | 工具费用 | char_f1 | "
-          "表格 F1 | heading_f1 | 人工介入 |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-    print("\n".join(rows))
+    if args.control:
+        print("| 文档 | 状态 | 耗时 | 工具请求 | 费用 | char_f1（v1） | 表格 F1（v1） | heading_f1（v1） |")
+        print("|---|---|---|---|---|---|---|---|")
+        for rec in records:
+            t = rec["tools"] or {}
+            print(f"| {rec['conditions']['doc']} | {_fmt(rec['outcome'].get('status') or rec['outcome'].get('error'))} "
+                  f"| {rec['outcome']['wall_s']:.0f} s | {json.dumps(t.get('requests', {}))} | {_fmt(t.get('cost_usd'), 4)} "
+                  f"| {scores(rec)} |")
+        return 0
+    print("| 文档 | 卫生 | 状态 | 导出 | 耗时 | 命令 | Agent token 输入/缓存/输出 | Agent 标价 | 工具请求 | 工具费用 "
+          "| char_f1（v1） | 表格 F1（v1） | heading_f1（v1） | 人工介入 |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for rec in records:
+        c, a, t, r = rec["conditions"], rec["agent"], rec["tools"] or {}, rec["result"]
+        export = "✅" if r["export"]["exported"] and r["export"]["current"] else (
+            "旧" if r["export"]["exported"] else "—")
+        print(f"| {c['doc']} | {'✅' if rec['hygiene']['valid'] else '❌'} | {_fmt((r['check'] or {}).get('document_status'))} "
+              f"| {export} | {a['wall_s']:.0f} s{' ⏱' if c['timed_out'] else ''} | {a['commands']} "
+              f"| {a['input_tokens']:,}/{a['cached_input_tokens']:,}/{a['output_tokens']:,} "
+              f"| {_fmt(a.get('usd_at_list_price'), 2)} | {json.dumps(t.get('requests', {}))} | {_fmt(t.get('cost_usd'), 4)} "
+              f"| {scores(rec)} | {len(rec['interventions'])} |")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--exp-root", type=Path, default=DEFAULT_EXP_ROOT)
+    parser.add_argument("--sample-dir", type=Path, help="legacy sample documents (default: $PARSERX_SAMPLE_DOCS)")
     sub = parser.add_subparsers(dest="command", required=True)
     snap = sub.add_parser("snapshot")
     snap.add_argument("--round", required=True)
@@ -433,10 +567,20 @@ def main() -> int:
     ver.add_argument("--round", required=True)
     ver.add_argument("--doc", required=True)
     ver.add_argument("--input", type=Path)
+    ctl = sub.add_parser("control")
+    ctl.add_argument("--round", required=True)
+    which = ctl.add_mutually_exclusive_group(required=True)
+    which.add_argument("--doc")
+    which.add_argument("--all", action="store_true", help="every document of the exploration set")
+    ctl.add_argument("--rerun", action="store_true", help="repeat a recorded control")
+    ctl.add_argument("--timeout-min", type=int, default=120)
     summ = sub.add_parser("summary")
     summ.add_argument("--round", required=True)
+    summ.add_argument("--control", action="store_true", help="the fixed-sequence controls instead of agent runs")
     args = parser.parse_args()
-    return {"snapshot": cmd_snapshot, "run": cmd_run, "verify": cmd_verify, "summary": cmd_summary}[args.command](args)
+    commands = {"snapshot": cmd_snapshot, "run": cmd_run, "verify": cmd_verify, "control": cmd_control,
+                "summary": cmd_summary}
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":
