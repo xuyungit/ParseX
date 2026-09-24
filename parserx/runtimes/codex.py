@@ -140,7 +140,7 @@ SYSTEM_ROOTS = tuple(Path(p) for p in (
     "/opt/homebrew", "/opt/local", "/System", "/Library", "/etc", "/private/etc", "/Applications",
 ))
 _STOP = r"\s'\"`;|&<>(){}\[\],=\\"
-_ABSOLUTE = re.compile(rf"(?<![\w.:/~$)\]}}-])/[A-Za-z._~][^{_STOP}]*")
+_ABSOLUTE = re.compile(rf"(?<![\w.:/~$)\]}}<-])/[A-Za-z._~][^{_STOP}]*")  # not after "<": an HTML closing tag
 _PARENT = re.compile(rf"(?<![\w./])\.\.(?![.\w])(?:/[^{_STOP}]*)?")
 _HOME = re.compile(rf"(?<![\w.~/$])(?:~|\$HOME|\$\{{HOME\}})(?=/|[{_STOP}]|$)(?:/[^{_STOP}]*)?")
 

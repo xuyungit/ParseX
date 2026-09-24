@@ -65,6 +65,7 @@ def test_audit_accepts_work_inside_the_experiment_directory():
         _cmd(3, "/bin/zsh -lc \"python3 - <<'EOF'\nfrom PIL import Image\nim = Image.open('/tmp/crop.png')\n"
                 "print(im.size[0]/2, 'https://example.org/a/b')\nEOF\""),
         _cmd(4, "/bin/zsh -lc 'cd ws && ls renders && /usr/bin/env python3 -V'"),
+        _cmd(6, "/bin/zsh -lc \"rg -n '<tr><td>(15|16)</td>' out/input.md; echo '<br/></th>'\""),
         {"type": "item.completed", "item": {"id": "item_5", "type": "file_change", "status": "completed",
                                             "changes": [{"path": str(DOC / "notes.py"), "kind": "add"}]}},
     )
