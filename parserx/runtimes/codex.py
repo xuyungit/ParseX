@@ -113,6 +113,53 @@ def usage_from_events(events: Iterable[dict]) -> AgentUsage:
     return usage
 
 
+class AgentTiming(IRModel):
+    """Where the agent's wall time went (plan P2-5): model steps (no command running) versus commands."""
+
+    wall_s: float
+    model_s: float
+    command_s: float
+    steps: int
+    longest_step_s: float
+    median_step_s: float
+
+
+def timing_from_events(events: list[dict], times: list[float]) -> AgentTiming:
+    """*times*: when each event arrived (seconds).  A model step is an interval with no command running;
+    it ends when a command starts or the turn ends."""
+    running: set[str] = set()
+    idle_since = times[0] if times else 0.0
+    busy_since = 0.0
+    steps: list[float] = []
+    command_s = 0.0
+    for event, t in zip(events, times):
+        kind, item = event.get("type"), event.get("item") or {}
+        is_command = item.get("type") == "command_execution"
+        if kind == "item.started" and is_command:
+            if not running:
+                steps.append(t - idle_since)
+                busy_since = t
+            running.add(item.get("id"))
+        elif kind == "item.completed" and is_command:
+            if item.get("id") in running:
+                running.discard(item.get("id"))
+                if not running:
+                    command_s += t - busy_since
+                    idle_since = t
+            elif not running:  # completed without a start event: a step that ran an instant command
+                steps.append(t - idle_since)
+                idle_since = t
+        elif kind in ("turn.completed", "turn.failed") and not running:
+            steps.append(t - idle_since)
+            idle_since = t
+    ordered = sorted(steps)
+    return AgentTiming(
+        wall_s=round(times[-1] - times[0], 1) if times else 0.0, model_s=round(sum(steps), 1),
+        command_s=round(command_s, 1), steps=len(steps), longest_step_s=round(max(steps, default=0.0), 1),
+        median_step_s=round(ordered[len(ordered) // 2], 1) if ordered else 0.0,
+    )
+
+
 # ── Audit ────────────────────────────────────────────────────────────────
 
 HitKind = Literal["forbidden", "outside", "workspace_write", "tool_type", "unknown_type"]

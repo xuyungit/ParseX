@@ -2,7 +2,7 @@
 """Agent exploration harness (docs/v2_phase2_plan.md P2-1, §2.2–§2.5).
 
     uv run python scripts/agent_explore.py snapshot --round r1 --rules r1
-    uv run python scripts/agent_explore.py run      --round r1 --doc text_table01 [--input PATH]
+    uv run python scripts/agent_explore.py run      --round r1 --doc a,b [--jobs 1] (or --all; --input PATH)
     uv run python scripts/agent_explore.py verify   --round r1 --doc text_table01
     uv run python scripts/agent_explore.py control  --round r1 --doc ocr01      (or --all)
     uv run python scripts/agent_explore.py summary  --round r1 [--control]
@@ -58,7 +58,13 @@ from parserx.eval.freeze import git_state  # noqa: E402
 from parserx.eval.gate import document_scores  # noqa: E402
 from parserx.eval.metrics import METRIC_VERSION, evaluate_markdown  # noqa: E402
 from parserx.eval.reporting import config_fingerprint  # noqa: E402
-from parserx.runtimes.codex import audit_events, exec_command, read_events, usage_from_events  # noqa: E402
+from parserx.runtimes.codex import (  # noqa: E402
+    audit_events,
+    exec_command,
+    read_events,
+    timing_from_events,
+    usage_from_events,
+)
 from parserx.runtimes.px import _SECRET_NAME  # noqa: E402
 from parserx.runtimes.experiment import (  # noqa: E402
     config_problems,
@@ -262,20 +268,30 @@ def _void(doc_dir: Path) -> Path:
 
 def cmd_run(args) -> int:
     snapshot = _snapshot(args)
-    codex_version = _codex_version()
-    if codex_version != snapshot["codex_version"]:
-        sys.exit(f"Codex is {codex_version}, the round started with {snapshot['codex_version']}: "
-                 "a round never mixes versions (start a new round)")
     if (args.model, args.effort) != (snapshot["agent"]["model"], snapshot["agent"]["reasoning_effort"]):
         sys.exit(f"the round uses {snapshot['agent']}: a round never mixes models (guide §14 Q35)")
-    input_path, expected = _find_input(args, args.doc)
+    docs = [d["name"] for d in _explore_set()] if args.all else [d for spec in args.doc for d in spec.split(",")]
+    if len(docs) > 1 and args.input:
+        sys.exit("--input names one document")
+    for doc in docs:  # refuse before anything runs
+        if (_round_dir(args) / doc).exists() and not args.rerun:
+            sys.exit(f"{_round_dir(args) / doc} exists: an earlier run; use --rerun REASON to void it")
+    if args.jobs <= 1 or len(docs) == 1:
+        return max(_run_one(args, snapshot, doc) for doc in docs)
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:  # one Codex session per document
+        return max(pool.map(lambda doc: _run_one(args, snapshot, doc), docs))
+
+
+def _run_one(args, snapshot: dict, doc: str) -> int:
+    codex_version = _codex_version()  # any current or newer version (Q41); recorded per run
+    input_path, expected = _find_input(args, doc)
     round_dir = _round_dir(args)
-    doc_dir = round_dir / args.doc
+    doc_dir = round_dir / doc
     interventions = list(args.intervention or [])
     if doc_dir.exists():
-        if not args.rerun:
-            sys.exit(f"{doc_dir} exists: an earlier run; use --rerun REASON to void it and start over")
-        voided = _void(doc_dir)
+        voided = _void(doc_dir)  # --rerun given (checked in cmd_run)
         interventions.append(f"rerun: {args.rerun} (earlier run kept as {voided.name})")
 
     pages = _pages(input_path)
@@ -296,24 +312,38 @@ def cmd_run(args) -> int:
     problems = listing_problems(doc_dir) + config_problems(
         (doc_dir / "parserx.yaml").read_text(encoding="utf-8"), forbidden=[REPO_ROOT], secret_values=secrets)
     if problems:
-        sys.exit(f"experiment directory not clean: {problems}")
+        print(f"{doc}: experiment directory not clean: {problems}", file=sys.stderr)
+        return 2
 
-    runs = round_dir / "_runs" / args.doc
+    runs = round_dir / "_runs" / doc
     if runs.exists():
         shutil.rmtree(runs)
     runs.mkdir(parents=True)
     argv = exec_command(model=args.model, effort=args.effort, doc_dir=doc_dir,
                         last_message=runs / "last_message.md", prompt=PROMPT)
-    print(f"[{_utc()}] {args.doc}: {pages} pages, deadline {minutes} min, codex {codex_version}, "
+    print(f"[{_utc()}] {doc}: {pages} pages, deadline {minutes} min, codex {codex_version}, "
           f"{args.model} ({args.effort})", flush=True)
     # Codex and the agent's shell get no service settings: only px-run loads them, inside the tool process.
     dotenv_names = set(dotenv_values(ENV_FILE)) | set(dotenv_values(Path.home() / ".config" / "parserx" / ".env"))
     env = {k: v for k, v in os.environ.items() if k not in dotenv_names and not _SECRET_NAME.search(k)}
     started, t0 = _utc(), time.monotonic()
     timed_out = False
-    with open(runs / "events.jsonl", "wb") as out, open(runs / "stderr.log", "wb") as err:
-        proc = subprocess.Popen(argv, cwd=doc_dir, stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env,
-                                start_new_session=True)
+    with open(runs / "events.jsonl", "wb") as out, open(runs / "event_times.txt", "w") as times, \
+            open(runs / "stderr.log", "wb") as err:
+        proc = subprocess.Popen(argv, cwd=doc_dir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err,
+                                env=env, start_new_session=True)
+
+        def pump() -> None:  # every event line with the second it arrived (P2-5: per-step timing)
+            for line in proc.stdout:
+                out.write(line)
+                out.flush()
+                times.write(f"{time.monotonic() - t0:.3f}\n")
+                times.flush()
+
+        import threading
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
         try:
             exit_code = proc.wait(timeout=minutes * 60)
         except subprocess.TimeoutExpired:
@@ -325,28 +355,51 @@ def cmd_run(args) -> int:
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
             exit_code = proc.returncode
+        reader.join(timeout=30)
     ended, wall = _utc(), time.monotonic() - t0
     shutil.move(str(runs), str(doc_dir / "run"))
     meta = {
-        "round": args.round, "doc": args.doc, "input": input_path.name, "input_sha256": _sha256(input_path),
+        "round": args.round, "doc": doc, "codex_version": codex_version, "input": input_path.name, "input_sha256": _sha256(input_path),
         "pages": pages, "deadline_min": minutes, "started": started, "ended": ended, "wall_s": round(wall, 1),
         "exit_code": exit_code, "timed_out": timed_out, "command": argv[:-1] + ["<prompt>"], "prompt": PROMPT,
         "files": files, "interventions": interventions, "has_ground_truth": expected is not None,
     }
     (doc_dir / "run" / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
-    print(f"[{ended}] codex exited {exit_code}{' (deadline)' if timed_out else ''} after {wall:.0f} s", flush=True)
-    return _verify(args, doc_dir, expected)
+    print(f"[{ended}] {doc}: codex exited {exit_code}{' (deadline)' if timed_out else ''} after {wall:.0f} s",
+          flush=True)
+    return _verify(args, doc_dir, expected, doc)
 
 
 # ── verify ──────────────────────────────────────────────────────────────
 
 
-def _verify(args, doc_dir: Path, expected: Path | None) -> int:
+def _timed_events(run_dir: Path) -> tuple[list[dict], list[float]] | None:
+    """Events with their arrival times (runs from P2-5 on); None for runs without event_times.txt."""
+    path = run_dir / "event_times.txt"
+    if not path.is_file():
+        return None
+    events, times = [], []
+    lines = (run_dir / "events.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    for line, t in zip(lines, path.read_text().split()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+            times.append(float(t))
+    return events, times
+
+
+def _verify(args, doc_dir: Path, expected: Path | None, doc: str | None = None) -> int:
+    doc = doc or args.doc
     snapshot = _snapshot(args)
     meta = json.loads((doc_dir / "run" / "meta.json").read_text())
     verification = _snapshot_verify(args, doc_dir)
     events, bad_lines = read_events(doc_dir / "run" / "events.jsonl")
     usage = usage_from_events(events)
+    timed = _timed_events(doc_dir / "run")
+    timing = timing_from_events(*timed) if timed is not None else None
     audit = audit_events(events, doc_dir=doc_dir, home=Path.home(),
                          forbidden=_forbidden(args))
     scratch = sorted(
@@ -355,18 +408,20 @@ def _verify(args, doc_dir: Path, expected: Path | None) -> int:
         and str(p.relative_to(doc_dir)) not in meta["files"]
     )
     export = verification["export"]
-    scores = _scores(args.doc, expected, export)
+    scores = _scores(doc, expected, export)
     record = {
         "conditions": {
-            "round": args.round, "rules": snapshot["rules"], "doc": args.doc, "toolkit_commit": snapshot["commit"],
+            "round": args.round, "rules": snapshot["rules"], "doc": doc, "toolkit_commit": snapshot["commit"],
             "config_fingerprint": snapshot["config"]["fingerprint"], "skills": snapshot["skills"],
-            "agents_md_sha256": meta["files"]["AGENTS.md"], "codex_version": snapshot["codex_version"],
+            "agents_md_sha256": meta["files"]["AGENTS.md"],
+            "codex_version": meta.get("codex_version", snapshot["codex_version"]),
             "agent_model": snapshot["agent"]["model"], "agent_reasoning_effort": snapshot["agent"]["reasoning_effort"],
             "service_models": snapshot["services"], "started": meta["started"], "ended": meta["ended"],
             "deadline_min": meta["deadline_min"], "exit_code": meta["exit_code"], "timed_out": meta["timed_out"],
             "input": meta["input"], "input_sha256": meta["input_sha256"], "pages": meta["pages"],
         },
         "agent": {**usage.model_dump(), "wall_s": meta["wall_s"], "event_lines_not_json": bad_lines,
+                  "timing": timing.model_dump() if timing is not None else None,
                   "usd_at_list_price": _list_price(snapshot["agent"]["model"], usage)},
         "tools": verification["tools"],
         "result": {"check": verification["check"], "export": export, "scratch_files": scratch},
@@ -423,6 +478,10 @@ def _print_record(record: dict) -> None:
     print(f"  agent  {a['turns']} turns, {a['commands']} commands ({a['failed_commands']} failed), "
           f"tokens in {a['input_tokens']} (cached {a['cached_input_tokens']}) out {a['output_tokens']}, "
           f"{a['wall_s']} s")
+    if a.get("timing"):
+        tm = a["timing"]
+        print(f"  time   model {tm['model_s']} s in {tm['steps']} steps (median {tm['median_step_s']} s, "
+              f"longest {tm['longest_step_s']} s), commands {tm['command_s']} s")
     print(f"  tools  calls {t.get('calls')} failures {t.get('failures')} requests {t.get('requests')} "
           f"cost {t.get('cost_usd')}")
     if record["scores"]:
@@ -556,7 +615,10 @@ def main() -> int:
     snap.add_argument("--effort", default=EFFORT)
     run = sub.add_parser("run")
     run.add_argument("--round", required=True)
-    run.add_argument("--doc", required=True)
+    which_run = run.add_mutually_exclusive_group(required=True)
+    which_run.add_argument("--doc", action="append", help="document name(s), repeatable or comma-separated")
+    which_run.add_argument("--all", action="store_true", help="every document of the exploration set")
+    run.add_argument("--jobs", type=int, default=1, help="documents run at the same time (default 1)")
     run.add_argument("--input", type=Path, help="input file for a document without ground truth")
     run.add_argument("--timeout-min", type=int, help="override the Q39 deadline")
     run.add_argument("--rerun", metavar="REASON", help="void the existing run of this document and start over")

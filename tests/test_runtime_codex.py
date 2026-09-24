@@ -99,3 +99,23 @@ def test_audit_flags_tools_other_than_the_shell_and_writes_to_the_workspace():
     assert [(h.item, h.kind) for h in result.hits] == [("item_1", "tool_type"), ("item_2", "tool_type"),
                                                         ("item_3", "workspace_write")]
     assert [(n.item, n.kind) for n in result.notes] == [("item_4", "unknown_type")]
+
+
+def test_timing_separates_model_steps_from_running_commands():
+    from parserx.runtimes.codex import timing_from_events
+
+    def started(n, cmd="./px tool read"):
+        return {"type": "item.started", "item": {"id": f"item_{n}", "type": "command_execution", "command": cmd}}
+
+    events = [
+        ({"type": "turn.started"}, 0.0),
+        (started(1), 4.0),                                    # model step 1: 4 s
+        (_cmd(1, "./px tool read"), 5.0),                     # command 1 s
+        (started(2), 8.0), (started(3), 8.1),                 # model step 2: 3 s, two commands in parallel
+        (_cmd(2, "./px tool read"), 9.0), (_cmd(3, "./px tool read"), 10.0),
+        ({"type": "item.completed", "item": {"id": "item_4", "type": "agent_message", "text": "done"}}, 16.0),
+        ({"type": "turn.completed", "usage": {}}, 16.5),       # model step 3: 6.5 s
+    ]
+    timing = timing_from_events([e for e, _ in events], [t for _, t in events])
+    assert timing.steps == 3 and timing.model_s == 13.5 and timing.command_s == 3.0
+    assert timing.longest_step_s == 6.5 and timing.wall_s == 16.5
