@@ -139,6 +139,27 @@ def test_structure_fix_may_move_but_not_lose_content():
     assert not outcome.adopted and {g.name: g.passed for g in outcome.gate}["structure_valid"] is False
 
 
+def test_a_missing_column_is_filled_only_where_a_structure_issue_named_it():
+    # Q45: cells the OCR missed may come from the image alone — inside the region a structure issue names
+    with_column = [["项目", "单价", "数值"], ["甲", "5", "3"], ["乙", "7", "20"]]
+    block = _table_block()
+    outcome = review_table(block, _candidate(with_column), allowed_cells=set(), fill_region={(1, 1), (2, 1)},
+                           actor="t")
+    assert outcome.adopted and block.cells.n_cols == 3
+    assert block.decisions[-1].evidence["image_only_cells"] == "r1c1,r2c1"  # marked in the sidecar
+    block = _table_block()
+    outcome = review_table(block, _candidate(with_column), allowed_cells=set(), actor="t")
+    detail = {g.name: g.detail for g in outcome.gate}["numeric_consistency"]
+    assert not outcome.adopted and "(1, 1)" in detail and "structure issue" in detail
+    block = _table_block()  # a fill does not cover a changed number: 20 would be lost
+    changed = [["项目", "单价", "数值"], ["甲", "5", "3"], ["乙", "7", "26"]]
+    assert not review_table(block, _candidate(changed), allowed_cells=set(), fill_region={(1, 1), (2, 1)},
+                            actor="t").adopted
+    block = _table_block(engine="native_pdf")  # the native layer is exact: nothing is filled from the image
+    assert not review_table(block, _candidate(with_column), allowed_cells=set(), fill_region={(1, 1), (2, 1)},
+                            actor="t").adopted
+
+
 def test_candidate_without_image_evidence_is_rejected():
     block = _table_block()
     blind = _candidate([["项目", "数值"], ["甲", "8"], ["乙", "20"]], raw_ref=None)

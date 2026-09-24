@@ -107,6 +107,7 @@ def run(ctx: ToolContext, req: ReviewTableRequest) -> ToolOutput[ReviewTableResu
         raise ToolFailure(**_failure_kwargs(service_failure(exc, [req.block]))) from exc
     raw_ref = vlm.request_key("describe_image", crop_path, prompt, **kwargs)
     allowed = {tuple(c) for i in req.issues if i.kind == "char" for c in (i.cells or [])}
+    region = {tuple(c) for i in req.issues if i.kind == "structure" for c in (i.cells or [])}
 
     with ctx.ws.txn("tool:review_table") as state:
         block = next(b for b in state.blocks if b.id == req.block)
@@ -122,7 +123,7 @@ def run(ctx: ToolContext, req: ReviewTableRequest) -> ToolOutput[ReviewTableResu
             status=ObservationStatus.OK if grid is not None else ObservationStatus.FAILED,
             error=problem)
         before = block.cells
-        outcome = gate_table(block, candidate, allowed_cells=allowed, actor="tool:review_table")
+        outcome = gate_table(block, candidate, allowed_cells=allowed, fill_region=region, actor="tool:review_table")
         block.decisions[-1].evidence["request"] = request_hash
         cell_diff = _cell_diff(before, grid) if grid is not None else []
         diff = [Change(target=block.id, field="chosen_observation", before=_prev(block), after=candidate.id)] \

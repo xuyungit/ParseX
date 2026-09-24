@@ -17,7 +17,8 @@ from parserx.content.select import GateCheck
 from parserx.content.select import correct as correct_gate
 from parserx.ir import ids
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, ObservationStatus, RelationKind, TaskKind
+from parserx.ir.anchor import PdfAnchor
+from parserx.ir.enums import BlockKind, BlockStatus, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
@@ -63,6 +64,11 @@ def run(ctx: ToolContext, req: CorrectRequest) -> ToolOutput[CorrectResult]:
         raise ToolFailure(FailureCode.NOT_FOUND, f"no block {req.block}", targets=[req.block])
     if bool(req.edits) == bool(req.cells):
         raise ToolFailure(FailureCode.INVALID_REQUEST, "give edits (text) or cells (table)", targets=[req.block])
+    if block.status == BlockStatus.MERGED:  # its content lives on in another block: a correction here would not show
+        into = next((r.src for r in state.relations if r.kind == RelationKind.CONTINUES and r.dst == block.id), None)
+        raise ToolFailure(FailureCode.INVALID_REQUEST, f"{req.block} is merged into {into or 'another block'}: "
+                                                       "correct that block (it holds this page's content too)",
+                          targets=[req.block])
     if block.kind == BlockKind.TABLE:
         if not req.cells or block.cells is None:
             raise ToolFailure(FailureCode.INVALID_REQUEST, f"{req.block} is a table: give cells", targets=[req.block])
@@ -129,9 +135,9 @@ def _edited_grid(grid: TableGrid, edits: list[CellEdit], block: str) -> TableGri
 
 def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
     """The image must have been read in this workspace — by the agent (``read --image``) or by the service VLM
-    (``ask_image``) — for this block, for the page it is on, or, for a block read inside an embedded image, for
-    that whole image (its figure)."""
-    page = block_unit(state, block)
+    (``ask_image``) — for this block, for a page it is on (a table merged across pages is on each), or, for a
+    block read inside an embedded image, for that whole image (its figure)."""
+    pages = {a.page for a in block.anchors if isinstance(a, PdfAnchor)} or {block_unit(state, block)}
     known = (ctx.ws.root / "renders" / f"{image}.png").is_file() or any(a.id == image for a in state.assets)
     if not known:
         return _no_evidence(image)
@@ -149,9 +155,9 @@ def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
                 if target_page is None and target_block is not None:
                     other = next((b for b in state.blocks if b.id == target_block), None)
                     target_page = block_unit(state, other) if other is not None else None
-                if target_page == page:
+                if target_page in pages:
                     return GateCheck(name="image_evidence", passed=True,
-                                     detail=f"read the image {image} of page {page}")
+                                     detail=f"read the image {image} of page {target_page}")
     return _no_evidence(image)
 
 

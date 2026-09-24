@@ -163,25 +163,57 @@ def renumber(state: DocumentState, *, new: set[str] = frozenset()) -> None:
 
 
 def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tuple[int, int]],
-                 actor: str) -> ReviewOutcome:
-    """Gate a TableGrid candidate; *allowed_cells* are the cells the review was asked to check for characters."""
+                 fill_region: set[tuple[int, int]] = frozenset(), actor: str) -> ReviewOutcome:
+    """Gate a TableGrid candidate; *allowed_cells* are the cells the review was asked to check for characters,
+    *fill_region* the cells a structure issue named, where content the reading missed may be filled (Q45)."""
     current = block.cells or TableGrid(n_rows=0, n_cols=0)
     native = _chosen(block) is not None and _chosen(block).engine in NATIVE_ENGINES
     grid = candidate.cells
     gate = [_image_evidence(candidate)]
+    filled: set[tuple[int, int]] = set()
     if grid is None:
         gate += [GateCheck(name="numeric_consistency", passed=False, detail="candidate has no table"),
                  GateCheck(name="structure_valid", passed=False, detail="candidate has no table")]
     else:
         skip = set() if native else allowed_cells
-        before, after = _grid_numbers(current, skip), _grid_numbers(grid, skip)
-        gate.append(GateCheck(name="numeric_consistency", passed=before == after,
-                              detail=_number_diff(before, after, native)))
+        filled = set() if native else _filled_cells(current, grid, fill_region)
+        before, after = _grid_numbers(current, skip), _grid_numbers(grid, skip | filled)
+        detail = _number_diff(before, after, native)
+        if before != after and not native:
+            detail += _where_added(grid, after - before, skip | filled)
+        elif filled:
+            detail += f"; {len(filled)} cells filled from the image only (Q45)"
+        gate.append(GateCheck(name="numeric_consistency", passed=before == after, detail=detail))
         lost = _cell_texts(current, allowed_cells) - _cell_texts(grid, set())
         gate.append(GateCheck(
             name="structure_valid", passed=grid.n_rows > 0 and grid.n_cols > 0 and not lost,
             detail="all cell content kept" if not lost else f"cells lost: {sorted(lost.elements())[:10]}"))
-    return _decide(block, candidate, gate, actor)
+    outcome = _decide(block, candidate, gate, actor)
+    if outcome.adopted and filled:  # Q45: shown as image-only evidence in the sidecar
+        block.decisions[-1].evidence["image_only_cells"] = ",".join(f"r{r}c{c}" for r, c in sorted(filled))
+    return outcome
+
+
+def _filled_cells(current: TableGrid, grid: TableGrid, region: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Candidate cells in the named region (widened by the rows and columns the candidate adds) whose text the
+    current reading does not have anywhere: what the reading missed.  Their numbers are new; every number of the
+    current reading must still be there, so a changed number is never a fill."""
+    if not region:
+        return set()
+    rows, cols = [r for r, _ in region], [c for _, c in region]
+    r1 = max(rows) + max(0, grid.n_rows - current.n_rows)
+    c1 = max(cols) + max(0, grid.n_cols - current.n_cols)
+    known = {"".join(c.content.split()) for c in current.cells if c.content.strip()}
+    return {(c.row, c.col) for c in grid.cells
+            if min(rows) <= c.row <= r1 and min(cols) <= c.col <= c1
+            and c.content.strip() and "".join(c.content.split()) not in known}
+
+
+def _where_added(grid: TableGrid, added: Counter[str], skip: set[tuple[int, int]]) -> str:
+    cells = sorted({(c.row, c.col) for c in grid.cells if (c.row, c.col) not in skip
+                    and any(n in added for n in _NUMBER_RE.findall(c.content))})
+    return (f" at candidate cells {cells[:12]}; numbers the reading missed may be filled only where a structure "
+            "issue names the cells and the table had nothing (Q45)") if cells else ""
 
 
 def review_text(block: Block, candidate: Observation, *, actor: str) -> ReviewOutcome:

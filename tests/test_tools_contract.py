@@ -512,6 +512,32 @@ def test_agent_corrects_table_cells(ws):
     assert not env.ok and code == 2
 
 
+def test_a_table_continued_across_pages_is_corrected_as_one(ws):
+    # after merge_tables the first block holds all rows and the anchors of every page; the continuation is merged
+    from parserx.ir.anchor import PdfAnchor
+    from parserx.ir.enums import BlockStatus
+    from parserx.ir.relation import Relation
+
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    workspace = Workspace.open(ws)
+    with workspace.txn("test:merge") as state:
+        second = next(b for b in state.blocks if b.kind == BlockKind.TABLE)
+        first = second.model_copy(deep=True, update={
+            "id": "t-first", "anchors": [PdfAnchor(page=1, bbox=(72, 500, 520, 700), coord_space="page_pt"),
+                                         *second.anchors]})
+        second.status = BlockStatus.MERGED
+        state.blocks.append(first)
+        state.relations.append(Relation(id="r-continues-t", kind="continues", src="t-first", dst=second.id))
+    page2, _ = _call("ask_image", ws, {"page": 2, "question": "续表第 1 行的数值？"}, context=context)
+    env, code = _call("correct", ws, {"block": second.id, "image": page2.result.image, "reason": "图上是 8",
+                                      "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
+    assert not env.ok and code == 2 and "t-first" in env.failures[0].message
+    env, _ = _call("correct", ws, {"block": "t-first", "image": page2.result.image, "reason": "图上是 8",
+                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
+    assert env.result.adopted is True  # page 2 is one of the table's pages
+
+
 def test_a_correction_may_fill_an_empty_position_of_the_grid():
     from parserx.tables.grid import Cell, TableGrid
     from parserx.tools.correct import CellEdit, _edited_grid
