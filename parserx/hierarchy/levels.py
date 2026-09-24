@@ -37,3 +37,14 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
         unified[block_id] = level
         previous = level
     return unified
+
+
+def title_changes(titles: list[tuple[str, str, int, dict]], levels: dict[str, int], *, reason: str) -> list[dict]:
+    """``set_role`` + ``set_level`` per (block id, text, proposed level, evidence), at the unified level."""
+    changes: list[dict] = []
+    for block_id, _text, proposed, evidence in titles:
+        level = levels[block_id]
+        changes.append({"op": "set_role", "block": block_id, "kind": "title", "reason": reason, "evidence": evidence})
+        changes.append({"op": "set_level", "block": block_id, "level": level, "evidence": evidence,
+                        "reason": reason + ("" if level == proposed else "; unified with the outline")})
+    return changes

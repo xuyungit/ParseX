@@ -6,7 +6,9 @@
 4. ``describe_figure`` — every shown figure, within the budget;
 5. structure (all through ``apply_structure``) — confirmed cross-page table
    continuations (``tables.merge``); then titles: DOCX styles and outline
-   levels, PDF ``adapter:v1``;
+   levels; PDF ``adapter:v1`` on native text and the scan engine's title
+   labels, unified as one outline (a level rejected only because it depends
+   on a title of the other source is sent again once both are in place);
 6. ``check`` and 7. ``export``.
 
 All tool calls of one document share one context: one meter and one budget.
@@ -25,6 +27,8 @@ from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
+from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
+from parserx.hierarchy.levels import title_changes, unify_levels
 from parserx.ir.enums import BlockKind, PageStatus
 from parserx.models.results import ParseResult
 from parserx.runtimes import v1_structure
@@ -32,7 +36,7 @@ from parserx.tables.merge import propose_merges
 from parserx.tools import ToolContext, call_tool, workspace_init
 from parserx.tools.envelope import Envelope
 from parserx.workspace import Workspace
-from parserx.workspace.queries import HIDDEN
+from parserx.workspace.queries import HIDDEN, ordered
 
 log = logging.getLogger(__name__)
 MERGE_ACTOR = "program:tables.merge"
@@ -110,12 +114,17 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
 
     state = Workspace.open(ws_dir).load()
     if state.format == "docx":
-        changes, actor = propose_docx_structure(state), DOCX_ACTOR
+        steps = [(DOCX_ACTOR, propose_docx_structure(state))]
     else:
-        changes, actor = v1_structure.propose_structure(Workspace.open(ws_dir).source_path, state, config), \
-            v1_structure.ACTOR
-    if changes:
-        call("apply_structure", {"changes": changes, "actor": actor})
+        steps = _pdf_titles(Workspace.open(ws_dir).source_path, state, config)
+    held: list[tuple[str, list[dict]]] = []
+    for actor, changes in steps:
+        if changes:
+            envelope = call("apply_structure", {"changes": changes, "actor": actor})
+            held.append((actor, [changes[r.index] for r in envelope.result.rejected if r.rule == "level_skip"]))
+    for actor, changes in held:  # a level can depend on a title of the other source, now in place
+        if changes:
+            call("apply_structure", {"changes": changes, "actor": actor})
 
     call("check")
     envelope = call("export", {"out": str(out_dir), "name": name or state.id})
@@ -125,6 +134,17 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
     return RunOutcome(markdown=md_path.read_text(encoding="utf-8"), sidecar_json=sidecar_path.read_text(encoding="utf-8"),
                       markdown_path=md_path, sidecar_path=sidecar_path, status=envelope.result.status.value,
                       envelopes=envelopes, context=session.context if isinstance(session, _Session) else None)
+
+
+def _pdf_titles(source: Path, state, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
+    """PDF titles from two sources, unified as one outline: v1's detection on native text, the scan engine's labels."""
+    native = v1_structure.matched_titles(source, state, config)
+    scanned = engine_titles(state)
+    position = {b.id: i for i, b in enumerate(ordered(state))}
+    combined = sorted(native + scanned, key=lambda t: position[t[0]])
+    levels = unify_levels([t[:3] for t in combined])
+    return [(v1_structure.ACTOR, title_changes(native, levels, reason=v1_structure.REASON)),
+            (ENGINE_ACTOR, title_changes(scanned, levels, reason=ENGINE_REASON))]
 
 
 def parse_result(path: Path | str, config: ParserXConfig) -> ParseResult:

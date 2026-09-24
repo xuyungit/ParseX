@@ -32,6 +32,7 @@
 | `parserx/layout/` + `parserx/routing/image.py` | 检测器封装、标签映射、面积统计、图片路由；**影子运行**：只写 Decision，不影响输出 | `Detector.detect(asset) -> list[Observation]`、`labels.to_kind(source, label)`、`route(asset, regions) -> RouteResult` |
 | `parserx/runtimes/pipeline.py` | 固定序列（流水线运行时的最小形态），全部通过工具函数完成；`pipeline: v1 \| v2` 开关，v2 返回同样的 `ParseResult` | `run(input, ws, config) -> ExportResult` |
 | `parserx/runtimes/v1_structure.py` 〔v1.9，临时〕 | 原生 PDF 的标题来源：复用 v1 不调用服务的元数据构建与章节处理，经 `apply_structure` 写入（actor `adapter:v1`）；阶段四删除（Q24） | `propose_structure(pdf_path, state) -> list[StructureChange]` |
+| `parserx/hierarchy/engine_titles.py` 〔Q33〕 | 扫描页的标题来源：扫描页引擎的 `doc_title` / `paragraph_title` 标签按 `layout/labels.py` 的 `TITLE_RANK` 给出建议层级（1 / 2），带点号编号每多一段深一级；`adapter:v1` 此后只匹配原生文字块 | `engine_titles(state) -> list[(block, text, level, evidence)]`，actor `program:hierarchy.engine_titles` |
 
 新旧路径由 `pipeline: v1 | v2` 开关切换（§12）。
 
@@ -657,7 +658,7 @@ class ExportResult(IRModel):
 
 ### 5.11 〔P1-10〕固定序列运行时
 
-- `parserx/runtimes/pipeline.py`：`run(input, ws, out, config)` 依次调用 workspace init → recognize（paddleocr，只对 pending 页）→ recognize（layout 影子：PDF 全部页面 + 可见图片块）→ describe_figure（可见且未描述的图片，预算耗尽即停）→ 结构（DOCX：`hierarchy/docx_styles.py`；PDF：`runtimes/v1_structure.py`，actor `adapter:v1`，临时）→ apply_structure → check → export。一篇文档的所有工具调用共用一个上下文（一个计数器、一个预算）；信封里的 `cost` 与写回 `state.stats` 的是本次调用的增量。
+- `parserx/runtimes/pipeline.py`：`run(input, ws, out, config)` 依次调用 workspace init → recognize（paddleocr，只对 pending 页）→ recognize（layout 影子：PDF 全部页面 + 可见图片块）→ describe_figure（可见且未描述的图片，预算耗尽即停）→ 〔Q33〕已确认的跨页续表（`tables/merge.py`，actor `program:tables.merge`）→ 结构（DOCX：`hierarchy/docx_styles.py`；PDF：`runtimes/v1_structure.py` 的原生文字标题（actor `adapter:v1`，临时）与 `hierarchy/engine_titles.py` 的扫描页标题（〔Q33〕），两者按阅读顺序一起做层级统一，再分两次调用写入；只因依赖另一来源的标题而被判跳级的层级，在两者都写入后再发一次）→ apply_structure → check → export。一篇文档的所有工具调用共用一个上下文（一个计数器、一个预算）；信封里的 `cost` 与写回 `state.stats` 的是本次调用的增量。
 - `pipeline: v1 | v2`（配置顶层）；`Pipeline.parse_result` 在 v2 时转给 `runtimes.pipeline.parse_result`，返回同样的 `ParseResult`，另带 `sidecar_json` 与 `document_status`；离线回放缺响应时返回带 `cache_misses` 的结果（评测记为未执行，不记为失败）。`configs/regression_v2.yaml` 继承回归配置并设 `pipeline: v2`；冻结 run 另存 `outputs/<doc>.blocks.json`。工作区默认在临时目录，`runtime.workspace_root` 可保留。
 - DOCX 确定性结构：大纲级别（直接或样式继承，9 为正文）或 `heading N` / `标题 N` 样式 → 标题；`Title` / `标题` 样式为文档标题（H1），存在时其余标题下移一级；带编号而无标题证据的段落 → list。
 - 层级统一（`hierarchy/levels.py`，§6.8 的文档级统一）：同一编号模式取多数层级（并列取浅），再按阅读顺序使每个标题最多比前一个标题深一级；只移动层级，不增删标题。

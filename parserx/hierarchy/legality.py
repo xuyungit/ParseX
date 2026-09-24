@@ -8,7 +8,8 @@ Checks are correctness constraints, not guesses about meaning:
   (a title is at most one level deeper than the title before it, and its
   successor at most one level deeper than it);
 - titles sharing a numbering pattern (``1.2`` / ``1.3`` → ``N.N``,
-  ``第二章`` → ``第N章``) share a level within the document;
+  ``第二章`` → ``第N章``, ``1 Scope`` / ``2. Terms`` → ``N``) share a level
+  within the document;
 - reordering cannot form a cycle; relations are not duplicated;
 - tables merge only when the second can continue the first
   (``tables.merge.merge_candidate``), and only rows that repeat the first
@@ -53,6 +54,7 @@ _NUMBERING_RE = re.compile(
     r"|[(（]\s*(?:" + _NUMERAL + r")\s*[)）]"  # （一） (3)
     r"|(?:" + _NUMERAL + r")\s*[、.．)）]"  # 一、 3. 3)
     r"|[A-Za-z]\s*[.)]"  # A. a)
+    r"|[0-9０-９]{1,3}(?=\s+\S)"  # 1 Introduction (not 2024 年: years are not section numbers)
     r")"
 )
 _NUMERAL_RE = re.compile(_NUMERAL)

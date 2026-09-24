@@ -2,8 +2,8 @@
 
 Runs v1's service-free steps — PDF provider, metadata builder, reading order,
 header/footer, code block, chapter processor with the LLM fallback off — and
-proposes its headings as structure changes on the v2 blocks whose text equals
-the heading (whitespace ignored).  Headings v1 found inside a larger v2 block
+proposes its headings as structure changes on the native-text v2 blocks whose
+text equals the heading (whitespace ignored).  Headings v1 found inside a larger v2 block
 are not applied: structure changes never split text.  Every change carries
 actor ``adapter:v1`` and goes through ``apply_structure`` and its legality
 checks like any other.
@@ -16,12 +16,14 @@ import re
 from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
-from parserx.hierarchy.levels import unify_levels
+from parserx.content.pdf_native import ENGINE as NATIVE_ENGINE
+from parserx.hierarchy.levels import title_changes, unify_levels
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.state import DocumentState
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
 
 ACTOR = "adapter:v1"
+REASON = "v1 heading detection (temporary adapter, Q24)"
 log = logging.getLogger(__name__)
 
 
@@ -50,9 +52,20 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
-def propose_structure(pdf_path: Path, state: DocumentState, config: ParserXConfig) -> list[dict]:
+def _native(block) -> bool:
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    return chosen is not None and chosen.engine == NATIVE_ENGINE
+
+
+def matched_titles(pdf_path: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, str, int, dict]]:
+    """(block id, text, v1 level, evidence) for native blocks whose text equals one of v1's headings on that page.
+
+    Only native-text blocks: v1's evidence (font sizes of the text layer) says nothing about scan-engine blocks,
+    whose titles come from the engine's labels (``hierarchy/engine_titles.py``).
+    """
     headings = v1_headings(pdf_path, config)
-    candidates = [b for b in ordered(state) if b.status not in HIDDEN and isinstance(b.anchors[0], PdfAnchor)]
+    candidates = [b for b in ordered(state) if b.status not in HIDDEN and isinstance(b.anchors[0], PdfAnchor)
+                  and _native(b)]
     used: set[str] = set()
     matched: dict[str, int] = {}
     for page, level, text in headings:
@@ -63,14 +76,9 @@ def propose_structure(pdf_path: Path, state: DocumentState, config: ParserXConfi
             continue
         used.add(block.id)
         matched[block.id] = level
-    titles = [(b.id, b.text, matched[b.id]) for b in candidates if b.id in matched]
-    levels = unify_levels(titles)
-    changes: list[dict] = []
-    for block_id, _text, proposed in titles:
-        evidence = {"v1_level": proposed}
-        reason = "v1 heading detection (temporary adapter, Q24)"
-        changes.append({"op": "set_role", "block": block_id, "kind": "title", "reason": reason, "evidence": evidence})
-        changes.append({"op": "set_level", "block": block_id, "level": levels[block_id],
-                        "reason": reason + ("" if levels[block_id] == proposed else "; unified with the outline"),
-                        "evidence": evidence})
-    return changes
+    return [(b.id, b.text, matched[b.id], {"v1_level": matched[b.id]}) for b in candidates if b.id in matched]
+
+
+def propose_structure(pdf_path: Path, state: DocumentState, config: ParserXConfig) -> list[dict]:
+    titles = matched_titles(pdf_path, state, config)
+    return title_changes(titles, unify_levels([t[:3] for t in titles]), reason=REASON)

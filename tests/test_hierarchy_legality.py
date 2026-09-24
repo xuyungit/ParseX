@@ -74,6 +74,8 @@ def test_level_skip():
 def test_same_numbering_pattern_same_level():
     assert numbering_signature("1.1 范围") == numbering_signature("1.2 术语") == "N.N"
     assert numbering_signature("第三章 结构") == "第N章" and numbering_signature("正文") is None
+    assert numbering_signature("1 Scope") == numbering_signature("2. Terms") == "N"
+    assert numbering_signature("2024 年度报告") is None and numbering_signature("3") is None
     rules = _rules([{"op": "set_role", "block": "p1", "kind": "title", "reason": "r"},
                     {"op": "set_level", "block": "p1", "level": 2, "reason": "r"},
                     {"op": "set_role", "block": "p3", "kind": "title", "reason": "r"},

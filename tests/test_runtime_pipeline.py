@@ -10,8 +10,14 @@ from PIL import Image
 
 from parserx.config.schema import ParserXConfig
 from parserx.hierarchy.docx_styles import propose_docx_structure
+from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, engine_titles
 from parserx.hierarchy.levels import unify_levels
+from parserx.ir.anchor import PdfAnchor
+from parserx.ir.block import Block
+from parserx.ir.enums import BlockKind, DocumentStatus, ObservationStatus, TaskKind
+from parserx.ir.observation import Observation
 from parserx.ir.schema import validate_sidecar
+from parserx.ir.state import DocumentState
 from parserx.pipeline import Pipeline
 from parserx.runtimes.pipeline import run
 from tests.test_layout_routing import FakeDetector
@@ -71,11 +77,12 @@ def test_pdf_runs_through_every_step_and_balances(pdf, tmp_path):
     assert validate_sidecar(sidecar) == [] and sidecar["accounting"]["unassigned"] == 0
     tools = [e.tool for e in outcome.envelopes]
     assert tools == ["workspace_init", "recognize", "recognize", "describe_figure", "describe_figure",
-                     "apply_structure", "check", "export"]
+                     "apply_structure", "apply_structure", "check", "export"]
     assert "SENTINEL-OCR 扫描文字 3 件" in outcome.markdown and "> [图片语义] photo" in outcome.markdown
     assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# Annual Report")  # adapter:v1 title
-    titles = [b for b in sidecar["blocks"] if b["kind"] == "title" and b["level"]]
-    assert any(d["actor"] == "adapter:v1" for b in titles for d in b["decisions"])
+    assert "\n## SENTINEL-OCR 标题\n" in outcome.markdown  # the scan engine's paragraph_title, under it
+    actors = {b["text"]: b["decisions"][-1]["actor"] for b in sidecar["blocks"] if b["kind"] == "title" and b["level"]}
+    assert actors == {"Annual Report": "adapter:v1", "SENTINEL-OCR 标题": ENGINE_ACTOR}
 
 
 def test_output_is_byte_identical_across_runs(pdf, tmp_path):
@@ -140,3 +147,19 @@ def test_docx_title_shifts_headings_and_body_outline_is_ignored(tmp_path):
     levels = {c["block"]: c["level"] for c in changes if c["op"] == "set_level"}
     texts = {b.id: b.text for b in state.blocks}
     assert {texts[b]: lv for b, lv in levels.items()} == {"Report": 1, "Chapter": 2}
+
+
+def test_scan_engine_title_labels_propose_levels():
+    def title(bid, text, label, engine="paddleocr"):
+        anchor = PdfAnchor(page=1, bbox=(0, 0, 1, 1), coord_space="page_pt")
+        obs = Observation(id=f"o-{bid}", engine=engine, engine_version="1", task=TaskKind.RECOGNIZE, anchor=anchor,
+                          label=label, text=text, status=ObservationStatus.OK)
+        return Block(id=bid, kind=BlockKind.TITLE, order=int(bid[1:]), anchors=[anchor], observations=[obs],
+                     chosen_observation=obs.id, text=text)
+
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS,
+                          blocks=[title("b1", "Survey Report", "doc_title"), title("b2", "1 Background", "paragraph_title"),
+                                  title("b3", "1.1 Scope", "paragraph_title"), title("b4", "2 Method", "paragraph_title"),
+                                  title("b5", "Native heading", None, engine="native_pdf")])
+    assert [(b, lv) for b, _, lv, _ in engine_titles(state)] == [("b1", 1), ("b2", 2), ("b3", 3), ("b4", 2)]

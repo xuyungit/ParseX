@@ -65,6 +65,13 @@ SOURCES: dict[str, dict[str, BlockKind]] = {"paddleocr": PADDLEOCR, "layout": LA
 # Kinds that are page furniture: not rendered, recorded as excluded (guide §6.3).
 FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER})
 
+# Title labels rank titles: the document title above section titles (Q33). A rank is evidence
+# for a level, which the document-level unification settles (hierarchy/levels.py).
+TITLE_RANK: dict[str, dict[str, int]] = {
+    "paddleocr": {"doc_title": 1, "paragraph_title": 2},
+    "layout": {"doc_title": 1, "paragraph_title": 2},
+}
+
 
 def is_known(source: str, label: str) -> bool:
     return label in SOURCES[source]
@@ -72,3 +79,7 @@ def is_known(source: str, label: str) -> bool:
 
 def to_kind(source: str, label: str) -> BlockKind:
     return SOURCES[source].get(label, BlockKind.OTHER)
+
+
+def title_rank(source: str, label: str) -> int | None:
+    return TITLE_RANK.get(source, {}).get(label)
