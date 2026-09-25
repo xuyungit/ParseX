@@ -224,7 +224,18 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_1():
+def test_metric_version_is_2_2():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.1"
+    assert METRIC_VERSION == "2.2"
+
+
+def test_headings_skip_fenced_code_and_compare_after_nfkc():
+    # Q68 (metric 2.2): a shell comment inside a code block is not a heading; "9．监督" is "9.监督"
+    from parserx.eval.metrics import compute_heading_metrics
+
+    expected = "# 换盘步骤\n\n```bash\n# 参考命令如下\nparted /dev/sdf\n```\n\n## 9.监督\n"
+    output = "# 换盘步骤\n\n\\# 参考命令如下\n\nparted /dev/sdf\n\n## 9．监督\n"
+    metrics = compute_heading_metrics(output, expected)
+    assert metrics.expected_count == 2 and metrics.detected_count == 2 and metrics.f1 == 1.0
+    assert compute_heading_metrics("~~~\n# not a title\n~~~\n# Title\n", "# Title\n").f1 == 1.0

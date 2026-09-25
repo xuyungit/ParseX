@@ -8,6 +8,7 @@ time → cost.  Text-side normalization lives in ``parserx.eval.normalize``.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -23,7 +24,8 @@ from parserx.text_utils import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.1"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.2"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+# 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 
 __all__ = [
     "METRIC_VERSION",
@@ -196,10 +198,21 @@ def compute_residual_diagnostics(output: str, expected: str) -> ResidualDiagnost
 
 
 def _extract_headings(markdown: str) -> list[tuple[int, str]]:
-    """Extract (level, title) pairs from markdown heading lines."""
+    """Extract (level, title) pairs from markdown heading lines (not inside fenced code blocks, Q68)."""
     headings = []
+    fence: str | None = None
     for line in markdown.splitlines():
-        m = re.match(r"^(#{1,6})\s+(.+)$", line.strip())
+        stripped = line.strip()
+        opening = re.match(r"^(`{3,}|~{3,})", stripped)
+        if opening:
+            if fence is None:
+                fence = opening.group(1)[0] * len(opening.group(1))
+            elif stripped.startswith(fence):
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        m = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if m:
             level = len(m.group(1))
             title = m.group(2).strip()
@@ -208,8 +221,8 @@ def _extract_headings(markdown: str) -> list[tuple[int, str]]:
 
 
 def _normalize_heading(text: str) -> str:
-    """Normalize heading text for fuzzy matching."""
-    text = re.sub(r"\s+", "", text)
+    """Normalize heading text for fuzzy matching (NFKC first: full-width "９．" is "9.", Q68)."""
+    text = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
     text = text.replace("—", "-").replace("–", "-").replace("－", "-")
     text = text.replace("：", ":").replace("，", ",")
     text = re.sub(r"^[—–\-一]{2,}", "--", text)
