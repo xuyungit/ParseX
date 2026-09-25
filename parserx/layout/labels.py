@@ -56,6 +56,8 @@ DOCX: dict[str, BlockKind] = {
     "comment": BlockKind.OTHER,
     "linked_image": BlockKind.FIGURE,
     "missing_image": BlockKind.FIGURE,
+    "chart": BlockKind.FIGURE,
+    "diagram": BlockKind.FIGURE,  # SmartArt
     "header": BlockKind.HEADER,
     "footer": BlockKind.FOOTER,
 }

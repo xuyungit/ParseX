@@ -191,3 +191,54 @@ def test_list_numbering_is_rendered(tmp_path):
 def test_extraction_is_deterministic(docx_path):
     a, b = extract_docx(docx_path), extract_docx(docx_path)
     assert [x.model_dump() for x in a.blocks] == [x.model_dump() for x in b.blocks] and a.ledger == b.ledger
+
+
+def test_charts_and_smartart_are_accounted_for_with_their_text(tmp_path):
+    # P4-5 / Q9: a drawing holding a chart or SmartArt has no image; its content lives in a part of its own.
+    # Not read into the output yet, but never dropped silently: a failed block with the part's text, a warning.
+    import zipfile
+
+    doc = Document()
+    doc.add_paragraph("Figure 1 shows the output.")
+    body = doc.element.body
+    graphic = ('<w:p {W} xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+               'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+               'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:r><w:drawing>'
+               '<wp:inline><wp:extent cx="4000000" cy="3000000"/><a:graphic><a:graphicData uri="{uri}">{ref}'
+               '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>')
+    _add(body, graphic.format(W=W, uri="http://schemas.openxmlformats.org/drawingml/2006/chart",
+                              ref='<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+                                  'r:id="rIdChart1"/>'))
+    _add(body, graphic.format(W=W, uri="http://schemas.openxmlformats.org/drawingml/2006/diagram",
+                              ref='<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+                                  'r:dm="rIdDm1" r:lo="rIdLo1"/>'))
+    plain = tmp_path / "plain.docx"
+    doc.save(plain)
+    chart = ('<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+             'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:p>'
+             '<a:r><a:t>月产量</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea><c:barChart><c:ser>'
+             '<c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>一月</c:v></c:pt></c:strCache></c:strRef></c:cat>'
+             '<c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>120</c:v></c:pt></c:numCache></c:numRef></c:val>'
+             '</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>')
+    data = ('<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst><dgm:pt><dgm:t><a:p><a:r>'
+            '<a:t>需求分析</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst></dgm:dataModel>')
+    path = tmp_path / "drawings.docx"
+    with zipfile.ZipFile(plain) as src, zipfile.ZipFile(path, "w") as out:
+        for item in src.infolist():
+            content = src.read(item.filename)
+            if item.filename == "word/_rels/document.xml.rels":
+                content = content.replace(b"</Relationships>", (
+                    '<Relationship Id="rIdChart1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    'relationships/chart" Target="charts/chart1.xml"/>'
+                    '<Relationship Id="rIdDm1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    'relationships/diagramData" Target="diagrams/data1.xml"/></Relationships>').encode())
+            out.writestr(item, content)
+        out.writestr("word/charts/chart1.xml", chart)
+        out.writestr("word/diagrams/data1.xml", data)
+    ext = extract_docx(path)
+    failed = {b.text: b for b in ext.blocks if b.status == BlockStatus.FAILED}
+    assert set(failed) == {"月产量\n一月\n120", "需求分析"}
+    assert all(b.kind == BlockKind.FIGURE for b in failed.values())
+    assert len(ext.missing) == 2
+    assert {e.disposition for e in ext.ledger if e.block in {b.id for b in failed.values()}} == {"failed"}

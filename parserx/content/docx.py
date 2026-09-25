@@ -26,7 +26,9 @@ Supported in Phase 1:
   paragraph that anchors the textbox (no style evidence).
 
 Not supported yet (warning, ``failed`` ledger item, text kept on a failed
-block in the sidecar): footnotes and endnotes, comments, linked images.
+block in the sidecar): footnotes and endnotes, comments, linked images,
+charts and SmartArt (their text read from their own part: titles, series,
+categories and cached values; node text).
 Paragraph roles (title, list) are the structure step's decision.
 """
 
@@ -343,7 +345,7 @@ def _format_number(n: int, fmt: str) -> str:
 class _Piece:
     """Something found inside a paragraph besides its text."""
 
-    kind: str  # "deleted" | "moved" | "image" | "textbox" | "footnote" | "endnote" | "comment" | "linked_image"
+    kind: str  # deleted · moved · image · textbox · footnote · endnote · comment · linked_image · chart · diagram
     path: str
     text: str = ""
     rid: str | None = None
@@ -488,6 +490,15 @@ def _graphics(node, para: _Para, path: str) -> None:
             para.pieces.append(_Piece("image", f"{path}#image{index}", rid=rid, extent=size))
         elif linked:
             para.pieces.append(_Piece("linked_image", f"{path}#image{index}"))
+    # charts and SmartArt keep their content in a part of their own: not read yet, but accounted for (P4-5, Q9)
+    for index, data in enumerate(node.iter(f"{{{NS['a']}}}graphicData"), 1):
+        uri = data.get("uri", "")
+        kind = "chart" if uri.endswith("/chart") else "diagram" if uri.endswith("/diagram") else None
+        if kind is None:
+            continue
+        ref = next(iter(data), None)
+        rid = None if ref is None else ref.get(f"{{{NS['r']}}}id") or ref.get(f"{{{NS['r']}}}dm")
+        para.pieces.append(_Piece(kind, f"{path}#{kind}{index}", rid=rid))
 
 
 def _plain_text(p) -> str:
@@ -689,6 +700,8 @@ class _Reader:
                 self._image(piece)
             elif piece.kind in ("footnote", "endnote", "comment"):
                 self._note(piece)
+            elif piece.kind in ("chart", "diagram"):
+                self._failed(piece.kind, piece.path, self._part_text(piece.rid), labels.to_kind(ENGINE, piece.kind))
             elif piece.kind == "textbox":  # Q44: its paragraphs follow the paragraph that anchors it
                 for index, text in enumerate(piece.paragraphs, 1):
                     self._text_block(text, f"{piece.path}/w:p[{index}]", None)
@@ -775,6 +788,17 @@ class _Reader:
                     note_path = f"/w:{kind}s/w:{kind}[@w:id='{piece.note_id}']"
                     break
         self._failed(kind, note_path, text, labels.to_kind(ENGINE, kind), part=part if root is not None else None)
+
+    def _part_text(self, rid: str | None) -> str:
+        """The text of the part a relationship names (a chart's titles, series, categories and cached values; a
+        SmartArt's node text), one text node per line."""
+        target, _kind = self.rels.get(rid or "", ("", ""))
+        if not target or target not in self.pkg.names:
+            return ""
+        root = etree.fromstring(self.pkg.zip.read(target))
+        texts = [(node.text or "").strip() for node in root.iter()
+                 if isinstance(node.tag, str) and etree.QName(node).localname in ("t", "v")]
+        return "\n".join(text for text in texts if text)
 
     def _failed(self, what: str, path: str, text: str, kind: BlockKind, part: str | None = None) -> None:
         self.unsupported[what] += 1
