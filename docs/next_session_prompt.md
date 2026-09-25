@@ -20,7 +20,7 @@
    - `uv run python scripts/regression_test.py --core --config configs/regression_v2.yaml --repeat 2`
 5. 回放两个冻结 run，都要 PASS：
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-23_p0_v1_gpt-6-luna`
-   - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-24_p1_v2_toolkit`
+   - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-25_p4_v2_toolkit`（P4-4 重新冻结；此前为 `2026-09-24_p1_v2_toolkit`）
 
 **然后**：
 
