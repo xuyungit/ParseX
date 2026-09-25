@@ -242,3 +242,53 @@ def test_charts_and_smartart_are_accounted_for_with_their_text(tmp_path):
     assert all(b.kind == BlockKind.FIGURE for b in failed.values())
     assert len(ext.missing) == 2
     assert {e.disposition for e in ext.ledger if e.block in {b.id for b in failed.values()}} == {"failed"}
+
+
+def _with_parts(plain, path, parts: dict[str, str], rels: list[tuple[str, str, str]]):
+    import zipfile
+
+    with zipfile.ZipFile(plain) as src, zipfile.ZipFile(path, "w") as out:
+        for item in src.infolist():
+            content = src.read(item.filename)
+            if item.filename == "word/_rels/document.xml.rels":
+                extra = "".join(f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/'
+                                f'2006/relationships/{kind}" Target="{target}"/>' for rid, kind, target in rels)
+                content = content.replace(b"</Relationships>", (extra + "</Relationships>").encode())
+            out.writestr(item, content)
+        for name, xml in parts.items():
+            out.writestr(name, xml)
+
+
+def test_footnotes_become_markdown_footnotes_and_comments_are_excluded(tmp_path):
+    # Q9: the reference stays where Word shows its number; the note follows its paragraph; a comment is a
+    # reviewer's note, not content
+    from parserx.render import render_markdown
+
+    doc = Document()
+    body = doc.element.body
+    _add(body, (f'<w:p {W}><w:r><w:t>Load tests</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r>'
+                '<w:r><w:t xml:space="preserve"> were repeated</w:t></w:r><w:r><w:endnoteReference w:id="2"/></w:r>'
+                '<w:commentRangeStart w:id="0"/><w:r><w:t>.</w:t></w:r><w:commentRangeEnd w:id="0"/>'
+                '<w:r><w:commentReference w:id="0"/></w:r></w:p>'))
+    _add(body, f'<w:p {W}><w:r><w:t>Next paragraph.</w:t></w:r></w:p>')
+    plain = tmp_path / "plain.docx"
+    doc.save(plain)
+    notes = (f'<w:{{kind}}s {W}><w:{{kind}} w:id="0"><w:p><w:r><w:t>separator</w:t></w:r></w:p></w:{{kind}}>'
+             f'<w:{{kind}} w:id="{{id}}"><w:p><w:r><w:{{kind}}Ref/></w:r><w:r><w:t>{{text}}</w:t></w:r></w:p>'
+             f'</w:{{kind}}></w:{{kind}}s>')
+    comments = f'<w:comments {W}><w:comment w:id="0" w:author="r"><w:p><w:r><w:t>Check this</w:t></w:r></w:p></w:comment></w:comments>'
+    path = tmp_path / "notes.docx"
+    _with_parts(plain, path, {
+        "word/footnotes.xml": notes.format(kind="footnote", id=1, text="At 20 °C."),
+        "word/endnotes.xml": notes.format(kind="endnote", id=2, text="See annex B."),
+        "word/comments.xml": comments,
+    }, [("rIdF", "footnotes", "footnotes.xml"), ("rIdE", "endnotes", "endnotes.xml"),
+        ("rIdC", "comments", "comments.xml")])
+    ext = extract_docx(path)
+    assert not ext.missing
+    state = ext.to_state(doc_id="notes", source="notes.docx", source_sha256="0" * 64)
+    assert render_markdown(state) == ("Load tests[^1] were repeated[^e2].\n\n[^1]: At 20 °C.\n\n[^e2]: See annex B.\n\n"
+                                      "Next paragraph.\n")
+    comment = next(b for b in ext.blocks if b.text == "Check this")
+    assert comment.status == BlockStatus.EXCLUDED and comment.decisions[-1].choice == "comment"
+    assert {e.disposition for e in ext.ledger if e.block == comment.id} == {"excluded"}

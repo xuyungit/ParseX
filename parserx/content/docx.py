@@ -25,10 +25,14 @@ Supported in Phase 1:
 - textboxes (Q44): each paragraph becomes a text block right after the
   paragraph that anchors the textbox (no style evidence).
 
+- footnotes and endnotes (Q9): the reference becomes ``[^1]`` (``[^e1]``)
+  where Word shows its number, the note a Markdown footnote definition right
+  after the paragraph; comments are excluded (a reviewer's note, kept in the
+  sidecar); Office Math as LaTeX, inline ``$…$`` or display ``$$…$$``.
+
 Not supported yet (warning, ``failed`` ledger item, text kept on a failed
-block in the sidecar): footnotes and endnotes, comments, linked images,
-charts and SmartArt (their text read from their own part: titles, series,
-categories and cached values; node text).
+block in the sidecar): linked images, charts and SmartArt (their text read
+from their own part: titles, series, categories and cached values; node text).
 Paragraph roles (title, list) are the structure step's decision.
 """
 
@@ -46,6 +50,7 @@ from PIL import Image
 
 from parserx.content import vector
 from parserx.content.extraction import Extraction
+from parserx.content.omml import omml_to_latex
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, DocxAnchor
 from parserx.ir.asset import Asset
@@ -397,8 +402,10 @@ def _inline(node, para: _Para, path: str) -> None:
             text = "".join(t.text or "" for t in child.iter(_w("delText"), _w("t")))
             if text.strip():
                 para.pieces.append(_Piece("deleted" if name == "w:del" else "moved", child_path, text))
-        elif name in ("m:oMath", "m:oMathPara"):
-            para.add("".join(t.text or "" for t in child.iter(f"{{{NS['m']}}}t")))
+        elif name in ("m:oMath", "m:oMathPara"):  # Q9: Office Math as LaTeX, inline or display
+            latex = omml_to_latex(child)
+            if latex:
+                para.add(f"$${latex}$$" if name == "m:oMathPara" else f"${latex}$")
         elif name == "mc:AlternateContent":
             choice = child.find(f"{{{NS['mc']}}}Choice")
             if choice is not None:
@@ -460,8 +467,10 @@ def _run_children(node, para: _Para, path: str) -> None:
             choice = child.find(f"{{{NS['mc']}}}Choice")
             if choice is not None:
                 _run_children(choice, para, f"{child_path}/mc:Choice[1]")
-        elif name in ("w:footnoteReference", "w:endnoteReference"):
-            para.pieces.append(_Piece(name[2:-9], child_path, note_id=_attr(child, "id")))
+        elif name in ("w:footnoteReference", "w:endnoteReference"):  # Q9: a Markdown footnote reference
+            kind = name[2:-9]
+            para.add(f"[^{note_label(kind, _attr(child, 'id'))}]")
+            para.pieces.append(_Piece(kind, child_path, note_id=_attr(child, "id")))
         elif name == "w:commentReference":
             para.pieces.append(_Piece("comment", child_path, note_id=_attr(child, "id")))
 
@@ -499,6 +508,11 @@ def _graphics(node, para: _Para, path: str) -> None:
         ref = next(iter(data), None)
         rid = None if ref is None else ref.get(f"{{{NS['r']}}}id") or ref.get(f"{{{NS['r']}}}dm")
         para.pieces.append(_Piece(kind, f"{path}#{kind}{index}", rid=rid))
+
+
+def note_label(kind: str, note_id: str | None) -> str:
+    """The Markdown footnote label of a Word footnote (its id) or endnote (``e`` + its id)."""
+    return f"{'e' if kind == 'endnote' else ''}{note_id or '?'}"
 
 
 def _plain_text(p) -> str:
@@ -787,7 +801,28 @@ class _Reader:
                     text = "\n".join(t for t in (_plain_text(p) for p in note.iter(_w("p"))) if t)
                     note_path = f"/w:{kind}s/w:{kind}[@w:id='{piece.note_id}']"
                     break
-        self._failed(kind, note_path, text, labels.to_kind(ENGINE, kind), part=part if root is not None else None)
+        if root is None or not text:
+            self._failed(kind, note_path, text, labels.to_kind(ENGINE, kind), part=part if root is not None else None)
+            return
+        anchor = self._anchor(note_path, part=part)  # in the referencing paragraph's segment: rendered after it
+        block_id = self._block_id()
+        chars = len("".join(text.split()))
+        if kind == "comment":  # a reviewer's note, not document content (Q9): excluded, kept in the sidecar
+            self.ext.blocks.append(Block(
+                id=block_id, kind=labels.to_kind(ENGINE, kind), order=len(self.ext.blocks), status=BlockStatus.EXCLUDED,
+                anchors=[anchor], text=text, decisions=[Decision(
+                    stage=DecisionStage.EXCLUDE, choice="comment", actor=ACTOR, evidence={"chars": chars},
+                    reason="a reviewer's comment, not document content; kept in the sidecar")]))
+            self._ledger("docx_comment", anchor, chars, "excluded", block_id)
+            return
+        # footnotes and endnotes (Q9): a Markdown footnote definition right after the paragraph that refers to it
+        text = f"[^{note_label(kind, piece.note_id)}]: " + " ".join(text.split("\n"))
+        obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
+                          task=TaskKind.EXTRACT, anchor=anchor, text=text, status=ObservationStatus.OK)
+        self.ext.blocks.append(Block(
+            id=block_id, kind=labels.to_kind(ENGINE, kind), order=len(self.ext.blocks), anchors=[anchor],
+            observations=[obs], chosen_observation=obs.id, text=text, decisions=[_source()]))
+        self._ledger("docx_note", anchor, chars, "output", block_id)
 
     def _part_text(self, rid: str | None) -> str:
         """The text of the part a relationship names (a chart's titles, series, categories and cached values; a
