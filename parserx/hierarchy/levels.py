@@ -7,11 +7,19 @@ Proposed title levels are made legal before they are applied:
 2. walking in reading order, a title whose dotted number extends the number of
    an earlier title (``5.1.1`` after ``5.1``) is one level below it — the
    numbering is the document's own statement of nesting (Phase 3 D4);
-3. a title is at most one level deeper than the title before it (the first
-   title keeps its level); a numbering pattern moved by 2 or 3 stays at that
+3. a numbering style seen for the first time right under a title of another
+   style (the last numbered title before it) nests in it — one level below —
+   when its proposal equals that title's proposal (the typography cannot tell
+   the two apart): the order in which the document introduces its styles says
+   how they nest (``一、 > （一） > 1. > （1）``), with no table of styles
+   (P4-3).  A different proposal is the typography's evidence and stands; a
+   number continuing the one above (``2 …`` then ``3、…``) is a sibling
+   written in another style;
+4. a title is at most one level deeper than the title before it (the first
+   title keeps its level); a numbering pattern moved by 2, 3 or 4 stays at that
    level for the titles that follow.
 
-Both steps only move levels toward consistency; they never add or remove a
+The steps only move levels toward consistency; they never add or remove a
 title.
 """
 
@@ -34,7 +42,10 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
     unified: dict[str, int] = {}
     previous: int | None = None
     levels_of: dict[tuple[int, ...], int] = {}  # the level each leading number was given
+    seen: set[str] = set()  # numbering styles met so far
+    above: tuple[str, int, int, str] | None = None  # the last numbered title: (style, level, proposed, text)
     for block_id, text, level in titles:
+        proposed = level
         signature = numbering_signature(text)
         level = agreed.get(signature, level) if signature is not None else level
         number = leading_number(text)
@@ -43,6 +54,10 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
             level = parent + 1
             if signature is not None:
                 agreed[signature] = level
+        elif signature is not None and signature not in seen and above is not None and above[0] != signature \
+                and proposed == above[2] and not _continues(text, above[3]):
+            level = above[1] + 1  # a new list under a title of another style nests in it
+            agreed[signature] = level
         if previous is not None and level > previous + 1:
             level = previous + 1
             if signature is not None:
@@ -52,7 +67,47 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
         previous = level
         if number is not None:
             levels_of[number] = level
+        if signature is not None:
+            seen.add(signature)
+            above = (signature, level, proposed, text)
     return unified
+
+
+_FIRST_NUMERAL = re.compile(r"[(（\s]*(?:第\s*)?([0-9０-９]+|[一二三四五六七八九十百零〇两]+|[IVXLCDM]+|[ivxlcdm]+|[A-Za-z])")
+_CJK_DIGITS = {c: i for i, c in enumerate("零一二三四五六七八九")} | {"〇": 0, "两": 2}
+_ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+def _continues(text: str, above: str) -> bool:
+    """The title's number is the one after the title above's (``2 概述`` → ``3、结构``): the same list."""
+    value, previous = number_value(text), number_value(above)
+    return value is not None and previous is not None and value == previous + 1
+
+
+def number_value(text: str) -> int | None:
+    """The value of a numbered title's first number: ``3、`` → 3, ``（十二）`` → 12, ``IV.`` → 4, ``B.`` → 2."""
+    match = _FIRST_NUMERAL.match(text or "")
+    if not match:
+        return None
+    numeral = match.group(1)
+    if numeral[0] in "0123456789０１２３４５６７８９":
+        return int(numeral.translate(str.maketrans("０１２３４５６７８９", "0123456789")))
+    if len(numeral) == 1 and numeral.isascii() and numeral.upper() not in "IVX":
+        return ord(numeral.upper()) - ord("A") + 1  # a letter sequence
+    if numeral.isascii():
+        values = [_ROMAN[c] for c in numeral.upper()]
+        return sum(-v if i + 1 < len(values) and v < values[i + 1] else v for i, v in enumerate(values))
+    total, digit = 0, 0
+    for c in numeral:
+        if c == "十":
+            total += (digit or 1) * 10
+            digit = 0
+        elif c == "百":
+            total += (digit or 1) * 100
+            digit = 0
+        else:
+            digit = _CJK_DIGITS.get(c, 0)
+    return total + digit
 
 
 _LEADING_NUMBER = re.compile(r"\s*(\d+(?:[.．]\d+)*)(?![\d])")

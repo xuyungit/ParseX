@@ -135,7 +135,7 @@ def test_appendix_numbering_has_its_own_signature():
     assert numbering_signature("C.0.1 说明") == "L.N.N" and numbering_signature("1 总则") == "N"
     # letter sequences share one pattern; I, V, X are Roman numerals
     assert numbering_signature("A. 概述") == numbering_signature("B. 方法") == numbering_signature("C. 结果") == "L"
-    assert numbering_signature("I. Introduction") == numbering_signature("IV. 结论") == numbering_signature("V. 讨论") == "N"
+    assert numbering_signature("I. Introduction") == numbering_signature("IV. 结论") == numbering_signature("V. 讨论") == "R"
     assert numbering_signature("a) 前提") == numbering_signature("b) 条件") == "L)"
 
 
@@ -256,3 +256,31 @@ def test_split_divides_a_block_at_one_of_its_line_breaks():
     assert result.mismatched == [] and result.illegal_refs == []
     assert _rules([{"op": "split", "block": "p2", "at_break": 1, "reason": "r"}]) == [(0, "no_line_break")]
     assert _rules([{"op": "split", "block": "t", "at_break": 1, "reason": "r"}]) == [(0, "kind_not_structural")]
+
+
+def test_numeral_classes_are_different_numbering_styles():
+    # 一、 > （一） > 1. > （1）: the numerals' class tells the styles apart (P4-3)
+    assert numbering_signature("一、总则") == "C、" and numbering_signature("1、目的") == "N、"
+    assert numbering_signature("（一）范围") != numbering_signature("（1）说明")
+    assert numbering_signature("第一章 总则") == numbering_signature("第3章 结构") == "第N章"  # the unit makes the style
+    assert numbering_signature("ii. scope") == "r" and numbering_signature("III. 方法") == "R"
+
+
+def test_the_chinese_four_level_numbering_is_legal():
+    from parserx.ir.anchor import PdfAnchor
+    from parserx.ir.block import Block
+    from parserx.ir.enums import BlockKind, DocumentStatus, PageStatus
+    from parserx.ir.state import DocumentState, PageState
+
+    texts = ["一、总则", "（一）范围", "1. 适用对象", "（1）新建工程", "（2）改建工程", "2. 术语", "（二）要求", "二、方法"]
+    blocks = [Block(id=f"t{i}", kind=BlockKind.TEXT, order=i, text=text,
+                    anchors=[PdfAnchor(page=1, bbox=(0, 20 * i, 100, 20 * i + 10), coord_space="page_pt")])
+              for i, text in enumerate(texts)]
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS, pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                          blocks=blocks)
+    levels = [1, 2, 3, 4, 4, 3, 2, 1]
+    changes = [c for i, lv in enumerate(levels) for c in (
+        {"op": "set_role", "block": f"t{i}", "kind": "title", "reason": "r"},
+        {"op": "set_level", "block": f"t{i}", "level": lv, "reason": "r"})]
+    assert apply_changes(state, _changes(*changes), actor="t").rejected == []

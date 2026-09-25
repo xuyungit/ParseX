@@ -15,6 +15,28 @@ def test_a_dotted_number_is_one_level_below_the_number_it_extends():
     assert unify_levels(titles) == {"a": 2, "b": 3, "c": 4, "d": 4, "e": 4, "f": 3}
 
 
+def test_a_numbering_style_first_seen_under_another_is_one_level_below_it():
+    # P4-3: the document's own order says how its numbering styles nest — no table of styles
+    titles = [("a", "一、总则", 1), ("b", "（一）范围", 1), ("c", "1. 适用对象", 1), ("d", "（1）新建工程", 1),
+              ("e", "（2）改建工程", 1), ("f", "2. 术语", 1), ("g", "（二）要求", 1), ("h", "二、方法", 1),
+              ("i", "（一）试验", 1)]
+    assert unify_levels(titles) == {"a": 1, "b": 2, "c": 3, "d": 4, "e": 4, "f": 3, "g": 2, "h": 1, "i": 2}
+    # the same styles in another order nest the other way
+    titles = [("a", "1. 概述", 1), ("b", "一、背景", 1), ("c", "二、目标", 1), ("d", "2. 方法", 1)]
+    assert unify_levels(titles) == {"a": 1, "b": 2, "c": 2, "d": 1}
+    # a proposal above or below the style over it is the typography's evidence and stands
+    titles = [("a", "第一章 总则", 1), ("b", "前言", 2), ("c", "1 范围", 3), ("d", "第二章 设计", 1)]
+    assert unify_levels(titles) == {"a": 1, "b": 2, "c": 3, "d": 1}
+    titles = [("a", "二、资格条件", 2), ("b", "八、采购人", 2), ("c", "第二章 供应商须知", 1), ("d", "1. 总则", 2)]
+    assert unify_levels(titles) == {"a": 2, "b": 2, "c": 1, "d": 2}
+    # a new style under another nests even when the titles before it in its list were not found
+    titles = [("a", "四、项目计划", 2), ("b", "五、经费预算", 2), ("c", "（五）各科目预算说明表", 2)]
+    assert unify_levels(titles) == {"a": 2, "b": 2, "c": 3}
+    # a number continuing the one above is a sibling in another style, not a new list
+    titles = [("a", "1 概述", 2), ("b", "2 主要标准", 2), ("c", "3、产品结构", 2), ("d", "4、产品特点", 2)]
+    assert unify_levels(titles) == {"a": 2, "b": 2, "c": 2, "d": 2}
+
+
 def _doc(paragraphs):
     blocks = []
     for i, (text, level) in enumerate(paragraphs):

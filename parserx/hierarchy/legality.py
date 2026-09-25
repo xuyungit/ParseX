@@ -67,16 +67,29 @@ _NUMERAL_RE = re.compile(_NUMERAL)
 
 
 def numbering_signature(text: str) -> str | None:
-    """The shape of a leading number (``1.2.3`` → ``N.N.N``), or None when the text starts without one."""
+    """The shape of a leading number, or None when the text starts without one: ``1.2.3`` → ``N.N.N``.  The numerals'
+    class is part of the style (P4-3): arabic ``N``, Chinese ``C``, Roman ``R`` / ``r`` — ``一、`` and ``1、``,
+    ``（一）`` and ``（1）`` are different levels of one document.  In ``第…章`` the unit makes the style: ``第N章``."""
     match = _NUMBERING_RE.match(text)
     if not match:
         return None
     token = re.sub(r"\s+", "", match.group(0)).rstrip(".．")
+    if token.startswith("第"):
+        return _NUMERAL_RE.sub("N", token)
     # A leading letter before a delimiter is a letter sequence (A., b), C.1), except I / V / X: Roman numerals.
     letter = re.match(r"(?![IVXivx](?:[.．)]|$))[A-Za-z](?=[.．)]|$)", token)
     if letter:
-        return "L" + _NUMERAL_RE.sub("N", token[1:]).replace("．", ".")
-    return _NUMERAL_RE.sub("N", token).replace("．", ".")
+        return "L" + _NUMERAL_RE.sub(_numeral_class, token[1:]).replace("．", ".")
+    return _NUMERAL_RE.sub(_numeral_class, token).replace("．", ".")
+
+
+def _numeral_class(match: re.Match) -> str:
+    numeral = match.group(0)
+    if numeral[0] in "0123456789０１２３４５６７８９":
+        return "N"
+    if numeral[0].isascii():
+        return "R" if numeral[0].isupper() else "r"
+    return "C"
 
 
 def check_changes(state: DocumentState, changes: list[StructureChange]) -> list[Rejection]:
