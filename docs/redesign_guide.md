@@ -22,14 +22,14 @@
 
 1. 读以下内容：
    - 指导 §2、§3、§7、§9.5、§12、§14，尤其 Q13、Q56、Q57–Q59；
-   - [v2_phase4_plan.md](v2_phase4_plan.md)（草稿；确认后照做）；
+   - [v2_phase4_plan.md](v2_phase4_plan.md)（已确认；Q60、Q61 开工前确认）；
    - 两份阶段三之后的报告：`eval_reports/2026-09-25_p4_*.md`。
 2. 运行 `uv run python scripts/check_services.py`，三项都 OK 才继续。
 3. 运行测试，都应 PASS：
    - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`，849 通过、4 个已知失败；
    - v1 的 L1 与 v2 的 L1（见 §0.1；v2 的 L1 含本地读数，约 12–20 s）；
    - 两个冻结 run 的 `--replay`（v2 需加 `--config configs/regression_v2.yaml`）。
-4. 若 Q57–Q59 尚未确认，先请用户确认；之后按 [v2_phase4_plan.md](v2_phase4_plan.md) §1 的顺序做。
+4. 先请用户确认 Q60、Q61；之后按 [v2_phase4_plan.md](v2_phase4_plan.md) §3 的顺序做（P4-1、P4-2 完成后先请用户试用）。启动提示词见 [next_session_prompt.md](next_session_prompt.md)。
 5. 每完成一项：跑 L0 与两个 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 结束会话前：`git status` 确认改动在预期内；评测报告写入 `eval_reports/`。
 
@@ -43,7 +43,8 @@
 - [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
-- [v2_phase4_plan.md](v2_phase4_plan.md)：阶段四工作分解（草稿，待用户确认：混合运行时作为产品默认、标题的 v2 自有路径、图片不丢、DOCX 页面、专项验证；待决问题 Q57–Q59）。
+- [v2_phase4_plan.md](v2_phase4_plan.md)：阶段四工作分解（已确认：混合运行时作为产品默认、控制台交互、标题的 v2 自有路径、图片不丢、DOCX 页面、专项与逐篇差距；待决问题 Q60、Q61）。
+- [next_session_prompt.md](next_session_prompt.md)：下一轮会话的启动提示词（阶段四）。
 - [v2_phase3_plan.md](v2_phase3_plan.md)：阶段三工作分解（已完成：固定流水线与 Codex 在未见集上的对比、混合方案的分流规则、P3-1 至 P3-6、待决问题 Q51–Q55）。
 - [v2_agent_runtime_research.md](v2_agent_runtime_research.md)：Agent 运行时调研（2026-09-24）：OpenAI Agents API / Agents SDK、Pi、PydanticAI 等框架的对比，与自研薄循环的架构建议；待决问题 Q56–Q58。
 - [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
@@ -772,7 +773,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 1 文档工具包 v1 | 建立数据模型、约束与工具（分解见 [v2_phase1_plan.md](v2_phase1_plan.md)） | `ir/`、`workspace/`、`scheduling/`（预算、`run_ordered`、费用）、`content/`（原生 PDF、paddleocr、DOCX 直接读 OOXML、选择步骤）、`accounting/`、`render/`；七个工具的 JSON CLI 与返回信封；三份 Skill 草稿；`layout/` 与 `routing/image.py` 影子运行；固定序列运行时与 `pipeline: v1 \| v2` 开关；验收文档 text_table01、receipt、simple_doc01，另加扫描路径 ocr_scan_jtg3362（Q23） | L0 覆盖五个 IR 概念、TableGrid 往返、七个工具契约、去向检查与调度；三篇的 v2 冻结 run 的信息类指标与 heading_f1 均不低于 v1、真实请求数不增加；扫描路径能执行、去向平衡、信息类指标不低于 v1；每篇去向平衡、sidecar 通过 schema 校验、冻结 run 可回放；v2 的 L1 回放两次一致 | ✅ 2026-09-24：P1-1 至 P1-11 全部完成；v2 冻结 run `eval_runs/2026-09-24_p1_v2_toolkit`，全部退出条件满足（receipt 的文本类指标与 heading_f1、jtg3362 的 heading_f1 按 Q23/Q27/Q32 只报告），[验收报告](../eval_reports/2026-09-24_p1_toolkit_acceptance.md)。全量语料参考运行（非退出条件）发现的差距按 Q33（e14752f 重新冻结，`--replay` 通过）与 Q34 在阶段二前处理；剩余差距见验收报告 |
 | 2 Agent 探索 | 发现工具缺口 | Codex CLI（主力模型 gpt-6-sol，Q35）挂工具包与 Skill，在难例上端到端运行，允许临时脚本；记录需要的工具、看图点、缺失信息、值得封装的能力；产出工具包 v1.1 与候选通用算法 | 探索报告；工具包修订完成 | 🟡 分解已确认（[v2_phase2_plan.md](v2_phase2_plan.md)，Q35–Q39）；✅ P2-1 实验装置（`scripts/agent_explore.py`、`runtimes/codex.py`、`runtimes/px.py`、`runtimes/experiment.py`、工作区状态摘要与 `workspace_tampered`；text_table01 跑通、审计通过，[报告](../eval_reports/2026-09-24_p2-1_harness.md)）；✅ P2-2 任务说明（`runtimes/agent_task.md`，两轮只差"本轮规则"一节）；✅ P2-3 对照运行（固定流水线 v2 在第一轮快照上跑探索集 13 次，全部完成）；✅ P2-4 第一轮（13 次运行，发现清单经用户确认，[报告](../eval_reports/2026-09-24_p2-4_round1_findings.md)）；✅ P2-5 工具包 v1.1 与 Skill 修订（`process`、`correct`、`ask_image`、`exclude` / `restore`、Q42 输出包与嵌入图片转录、Q43、Q44、段落续接、WMF / EMF；两次小范围迭代检查：[一](../eval_reports/2026-09-24_p2-5_iteration1.md)、[二](../eval_reports/2026-09-24_p2-5_iteration2.md)；图片索引图 C3 与误识表格还原 B3 视第二轮结果再定，跨页正文续接并入 P2-7）；✅ P2-6 第二轮（17 次运行全部有效，注入测试通过；发现的 8 处工具包缺陷与 3 处装置缺陷已修正，[报告](../eval_reports/2026-09-24_p2-6_round2.md)；Q48–Q50 待用户决定）；✅ P2-7 候选通用算法（跨页段落续接、DOCX 无样式标题 Q48、表格算术一致性、可疑字符、单元格中的图片；第三轮在修正涉及的 8 篇上核对）；✅ P2-9 [探索报告](../eval_reports/2026-09-24_p2_agent_exploration.md)（Q14、Q30 已回答）；✅ P2-8 阶段三准备（未见集 6 篇：隔离集 3 篇 + `ground_truth_unseen/` 3 篇新文档，标注经用户审核；验证集 1 篇；§9.4 协议补全）。**阶段二 ✅ 2026-09-24** |
 | 3 验收实验 | 用数据决定运行时 | 冻结工具与 Skill；未见过的难例集；Codex 基线、Claude Code 第二基线、Pi（同模型时比较运行时差异）、固定流水线对照；§9.4 协议与 §7.3 卫生（2026-09-24 用户决定：先比较固定流水线与 Codex；Claude Code 暂不用；第三方 Agent 框架（Pi 或其他）另议，其余工作完成后再切换） | §9.4 报告入库；Q13 决定默认运行时 | ✅ 2026-09-25：阶段三运行与[对比报告](../eval_reports/2026-09-24_p3_runtime_comparison.md)；按报告的缺陷清单修正 D1–D6、加本地读数双向比对（Q56）与 Agent 修正通道后[重跑对比](../eval_reports/2026-09-25_p4_runtime_comparison.md)；**Q13 用户决定默认混合方案**；Q54 执行：3 篇新文档并入 `ground_truth/` |
-| 4 能力完善 | 按结论补齐处理能力 | 〔Q13〕混合方案作为产品默认运行时（固定流水线 → 有待核对项交 Agent，Agent 运行时可替换）；图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
+| 4 能力完善 | 按结论补齐处理能力 | 〔Q13〕混合方案作为产品默认运行时（固定流水线 → 有待核对项交 Agent，Agent 运行时可替换）与控制台交互（进度、Agent 动作、结果摘要、回退与中断）；图片路由（含 UNCERTAIN）、两种扫描引擎、复核与语义提取、章节组织（§6.8）、OOXML 边界表、嵌入图片统一子文档路径；退役守卫函数；专项验证低分辨率、密集表格、多栏、旧 OCR 层、矢量文字 | 扫描类、DOCX、标题各项不低于 v1；"有信息图片被丢弃"为 0；模型能提出 v1 漏掉的标题 | ⬜ |
 | 5 清理 | 删除死代码与死依赖 | §11.4 执行；§11.5 全部迁移；README 反映真实状态 | 测试全绿；依赖清单与 §10.4 一致 | ⬜ |
 
 阶段二与三不等阶段四：对比实验只需要工具包和固定序列存在，越早拿到数据越早止损。
@@ -851,9 +852,11 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q54 | 阶段三之后未见集的去向 | ✅ 用户同意：3 篇新文档并入开发语料，隔离集照旧单独报告；以后验收另找未见文档。用户补充：不必在数据集划分上做得过细，典型文档能正常处理即可，新文档出问题时再打磨 |
 | Q55 | 探索集是否一起跑作参照 | ✅ 用户同意：不跑 |
 | Q56 | 待核对信号怎样设计才不沦为"见一种错写一条规则"（用户担忧，2026-09-25） | ✅ 用户同意（2026-09-25）：① **信号只指路、不下结论**：只把位置与理由列入待核对项，由 Agent 看图判断；误报的代价是多看一眼，不会改坏输出。② **信号来自正确输出必须满足的性质，而不是见过的错误样子**，限于四类：守恒（页面上看得见的每一行字都有去处；输出的文字页面上看得见）、独立读数一致（同一区域两份独立读数不一致）、文档自身一致（数字相加、编号连续、目录与标题对应）、结构与版面一致（程序给出的结构与页面版面特征相符）。新发现的错误先归到其中一类，修法是扩大这一类的覆盖，而不是加一条模式。③ **先与文档自身比较，少用绝对阈值**；非用不可的数字须是测量容差并登记理由。④ **用全语料衡量信号**：评测器知道输出与标注哪里不一致，信号知道指了哪里，可算"错误被指到的比例"与"指到处确有错误的比例"；新信号或改动须在全语料上提高前者且不明显降低后者才能加入。⑤ **分层检查**（用户：不做每页都经 VLM / OCR / Agent 读一遍）：每页只做便宜的本地检查——本地文字检测与识别（rapidocr，CPU，约 0.6 s/页，无费用；在 unseen_scan_form01 上读出了服务 OCR 漏掉的一行）与输出双向比对；只有不一致处才交给服务 OCR、VLM 或 Agent。用户原则（2026-09-25）：规则的应用要谨慎，特别是带魔法数字的规则。**用户补充（2026-09-25）**：Agent 按需读取（看图、再识别）是它的核心优势，不能因为有了本地读数就排除；工具与门要让有独立证据的修正通过 |
-| Q57 | 混合运行时怎样调用 Agent | ❓ 建议见 [v2_phase4_plan.md](v2_phase4_plan.md) §3：调用本机已登录的 Codex CLI；不可用时只用固定流水线并在摘要中说明；卫生设置沿用实验装置；截止时间按 Q39 |
-| Q58 | 阶段四的范围与顺序 | ❓ 建议：P4-1 混合运行时 → P4-2 标题 → P4-3 图片 → P4-4 DOCX 页面 → P4-5 专项验证 → P4-6 收尾；第二种扫描引擎与语义提取扩展暂不做 |
-| Q59 | adapter:v1 何时退役 | ❓ 建议：v2 自有标题路径在全语料上不低于 v1 时退役，否则保留到阶段五 |
+| Q57 | 混合运行时怎样调用 Agent | ✅ 用户基本同意（2026-09-25）：调用本机已登录的 Codex CLI；不可用时只用固定流水线并说明；卫生沿用实验装置；截止时间按 Q39；费用按标价记录 |
+| Q58 | 阶段四的范围与顺序 | ✅ 用户基本同意（2026-09-25），并补充控制台交互（P4-2：进度、Agent 动作、结果摘要、回退与中断的提示）；第二种扫描引擎与语义提取扩展暂不做 |
+| Q59 | adapter:v1 何时退役 | ✅ 用户基本同意（2026-09-25）：v2 自有标题路径在全语料上不低于 v1 时退役，否则保留到阶段五 |
+| Q60 | 控制台的界面语言 | ❓ 建议：跟随系统语言（`LANG` 为中文时用中文，其余用英文），`--lang` 可指定；命令、参数与 JSON 字段名始终用英文 |
+| Q61 | `parserx parse` 的默认流水线 | ❓ 建议：默认改为 v2（混合方案），v1 保留 `--pipeline v1` 入口到阶段五删除 |
 | Q56 | 主 Agent 的运行时：自研薄循环、PydanticAI，还是 Pi（[调研](v2_agent_runtime_research.md)） | ❓ 建议自研薄循环：Python、进程内调用工具、模型请求经 `ServiceGateway`（缓存回放、计数、预算），参考 Pi 与 mini-swe-agent；Codex 保留作探索；OpenAI Agents API（托管的 Codex）与 Claude Agent SDK 不采用 |
 | Q57 | 主 Agent 是否需要支持多家模型 | ❓ 建议暂时只用 OpenAI Responses API，模型接口留一层，需要时接 PydanticAI 的模型层 |
 | Q58 | 自研循环与缺陷 D1–D6 修复的先后 | ❓ 建议先修 D1、D2（信息错误），再做循环 |
@@ -956,3 +959,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-25 | v1.14 | **修正后重跑对比**（快照 b0a833e，6 篇 × 2 × 2，24 次全部有效，[报告](../eval_reports/2026-09-25_p4_runtime_comparison.md)）：固定流水线 char_f1 0.922 → 0.942、表格 F1 0.519 → 0.629；Codex heading_f1 0.499 → 0.619、角色 F1 0.517 → 0.662（text_pic02 0.143 → 0.960）；Agent 用 `close` 关闭看过的提示，处理后待核对项大都为 0；Q13 建议改为默认混合方案 |
 | 2026-09-25 | v1.15 | **Q13 决定、阶段三完成**：用户同意默认用混合方案（先跑固定流水线，有待核对项或状态不是 complete 就交给 Agent；保留只用固定流水线的模式）。Q54 执行：unseen_word_spec01、unseen_pdf_tables01、unseen_scan_form01 由 `ground_truth_unseen/` 移入 `ground_truth/`，成为开发语料；以后验收另找未见文档。下一阶段：阶段四（分解待写） |
 | 2026-09-25 | v1.15 | **阶段四分解草稿**（[v2_phase4_plan.md](v2_phase4_plan.md)）：混合运行时作为产品默认（P4-1）、标题的 v2 自有路径（P4-2）、有信息的图片不丢（P4-3）、DOCX 页面（P4-4）、专项验证（P4-5）、收尾（P4-6）；新增待决问题 Q57–Q59；§0.2 改为阶段四启动清单 |
+| 2026-09-25 | v1.15 | **阶段四分解确认并细化**（[v2_phase4_plan.md](v2_phase4_plan.md)）：用户基本同意，Q57–Q59 按建议；用户补充控制台交互（新 P4-2：进度、Agent 动作的可读显示、结果摘要、回退与中断提示、非终端与 `--json`）。细化加入进入阶段四时的事实（固定流水线 v2 与 v1 按现行标注重算：char_f1 0.943 / 0.891、表格 F1 0.817 / 0.775、heading_f1 0.537 / 0.504，逐篇差距清单）与各项设计。新增 Q60（界面语言）、Q61（`parserx parse` 默认改 v2 混合方案）。下一轮会话启动提示词写入 [next_session_prompt.md](next_session_prompt.md) |
