@@ -266,3 +266,24 @@ def test_v1_docx_headings_do_not_render_drawings(tmp_path, monkeypatch):
     headings = v1_headings_docx(tmp_path / "shape.docx", load_config(None))
     assert [text for _, text in headings] == ["第一章 总则"]
 
+
+
+def test_a_v1_heading_on_the_first_line_of_a_block_is_split_off(tmp_path, monkeypatch):
+    # P4-3: a title joined to the next line by a line break is divided there (text unchanged), then set as title;
+    # the rest can be the next heading
+    from parserx.runtimes import v1_structure
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 90), "TensorFlow:\nLarge-Scale Machine Learning\nMartin Abadi and others", fontsize=11)
+    for i in range(6):
+        page.insert_text((72, 200 + 16 * i), f"Body line {i} of the paper with enough words in it.", fontsize=10)
+    path = tmp_path / "paper.pdf"
+    doc.save(path)
+    monkeypatch.setattr(v1_structure, "v1_headings",
+                        lambda p, c: [(1, 1, "TensorFlow:"), (1, 1, "Large-Scale Machine Learning")])
+    outcome = run(path, tmp_path / "ws", tmp_path / "out", _config(), context_factory=_Session(_context()))
+    assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# TensorFlow:\n\n# Large-Scale Machine Learning\n\n"
+                                       "Martin Abadi and others\n")
+    sidecar = json.loads(outcome.sidecar_json)
+    assert sidecar["accounting"]["unassigned"] == 0

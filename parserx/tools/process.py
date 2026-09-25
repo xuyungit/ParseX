@@ -229,9 +229,17 @@ def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> lis
     native = v1_structure.matched_titles(source, state, config)
     scanned = engine_titles(state)
     position = {b.id: i for i, b in enumerate(ordered(state))}
-    combined = sorted(native + scanned, key=lambda t: position[t[0]])
+
+    def place(block_id: str) -> tuple[int, int]:  # a part split off a block (<id>-s1) follows it
+        root = block_id
+        while root not in position and "-s" in root:
+            root = root.rsplit("-s", 1)[0]
+        return position[root], block_id.count("-s") - root.count("-s")
+
+    combined = sorted(native + scanned, key=lambda t: place(t[0]))
     levels = unify_levels([t[:3] for t in combined])
-    return [(v1_structure.ACTOR, title_changes(native, levels, reason=v1_structure.REASON)),
+    return [(v1_structure.ACTOR, v1_structure.split_changes(native)
+             + title_changes(native, levels, reason=v1_structure.REASON)),
             (ENGINE_ACTOR, title_changes(scanned, levels, reason=ENGINE_REASON))]
 
 

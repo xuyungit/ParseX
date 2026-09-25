@@ -869,3 +869,18 @@ def test_structure_changes_return_the_items_they_open(ws):
                                                         "reason": "test"}]})
     data = _assert_contract(env, "apply_structure")
     assert [(u["target"], u["kind"]) for u in data["unresolved"]] == [(block, "structure_pending")]
+
+
+def test_split_through_the_tool_reports_the_new_block(tmp_path):
+    # the diff of apply_structure knows blocks created by the call (a split's second part)
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 90), "3 Results\nThe measured values follow.", fontsize=11)
+    doc.save(tmp_path / "two.pdf")
+    ws = tmp_path / "ws"
+    workspace_init(tmp_path / "two.pdf", ws, config=_config())
+    block = next(b for b in json.loads((ws / "state.json").read_text())["blocks"] if "\n" in (b["text"] or ""))
+    env, _ = _call("apply_structure", ws, {"changes": [{"op": "split", "block": block["id"], "at_break": 1,
+                                                        "reason": "title joined to the next line"}]})
+    data = _assert_contract(env, "apply_structure")
+    assert env.ok and data["result"]["accepted"] == [0]
+    assert any(c["target"] == block["id"] + "-s1" for c in data["diff"])

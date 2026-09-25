@@ -36,7 +36,8 @@ def run(ctx: ToolContext, req: ApplyStructureRequest) -> ToolOutput[ApplyStructu
         diff = []
         for block in state.blocks:
             for f in _FIELDS:
-                old, new = before[block.id][f], _value(block, f)
+                old = before[block.id][f] if block.id in before else None  # a block the call created (split)
+                new = _value(block, f)
                 if old != new:
                     diff.append(Change(target=block.id, field=f, before=_json(old), after=_json(new)))
         outline = outline_nodes(state)
