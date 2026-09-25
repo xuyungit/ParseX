@@ -100,7 +100,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if ctx.config.runtime.layout_shadow:
         pages, figures = layout_todo(state)
         if pages or figures:
-            ctx.report(Step("process", "layout", total=len(pages)))
+            ctx.report(Step("process", "layout", total=len(pages), detail={"figures": len(figures)}))
             out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
             failures += out.failures
             steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))

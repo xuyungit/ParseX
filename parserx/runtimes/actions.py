@@ -39,13 +39,17 @@ def _page_of(target: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _look(block: str | None, page: int | None, seam: int | None, question: str | None) -> AgentAction:
+def _look(block: str | None, page: int | None, seam: int | None, question: str | None,
+          text_of: Lookup) -> AgentAction:
     target = block or (f"p{page}" if page is not None else f"p{seam}" if seam is not None else None)
-    return AgentAction("look", target=target, page=page if page is not None else seam if seam is not None
-                       else _page_of(block), detail=_short(question))
+    where = page if page is not None else seam if seam is not None else _page_of(block)
+    # a block without a page (DOCX) is named by its text
+    text = _short(text_of(block)) if block and where is None else None
+    return AgentAction("look", target=target, page=where, text=text, detail=_short(question))
 
 
 GROUP_MIN = 4  # this many same actions from one call are shown as one line with a count
+GROUPED = frozenset({"join", "set_role", "exclude", "restore", "move_after", "split"})  # titles, edits stay listed
 
 
 def actions(record: dict, text_of: Lookup = lambda _: None) -> list[AgentAction]:
@@ -58,7 +62,7 @@ def actions(record: dict, text_of: Lookup = lambda _: None) -> list[AgentAction]
         while j < len(out) and out[j].action == out[i].action:
             j += 1
         run = out[i:j]
-        if len(run) >= GROUP_MIN and run[0].action not in ("look",):
+        if len(run) >= GROUP_MIN and run[0].action in GROUPED:
             pages = sorted({a.page for a in run if a.page is not None})
             grouped.append(AgentAction(run[0].action, page=pages[0] if len(pages) == 1 else None,
                                        target=None if len(pages) == 1 else ",".join(f"p{p}" for p in pages) or None,
@@ -77,9 +81,9 @@ def _actions(record: dict, text_of: Lookup) -> list[AgentAction]:
     ok = (record.get("envelope") or {}).get("ok", False)
     if tool == "ask_image":
         questions = req.get("questions") or [req]
-        return [_look(q.get("block"), q.get("page"), q.get("seam"), q.get("question")) for q in questions]
+        return [_look(q.get("block"), q.get("page"), q.get("seam"), q.get("question"), text_of) for q in questions]
     if tool == "read" and req.get("image") in ("page", "crop"):
-        return [_look(req.get("block"), req.get("page"), None, None)]
+        return [_look(req.get("block"), req.get("page"), None, None, text_of)]
     if not ok:
         return []
     if tool == "correct":

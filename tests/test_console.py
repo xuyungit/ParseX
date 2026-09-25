@@ -33,7 +33,7 @@ class Clock:
 
 
 def _outcome(tmp_path, **changes):
-    values = dict(name="专利说明书", source="专利说明书.pdf", out_dir=str(tmp_path),
+    values = dict(name="专利说明书", source="专利说明书.pdf", format="pdf", out_dir=str(tmp_path),
                   markdown=str(tmp_path / "专利说明书.md"), summary=str(tmp_path / "专利说明书.json"),
                   blocks=str(tmp_path / "专利说明书.blocks.json"), status="complete", runtime="hybrid:agent", pages=14,
                   tables=2, images=3, titles=9, review_open=0, review_by_kind={}, missing=[], wall_s=181.0,
@@ -261,3 +261,25 @@ def test_pipeline_v1_stays_available(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
     assert exit_info.value.code == 0 and calls == [("v1", tmp_path / "a.pdf")]
+
+
+def test_action_lines_name_pages_kinds_and_docx_blocks():
+    stream = io.StringIO()
+    reporter = ConsoleReporter(stream, lang="zh", tty=False)
+    reporter(AgentAction("set_role", target=",".join(["p4", "p5", "p6"]), count=5))
+    reporter(AgentAction("set_role", target="b-p001-0002", page=1, text="(12)发明专利", detail="other"))
+    reporter(AgentAction("look", target="b-d00093", text="5.2支座加工：", detail="是独立小节标题吗？"))
+    reporter(Step("process", "layout", total=0, detail={"figures": 13}))
+    reporter(StageEnd("process", 1.0))
+    assert stream.getvalue().splitlines() == [
+        "      改类型  5 处 · 第 4、5、6 页",
+        "      改类型  (12)发明专利 → 其他",
+        "      看图  «5.2支座加工：» · 是独立小节标题吗？",
+        "      图片分类 13 张                            ✓ 0.0 s",
+    ]
+
+
+def test_docx_result_has_no_page_count(tmp_path):
+    stream = io.StringIO()
+    ConsoleReporter(stream, lang="zh", tty=False)(DocEnd(_outcome(tmp_path, format="docx", pages=1)))
+    assert "      状态 complete · 表格 2 · 图片 3 · 标题 9 · 待核对 0 项" in stream.getvalue().splitlines()

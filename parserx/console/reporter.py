@@ -21,7 +21,7 @@ import unicodedata
 from pathlib import Path
 from typing import TextIO
 
-from parserx.console.messages import duration, money, t
+from parserx.console.messages import MESSAGES, duration, money, t
 from parserx.runtimes.events import (
     STAGES,
     AgentAction,
@@ -204,7 +204,9 @@ class ConsoleReporter:
                   + (f"  · {self._msg('resumed')}" if e.resumed else ""))
 
     def _on_Step(self, e: Step) -> None:
-        text = self._msg(f"step.{e.step}", done=e.done if e.done is not None else 0, total=e.total or 0)
+        key = "step.layout_figures" if e.step == "layout" and not e.total else f"step.{e.step}"
+        text = self._msg(key, done=e.done if e.done is not None else 0, total=e.total or 0,
+                         figures=e.detail.get("figures", 0))
         if self._step is None or self._step[0] != e.step:
             self._finish_step()
             self._step = (e.step, text, self.clock())
@@ -227,6 +229,8 @@ class ConsoleReporter:
         if code == "check" and self._structure_started is not None:
             text = f"{self._msg('step.structure')} · {text}"
             started, self._structure_started = self._structure_started, None
+        if self.tty:
+            self._render_live(None, False)  # the finished step's live line gives way to its permanent line
         self.line(pad(INDENT + text) + f"✓ {duration(self.lang, self.clock() - started)}")
 
     def _on_Waiting(self, e: Waiting) -> None:
@@ -292,13 +296,24 @@ class ConsoleReporter:
     def _on_AgentAction(self, e: AgentAction) -> None:
         if self.quiet:
             return
-        where = self._msg("page", page=e.page) if e.page is not None else (e.target or "")
+        if e.page is not None:
+            where = self._msg("page", page=e.page)
+        elif e.target and "," in e.target:
+            where = self._msg("pages", pages="、".join(p.lstrip("p") for p in e.target.split(",")) if self.lang == "zh"
+                              else ", ".join(p.lstrip("p") for p in e.target.split(",")))
+        else:
+            where = f"«{e.text}»" if e.action == "look" and e.text else (e.target or "")
         parts = [self._msg(f"act.{e.action}")]
-        if e.action == "set_title" or e.action == "set_level":
+        if e.count > 1:
+            parts.append(" · ".join(p for p in (self._msg("count", n=e.count), where) if p))
+        elif e.action == "look":
+            parts.append(" · ".join(p for p in (where, e.detail) if p))
+        elif e.action == "set_title" or e.action == "set_level":
             parts.append(" ".join(p for p in (e.text or where, self._msg("level", level=e.level)
                                               if e.level is not None else "") if p))
-        elif e.count > 1:
-            parts.append(" · ".join(p for p in (self._msg("count", n=e.count), where) if p))
+        elif e.action == "set_role" and e.detail:
+            role = self._msg(f"role.{e.detail}") if f"role.{e.detail}" in MESSAGES else e.detail
+            parts.append(" ".join(p for p in (e.text or where, self._msg("role_to", role=role)) if p))
         elif e.action == "rejected":
             parts.append(" · ".join(p for p in (where, self._msg("rejected_why")) if p))
         else:
@@ -340,7 +355,7 @@ class ConsoleReporter:
                                 path=shown_path(o.markdown)))
             return
         self.line(pad(status_word, 6) + shown_path(o.markdown))
-        self.line(INDENT + self._msg("result_line", status=_value(o.status),
+        self.line(INDENT + self._msg("result_line_docx" if o.format == "docx" else "result_line", status=_value(o.status),
                                      pages=o.pages, tables=o.tables, images=o.images, titles=o.titles,
                                      open=o.review_open))
         if o.missing:

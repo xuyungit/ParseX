@@ -74,6 +74,7 @@ class ParseFailure(RuntimeError):
 class ParseOutcome(IRModel):
     name: str
     source: str
+    format: str  # pdf · docx
     out_dir: str
     markdown: str
     summary: str
@@ -179,7 +180,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     else:
         shutil.rmtree(work, ignore_errors=True)
     outcome = ParseOutcome(
-        name=name, source=source.name, out_dir=str(out_dir), markdown=str(out_dir / f"{name}.md"),
+        name=name, source=source.name, format=summary.format, out_dir=str(out_dir), markdown=str(out_dir / f"{name}.md"),
         summary=str(out_dir / f"{name}.json"), blocks=str(out_dir / f"{name}.blocks.json"), status=summary.status,
         runtime=runtime, runtime_note=note, runtime_detail=detail, pages=summary.pages, tables=summary.tables,
         images=sum(1 for i in summary.images if i.shown), titles=len(summary.outline),

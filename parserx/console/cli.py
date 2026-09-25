@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import signal
 import sys
 import tempfile
 import time
@@ -40,6 +41,8 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
     from parserx.runtimes.hybrid import WORK_DIR, ParseFailure, parse_document
 
     _quiet_logging(args.verbose)
+    # A termination request stops like Ctrl-C: the agent (in its own session) is stopped, the work is kept.
+    signal.signal(signal.SIGTERM, _interrupt)
     files = expand_inputs(args.input)
     several = len(files) > 1
     reporter = ConsoleReporter(sys.stderr, lang=args.lang, quiet=args.quiet, verbose=args.verbose,
@@ -88,6 +91,10 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
     if args.json:
         sys.stdout.write(json.dumps(results if several else results[0], ensure_ascii=False, indent=2) + "\n")
     return 1 if failed else 0
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 def _quiet_logging(verbose: bool) -> None:

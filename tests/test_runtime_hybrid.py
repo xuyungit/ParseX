@@ -262,6 +262,12 @@ def test_agent_actions_are_read_from_the_call_records():
                                                  "dst": f"b-p001-000{i + 1}"} for i in range(5)]},
                 {"accepted": [0, 1, 2, 3, 4], "rejected": []})
     assert [(a.action, a.page, a.count) for a in actions(joins)] == [("join", 1, 5)]
+    titles = rec("apply_structure", {"changes": [{"op": "set_role", "block": f"b-p00{i}-0001", "kind": "title",
+                                                  "level": 1} for i in range(1, 6)]},
+                 {"accepted": [0, 1, 2, 3, 4], "rejected": []})
+    assert [a.action for a in actions(titles)] == ["set_title"] * 5  # each title is worth its own line
+    docx = actions(rec("ask_image", {"block": "b-d00093", "question": "?"}, {}), {"b-d00093": "5.2支座加工："}.get)
+    assert (docx[0].page, docx[0].text) == (None, "5.2支座加工：")
     tally = AgentTally()
     for r in records:
         tally.add(r)
