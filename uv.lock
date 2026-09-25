@@ -1956,6 +1956,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rapid-layout" },
     { name = "rapidfuzz" },
+    { name = "rapidocr" },
     { name = "requests" },
 ]
 
@@ -2002,6 +2003,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rapid-layout", specifier = ">=1.2.1" },
     { name = "rapidfuzz", specifier = ">=3.14.6" },
+    { name = "rapidocr", specifier = ">=3.7.0" },
     { name = "requests", specifier = ">=2.33.1" },
 ]
 provides-extras = ["docx", "dev", "bench"]

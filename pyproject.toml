@@ -22,6 +22,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "rapid-layout>=1.2.1",
     "onnxruntime>=1.30.0",
+    "rapidocr>=3.7.0",
 ]
 
 [project.optional-dependencies]

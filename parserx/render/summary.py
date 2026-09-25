@@ -45,6 +45,7 @@ class OpenItem(IRModel):
     target: str  # block id or page ("p3")
     kind: str
     detail: str
+    quotes: list[str] = []  # the document text the item is about
 
 
 class Review(IRModel):
@@ -142,7 +143,8 @@ def _review(state: DocumentState) -> Review:
     for item in items:
         by_kind[item.kind.value] = by_kind.get(item.kind.value, 0) + 1
     return Review(open=len(items), by_kind=dict(sorted(by_kind.items())),
-                  items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail) for i in items[:REVIEW_ITEMS_MAX]])
+                  items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail, quotes=[q.doc_text for q in i.quotes])
+                         for i in items[:REVIEW_ITEMS_MAX]])
 
 
 def _summary(block: Block | None) -> str | None:

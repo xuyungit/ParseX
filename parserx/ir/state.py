@@ -12,7 +12,7 @@ from pydantic import Field
 
 from parserx.ir.anchor import SourceAnchor
 from parserx.ir.asset import Asset
-from parserx.ir.base import IRModel
+from parserx.ir.base import BBox, IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import DocumentStatus, ImageRoute, PageStatus
 from parserx.ir.relation import Relation
@@ -84,6 +84,25 @@ class Stats(IRModel):
     wall_time_s: float = 0.0
 
 
+class ReadLine(IRModel):
+    """One text line of a local page reading, in page points (unrotated PDF space, like every PdfAnchor)."""
+
+    bbox: BBox
+    text: str
+    score: float  # the local recognizer's own confidence
+
+
+class PageReading(IRModel):
+    """An independent local reading of one page render (guide §9.5, Q56): evidence for the two-way comparison
+    with the output, never output itself."""
+
+    n: int = Field(ge=1)
+    engine: str  # recognizer and version
+    dpi: int
+    lines: list[ReadLine] = []
+    not_prose: list[BBox] = []  # layout-detector regions whose text is picture or formula content
+
+
 class DocumentState(IRModel):
     schema_version: Literal[1] = 1
     id: str
@@ -98,6 +117,7 @@ class DocumentState(IRModel):
     relations: list[Relation] = []
     assets: list[Asset] = []
     images: list[ImageRecord] = []
+    readings: list[PageReading] = []  # local page readings (guide §9.5, Q56)
     ledger: list[LedgerEntry] = []
     missing: list[Missing] = []
     stats: Stats = Stats()

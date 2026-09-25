@@ -4,6 +4,8 @@ The fixed sequence of the pipeline runtime, as a tool the agent calls first:
 
 1. ``recognize`` (paddleocr) — pages whose native layer failed;
 2. ``recognize`` (layout) — shadow detection of pages, routing of figures;
+2a. the local page reading (``tools/page_reading.py``, PDF): evidence for the two-way comparison of the output
+    with each page image, listed in the worklist (guide §9.5, Q56);
 2b. ``recognize`` (paddleocr) on embedded images routed SCAN or MIXED (Q42): their text and tables follow them;
 3. ``describe_figure`` — every shown figure without a description, in one concurrent batch, except images
    routed SCAN whose content was transcribed;
@@ -40,6 +42,7 @@ from parserx.tools import check_export, describe_figure, recognize, structure
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure
 from parserx.tools.layout_shadow import layout_todo
+from parserx.tools.page_reading import read_pages, reading_todo
 from parserx.tools.views import unresolved_items
 from parserx.workspace.queries import HIDDEN, ordered
 
@@ -98,6 +101,12 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
             failures += out.failures
             steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
+
+    state = ctx.ws.load()
+    if ctx.config.runtime.page_reading:  # evidence for the two-way comparison with the output (guide §9.5, Q56)
+        todo = reading_todo(state)
+        if todo:
+            steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
 
     state = ctx.ws.load()
     candidates = _textual_images(state)

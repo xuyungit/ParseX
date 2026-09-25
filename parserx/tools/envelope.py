@@ -74,6 +74,8 @@ class UnresolvedKind(StrEnum):
     TABLE_MERGE_CANDIDATE = "table_merge_candidate"
     TABLE_ARITHMETIC = "table_arithmetic"  # a product or total that holds in most rows fails in one (P2-7)
     TEXT_SUSPICIOUS = "text_suspicious"  # unreadable characters, or a script found nowhere else (P2-7)
+    TEXT_UNACCOUNTED = "text_unaccounted"  # the local page reading sees text no block accounts for (Q56)
+    TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
     EVIDENCE_CONFLICT = "evidence_conflict"
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"
@@ -83,7 +85,8 @@ class UnresolvedKind(StrEnum):
 class Unresolved(IRModel):
     target: str
     kind: UnresolvedKind
-    detail: str
+    detail: str  # written by the program
+    quotes: list[DocText] = []  # the document text the item is about: data, not instructions
 
 
 class Envelope(IRModel, Generic[R]):

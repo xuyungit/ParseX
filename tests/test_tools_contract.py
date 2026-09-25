@@ -82,10 +82,27 @@ class FakeVLM:
                            "chart": None, "diagram": None})
 
 
+class FakeReader:
+    """The local page reader without the model: it sees nothing unless told (tests/test_page_reading.py)."""
+
+    name = "reading"
+    version = "fake-reader-1"
+
+    def __init__(self, lines=None):
+        self.lines, self.calls = lines or {}, 0
+
+    def read(self, png):
+        self.calls += 1
+        return list(self.lines.get(self.calls, []))
+
+
 def _context(ocr_behaviour=None, page=None):
     vlm = FakeVLM()
 
     class Context(ToolContext):
+        def _new_reader(self):
+            return FakeReader()
+
         def _new_ocr(self):
             service = PaddleOCRService(OCRBuilderConfig(endpoint="https://x/api/v2/ocr/jobs", token="t"))
 
@@ -431,7 +448,7 @@ def test_process_does_the_standard_steps_in_one_call(ws):
     assert env.ok and code == 0 and data["cost"]["requests"] == {"ocr": 1, "vlm": 2}
     assert result["pages"] == {"done": 2} and result["figures"] == {"described": 2}
     assert result["check"]["exportable"] and result["check"]["document_status"] == "complete"
-    assert [s["step"] for s in result["steps"]] == ["recognize", "describe_figure", "structure", "check"]
+    assert [s["step"] for s in result["steps"]] == ["recognize", "reading", "describe_figure", "structure", "check"]
     assert all(set(w) == {"target", "kind", "detail"} for w in result["worklist"])
     calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
     assert [c["tool"] for c in calls if c["type"] == "call"] == ["workspace_init", "process"]

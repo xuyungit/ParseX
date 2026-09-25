@@ -62,6 +62,10 @@ DOCX: dict[str, BlockKind] = {
 
 SOURCES: dict[str, dict[str, BlockKind]] = {"paddleocr": PADDLEOCR, "layout": LAYOUT, "docx": DOCX}
 
+# Detector labels whose text is picture or formula content, not prose: the local page reading does not compare
+# text inside them with the output (reading/compare.py, Q56).
+NOT_PROSE = frozenset({"image", "chart", "seal", "display_formula"})
+
 # Kinds that are page furniture: not rendered, recorded as excluded (guide §6.3).
 FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER, BlockKind.WATERMARK})
 

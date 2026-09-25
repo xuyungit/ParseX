@@ -86,6 +86,17 @@ class ToolContext:
             self._detector = self._new_detector()
         return self._detector
 
+    def _new_reader(self):
+        from parserx.reading.local import LocalReader
+
+        return LocalReader()
+
+    def reader(self):
+        """The local page reader (guide §9.5, Q56)."""
+        if getattr(self, "_reader", None) is None:
+            self._reader = self._new_reader()
+        return self._reader
+
     def ocr(self) -> PaddleOCRService:
         if self._ocr is None:
             service = self._new_ocr()

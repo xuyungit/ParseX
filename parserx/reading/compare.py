@@ -1,0 +1,140 @@
+"""Two-way comparison of the output with an independent local reading of each page (guide §9.5, Q56).
+
+A signal, not a verdict: a place where the output and the page image disagree is listed for review; nothing is
+changed.
+
+- **Seen on the page, accounted for by no block** (``unaccounted_lines``): a line of the local reading that the
+  blocks at its place do not contain and that is nowhere else on its page either.  Blocks account for text
+  when they are output, excluded with a reason or merged into another block; a superseded reading (DUPLICATE)
+  is no destination.  Text inside a figure block, or in a region the layout detector calls picture or formula
+  content, is not prose and is not compared.  A line unaccounted for on more than one page is page furniture
+  (the cross-page repetition evidence of ``content/furniture.py``), not an omission.
+- **Output, not seen on the page** (``unseen_segments``): a segment of a shown block — a table cell, a
+  sentence — that the local reading does not see where the block sits (on every page the block spans) nor
+  anywhere on those pages.
+
+The readings are compared on letters and digits only (NFKC, full width folded, markup dropped): punctuation,
+spacing and LaTeX commands are not differences.  The two tolerances are measurement tolerances between two
+independent readings, calibrated once on the whole corpus (guide §9.5, 2026-09-25: 26 PDFs, 6125 local lines,
+4426 output segments), not judgments about content.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections import defaultdict
+
+from rapidfuzz import fuzz
+
+from parserx.ir.anchor import PdfAnchor
+from parserx.ir.base import BBox
+from parserx.ir.block import Block
+from parserx.ir.enums import BlockKind, BlockStatus
+from parserx.ir.state import DocumentState, ReadLine
+from parserx.processors.text_clean import normalize_fullwidth_ascii
+
+NEAR = 0.5  # share of a text's adjacent-character pairs the other reading has at the text's place
+SOMEWHERE = 80  # rapidfuzz partial_ratio of the text against all of its page(s): a contiguous near match
+
+_ACCOUNTS = frozenset({BlockStatus.OK, BlockStatus.DEGRADED, BlockStatus.EXCLUDED, BlockStatus.MERGED})
+_SHOWN = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
+_NOT_PROSE = frozenset({BlockKind.FIGURE, BlockKind.SCAN, BlockKind.FORMULA})
+_MARKUP = re.compile(r"\\[A-Za-z]+|<[^>]+>")
+_SEGMENT_END = re.compile(r"(?<=[。！？；!?;])|(?<=\.)\s+|\n")
+
+
+def unaccounted_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
+    """Page → the lines of its local reading that no block accounts for (page furniture left out)."""
+    places = _places(state)
+    found: dict[int, list[ReadLine]] = {}
+    for reading in state.readings:
+        if not reading.lines:  # the page read as empty: no evidence either way
+            continue
+        blocks = [(b, box) for b, box in places.get(reading.n, []) if b.status in _ACCOUNTS]
+        pictures = [box for b, box in places.get(reading.n, []) if b.kind == BlockKind.FIGURE] + list(reading.not_prose)
+        page_text = _norm(" ".join(_text(b) for b, _ in blocks))
+        for line in reading.lines:
+            text = _norm(line.text)
+            if len(text) < 2 or any(_inside(_centre(line.bbox), box) for box in pictures):
+                continue
+            holders = ([b for b, box in blocks if _inside(_centre(line.bbox), box)]
+                       or [b for b, box in blocks if _overlap(line.bbox, box)])
+            if holders and _pairs_share(text, _norm(" ".join(_text(b) for b in holders))) >= NEAR:
+                continue
+            if page_text and fuzz.partial_ratio(text, page_text) >= SOMEWHERE:
+                continue
+            found.setdefault(reading.n, []).append(line)
+    pages_of: dict[str, set[int]] = defaultdict(set)
+    for n, lines in found.items():
+        for line in lines:
+            pages_of[_norm(line.text)].add(n)
+    return {n: kept for n, lines in sorted(found.items())
+            if (kept := [ln for ln in lines if len(pages_of[_norm(ln.text)]) < 2])}
+
+
+def unseen_segments(state: DocumentState) -> dict[str, list[str]]:
+    """Block id → the segments of a shown block the local reading does not see (blocks in reading order)."""
+    readings = {r.n: r for r in state.readings if r.lines}  # a page read as empty is no evidence either way
+    out: dict[str, list[str]] = {}
+    for block in sorted(state.blocks, key=lambda b: b.order):
+        if block.status not in _SHOWN or block.kind in _NOT_PROSE or not isinstance(block.anchors[0], PdfAnchor):
+            continue
+        spans = [(a.page, a.bbox) for a in block.anchors
+                 if isinstance(a, PdfAnchor) and a.coord_space == "page_pt" and a.page in readings]
+        if not spans or any(_inside(_centre(spans[0][1]), box) for box in readings[spans[0][0]].not_prose):
+            continue
+        near = _norm(" ".join(ln.text for n, box in spans for ln in readings[n].lines if _inside(_centre(ln.bbox), box)))
+        pages = _norm(" ".join(ln.text for n in sorted({n for n, _ in spans}) for ln in readings[n].lines))
+        unseen = [seg for seg in _segments(block)
+                  if len(text := _norm(seg)) >= 2 and _pairs_share(text, near) < NEAR
+                  and fuzz.partial_ratio(text, pages) < SOMEWHERE]
+        if unseen:
+            out[block.id] = unseen
+    return out
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _places(state: DocumentState) -> dict[int, list[tuple[Block, BBox]]]:
+    places: dict[int, list[tuple[Block, BBox]]] = defaultdict(list)
+    for block in state.blocks:
+        for anchor in block.anchors:
+            if isinstance(anchor, PdfAnchor) and anchor.coord_space == "page_pt":
+                places[anchor.page].append((block, anchor.bbox))
+    return places
+
+
+def _segments(block: Block) -> list[str]:
+    if block.cells is not None:
+        return [c.content.strip() for c in block.cells.cells if c.content.strip()]
+    return [s.strip() for s in _SEGMENT_END.split(block.text or "") if s.strip()]
+
+
+def _text(block: Block) -> str:
+    cells = " ".join(c.content for c in block.cells.cells) if block.cells is not None else ""
+    return f"{block.text or ''} {cells}"
+
+
+def _norm(text: str) -> str:
+    text = _MARKUP.sub("", unicodedata.normalize("NFKC", normalize_fullwidth_ascii(text)))
+    return "".join(ch.lower() for ch in text if ch.isalnum())
+
+
+def _pairs_share(text: str, other: str) -> float:
+    pairs = [text[i:i + 2] for i in range(len(text) - 1)]
+    have = {other[i:i + 2] for i in range(len(other) - 1)}
+    return sum(p in have for p in pairs) / len(pairs) if pairs else 1.0
+
+
+def _centre(box: BBox) -> tuple[float, float]:
+    return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+
+def _inside(point: tuple[float, float], box: BBox) -> bool:
+    return box[0] <= point[0] <= box[2] and box[1] <= point[1] <= box[3]
+
+
+def _overlap(a: BBox, b: BBox) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]

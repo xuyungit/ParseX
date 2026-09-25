@@ -17,6 +17,7 @@ from parserx.tables.arithmetic import arithmetic_issues
 from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
+from parserx.reading.compare import unaccounted_lines, unseen_segments
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
@@ -163,11 +164,29 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
                 and _chosen_engine(block) not in NATIVE_ENGINES:
             items += [Unresolved(target=block.id, kind=UnresolvedKind.TABLE_ARITHMETIC, detail=issue)
                       for issue in arithmetic_issues(block.cells)]
+    for n, lines in unaccounted_lines(state).items():  # the local page reading sees text no block has (Q56)
+        places = ", ".join("(" + ", ".join(f"{v:.0f}" for v in ln.bbox) + ")" for ln in lines[:_QUOTES])
+        items.append(Unresolved(
+            target=f"p{n}", kind=UnresolvedKind.TEXT_UNACCOUNTED, quotes=_quotes([ln.text for ln in lines]),
+            detail=f"{len(lines)} line(s) seen on the page image are in no block, at {places} (page points); "
+                   "the quotes are the local reading; look at the page"))
+    for block_id, segments in unseen_segments(state).items():
+        items.append(Unresolved(
+            target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
+            detail=f"{len(segments)} segment(s) of this block are not seen on the page image where the block sits; "
+                   "compare with the image"))
     for candidate in merge_candidates(state):
         items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,
                                 detail=f"may continue {candidate.first}: "
                                        + ", ".join(f"{k}={v}" for k, v in candidate.evidence.items())))
     return items
+
+
+_QUOTES = 5  # quoted texts per item; the count says how many there are
+
+
+def _quotes(texts: list[str]) -> list[DocText]:
+    return [DocText(doc_text=t if len(t) <= 80 else t[:79] + "…") for t in texts[:_QUOTES]]
 
 
 def _all_text(block: Block) -> str:
