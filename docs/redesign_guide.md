@@ -21,15 +21,15 @@
 下一轮会话的主题是"阶段四：能力完善"（§12，Q13 已定为默认混合方案）。阶段三已完成，结论见[修正后对比报告](../eval_reports/2026-09-25_p4_runtime_comparison.md)。开始时按顺序做：
 
 1. 读以下内容：
-   - 指导 §2、§3、§7、§9.5、§12、§14，尤其 Q13、Q56、Q57–Q59；
-   - [v2_phase4_plan.md](v2_phase4_plan.md)（已确认；Q60、Q61 开工前确认）；
+   - 指导 §2、§3、§7、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q57–Q61；
+   - [v2_phase4_plan.md](v2_phase4_plan.md)（已确认，Q57–Q61 均已定）；
    - 两份阶段三之后的报告：`eval_reports/2026-09-25_p4_*.md`。
 2. 运行 `uv run python scripts/check_services.py`，三项都 OK 才继续。
 3. 运行测试，都应 PASS：
    - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`，849 通过、4 个已知失败；
    - v1 的 L1 与 v2 的 L1（见 §0.1；v2 的 L1 含本地读数，约 12–20 s）；
    - 两个冻结 run 的 `--replay`（v2 需加 `--config configs/regression_v2.yaml`）。
-4. 先请用户确认 Q60、Q61；之后按 [v2_phase4_plan.md](v2_phase4_plan.md) §3 的顺序做（P4-1、P4-2 完成后先请用户试用）。启动提示词见 [next_session_prompt.md](next_session_prompt.md)。
+4. 按 [v2_phase4_plan.md](v2_phase4_plan.md) §3 的顺序做（P4-1、P4-2 完成后先请用户试用）。启动提示词见 [next_session_prompt.md](next_session_prompt.md)。
 5. 每完成一项：跑 L0 与两个 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 结束会话前：`git status` 确认改动在预期内；评测报告写入 `eval_reports/`。
 
@@ -43,10 +43,10 @@
 - [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
-- [v2_phase4_plan.md](v2_phase4_plan.md)：阶段四工作分解（已确认：混合运行时作为产品默认、控制台交互、标题的 v2 自有路径、图片不丢、DOCX 页面、专项与逐篇差距；待决问题 Q60、Q61）。
+- [v2_phase4_plan.md](v2_phase4_plan.md)：阶段四工作分解（已确认：混合运行时作为产品默认、控制台交互、标题的 v2 自有路径、图片不丢、DOCX 页面、专项与逐篇差距；Q57–Q61 均已定）。
 - [next_session_prompt.md](next_session_prompt.md)：下一轮会话的启动提示词（阶段四）。
 - [v2_phase3_plan.md](v2_phase3_plan.md)：阶段三工作分解（已完成：固定流水线与 Codex 在未见集上的对比、混合方案的分流规则、P3-1 至 P3-6、待决问题 Q51–Q55）。
-- [v2_agent_runtime_research.md](v2_agent_runtime_research.md)：Agent 运行时调研（2026-09-24）：OpenAI Agents API / Agents SDK、Pi、PydanticAI 等框架的对比，与自研薄循环的架构建议；待决问题 Q56–Q58。
+- [v2_agent_runtime_research.md](v2_agent_runtime_research.md)：Agent 运行时调研（2026-09-24；待决问题 Q62–Q64，属"第三方 Agent 框架"议题，以后单独讨论）：OpenAI Agents API / Agents SDK、Pi、PydanticAI 等框架的对比，与自研薄循环的架构建议；待决问题 Q56–Q58。
 - [../eval_reports/dependency_probe_2026-09-23.md](../eval_reports/dependency_probe_2026-09-23.md)：依赖探测原始数据；[../eval_reports/full_ocr_v16_2026-09-23.md](../eval_reports/full_ocr_v16_2026-09-23.md)：OCR 1.6 接入后的全量回归。
 
 ## 1. 背景与根因
@@ -855,11 +855,11 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q57 | 混合运行时怎样调用 Agent | ✅ 用户基本同意（2026-09-25）：调用本机已登录的 Codex CLI；不可用时只用固定流水线并说明；卫生沿用实验装置；截止时间按 Q39；费用按标价记录 |
 | Q58 | 阶段四的范围与顺序 | ✅ 用户基本同意（2026-09-25），并补充控制台交互（P4-2：进度、Agent 动作、结果摘要、回退与中断的提示）；第二种扫描引擎与语义提取扩展暂不做 |
 | Q59 | adapter:v1 何时退役 | ✅ 用户基本同意（2026-09-25）：v2 自有标题路径在全语料上不低于 v1 时退役，否则保留到阶段五 |
-| Q60 | 控制台的界面语言 | ❓ 建议：跟随系统语言（`LANG` 为中文时用中文，其余用英文），`--lang` 可指定；命令、参数与 JSON 字段名始终用英文 |
-| Q61 | `parserx parse` 的默认流水线 | ❓ 建议：默认改为 v2（混合方案），v1 保留 `--pipeline v1` 入口到阶段五删除 |
-| Q56 | 主 Agent 的运行时：自研薄循环、PydanticAI，还是 Pi（[调研](v2_agent_runtime_research.md)） | ❓ 建议自研薄循环：Python、进程内调用工具、模型请求经 `ServiceGateway`（缓存回放、计数、预算），参考 Pi 与 mini-swe-agent；Codex 保留作探索；OpenAI Agents API（托管的 Codex）与 Claude Agent SDK 不采用 |
-| Q57 | 主 Agent 是否需要支持多家模型 | ❓ 建议暂时只用 OpenAI Responses API，模型接口留一层，需要时接 PydanticAI 的模型层 |
-| Q58 | 自研循环与缺陷 D1–D6 修复的先后 | ❓ 建议先修 D1、D2（信息错误），再做循环 |
+| Q60 | 控制台的界面语言 | ✅ 用户决定（2026-09-25）：默认中文，`--lang en` 切换为英文；命令、参数、JSON 字段名始终用英文 |
+| Q61 | `parserx parse` 的默认流水线 | ✅ 用户决定（2026-09-25）：默认用混合方案（v2）；v1 是否保留、是否只留一条流水线，阶段五再讨论 |
+| Q62 | 主 Agent 的运行时：自研薄循环、PydanticAI，还是 Pi（[调研](v2_agent_runtime_research.md)） | ❓ 建议自研薄循环：Python、进程内调用工具、模型请求经 `ServiceGateway`（缓存回放、计数、预算），参考 Pi 与 mini-swe-agent；Codex 保留作探索；OpenAI Agents API（托管的 Codex）与 Claude Agent SDK 不采用 |
+| Q63 | 主 Agent 是否需要支持多家模型 | ❓ 建议暂时只用 OpenAI Responses API，模型接口留一层，需要时接 PydanticAI 的模型层 |
+| Q64 | 自研循环与缺陷 D1–D6 修复的先后 | ❓ 建议先修 D1、D2（信息错误），再做循环 |
 
 ## 15. 变更记录
 
@@ -947,7 +947,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-24 | v1.14 | **P2-8 完成、阶段二完成**：未见集与验证集标注经用户对照原文件审核通过（草稿直接从源文件起草，未用 OCR 服务或 ParserX 输出；扫描件由 Claude 看图读出），写入 `ground_truth_unseen/`（新目录，开发中的运行不扫描，`.gitignore`）与 `ground_truth/val_word_template01`；`configs/phase3_unseen.txt` 列出未见集 6 篇。验证集在固定流水线上可以运行（表格 F1 0.889、char_f1 0.925、heading_f1 0：加粗正文作标题，留作开发中的验证）。§9.4 协议补全：阶段三先比较固定流水线与 Codex，每篇每个运行时 2 次；Claude Code 暂不用，第三方 Agent 框架另议。阶段二的全部退出条件满足 |
 | 2026-09-24 | v1.14 | **阶段三分解确认**（[v2_phase3_plan.md](v2_phase3_plan.md)）：Q51–Q55 按建议确认；用户补充"不必在数据集划分上做得过细，目标是典型文档都能正常处理，以后遇到新文档处理不好再打磨"——阶段三执行从简 |
 | 2026-09-24 | v1.14 | **阶段三运行与报告**：实验装置可读 `ground_truth_unseen/`（P3-1）；快照 49fb950 上固定流水线与 Codex 各跑未见集 6 篇 × 2 次，全部有效。[对比报告](../eval_reports/2026-09-24_p3_runtime_comparison.md)：char_f1 0.934 / 0.935、表格 F1 0.558 / 0.534（下降来自扫描表单跨页合并与标注口径），heading_f1 0.380 / 0.569；固定流水线每篇约 33 s、$0.003，两次结果一致；Codex 约 164 s、$0.22；预定分流规则只选中 text_pic02，混合方案等于固定流水线。缺陷 D1–D6 与工具缺口 T1 两种运行时共有。按"执行从简"未另冻结固定流水线 run。建议 Q13：默认固定流水线，Codex 可选 |
-| 2026-09-24 | v1.14 | **Agent 运行时调研**（[v2_agent_runtime_research.md](v2_agent_runtime_research.md)）：OpenAI Agents API 是托管的 Codex（系统提示只能追加、循环在服务器端、无本地回放、不支持 ZDR），不适合；Pi 设计值得借鉴，但只有 TypeScript、无步数与费用上限；PydanticAI 是现成框架中最合适的备选。建议自研薄循环（约 400–500 行，经 `ServiceGateway`），新增待决问题 Q56–Q58 |
+| 2026-09-24 | v1.14 | **Agent 运行时调研**（[v2_agent_runtime_research.md](v2_agent_runtime_research.md)）：OpenAI Agents API 是托管的 Codex（系统提示只能追加、循环在服务器端、无本地回放、不支持 ZDR），不适合；Pi 设计值得借鉴，但只有 TypeScript、无步数与费用上限；PydanticAI 是现成框架中最合适的备选。建议自研薄循环（约 400–500 行，经 `ServiceGateway`），新增待决问题 Q62–Q64（原编号 Q56–Q58，与"信号设计"的 Q56 及阶段四的 Q57–Q58 重复，2026-09-25 改号） |
 | 2026-09-25 | v1.14 | **§9.5 问题定位方法**（用户要求写入）：五层（内容获取与算法、待核对信号、接受门、工具能力、Agent 判断）与四个定位问题，阶段三 D1–D6 为第一次应用。修正顺序经用户同意：先 ① 的 D1，再修门检查的对象，再做信号，最后 D3、D4。新增 Q56（信号设计原则，回应用户"信号沦为一堆规则"的担忧；用户补充：不做每页都读一遍的方案；规则尤其带魔法数字的规则要非常谨慎） |
 | 2026-09-25 | v1.14 | **D1 修正与门的第一处修正**：① `content/pdf_native.py` 单元格文字只沿自身方向在格间切分（与表格文字方向不同、又不整条落在一格内的行不属于任何单元格），`content/furniture.py` 的 `mark_watermarks`：与本页文字方向不同、同一形状跨页重复的文字块为 WATERMARK（新 BlockKind），`excluded`；两条都是正确性陈述或沿用跨页重复证据，没有新阈值。全语料只影响 unseen_pdf_tables01（水印 5 页排除，char_f1 0.913 → 0.933、表格 F1 0.518 → 0.595）。③ `review_table` 的内容守恒由"原有每格文字须原样成为某一格"改为"原有每格文字须按出现次数、沿候选表的行或列连续读出"：拆行、拆列、合并与移动通过，丢字改字不通过（paper01 的 9 行表属此类）。`correct` 的"原生文字的数字不改"保留——水印数字已在 ① 去掉。原生页的 OCR 旁证暂缓，待 Q56 确定（本地读数可能替代）。L0 821 通过 + 4 个已知失败；两个 L1 PASS；两个冻结 run 回放 PASS（验收输出不变） |
 | 2026-09-25 | v1.14 | **Q56 确认与本地读数双向比对**：用户同意 Q56，并补充 Agent 按需读取是核心优势、不能排除。新增 `reading/local.py`（rapidocr，依赖显式加入）、`reading/compare.py`、`tools/page_reading.py`（`process` 的 reading 步骤）、`DocumentState.readings`、待核对项 `text_unaccounted` / `text_not_seen`；`Unresolved` 增加 `quotes`（DocText：文档文字只作数据出现，详情由程序写）。校准与两个容差见 §9.5。L0 832 通过 + 4 个已知失败；两个 L1 PASS（v2 L1 因本地读数由约 4 s 增至约 19 s）；两个冻结 run 回放 PASS（验收输出不变） |
@@ -960,3 +960,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-25 | v1.15 | **Q13 决定、阶段三完成**：用户同意默认用混合方案（先跑固定流水线，有待核对项或状态不是 complete 就交给 Agent；保留只用固定流水线的模式）。Q54 执行：unseen_word_spec01、unseen_pdf_tables01、unseen_scan_form01 由 `ground_truth_unseen/` 移入 `ground_truth/`，成为开发语料；以后验收另找未见文档。下一阶段：阶段四（分解待写） |
 | 2026-09-25 | v1.15 | **阶段四分解草稿**（[v2_phase4_plan.md](v2_phase4_plan.md)）：混合运行时作为产品默认（P4-1）、标题的 v2 自有路径（P4-2）、有信息的图片不丢（P4-3）、DOCX 页面（P4-4）、专项验证（P4-5）、收尾（P4-6）；新增待决问题 Q57–Q59；§0.2 改为阶段四启动清单 |
 | 2026-09-25 | v1.15 | **阶段四分解确认并细化**（[v2_phase4_plan.md](v2_phase4_plan.md)）：用户基本同意，Q57–Q59 按建议；用户补充控制台交互（新 P4-2：进度、Agent 动作的可读显示、结果摘要、回退与中断提示、非终端与 `--json`）。细化加入进入阶段四时的事实（固定流水线 v2 与 v1 按现行标注重算：char_f1 0.943 / 0.891、表格 F1 0.817 / 0.775、heading_f1 0.537 / 0.504，逐篇差距清单）与各项设计。新增 Q60（界面语言）、Q61（`parserx parse` 默认改 v2 混合方案）。下一轮会话启动提示词写入 [next_session_prompt.md](next_session_prompt.md) |
+| 2026-09-25 | v1.15 | **Q60、Q61 决定与改号**：Q60 默认中文，`--lang en` 切换英文，命令、参数、JSON 字段名用英文；Q61 `parserx parse` 默认用混合方案（v2），v1 是否保留、是否只留一条流水线阶段五再讨论。Agent 运行时调研的三个待决问题由 Q56–Q58 改为 Q62–Q64（与"信号设计"的 Q56、阶段四的 Q57–Q58 重复），调研文档同步改号 |

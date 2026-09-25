@@ -12,7 +12,7 @@
 
 **先做五件事**，任一不通过先处理，不要绕过：
 
-1. 读指导 §0、§2、§3、§9.5、§12、§14（尤其 Q13、Q40，"信号设计"的 Q56，阶段四的 Q57–Q61）与 docs/v2_phase4_plan.md 全文；再读两份报告：eval_reports/2026-09-25_p4_runtime_comparison.md 与 eval_reports/2026-09-25_p4_page_reading.md。§4–§8 在实现对应部分时再读。
+1. 读指导 §0、§2、§3、§9.5、§12、§14（尤其 Q13、Q40、Q56，以及阶段四的 Q57–Q61）与 docs/v2_phase4_plan.md 全文；再读两份报告：eval_reports/2026-09-25_p4_runtime_comparison.md 与 eval_reports/2026-09-25_p4_page_reading.md。§4–§8 在实现对应部分时再读。
 2. 运行 `uv run python scripts/check_services.py`，OCR、LLM、VLM 三项都要 OK。
 3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 849 通过、4 个已知失败（v1 的旧测试，不要修）。
 4. 运行两个 L1，都要 PASS：
@@ -22,12 +22,13 @@
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-23_p0_v1_gpt-6-luna`
    - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-24_p1_v2_toolkit`
 
-注意：§14 中另有一组编号重复的 Q56–Q58，来自另一个会话的 Agent 运行时调研（docs/v2_agent_runtime_research.md：自研薄循环、多家模型、与缺陷修复的先后）。它们属于"第三方 Agent 框架"这个以后单独的议题，本轮不处理；遇到编号时以问题内容区分。
-
 **然后**：
 
-- 请我确认 Q60（控制台界面语言）与 Q61（`parserx parse` 默认改为 v2 混合方案）。一次问完，附上你的建议。
-- 确认后按计划 §3 的顺序做：P4-1 混合运行时 → P4-2 控制台交互。这两项完成后先让我试用一次，再做 P4-3 标题、P4-4 图片、P4-5 DOCX 页面、P4-6 专项与逐篇差距、P4-7 收尾。
+- 计划已确认，Q57–Q61 都已定。其中：
+  - Q60：界面默认中文，`--lang en` 切换为英文；命令、参数、JSON 字段名始终用英文；
+  - Q61：`parserx parse` 默认用混合方案（v2）；v1 保留 `--pipeline v1` 入口，去留在阶段五再讨论。
+- 直接按计划 §3 的顺序开始：P4-1 混合运行时 → P4-2 控制台交互。这两项完成后，先让我试用一次，再做 P4-3 标题、P4-4 图片、P4-5 DOCX 页面、P4-6 专项与逐篇差距、P4-7 收尾。
+- 做计划时遇到新的需要我拍板的问题，集中列出一次问，附上建议。
 
 **约束**：
 
@@ -53,7 +54,7 @@
 - **v1 与冻结 run**：
   - v1 代码只在修复明确缺陷时改动；v1 与 v2 的 L1 必须一直 PASS；
   - 改动影响验收文档的输出时，以空缓存重新冻结，并用 `--replay` 验证。
-- **从简**：典型文档要能正常处理，新文档出问题时再打磨；不做计划之外的扩展。第三方 Agent 框架（Pi 或其他）是以后单独的议题，本轮只保证 Agent 运行时接口可替换。
+- **从简**：典型文档要能正常处理，新文档出问题时再打磨；不做计划之外的扩展。第三方 Agent 框架（Pi、自研薄循环或其他，见 docs/v2_agent_runtime_research.md 与 Q62–Q64）是以后单独的议题，本轮只保证 Agent 运行时接口可替换。
 
 **每完成一项**：
 

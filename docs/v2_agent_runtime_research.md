@@ -240,9 +240,9 @@ flowchart TD
 
 | 编号 | 问题 | 建议 |
 |---|---|---|
-| Q56 | 主 Agent 的运行时：自研薄循环、PydanticAI，还是 Pi | 自研薄循环（Python，经 `ServiceGateway`），参考 Pi 与 mini-swe-agent；Codex 保留作探索 |
-| Q57 | 主 Agent 是否需要支持多家模型（Claude、Qwen 等） | 暂时只用 OpenAI Responses API；接口留一层，需要时接 PydanticAI 的模型层 |
-| Q58 | 与缺陷修复的先后 | 先修 D1、D2（信息错误，按用户的优先级），再做循环；Q13 按阶段三报告的建议定下后，自研循环就是"精修"模式的运行时 |
+| Q62 | 主 Agent 的运行时：自研薄循环、PydanticAI，还是 Pi | 自研薄循环（Python，经 `ServiceGateway`），参考 Pi 与 mini-swe-agent；Codex 保留作探索 |
+| Q63 | 主 Agent 是否需要支持多家模型（Claude、Qwen 等） | 暂时只用 OpenAI Responses API；接口留一层，需要时接 PydanticAI 的模型层 |
+| Q64 | 与缺陷修复的先后 | 先修 D1、D2（信息错误，按用户的优先级），再做循环；Q13 按阶段三报告的建议定下后，自研循环就是"精修"模式的运行时 |
 
 ## 9. 参考
 
