@@ -21,7 +21,6 @@ from parserx.render.markdown import image_file
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
 
 _SHOWN = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
-_IMAGE_ROLES = frozenset({"original", "crop"})  # page renders are working images, not document content
 
 
 class OutlineEntry(IRModel):
@@ -132,8 +131,14 @@ def summary_json(state: DocumentState, name: str, image_dir: str = "images") -> 
 
 
 def package_images(state: DocumentState) -> list:
-    """Every extracted image of the document (Q42): embedded originals and crops, not page renders."""
-    return [a for a in state.assets if a.role in _IMAGE_ROLES]
+    """Every image of the document (Q42): the embedded originals (shown or not), the image each figure stands on
+    (cut from a scanned page, or rendered from the page where the embedded bytes were unusable), and every image
+    the Markdown links.  Working images (page renders, crops made to look at a region) are not document content."""
+    wanted = {a.id for a in state.assets if a.role == "original"}
+    for block in state.blocks:
+        if block.kind == BlockKind.FIGURE or (block.kind == BlockKind.SCAN and block.status in _SHOWN):
+            wanted |= {a.asset for a in block.anchors if isinstance(a, AssetAnchor)}
+    return [a for a in state.assets if a.id in wanted]
 
 
 def image_entries(state: DocumentState, image_dir: str = "images") -> list[ImageEntry]:

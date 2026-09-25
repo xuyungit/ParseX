@@ -204,3 +204,27 @@ def test_pictures_taken_from_a_table_follow_it_with_a_note():
     md = render_markdown(state)
     assert md.index("| 甲 | 10 |") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.index("![图片]") < md.index("后文")
 
+
+
+def test_every_linked_image_is_exported_and_working_images_are_not(tmp_path):
+    # a figure rendered from the page (its embedded bytes unusable, e.g. a seal) is linked, so it is exported;
+    # a page render and a crop made to look at a region (read / ask_image) are working images
+    rendered = Asset.from_bytes(b"\x89PNG-seal", media_type="image/png", width=171, height=114, role="render",
+                                source=_pdf(1), dpi=144.0)
+    page = Asset.from_bytes(b"\x89PNG-page", media_type="image/png", width=1241, height=827, role="render",
+                            source=_pdf(1), dpi=150.0)
+    look = Asset.from_bytes(b"\x89PNG-look", media_type="image/png", width=600, height=300, role="crop",
+                            derived_from=page.id)
+    ws = tmp_path / "ws"
+    (ws / "assets").mkdir(parents=True)
+    for asset in (rendered, page, look):
+        (ws / asset.path).write_bytes(asset.id.encode())
+    seal = Block(id="seal", kind=BlockKind.FIGURE, order=0, status=BlockStatus.OK,
+                 anchors=[_pdf(1), AssetAnchor(asset=rendered.id, bbox=(0, 0, 171, 114), image_size=(171, 114))])
+    state = _state([seal], pages=1)
+    state.assets = [rendered, page, look]
+    paths = write_export(state, ws, tmp_path / "out", "doc")
+    linked = rendered.path.split("/")[-1]
+    assert f"](images/{linked})" in paths.markdown.read_text()
+    assert [p.name for p in (tmp_path / "out" / "images").iterdir()] == [linked]
+    assert [i["file"] for i in json.loads(paths.summary.read_text())["images"]] == [f"images/{linked}"]
