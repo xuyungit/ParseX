@@ -30,6 +30,7 @@ from parserx.scheduling import (
     UnparseableResponse,
     is_retryable,
 )
+from parserx.runtimes.events import Waiting
 from parserx.services.llm import create_vlm_service
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools.envelope import BudgetLeft, Change, Cost, Envelope, Failure, FailureCode, ToolFailure, Unresolved
@@ -106,6 +107,7 @@ class ToolContext:
         if self._ocr is None:
             service = self._new_ocr()
             service.gateway = self.gateway
+            service.on_wait = lambda state, seconds: self.report(Waiting("ocr", round(seconds, 1), state))
             if self.cache is not None and self.cache.writable:
                 service.job_store = JobStore(Path(self.cache.root) / "jobs" / "ocr")
             self._ocr = service

@@ -37,6 +37,7 @@ from parserx.ir.base import IRModel
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
 from parserx.ir.state import AccountingSummary, DocumentState
+from parserx.runtimes.events import Step
 from parserx.tables.merge import propose_merges
 from parserx.tools import check_export, describe_figure, recognize, structure
 from parserx.tools.context import ToolContext, ToolOutput, output
@@ -89,6 +90,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     state = ctx.ws.load()
     pending = [p.n for p in state.pages if p.status == PageStatus.PENDING]
     if pending:
+        ctx.report(Step("process", "recognize", total=len(pending)))
         out = recognize.run(ctx, recognize.RecognizeRequest(pages=pending, engine="paddleocr"))
         failures += out.failures
         steps.append(StepSummary(step="recognize", detail=f"scan engine on {len(pending)} pages, "
@@ -98,6 +100,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if ctx.config.runtime.layout_shadow:
         pages, figures = layout_todo(state)
         if pages or figures:
+            ctx.report(Step("process", "layout", total=len(pages)))
             out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
             failures += out.failures
             steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
@@ -106,11 +109,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if ctx.config.runtime.page_reading:  # evidence for the two-way comparison with the output (guide §9.5, Q56)
         todo = reading_todo(state)
         if todo:
+            ctx.report(Step("process", "reading", done=0, total=len(todo)))
             steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
 
     state = ctx.ws.load()
     candidates = _textual_images(state)
     if candidates:
+        ctx.report(Step("process", "transcribe", total=len(candidates)))
         out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
         failures += out.failures
         steps.append(StepSummary(step="transcribe_images",
@@ -122,11 +127,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
                 and b.semantic is None and b.id not in read_as_text]
         if todo:
+            ctx.report(Step("process", "describe", total=len(todo)))
             out = describe_figure.run(ctx, describe_figure.DescribeFigureRequest(blocks=todo))
             failures += out.failures
             steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
                                                                     "figures described"))
 
+    ctx.report(Step("process", "structure"))
     state = ctx.ws.load()
     merges = propose_merges(state)
     changes: list[tuple[str, list[dict]]] = [(MERGE_ACTOR, merges)] if merges else []
@@ -145,6 +152,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                                           + (f", {len(continuations)} paragraph continuations"
                                                              if continuations else "")))
 
+    ctx.report(Step("process", "check"))
     checked = check_export._checked(ctx)
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
     state = ctx.ws.load()

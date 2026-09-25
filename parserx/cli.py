@@ -26,15 +26,26 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     # parserx parse
-    parse_cmd = sub.add_parser("parse", help="Parse a document to Markdown")
-    parse_cmd.add_argument("input", type=Path, help="Input document path (PDF, DOCX)")
+    parse_cmd = sub.add_parser("parse", help="Parse documents to Markdown")
+    parse_cmd.add_argument("input", type=Path, nargs="+",
+                           help="Input documents (PDF, DOCX, DOC) or directories holding them")
     parse_cmd.add_argument(
         "-o", "--output", type=Path,
-        help="Output directory (default: ./output/<filename>/)",
+        help="Output directory (default: ./output/<filename>/; with several inputs: the parent, default ./output/)",
     )
     parse_cmd.add_argument("-c", "--config", type=Path, help="Config YAML path")
     parse_cmd.add_argument("--pipeline", choices=("v1", "v2"),
-                           help="v2: workspace + toolkit, writes the output package (default: from the config)")
+                           help="v2 (default): workspace + toolkit, writes the output package; v1: the old pipeline")
+    parse_cmd.add_argument("--runtime", choices=("hybrid", "fixed"),
+                           help="v2: hybrid (default) hands documents with open review items to the agent; "
+                                "fixed runs the standard processing only")
+    parse_cmd.add_argument("--lang", choices=("zh", "en"), default=os.environ.get("PARSERX_LANG", "zh"),
+                           help="Interface language of the console (default: zh)")
+    parse_cmd.add_argument("--json", action="store_true",
+                           help="v2: write the result summary as JSON to stdout at the end")
+    parse_cmd.add_argument("-q", "--quiet", action="store_true", help="v2: only errors and the result")
+    parse_cmd.add_argument("--keep-work", action="store_true",
+                           help="v2: keep the work directory (<output>/.parserx-work/) after the run")
     parse_cmd.add_argument(
         "--set", dest="overrides", action="append", default=[],
         help="Override config with dotted.path=value (repeatable)",
@@ -193,10 +204,10 @@ def main() -> None:
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
     logging.getLogger("pdfminer").setLevel(logging.INFO)
 
+    if args.command == "parse":
+        sys.exit(_cmd_parse(args))
     if args.command == "init":
         _cmd_init()
-    elif args.command == "parse":
-        _cmd_parse(args)
     elif args.command == "eval":
         _cmd_eval(args)
     elif args.command == "compare":
@@ -309,7 +320,7 @@ def _cmd_init() -> None:
         print("Global config already exists. Nothing to do.", file=sys.stderr)
 
 
-def _cmd_parse(args: argparse.Namespace) -> None:
+def _cmd_parse(args: argparse.Namespace) -> int:
     # Build overrides from convenience flags (applied before --set)
     flag_overrides = _collect_flag_overrides(args)
     all_overrides = flag_overrides + list(args.overrides)
@@ -318,6 +329,18 @@ def _cmd_parse(args: argparse.Namespace) -> None:
     config = apply_overrides(loaded.config, all_overrides)
     if getattr(args, "pipeline", None):
         config.pipeline = args.pipeline
+    if getattr(args, "runtime", None):
+        config.runtime.mode = args.runtime
+    if config.pipeline == "v2":
+        from parserx.console.cli import parse_v2
+
+        return parse_v2(args, config, loaded)
+    for path in args.input:
+        _cmd_parse_v1(args, config, path)
+    return 0
+
+
+def _cmd_parse_v1(args: argparse.Namespace, config, input_path: Path) -> None:
 
     # Chapter splitting: honour both --split-chapters flag and config default
     if args.split_chapters:
@@ -330,14 +353,16 @@ def _cmd_parse(args: argparse.Namespace) -> None:
 
     if args.stdout:
         # Legacy stdout mode
-        result = pipeline.parse(args.input)
+        result = pipeline.parse(input_path)
         print(result)
         return
 
     # Directory output mode (default)
-    output_dir = args.output or Path("output") / args.input.stem
-    result = pipeline.parse_result_to_dir(args.input, output_dir)
-    _print_summary(args.input, output_dir, result)
+    output_dir = args.output or Path("output") / input_path.stem
+    if len(args.input) > 1:
+        output_dir = (args.output or Path("output")) / input_path.stem
+    result = pipeline.parse_result_to_dir(input_path, output_dir)
+    _print_summary(input_path, output_dir, result)
 
 
 def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:

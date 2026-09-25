@@ -230,7 +230,9 @@ def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
     doc.save(path)
     out = tmp_path / "out"
     monkeypatch.setattr(sys, "argv", ["parserx", "parse", str(path), "-o", str(out), "--pipeline", "v2"])
-    parserx.cli.main()
+    with pytest.raises(SystemExit) as exit_info:
+        parserx.cli.main()
+    assert exit_info.value.code == 0
     assert sorted(p.name for p in out.iterdir()) == ["report.blocks.json", "report.json", "report.md"]
     assert (out / "report.md").read_text() == "# Background\n\nBody text.\n"
     summary = json.loads((out / "report.json").read_text())

@@ -39,6 +39,7 @@ from parserx.config.schema import ParserXConfig
 from parserx.eval.reporting import config_fingerprint
 from parserx.ir.base import IRModel
 from parserx.ir.enums import DocumentStatus, PageStatus
+from parserx.ir.state import Missing
 from parserx.render.export import IMAGE_DIR
 from parserx.render.summary import AgentRecord, DocumentSummary
 from parserx.runtimes.actions import AgentTally, CallFollower, actions
@@ -87,7 +88,7 @@ class ParseOutcome(IRModel):
     titles: int
     review_open: int
     review_by_kind: dict[str, int]
-    missing: int
+    missing: list[Missing]  # what could not be read, and why (status partial)
     wall_s: float
     service_usd: float | None
     agent: AgentRecord | None = None
@@ -99,9 +100,11 @@ class ParseOutcome(IRModel):
 
 def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXConfig, *,
                    agent: AgentRuntime | None = None, reporter: Reporter = null_reporter,
-                   context_class: type[ToolContext] = ToolContext) -> ParseOutcome:
+                   context_class: type[ToolContext] = ToolContext, keep_work: bool = False) -> ParseOutcome:
     """The hybrid runtime (``runtime.mode: hybrid``) or the fixed sequence alone (``fixed``); *agent* defaults to
-    Codex as configured (``runtime.agent``)."""
+    Codex as configured (``runtime.agent``).  *keep_work* keeps the work directory in every case (debugging,
+    the hygiene audit of validation runs)."""
+    keep_always = keep_work
     started = time.monotonic()
     source, out_dir = Path(input_path).resolve(), Path(out_dir).resolve()
     name = source.stem
@@ -125,9 +128,9 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
             raise ParseFailure("unreadable", envelope.failures[0].message)
     state = Workspace.open(ws_dir).load()
     scanned = sum(1 for p in state.pages if p.status == PageStatus.PENDING)
-    reporter(StageEnd("read", round(time.monotonic() - t, 1), detail={"resumed": resumed}))
     reporter(DocStart(name=name, source=source.name, format=state.format, pages=len(state.pages), scanned=scanned,
                       resumed=resumed))
+    reporter(StageEnd("read", round(time.monotonic() - t, 1), detail={"resumed": resumed}))
 
     # 2. the standard processing
     _write_run(work, key, "process")
@@ -171,8 +174,8 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         _install(fixed, out_dir, name)
     summary = _record_runtime(out_dir, name, runtime, note, detail, record)
     reporter(StageEnd("export", round(time.monotonic() - t, 1)))
-    if keep_work:
-        _write_run(work, key, "agent_pending")
+    if keep_work or keep_always:
+        _write_run(work, key, "agent_pending" if keep_work else "done")
     else:
         shutil.rmtree(work, ignore_errors=True)
     outcome = ParseOutcome(
@@ -180,9 +183,10 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         summary=str(out_dir / f"{name}.json"), blocks=str(out_dir / f"{name}.blocks.json"), status=summary.status,
         runtime=runtime, runtime_note=note, runtime_detail=detail, pages=summary.pages, tables=summary.tables,
         images=sum(1 for i in summary.images if i.shown), titles=len(summary.outline),
-        review_open=summary.review.open, review_by_kind=summary.review.by_kind, missing=len(summary.missing),
-        wall_s=round(time.monotonic() - started, 1), service_usd=summary.processing.cost_usd, agent=record,
-        work_dir=str(work) if keep_work else None,
+        review_open=summary.review.open, review_by_kind=summary.review.by_kind, missing=summary.missing,
+        wall_s=round(time.monotonic() - started, 1), agent=record,
+        service_usd=summary.processing.cost_usd if any(summary.processing.requests.values()) else 0.0,
+        work_dir=str(work) if keep_work or keep_always else None,
     )
     reporter(DocEnd(outcome))
     return outcome

@@ -6,6 +6,7 @@
     uv run python scripts/agent_explore.py verify   --round r1 --doc text_table01
     uv run python scripts/agent_explore.py control  --round r1 --doc ocr01      (or --all)
     uv run python scripts/agent_explore.py summary  --round r1 [--control]
+    uv run python scripts/agent_explore.py parse    --round p4a --doc a,b [--runtime hybrid] [--no-agent]
 
 - ``snapshot``: the round's tool snapshot outside the repository — a wheel
   built from ``git archive`` of the (clean) HEAD, installed with the locked
@@ -22,6 +23,10 @@
   config, in ``<round>/_control/<doc>/`` (plan P2-3); verified and scored the
   same way → ``record.json`` there.
 - ``summary``: one table over a round's records, with the v1 frozen baseline.
+- ``parse`` (plan P4-1, P4-2): the product command ``parserx parse`` of the round's snapshot on one document, in a
+  fresh directory outside the repository (keys from the repository ``.env`` reach the product process only; it
+  keeps them from the agent itself); then the hygiene audit of the agent's events, the workspace integrity and the
+  scores → ``<round>/_parse/<doc>/record.json``.  ``--no-agent`` hides Codex (PATH without it): the fallback.
 
 Documents are named as in ``configs/phase2_explore.yaml``: ground-truth
 documents by name, the others from the legacy sample directory
@@ -569,6 +574,71 @@ def _control(args, snapshot: dict, doc: str) -> int:
     return 0 if outcome.get("status") else 1
 
 
+# ── parse (the product command) ──────────────────────────────────────────
+
+
+def cmd_parse(args) -> int:
+    _snapshot(args)
+    return max(_parse_one(args, doc) for spec in args.doc for doc in spec.split(","))
+
+
+def _parse_one(args, doc: str) -> int:
+    import yaml
+
+    input_path, expected = _find_input(args, doc)
+    doc_dir = _round_dir(args) / "_parse" / (doc + (f".{args.tag}" if args.tag else ""))
+    if doc_dir.exists():
+        if not args.rerun:
+            sys.exit(f"{doc_dir} exists (use --rerun)")
+        shutil.rmtree(doc_dir)
+    doc_dir.mkdir(parents=True)
+    source = doc_dir / f"input{input_path.suffix.lower()}"
+    shutil.copyfile(input_path, source)
+    (doc_dir / "parserx.yaml").write_text(
+        yaml.safe_dump(doc_config(load_raw_config(CONFIG), doc_dir), allow_unicode=True, sort_keys=False))
+    python = _toolkit(args) / "venv" / "bin" / "python"
+    env = {**os.environ, **{k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}}
+    if args.no_agent:
+        codex_dirs = {str(Path(p).parent) for p in [shutil.which("codex")] if p}
+        env["PATH"] = os.pathsep.join(d for d in env.get("PATH", "").split(os.pathsep) if d not in codex_dirs)
+    argv = [str(python), "-P", "-m", "parserx.cli", "parse", str(source), "-o", str(doc_dir / "out"), "-c",
+            str(doc_dir / "parserx.yaml"), "--runtime", args.runtime, "--keep-work", "--json", "--lang", args.lang]
+    print(f"[{_utc()}] parse {doc} ({input_path.name}, {_pages(input_path)} pages, {args.runtime}"
+          f"{', no agent' if args.no_agent else ''}) …", flush=True)
+    t0 = time.monotonic()
+    proc = subprocess.run(argv, cwd=doc_dir, env=env, capture_output=True, text=True, timeout=args.timeout_min * 60)
+    wall = round(time.monotonic() - t0, 1)
+    (doc_dir / "console.log").write_text(proc.stderr, encoding="utf-8")
+    sys.stderr.write(proc.stderr)
+    outcome = json.loads(proc.stdout) if proc.stdout.strip() else None
+    work = doc_dir / "out" / ".parserx-work"
+    audit, usage = None, None
+    events_path = work / "agent_run" / "events.jsonl"
+    if events_path.is_file():
+        events, _ = read_events(events_path)
+        usage = usage_from_events(events).model_dump()
+        audit = audit_events(events, doc_dir=work / "agent", home=Path.home(), forbidden=_forbidden(args)).model_dump()
+    integrity = None
+    if (work / "agent" / "ws" / "state.json").is_file():
+        integrity = json.loads(_run([str(python), "-P", "-m", "parserx.runtimes.experiment", "verify", "--doc-dir",
+                                     str(work / "agent")]).stdout)["integrity"]
+    scores = None
+    if expected is not None and outcome and not outcome.get("error"):
+        scores = _scores(doc, expected, {"exported": True, "markdown": outcome["markdown"]})
+    record = {"doc": doc, "runtime_mode": args.runtime, "no_agent": args.no_agent, "exit_code": proc.returncode,
+              "wall_s": wall, "outcome": outcome, "agent_usage": usage, "audit": audit, "integrity": integrity,
+              "scores": scores, "snapshot": _snapshot(args)["commit"]}
+    (doc_dir / "record.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    valid = (audit is None or audit["ok"]) and (integrity is None or integrity["ok"])
+    s = scores or {}
+    print(f"  exit {proc.returncode} {wall} s runtime {(outcome or {}).get('runtime')} "
+          f"({(outcome or {}).get('runtime_note')}) hygiene {'ok' if valid else 'FAILED'} char_f1 {s.get('char_f1')} "
+          f"table_f1 {s.get('table_cell_f1')} heading_f1 {s.get('heading_f1')}", flush=True)
+    for hit in (audit or {}).get("hits", []):
+        print(f"  AUDIT {hit['kind']}: {hit['detail']}")
+    return 0 if valid and proc.returncode == 0 else 1
+
+
 # ── summary ─────────────────────────────────────────────────────────────
 
 
@@ -655,11 +725,22 @@ def main() -> int:
     which.add_argument("--all", action="store_true", help="every document of the exploration set")
     ctl.add_argument("--rerun", action="store_true", help="repeat a recorded control")
     ctl.add_argument("--timeout-min", type=int, default=120)
+    prs = sub.add_parser("parse", help="the product command parserx parse of the snapshot, audited")
+    prs.add_argument("--round", required=True)
+    prs.add_argument("--doc", action="append", required=True, help="document name(s), comma-separated")
+    prs.add_argument("--input", type=Path)
+    prs.add_argument("--runtime", choices=("hybrid", "fixed"), default="hybrid")
+    prs.add_argument("--no-agent", action="store_true", help="Codex not on PATH: the fallback")
+    prs.add_argument("--lang", choices=("zh", "en"), default="zh")
+    prs.add_argument("--tag", help="suffix of the run directory (several runs of one document)")
+    prs.add_argument("--rerun", action="store_true")
+    prs.add_argument("--timeout-min", type=int, default=120)
     summ = sub.add_parser("summary")
     summ.add_argument("--round", required=True)
     summ.add_argument("--control", action="store_true", help="the fixed-sequence controls instead of agent runs")
     args = parser.parse_args()
     commands = {"snapshot": cmd_snapshot, "run": cmd_run, "verify": cmd_verify, "control": cmd_control,
+                "parse": cmd_parse,
                 "summary": cmd_summary}
     return commands[args.command](args)
 

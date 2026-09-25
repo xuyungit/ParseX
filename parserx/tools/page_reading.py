@@ -17,6 +17,7 @@ from parserx.ir.state import DocumentState, PageReading, ReadLine
 from parserx.layout.detector import detect_cached
 from parserx.layout.labels import NOT_PROSE
 from parserx.reading.local import read_cached
+from parserx.runtimes.events import Step
 from parserx.tools.context import ToolContext
 
 
@@ -43,6 +44,7 @@ def read_pages(ctx: ToolContext, pages: list[int]) -> int:
             not_prose = [_page_box(r.bbox, layout_dpi, back) for r in detect_cached(detector, layout_png, cache)
                          if r.label in NOT_PROSE]
             readings.append(PageReading(n=n, engine=reader.version, dpi=dpi, lines=lines, not_prose=not_prose))
+            ctx.report(Step("process", "reading", done=len(readings), total=len(pages)))
     with ctx.ws.txn("tool:process:reading") as state:
         done = {r.n for r in state.readings}
         state.readings = sorted([*state.readings, *(r for r in readings if r.n not in done)], key=lambda r: r.n)

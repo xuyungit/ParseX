@@ -55,6 +55,7 @@ class Waiting:
 
     service: str
     seconds: float
+    state: str | None = None  # the service's own word: pending (queued), running
 
 
 @dataclass(frozen=True)

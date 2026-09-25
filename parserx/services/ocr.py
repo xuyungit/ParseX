@@ -104,6 +104,7 @@ class PaddleOCRService:
         self._headers = {"Authorization": f"bearer {cfg.token}"}
         self._model = cfg.model
         self._timeout = 600  # Budget (s) for queue-full waits and for polling
+        self.on_wait = None  # (job state, seconds waited) while a job is not done: progress for the console
         # Cache, counting, budget and retries for every job; the pipeline sets
         # its per-document gateway, otherwise a private one is used.
         self.gateway: ServiceGateway = ServiceGateway(RequestMeter())
@@ -227,7 +228,8 @@ class PaddleOCRService:
 
     def _wait_done(self, job_id: str) -> dict:
         """Poll a job until it finishes; return its ``data`` object."""
-        deadline = time.monotonic() + self._timeout
+        started = time.monotonic()
+        deadline = started + self._timeout
         interval = self._POLL_INTERVAL
         while True:
             resp = requests.get(f"{self._url}/{job_id}", headers=self._headers, timeout=60)
@@ -246,6 +248,8 @@ class PaddleOCRService:
                 raise _JobGone(f"OCR job {job_id} failed: {data.get('errorMsg')}")
             if time.monotonic() > deadline:
                 raise TimeoutError(f"OCR job {job_id} still '{state}' after {self._timeout}s")
+            if self.on_wait is not None:
+                self.on_wait(state, time.monotonic() - started)
             time.sleep(interval)
             interval = min(interval * 1.5, self._POLL_INTERVAL_MAX)
 
