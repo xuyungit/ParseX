@@ -20,8 +20,8 @@ from typing import Any
 
 from parserx.config.schema import load_config
 
-TOOL_NAMES = ("process", "overview", "read", "ask_image", "recognize", "review_table", "correct", "describe_figure",
-              "apply_structure", "check", "export")
+TOOL_NAMES = ("process", "overview", "read", "ask_image", "recognize", "review_table", "correct", "close",
+              "describe_figure", "apply_structure", "check", "export")
 
 
 def add_parsers(sub) -> None:
@@ -87,6 +87,14 @@ def _ask_opts(p):
                                        "several at once")
 
 
+def _close_opts(p):
+    p.add_argument("--target", help="the item's block id or page (p3)")
+    p.add_argument("--kind", help="the item's kind (e.g. text_unaccounted, title_candidate)")
+    p.add_argument("--image", help="the asset id of the image the item was checked on")
+    p.add_argument("--reason")
+    p.add_argument("--actor", default="agent")
+
+
 def _correct_opts(p):
     p.add_argument("--block")
     p.add_argument("--image", help="the asset id that read --image returned for this block or its page")
@@ -115,7 +123,7 @@ def _export_opts(p):
 
 _TOOL_OPTIONS = {
     "process": lambda p: None, "overview": lambda p: None, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
-    "describe_figure": _describe_opts, "correct": _correct_opts, "ask_image": _ask_opts, "apply_structure": _structure_opts, "check": lambda p: None,
+    "describe_figure": _describe_opts, "correct": _correct_opts, "close": _close_opts, "ask_image": _ask_opts, "apply_structure": _structure_opts, "check": lambda p: None,
     "export": _export_opts,
 }
 
@@ -163,6 +171,9 @@ def _request(name: str, args) -> dict[str, Any]:
         return {"block": args.block, "image": args.image, "reason": args.reason, "actor": args.actor,
                 "edits": _load_json(args.edits) if args.edits else [],
                 "cells": _load_json(args.cells) if args.cells else []}
+    if name == "close":
+        return {"target": args.target, "kind": args.kind, "image": args.image, "reason": args.reason,
+                "actor": args.actor}
     if name == "describe_figure":
         if args.blocks:
             return {"blocks": args.blocks.split(","), "schema": args.schema}

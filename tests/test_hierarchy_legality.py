@@ -235,3 +235,24 @@ def test_titles_read_inside_an_image_number_on_their_own():
     assert [r.rule for r in check_changes(state, _changes(
         {"op": "set_level", "block": "t3", "level": 3, "reason": "r"},
         {"op": "set_level", "block": "t4", "level": 4, "reason": "r"}))] == ["numbering_level_inconsistent"]
+
+
+def test_split_divides_a_block_at_one_of_its_line_breaks():
+    from parserx.accounting import check
+
+    state = _ledgered_state()
+    p2 = next(b for b in state.blocks if b.id == "p2")
+    p2.text = "6.1 铸钢件\n1) 铸造及热处理"  # a soft line break joined a title and the first item
+    outcome = apply_changes(state, _changes({"op": "split", "block": "p2", "at_break": 1,
+                                             "reason": "标题与条目只隔了一个软换行"}), actor="agent")
+    assert outcome.accepted == [0]
+    order = sorted(state.blocks, key=lambda b: b.order)
+    i = [b.id for b in order].index("p2")
+    first, second = order[i], order[i + 1]
+    assert (first.text, second.text) == ("6.1 铸钢件", "1) 铸造及热处理")  # nothing added, nothing lost
+    assert second.kind == BlockKind.TEXT and second.anchors == first.anchors
+    assert second.decisions[-1].choice == "split" and first.decisions[-1].refs == ["p2", second.id]
+    result = check(state)
+    assert result.mismatched == [] and result.illegal_refs == []
+    assert _rules([{"op": "split", "block": "p2", "at_break": 1, "reason": "r"}]) == [(0, "no_line_break")]
+    assert _rules([{"op": "split", "block": "t", "at_break": 1, "reason": "r"}]) == [(0, "kind_not_structural")]

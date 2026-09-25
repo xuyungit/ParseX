@@ -36,13 +36,15 @@ from parserx.hierarchy.changes import (
     Restore,
     SetLevel,
     SetRole,
+    Split,
     StructureChange,
 )
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, RelationKind
+from parserx.ir.observation import Observation
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState
 from parserx.tables.merge import merge_candidate, merge_tables, repeats_header
@@ -152,6 +154,15 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
     if isinstance(change, AddRelation):
         if any((r.kind, r.src, r.dst) == (change.kind, change.src, change.dst) for r in state.relations):
             return LegalityRule.DUPLICATE_RELATION, f"{change.kind} {change.src} → {change.dst} exists"
+    if isinstance(change, Split):
+        block = blocks[change.block]
+        if block.kind in _CONTENT_KINDS or block.cells is not None:
+            return LegalityRule.KIND_NOT_STRUCTURAL, f"{change.block} is a {block.kind}"
+        if block.status in HIDDEN:
+            return LegalityRule.NOT_VISIBLE, f"{change.block} is {block.status}"
+        if _split_parts(block.text, change.at_break) is None:
+            return LegalityRule.NO_LINE_BREAK, f"{change.block} has no line break {change.at_break} with text on both sides"
+        return None
     if isinstance(change, MergeTables):
         first, second = blocks[change.first], blocks[change.second]
         if merge_candidate(state, first, second) is None:
@@ -164,7 +175,7 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
 
 
 def _block_refs(change: StructureChange) -> list[str]:
-    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Restore)):
+    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Restore, Split)):
         return [change.block]
     if isinstance(change, MoveAfter):
         return [change.block] + ([change.after] if change.after else [])
@@ -277,11 +288,56 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
     elif isinstance(change, MergeTables):
         merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
                      evidence=change.evidence)
+    elif isinstance(change, Split):
+        _split(state, blocks[change.block], change.at_break, change.reason, actor)
     elif isinstance(change, MarkPending):
         block = blocks[change.block]
         block.status = BlockStatus.DEGRADED
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="pending", reason=change.reason,
                                         evidence={}, actor=actor))
+
+
+def _split_parts(text: str | None, at_break: int) -> tuple[str, str] | None:
+    """The text before and after its *at_break*-th line break, both with text; None when there is no such break."""
+    parts = (text or "").split("\n")
+    if at_break >= len(parts):
+        return None
+    first, second = "\n".join(parts[:at_break]).rstrip(), "\n".join(parts[at_break:]).lstrip()
+    return (first, second) if first.strip() and second.strip() else None
+
+
+def _split(state: DocumentState, block: Block, at_break: int, reason: str, actor: str) -> None:
+    """The text after the break becomes a new text block right after *block*, on the same anchors; the ledger stays
+    with *block* (the source item is output, now in two blocks).  Both parts are recorded as observations."""
+    first, second = _split_parts(block.text, at_break)
+    taken = {b.id for b in state.blocks}
+    n = 1
+    while f"{block.id}-s{n}" in taken:
+        n += 1
+    new_id = f"{block.id}-s{n}"
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    style = chosen.style if chosen is not None else None
+
+    def part(block_id: str, text: str) -> Observation:
+        number = sum(1 for o in block.observations if o.task == TaskKind.SPLIT) + 1 if block_id == block.id else 1
+        return Observation(id=ids.observation_id(block_id, "split", number), engine="split", engine_version=actor,
+                           task=TaskKind.SPLIT, anchor=block.anchors[0], text=text, style=style,
+                           status=ObservationStatus.OK)
+
+    kept = part(block.id, first)
+    block.observations.append(kept)
+    block.chosen_observation, block.text = kept.id, first
+    rest = part(new_id, second)
+    decision = Decision(stage=DecisionStage.STRUCTURE, choice="split", reason=reason, evidence={"at_break": at_break},
+                        actor=actor, refs=[block.id, new_id])
+    new = Block(id=new_id, kind=BlockKind.TEXT, order=block.order, anchors=list(block.anchors), observations=[rest],
+                chosen_observation=rest.id, text=second, decisions=[decision])
+    block.decisions.append(decision)
+    sequence = ordered(state)
+    sequence.insert(next(i for i, b in enumerate(sequence) if b.id == block.id) + 1, new)
+    state.blocks.append(new)
+    for order, item in enumerate(sequence):
+        item.order = order
 
 
 def _set_excluded(state: DocumentState, block: Block, exclude: bool, reason: str, actor: str, evidence: dict) -> None:

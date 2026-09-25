@@ -93,8 +93,19 @@ class Restore(IRModel):
     reason: str
 
 
+class Split(IRModel):
+    """Divide a text block at one of its line breaks (a soft line break that joined a title and the next item):
+    the text after the break becomes a new text block right after it.  No text field — the break is named by its
+    number, so the content is only divided, never rewritten (2026-09-25)."""
+
+    op: Literal["split"]
+    block: str
+    at_break: int = Field(1, ge=1)  # the n-th line break of the block's text
+    reason: str
+
+
 StructureChange = Annotated[
-    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables | Exclude | Restore,
+    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables | Exclude | Restore | Split,
     Field(discriminator="op"),
 ]
 
@@ -113,6 +124,7 @@ class LegalityRule(StrEnum):
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
+    NO_LINE_BREAK = "no_line_break"  # split: the block has no such line break with text on both sides
 
 
 class Rejection(IRModel):

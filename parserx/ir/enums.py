@@ -67,6 +67,7 @@ class TaskKind(StrEnum):
     RECOGNIZE = "recognize"
     REVIEW = "review"
     CORRECT = "correct"  # the agent's own reading of an image it looked at (P2-5, Q30)
+    SPLIT = "split"  # a block's text divided at a line break by a structure change: no new reading
     DESCRIBE = "describe"
     EXPLAIN = "explain"
 

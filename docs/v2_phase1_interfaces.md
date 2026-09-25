@@ -718,3 +718,4 @@ class ExportResult(IRModel):
 
 **〔阶段三 D3、D4、D6，2026-09-25〕**：`extract_pdf(path, *, tables_seen=None)`——`tables_seen(page)` 返回版面检测器在该页看到的表格区域（页面点），框线网格只有与之重叠、且含文字时才成为 TABLE（`workspace_init` 按 `layout.check_tables` 提供，渲染与缓存同 layout 步骤）；单元格文字按"每个字符属于最小的包含格"与"无框线行拆分"（`_row_bands`）取出；`TextStyle.font`（主导字体名）；`UnresolvedKind.title_candidate`（版面检测器标题 + 排版不同，或编号序列缺号）；`unify_levels` 的点分编号嵌套。
 
+**〔2026-09-25〕**：工具 `close`（`CloseRequest{target, kind, image, reason, actor}` → `CloseResult{closed, gate}`）；`DocumentState.closed: list[ClosedItem]`；`apply_structure` 操作 `split{block, at_break, reason}`（`TaskKind.split` 记录两部分的文字）；`LegalityRule.no_line_break`。

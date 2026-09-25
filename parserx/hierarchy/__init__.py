@@ -13,6 +13,7 @@ from parserx.hierarchy.changes import (
     Restore,
     SetLevel,
     SetRole,
+    Split,
     StructuralKind,
     StructureChange,
 )
@@ -20,6 +21,6 @@ from parserx.hierarchy.legality import apply_changes, check_changes, numbering_s
 
 __all__ = [
     "AddRelation", "ApplyOutcome", "Exclude", "LegalityRule", "MarkPending", "MergeTables", "MoveAfter", "Rejection", "RemoveRelation",
-    "Restore", "SetLevel", "SetRole", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
+    "Restore", "SetLevel", "SetRole", "Split", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
     "numbering_signature",
 ]

@@ -39,8 +39,9 @@
 {{#vision_agent}}| `read --image crop` / `--image page` | 取块的裁剪图或整页图（返回路径） |
 {{/vision_agent}}{{#vision_tool}}| `ask_image` | `--block ID`（表格可加 `--rows 首行 末行`）、`--page N` 或 `--seam N`（跨页接缝），`--question "……"`：视觉模型读图作答 |
 {{/vision_tool}}| `correct` | 按图修改：正文给出要替换的片段，表格给出单元格；`add` 补入图上有、却不在任何块里的文字；原生文字层的数字只有本地读数显示为新值时才能改 |
+| `close` | 看过图、确认无需修改的待办项（页面读数、标题候选、表格算术等提示）关闭并写明理由；失败类待办不能关闭 |
 | `review_table` | 表格的行列结构问题，由视觉模型复核后经接受门采用 |
-| `apply_structure` | 结构：`set_role`（设为标题时可带 `level`）、`set_level`、`merge_tables`、`mark_pending`、`exclude` / `restore`、`move_after`、`add_relation` |
+| `apply_structure` | 结构：`set_role`（设为标题时可带 `level`）、`set_level`、`merge_tables`、`mark_pending`、`exclude` / `restore`、`move_after`、`add_relation`、`split` |
 | `describe_figure` | `--block ID` 或 `--blocks ID1,ID2`：补充图片描述 |
 | `recognize` | `--pages 3,5 --engine paddleocr [--force]`：重新识别（`process` 已做过基础识别） |
 | `check` / `export` | 核对账目；导出到 `out/`：`./px tool export --ws ws --out out --json` |
@@ -69,6 +70,14 @@
 
 `bbox` 用待办项给出的位置（页面点）；`after` 为 null 时按位置排进阅读顺序，也可填前一块的 id。程序只在你看过该处的图、且页面本地读数在该处也有这段文字时才补入。
 
+`close`（`./px tool close --ws ws --request - --json`）：看过图、确认不需要修改的待办项，关闭并写明理由，`image` 填你看过的图：
+
+```
+{"target": "p1", "kind": "title_candidate", "image": "<图像 id>", "reason": "封面信息，不是节标题"}
+```
+
+`target` 与 `kind` 照抄待办项。只有提示类待办能关闭；待识别页、失败块等要处理，不能关闭。关闭后该处内容若变化，待办会重新出现。
+
 `apply_structure`（`./px tool apply_structure --ws ws --changes - --json`，加 `--atomic` 表示任一条被拒则全部不生效），变更列表中每条是以下之一：
 
 ```
@@ -81,6 +90,7 @@
 {"op": "move_after", "block": ID, "after": ID, "reason": "……"}             # after 为 null 表示移到最前
 {"op": "add_relation", "kind": "continues|captions|footnotes|contains|follows|belongs_to_section|duplicate_of", "src": ID, "dst": ID}
 {"op": "add_relation", "kind": "continues", "src": 前一块, "dst": 后一块}   # 同一段被分页或换行拆成两块：输出合成一段，原文不变
+{"op": "split", "block": ID, "at_break": 1, "reason": "……"}                # 在块内第 n 个换行处拆成两块（标题与下一项被软换行连在一段），文字不变
 ```
 
 `set_role` 的 `level` 只在 `kind` 为 `title` 时使用，可省。除 `add_relation` 外，每条都可以另带 `"evidence": {"page": 3, "image": "a-…"}`——一个字典，值为文字、数字或真假值，可省；依据主要写在 `reason` 里。被拒绝的变更会给出规则名与原因。

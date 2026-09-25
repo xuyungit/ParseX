@@ -55,6 +55,8 @@ class Review(IRModel):
     open: int
     by_kind: dict[str, int]
     items: list[OpenItem]  # in page / block order, at most REVIEW_ITEMS_MAX
+    checked: int = 0  # signals the agent checked against the image and closed (``close``)
+    checked_by_kind: dict[str, int] = {}
 
 
 REVIEW_ITEMS_MAX = 200
@@ -142,7 +144,11 @@ def _review(state: DocumentState) -> Review:
     by_kind: dict[str, int] = {}
     for item in items:
         by_kind[item.kind.value] = by_kind.get(item.kind.value, 0) + 1
-    return Review(open=len(items), by_kind=dict(sorted(by_kind.items())),
+    checked: dict[str, int] = {}
+    for c in state.closed:
+        checked[c.kind] = checked.get(c.kind, 0) + 1
+    return Review(open=len(items), by_kind=dict(sorted(by_kind.items())), checked=len(state.closed),
+                  checked_by_kind=dict(sorted(checked.items())),
                   items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail, quotes=[q.doc_text for q in i.quotes])
                          for i in items[:REVIEW_ITEMS_MAX]])
 

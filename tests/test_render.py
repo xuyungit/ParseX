@@ -166,7 +166,7 @@ def test_export_writes_the_package(tmp_path):
     assert images["f"]["shown"] is True and images["f"]["type"] == "photo" and images["f"]["summary"] == "一座桥"
     assert images["icon"]["shown"] is False and images["icon"]["file"].startswith("images/")
     assert summary["files"] == {"markdown": "doc.md", "blocks": "doc.blocks.json", "images": "images/"}
-    assert summary["review"] == {"open": 0, "by_kind": {}, "items": []}  # processing done, nothing left to check
+    assert summary["review"] == {"open": 0, "by_kind": {}, "items": [], "checked": 0, "checked_by_kind": {}}  # processing done, nothing left to check
 
 
 def test_the_summary_lists_what_is_left_to_check_apart_from_the_status(tmp_path):

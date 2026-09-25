@@ -104,6 +104,18 @@ class PageReading(IRModel):
     not_prose: list[BBox] = []  # layout-detector regions whose text is picture or formula content
 
 
+class ClosedItem(IRModel):
+    """A worklist signal the agent checked against the page image and left as it is (``close``).  It stays closed
+    while the item reads the same (target, kind, quoted text); new content opens it again."""
+
+    target: str
+    kind: str
+    quotes: list[str] = []
+    reason: str
+    actor: str
+    image: str  # the image it was checked on
+
+
 class DocumentState(IRModel):
     schema_version: Literal[1] = 1
     id: str
@@ -119,6 +131,7 @@ class DocumentState(IRModel):
     assets: list[Asset] = []
     images: list[ImageRecord] = []
     readings: list[PageReading] = []  # local page readings (guide §9.5, Q56)
+    closed: list[ClosedItem] = []  # worklist signals checked and left as they are
     ledger: list[LedgerEntry] = []
     missing: list[Missing] = []
     stats: Stats = Stats()

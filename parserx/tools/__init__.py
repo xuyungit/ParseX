@@ -19,6 +19,7 @@ from parserx.config.schema import ParserXConfig
 from parserx.tools import (
     ask_image,
     check_export,
+    close,
     correct,
     describe_figure,
     overview,
@@ -47,6 +48,7 @@ TOOLS: dict[str, ToolSpec] = {
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),
     "review_table": ToolSpec(review_table.ReviewTableRequest, review_table.ReviewTableResult, review_table.run),
     "correct": ToolSpec(correct.CorrectRequest, correct.CorrectResult, correct.run),
+    "close": ToolSpec(close.CloseRequest, close.CloseResult, close.run),
     "ask_image": ToolSpec(ask_image.AskImageRequest, ask_image.AskImageResult, ask_image.run),
     "describe_figure": ToolSpec(describe_figure.DescribeFigureRequest, describe_figure.DescribeFigureResult,
                                 describe_figure.run),

@@ -132,7 +132,12 @@ def doc_info(state: DocumentState) -> DocInfo:
 
 
 def unresolved_items(state: DocumentState) -> list[Unresolved]:
-    """Open work in the document, in page / block order."""
+    """Open work in the document, in page / block order; signals the agent checked and closed are left out."""
+    closed = {(c.target, c.kind, tuple(c.quotes)) for c in state.closed}
+    return [u for u in _all_items(state) if (u.target, u.kind.value, tuple(q.doc_text for q in u.quotes)) not in closed]
+
+
+def _all_items(state: DocumentState) -> list[Unresolved]:
     items: list[Unresolved] = []
     for page in state.pages:
         if page.status.value == "pending":

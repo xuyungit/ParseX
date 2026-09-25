@@ -568,6 +568,31 @@ def test_native_numbers_change_only_as_the_local_reading_shows(ws):
 
 
 
+def test_an_item_checked_on_the_image_can_be_closed(ws):
+    context = _context()
+    native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
+    _give_reading(ws, 1, [(NATIVE, native.anchors[0].bbox), ("扫描软件的标志", (400.0, 780.0, 520.0, 792.0))])
+    open_items = [u for u in _call("check", ws, context=context)[0].unresolved if u.kind == "text_unaccounted"]
+    assert [u.target for u in open_items] == ["p1"]
+    request = {"target": "p1", "kind": "text_unaccounted", "image": "a-0000000000000000",
+               "reason": "a logo the local reading took for text"}
+    env, _ = _call("close", ws, request, context=context)
+    assert env.ok and env.result.closed is False  # no image of the page was read
+    request["image"] = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
+    env, code = _call("close", ws, request, context=context)
+    data = _assert_contract(env, "close")
+    assert code == 0 and data["result"]["closed"] is True
+    assert not any(u.kind == "text_unaccounted" for u in _call("check", ws, context=context)[0].unresolved)
+    env, code = _call("close", ws, {"target": "p2", "kind": "page_pending", "image": request["image"],
+                                    "reason": "r"}, context=context)
+    assert not env.ok and code == 2  # a failure is resolved by processing, not closed
+    env, code = _call("close", ws, request, context=context)
+    assert not env.ok and env.failures[0].code == "not_found"  # nothing open any more
+    _give_reading(ws, 1, [(NATIVE, native.anchors[0].bbox), ("另一行漏掉的正文内容", (72.0, 600.0, 300.0, 612.0))])
+    assert any(u.kind == "text_unaccounted" for u in _call("check", ws, context=context)[0].unresolved)  # new content
+
+
+
 def test_agent_corrects_table_cells(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
