@@ -313,3 +313,96 @@ def test_rotated_text_inside_one_cell_stays_in_the_cell(tmp_path):
     tables = [b for b in ext.blocks if b.kind == BlockKind.TABLE]
     assert all("合计" in _cells(t)[0][0] for t in tables)  # a vertical label inside one cell is that cell's text
     assert not any(b.kind == BlockKind.WATERMARK for b in ext.blocks)
+
+
+# ── Table grids: rows without rules, drawings, overlapping cells (Phase 3 D3, D6) ──
+
+
+def _ruled(page, xs, ys):
+    for x in xs:
+        page.draw_line((x, ys[0]), (x, ys[-1]))
+    for y in ys:
+        page.draw_line((xs[0], y), (xs[-1], y))
+
+
+def test_a_row_of_aligned_items_without_rules_is_split_into_rows(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _ruled(page, [72, 250, 480], [100, 116, 200])  # rules only above, below the header and at the bottom
+    page.insert_text((78, 111), "Category", fontsize=9)
+    page.insert_text((256, 111), "Examples", fontsize=9)
+    items = [("Array operations", "Concat, Slice, Split"), ("Matrix operations", "MatMul, MatrixInverse"),
+             ("Stateful operations", "Variable, Assign"), ("Checkpointing", "Save, Restore")]
+    for i, (a, b) in enumerate(items):
+        page.insert_text((78, 130 + 16 * i), a, fontsize=9)
+        page.insert_text((256, 130 + 16 * i), b, fontsize=9)
+    path = tmp_path / "unruled.pdf"
+    doc.save(path)
+    table = next(b for b in extract_pdf(path).blocks if b.kind == BlockKind.TABLE)
+    assert _cells(table) == [["Category", "Examples"], *[list(item) for item in items]]
+
+
+def test_a_row_whose_cells_just_wrap_stays_one_row(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _ruled(page, [72, 250, 480], [100, 116, 200])
+    page.insert_text((78, 111), "Name", fontsize=9)
+    page.insert_text((256, 111), "Description", fontsize=9)
+    for x0, x1, text in ((72, 250, "Element-wise mathematical operations on every value"),
+                         (250, 480, "Adds, subtracts, multiplies and divides arrays of the same shape elementwise")):
+        words, line, lines = text.split(), "", []
+        for word in words:  # fill each line to the cell's width, as a wrapping paragraph does
+            trial = f"{line} {word}".strip()
+            if fitz.get_text_length(trial, fontsize=9) > x1 - x0 - 12 and line:
+                lines.append(line)
+                line = word
+            else:
+                line = trial
+        lines.append(line)
+        assert len(lines) == 2
+        for i, part in enumerate(lines):
+            page.insert_text((x0 + 6, 130 + 12 * i), part, fontsize=9)
+    path = tmp_path / "wrapped.pdf"
+    doc.save(path)
+    table = next(b for b in extract_pdf(path).blocks if b.kind == BlockKind.TABLE)
+    assert len(_cells(table)) == 2
+
+
+def test_a_ruled_grid_without_text_is_no_table(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _ruled(page, [100, 150, 200, 250], [100, 130])  # boxes of a diagram
+    page.insert_text((72, 300), "Figure 8: Model parallel training", fontsize=9)
+    path = tmp_path / "boxes.pdf"
+    doc.save(path)
+    ext = extract_pdf(path)
+    assert not any(b.kind == BlockKind.TABLE for b in ext.blocks)
+
+
+def test_a_grid_the_layout_detector_does_not_see_is_read_as_text(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _ruled(page, [72, 400, 520], [100, 300])  # a frame around body text and a margin note
+    page.insert_text((80, 120), "1. Deployment", fontsize=11)
+    page.insert_text((80, 140), "The inventory file lists every group.", fontsize=10)
+    page.insert_text((405, 120), "Comment: how is it checked?", fontsize=7)
+    path = tmp_path / "framed.pdf"
+    doc.save(path)
+    seen_nothing = extract_pdf(path, tables_seen=lambda page: [])
+    assert not any(b.kind == BlockKind.TABLE for b in seen_nothing.blocks)
+    text = " ".join(b.text for b in seen_nothing.blocks)
+    assert "The inventory file lists every group." in text and "Comment: how is it checked?" in text
+    assert any("layout detector" in w for w in seen_nothing.warnings)
+    seen_table = extract_pdf(path, tables_seen=lambda page: [(70.0, 98.0, 525.0, 305.0)])
+    assert any(b.kind == BlockKind.TABLE for b in seen_table.blocks)
+    assert any(b.kind == BlockKind.TABLE for b in extract_pdf(path).blocks)  # no detector: grids as found
+
+
+def test_each_character_belongs_to_the_smallest_cell_holding_it():
+    from parserx.content.pdf_native import _owner
+
+    cells = [(0, 0, 100, 100), (0, 0, 50, 50), (50, 0, 100, 50)]  # a frame drawn around two cells
+    assert _owner((20, 20, 30, 30), cells) == 1
+    assert _owner((60, 10, 70, 20), cells) == 2
+    assert _owner((40, 70, 50, 80), cells) == 0  # only the frame holds it
+    assert _owner((200, 200, 210, 210), cells) is None

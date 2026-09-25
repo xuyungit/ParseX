@@ -17,6 +17,8 @@ from parserx.tables.arithmetic import arithmetic_issues
 from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
+from parserx.hierarchy.layout_titles import layout_titles
+from parserx.hierarchy.numbering_gaps import numbering_gaps
 from parserx.reading.compare import unaccounted_lines, unseen_segments
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
@@ -175,6 +177,19 @@ def unresolved_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
             detail=f"{len(segments)} segment(s) of this block are not seen on the page image where the block sits; "
                    "compare with the image"))
+    for block_id, text, level, evidence in layout_titles(state):  # the page image shows a title the outline lacks
+        items.append(Unresolved(
+            target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
+            detail=f"the layout detector marks this line a section title and it is set apart from the body text "
+                   f"({evidence['set_apart']}); the outline does not have it — look at the page and, if it is a "
+                   f"title, set its role and level (proposed level {level})"))
+    listed = {u.target for u in items if u.kind == UnresolvedKind.TITLE_CANDIDATE}
+    for block_id, text, level, evidence in numbering_gaps(state):  # a numbered title sequence misses this number
+        if block_id not in listed:
+            items.append(Unresolved(
+                target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
+                detail=f"the numbered titles around it miss the number this paragraph starts with "
+                       f"({evidence['numbering']}); if it is a title, set its role and level (proposed level {level})"))
     for candidate in merge_candidates(state):
         items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,
                                 detail=f"may continue {candidate.first}: "

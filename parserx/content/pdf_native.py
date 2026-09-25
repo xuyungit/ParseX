@@ -6,10 +6,16 @@ One pass over PyMuPDF's ``rawdict`` per page:
 - PyMuPDF text blocks become TEXT blocks with a PdfAnchor, a native
   Observation and ``TextStyle`` evidence (dominant font size, bold);
 - ruled tables found by ``page.find_tables`` become TABLE blocks; the lines
-  inside a table are accounted to it.  Cell text is divided among cells only
-  along its own direction: a line in another direction than the table's text
-  that is not wholly inside one cell (a stamp or watermark drawn across the
-  table) is no cell's content and stays a text line of its own;
+  inside a table are accounted to it.  A ruled grid is a table only when it
+  holds text and, given a layout detector (``tables_seen``), the detector sees a
+  table there too — otherwise the rules frame a drawing or a page of text, and
+  the lines stay text (Phase 3 D3).  Each character belongs to one cell, the
+  smallest holding it (a frame drawn around cells holds nothing of theirs, D6).
+  Cell text is divided among cells only along its own direction: a line in
+  another direction than the table's text that is not wholly inside one cell
+  (a stamp or watermark drawn across the table) is no cell's content and stays
+  a text line of its own.  A row whose rules between items are not drawn is
+  split into rows (``_row_bands``, D3);
 - placed images become Assets and FIGURE blocks (a page-covering image on a
   page without a usable text layer is a SCAN block);
 - repeated margin text (running headers, footers, page numbers) and text in
@@ -30,6 +36,7 @@ from __future__ import annotations
 import io
 import os
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +78,7 @@ class _Line:
     chars: int  # non-whitespace characters
     size: float
     bold: bool
+    font: str = ""
     direction: tuple[float, float] = (1.0, 0.0)  # PyMuPDF line "dir" (cos, sin), rounded
     glyphs: tuple[tuple[str, float, float, float, float], ...] = ()  # (char, x0, y0, x1, y1)
     origins: tuple[tuple[str, float, float], ...] = ()  # (char, origin in PDF space): the key of PyMuPDF's table chars
@@ -86,18 +94,21 @@ class _Region:
     asset: Asset | None = None
 
 
-def extract_pdf(path: Path | str) -> Extraction:
+def extract_pdf(path: Path | str, *, tables_seen: Callable[[fitz.Page], list[BBox]] | None = None) -> Extraction:
+    """*tables_seen*: the table regions a layout detector sees on a page (page points), asked only for pages where
+    ruled grids are found; None reads every ruled grid that holds text as a table."""
     ext = Extraction(format="pdf", engines={ENGINE: ENGINE_VERSION})
     off_direction: dict[str, str] = {}  # block id → text of blocks written across their page's text direction
     with fitz.open(path) as doc:
         for index in range(doc.page_count):
-            off_direction.update(_extract_page(doc, doc[index], index + 1, ext))
+            off_direction.update(_extract_page(doc, doc[index], index + 1, ext, tables_seen))
     mark_furniture(ext)
     mark_watermarks(ext, off_direction)
     return ext
 
 
-def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) -> dict[str, str]:
+def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
+                  tables_seen: Callable[[fitz.Page], list[BBox]] | None = None) -> dict[str, str]:
     rect = page.rect
     lines = _lines(page)
     for seq, line in enumerate(lines, 1):
@@ -108,12 +119,19 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
     regions: list[_Region] = []
     free = lines
     if verdict.ok:
-        for table in _tables(page):
+        grids = [t for t in _tables(page) if any(_glyph_in(g, t.bbox) for ln in lines for g in ln.glyphs if g[0].strip())]
+        seen = tables_seen(page) if grids and tables_seen is not None else None
+        for table in grids:
+            if seen is not None and not any(_overlap(table.bbox, box) for box in seen):
+                ext.warnings.append(f"page {n}: ruled lines the layout detector does not see as a table "
+                                    "were read as text")
+                continue
             across = {id(ln) for ln in _across(lines, table)}
             inside = [ln for ln in free if _centre_in(ln.bbox, table.bbox) and id(ln) not in across]
             free = [ln for ln in free if ln not in inside]
             regions.append(_Region(BlockKind.TABLE, tuple(table.bbox), inside,
-                                   grid=_grid(table, [ln for ln in lines if id(ln) in across])))
+                                   grid=_grid(table, [ln for ln in lines if id(ln) not in across],
+                                              [ln for ln in lines if id(ln) in across])))
     by_block: dict[int, list[_Line]] = {}
     for line in free:
         by_block.setdefault(line.block, []).append(line)
@@ -168,14 +186,15 @@ def _lines(page: fitz.Page) -> list[_Line]:
             text = normalize_fullwidth_ascii(_reconstruct_line_from_chars(spans))
             if not text.strip():
                 continue
-            weights: Counter[tuple[float, bool]] = Counter()
+            weights: Counter[tuple[float, bool, str]] = Counter()
             for span in spans:
-                weights[(round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16))] += len(span.get("chars", []))
-            (size, bold), _ = weights.most_common(1)[0]
+                weights[(round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16), span.get("font", ""))] += \
+                    len(span.get("chars", []))
+            (size, bold, font), _ = weights.most_common(1)[0]
             chars = [ch for span in spans for ch in span.get("chars", ())]
             origins = tuple(_origin_key(ch["c"], fitz.Point(ch["origin"]) * ctm) for ch in chars)
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
-                             chars=len("".join(text.split())), size=size, bold=bold,
+                             chars=len("".join(text.split())), size=size, bold=bold, font=font,
                              direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
                              glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins))
     return out
@@ -232,8 +251,8 @@ def _tables(page: fitz.Page) -> list:
         return []
 
 
-def _grid(table, across: list[_Line]) -> TableGrid:
-    rows = (_extract(table, {key for ln in across for key in ln.origins}) if across else table.extract()) or []
+def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:
+    rows = _cell_texts(table, lines, {key for ln in across for key in ln.origins}) or []
     n_cols = max((len(r) for r in rows), default=0)
     cells = [
         Cell(row=r, col=c, content=join_wrapped(normalize_fullwidth_ascii(row[c] or "").split("\n"))
@@ -243,16 +262,84 @@ def _grid(table, across: list[_Line]) -> TableGrid:
     return TableGrid(n_rows=len(rows), n_cols=n_cols, cells=cells)
 
 
-def _extract(table, drop: set[tuple[str, float, float]]) -> list[list[str | None]]:
-    """``Table.extract`` without the characters in *drop* (PyMuPDF assigns each character by its centre alone)."""
+def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) -> list[list[str | None]]:
+    """The text of each cell.  ``Table.extract`` gives it unless a character lies in more than one cell, characters
+    are dropped (``_across``) or a row splits (``_row_bands``); then each character goes to the smallest cell holding
+    it, and a split row's characters to the band of their sub-row."""
     chars = [ch for ch in pymupdf_table.CHARS if _origin_key(ch["text"], ch["matrix"][4:]) not in drop]
-    rows = []
-    for row in table.rows:
-        row_chars = [ch for ch in chars if _glyph_in((ch["text"], ch["x0"], ch["top"], ch["x1"], ch["bottom"]), row.bbox)]
-        rows.append([None if cell is None else pymupdf_table.extract_text(
-            [ch for ch in row_chars if _glyph_in((ch["text"], ch["x0"], ch["top"], ch["x1"], ch["bottom"]), cell)])
-            for cell in row.cells])
+    places = [(r, c, cell) for r, row in enumerate(table.rows) for c, cell in enumerate(row.cells) if cell is not None]
+    boxes = [cell for _, _, cell in places]
+    held = [[k for k, box in enumerate(boxes) if _glyph_in(_box_of(ch), box)] for ch in chars]
+    bands = {r: b for r, row in enumerate(table.rows) if (b := _row_bands(row, lines))}
+    if not drop and not bands and all(len(h) <= 1 for h in held):
+        return table.extract()
+    owned: dict[int, list[dict]] = {}
+    for ch, holders in zip(chars, held):
+        if holders:
+            owned.setdefault(min(holders, key=lambda k: _area(boxes[k])), []).append(ch)
+    index = {(r, c): k for k, (r, c, _) in enumerate(places)}
+    rows: list[list[str | None]] = []
+    for r, row in enumerate(table.rows):
+        for top, bottom in bands.get(r, [(float("-inf"), float("inf"))]):
+            rows.append([None if cell is None else pymupdf_table.extract_text(
+                [ch for ch in owned.get(index[(r, c)], []) if top <= (ch["top"] + ch["bottom"]) / 2 < bottom])
+                for c, cell in enumerate(row.cells)])
     return rows
+
+
+def _owner(glyph_box, cells: list) -> int | None:
+    """The smallest of *cells* holding the glyph's centre: a frame drawn around cells holds nothing of theirs."""
+    holders = [k for k, cell in enumerate(cells) if _glyph_in(("", *glyph_box), cell)]
+    return min(holders, key=lambda k: _area(cells[k])) if holders else None
+
+
+def _row_bands(row, lines: list[_Line]) -> list[tuple[float, float]] | None:
+    """Sub-rows of a table row whose rules between items are not drawn, as vertical bands; None: one row.
+
+    Every non-empty cell holds the same number (two or more) of lines, the lines align one to one across the cells,
+    and at least one line break was not forced by the cell's width — the next word would have fitted — so the lines
+    are items, one per row.  A row whose cells only wrap, or with a cell of a single line, stays one row."""
+    columns = []
+    for cell in (c for c in row.cells if c is not None):
+        touching = [ln for ln in lines if any(_glyph_in(g, cell) for g in ln.glyphs)]
+        inside = [ln for ln in touching if all(_glyph_in(g, cell) for g in ln.glyphs)]
+        if len(inside) != len(touching):
+            return None  # a line across cells: no line-per-row reading
+        if inside:
+            columns.append((cell, sorted(inside, key=lambda ln: ln.bbox[1])))
+    if len(columns) < 2 or len({len(col) for _, col in columns}) != 1 or len(columns[0][1]) < 2:
+        return None
+    k = len(columns[0][1])
+    if any(max(col[i].bbox[1] for _, col in columns) >= min(col[i].bbox[3] for _, col in columns) for i in range(k)):
+        return None  # the lines do not align across the cells
+    if not any(_chosen_break(cell, col, i) for cell, col in columns for i in range(k - 1)):
+        return None
+    edges = [row.bbox[1]] + [(max(col[i].bbox[3] for _, col in columns) + min(col[i + 1].bbox[1] for _, col in columns)) / 2
+                             for i in range(k - 1)] + [row.bbox[3]]
+    return list(zip(edges, edges[1:]))
+
+
+def _chosen_break(cell, lines: list[_Line], i: int) -> bool:
+    """The break after line *i* was not forced by the width: the first word of the next line would have fitted
+    (the cell's right padding taken equal to its left)."""
+    room = cell[2] - (min(ln.bbox[0] for ln in lines) - cell[0])
+    glyphs = list(lines[i + 1].glyphs)
+    while glyphs and not glyphs[0][0].strip():
+        glyphs.pop(0)
+    word = []
+    for g in glyphs:
+        if not g[0].strip():
+            break
+        word.append(g)
+        if not g[0].isascii():  # a CJK character is a word of its own
+            break
+    spaces = [g for ln in lines for g in ln.glyphs if g[0] == " "]
+    space = (spaces[0][3] - spaces[0][1]) if spaces else 0.0
+    return bool(word) and lines[i].bbox[2] + space + (word[-1][3] - word[0][1]) <= room
+
+
+def _box_of(ch: dict) -> tuple[str, float, float, float, float]:
+    return ch["text"], ch["x0"], ch["top"], ch["x1"], ch["bottom"]
 
 
 def _origin_key(char: str, origin) -> tuple[str, float, float]:
@@ -344,12 +431,14 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
 
 def _style(lines: list[_Line]) -> TextStyle:
     sizes: Counter[float] = Counter()
+    fonts: Counter[str] = Counter()
     bold = 0
     for ln in lines:
         sizes[ln.size] += ln.chars
+        fonts[ln.font] += ln.chars
         bold += ln.chars if ln.bold else 0
     total = sum(sizes.values()) or 1
-    return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total)
+    return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total, font=fonts.most_common(1)[0][0] or None)
 
 
 # ── Geometry ────────────────────────────────────────────────────────────
@@ -357,6 +446,10 @@ def _style(lines: list[_Line]) -> TextStyle:
 
 def _round(bbox) -> BBox:
     return tuple(round(float(v), 2) for v in bbox)  # type: ignore[return-value]
+
+
+def _overlap(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
 def _area(b: BBox) -> float:

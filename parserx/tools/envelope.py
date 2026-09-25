@@ -76,6 +76,7 @@ class UnresolvedKind(StrEnum):
     TEXT_SUSPICIOUS = "text_suspicious"  # unreadable characters, or a script found nowhere else (P2-7)
     TEXT_UNACCOUNTED = "text_unaccounted"  # the local page reading sees text no block accounts for (Q56)
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
+    TITLE_CANDIDATE = "title_candidate"  # the layout detector sees a section title set apart from the body (D4)
     EVIDENCE_CONFLICT = "evidence_conflict"
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"

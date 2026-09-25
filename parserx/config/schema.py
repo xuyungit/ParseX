@@ -258,6 +258,7 @@ class LayoutConfig(BaseModel):
     model: str = "pp_doc_layoutv3"
     conf_thresh: float = 0.5
     page_dpi: int = 100  # page renders for detection (A4 ≈ 827 × 1169 px)
+    check_tables: bool = True  # a native ruled grid is read as a table only where the detector sees one (Phase 3 D3)
 
 
 class RoutingConfig(BaseModel):

@@ -214,7 +214,8 @@ def docx_titles(source: Path, state: DocumentState, config: ParserXConfig) -> li
 
 
 def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
-    """PDF titles from two sources, unified as one outline: v1's detection on native text, the scan engine's labels."""
+    """PDF titles from two sources, unified as one outline: v1's detection on native text, the scan engine's labels.
+    Titles the layout detector sees on native text are a worklist signal (``title_candidate``), not applied here."""
     from parserx.runtimes import v1_structure  # the temporary adapter (Phase 4 removes it)
 
     native = v1_structure.matched_titles(source, state, config)

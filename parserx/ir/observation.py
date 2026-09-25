@@ -23,6 +23,7 @@ class TextStyle(IRModel):
 
     font_size: float | None = None  # pt
     bold: bool | None = None
+    font: str | None = None  # the dominant font face (PDF), as named in the file
     style_name: str | None = None  # DOCX style display name, resolved along basedOn
     outline_level: int | None = None  # w:outlineLvl including style inheritance, 0-based
     numbering: Numbering | None = None
