@@ -16,6 +16,7 @@ class BlockKind(StrEnum):
     HEADER = "header"
     FOOTER = "footer"
     PAGE_NUMBER = "page_number"
+    WATERMARK = "watermark"
     FOOTNOTE = "footnote"
     SCAN = "scan"
     OTHER = "other"

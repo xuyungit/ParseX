@@ -185,7 +185,7 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
         elif filled:
             detail += f"; {len(filled)} cells filled from the image only (Q45)"
         gate.append(GateCheck(name="numeric_consistency", passed=before == after, detail=detail))
-        lost = _cell_texts(current, allowed_cells) - _cell_texts(grid, set())
+        lost = _lost_cells(current, grid, allowed_cells)
         gate.append(GateCheck(
             name="structure_valid", passed=grid.n_rows > 0 and grid.n_cols > 0 and not lost,
             detail="all cell content kept" if not lost else f"cells lost: {sorted(lost.elements())[:10]}"))
@@ -295,6 +295,20 @@ def _grid_numbers(grid: TableGrid, skip: set[tuple[int, int]]) -> Counter[str]:
 def _cell_texts(grid: TableGrid, skip: set[tuple[int, int]]) -> Counter[str]:
     return Counter("".join(c.content.split()) for c in grid.cells
                    if (c.row, c.col) not in skip and c.content.strip())
+
+
+def _lost_cells(current: TableGrid, grid: TableGrid, skip: set[tuple[int, int]]) -> Counter[str]:
+    """Texts of the current cells (outside *skip*) the candidate does not keep whole.  Each must read on, as often
+    as it occurs, as one run of the candidate's text row by row or column by column: splitting a cell into rows or
+    columns, merging cells and moving rows keep content; a dropped or altered character does not."""
+    missing = _cell_texts(current, skip) - _cell_texts(grid, set())
+    if not missing:
+        return missing
+    by_rows = "".join("".join(c.content.split()) for c in sorted(grid.cells, key=lambda c: (c.row, c.col)))
+    by_cols = "".join("".join(c.content.split()) for c in sorted(grid.cells, key=lambda c: (c.col, c.row)))
+    wanted = _cell_texts(current, skip)
+    return Counter({text: n for text, n in missing.items()
+                    if max(by_rows.count(text), by_cols.count(text)) < wanted[text]})
 
 
 def _number_diff(before: Counter[str], after: Counter[str], native: bool) -> str:

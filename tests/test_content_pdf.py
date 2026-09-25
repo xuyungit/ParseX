@@ -252,3 +252,64 @@ def test_margin_text_that_does_not_repeat_stays(tmp_path):
     varying = _paged_pdf(tmp_path, 3, footer=lambda n: ["Contact us", "See the appendix", "End of report"][n - 1],
                          name="varying.pdf")
     assert all(b.status == "ok" for b in extract_pdf(varying).blocks)
+
+
+# ── Text in another direction: stamps and watermarks (Phase 3 D1) ───────
+
+_ROWS = [("名称", "数量", "说明"), ("甲", "8", "第一项"), ("乙", "12", "第二项")]
+
+
+def _stamped_pdf(tmp_path, pages, stamp=None, cell_label=None, name="stamped.pdf"):
+    """A ruled 3×3 table per page; *stamp* is drawn at 45° across it, *cell_label* upright-rotated inside one cell."""
+    doc = fitz.open()
+    xs, ys = [72, 232, 392, 522], [100, 160, 220, 280]
+    for _ in range(pages):
+        page = doc.new_page(width=595, height=842)
+        for x in xs:
+            page.draw_line((x, ys[0]), (x, ys[-1]))
+        for y in ys:
+            page.draw_line((xs[0], y), (xs[-1], y))
+        for r, row in enumerate(_ROWS):
+            for c, text in enumerate(row):
+                page.insert_text((xs[c] + 8, ys[r] + 34), text, fontsize=11, fontname="china-s")
+        if cell_label:
+            page.insert_text((200, 150), cell_label, fontsize=11, fontname="china-s", rotate=90)
+        page.insert_text((72, 400), "表后正文", fontsize=11, fontname="china-s")
+        if stamp:
+            pivot = fitz.Point(100, 330)
+            page.insert_text(pivot, stamp, fontsize=40, morph=(pivot, fitz.Matrix(45)))
+    path = tmp_path / name
+    doc.save(path)
+    return path
+
+
+def _cells(block) -> list[list[str]]:
+    return [[c.content for c in row] for row in block.cells.slot_matrix()]
+
+
+def test_a_stamp_across_a_table_is_not_cell_text(tmp_path):
+    ext = extract_pdf(_stamped_pdf(tmp_path, 1, stamp="2024-YF09-00061-SN"))
+    table = next(b for b in ext.blocks if b.kind == BlockKind.TABLE)
+    assert _cells(table) == [list(r) for r in _ROWS]  # none of the stamp's characters in a cell
+    stamp = [b for b in ext.blocks if b.text.replace(" ", "") == "2024-YF09-00061-SN"]
+    assert len(stamp) == 1 and stamp[0].status == "ok"  # one page: no evidence it is furniture, so it stays
+    stamp_line = next(e for e in ext.ledger if e.chars == len("2024-YF09-00061-SN"))
+    assert stamp_line.block == stamp[0].id  # accounted to its own block, not to the table
+
+
+def test_a_stamp_repeated_on_pages_is_excluded_as_a_watermark(tmp_path):
+    ext = extract_pdf(_stamped_pdf(tmp_path, 3, stamp="2024-YF09-00061-SN"))
+    tables = [b for b in ext.blocks if b.kind == BlockKind.TABLE]
+    assert len(tables) == 3 and all(_cells(t) == [list(r) for r in _ROWS] for t in tables)
+    marks = [b for b in ext.blocks if b.kind == BlockKind.WATERMARK]
+    assert len(marks) == 3 and all(b.status == "excluded" for b in marks)
+    assert marks[0].decisions[-1].stage == "exclude" and marks[0].decisions[-1].evidence["pages"] == 3
+    assert all(e.disposition == "excluded" for e in ext.ledger if e.block in {b.id for b in marks})
+    assert all(b.status == "ok" for b in ext.blocks if b.text == "表后正文")
+
+
+def test_rotated_text_inside_one_cell_stays_in_the_cell(tmp_path):
+    ext = extract_pdf(_stamped_pdf(tmp_path, 2, cell_label="合计"))
+    tables = [b for b in ext.blocks if b.kind == BlockKind.TABLE]
+    assert all("合计" in _cells(t)[0][0] for t in tables)  # a vertical label inside one cell is that cell's text
+    assert not any(b.kind == BlockKind.WATERMARK for b in ext.blocks)

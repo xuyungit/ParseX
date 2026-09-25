@@ -9,6 +9,11 @@ a HEADER / FOOTER / PAGE_NUMBER block, excluded from the Markdown with a
 Decision; its text stays in the sidecar.  A shape with no letters besides the
 number is a page number.
 
+Text written in another direction than the rest of its page (a diagonal
+stamp, a rotated margin label) is a watermark when the same text shape sits
+on another page; it becomes a WATERMARK block, excluded the same way.  One
+page alone is no evidence: such text stays.
+
 Only pages whose native layer passed the quality check are considered: the
 scan engine labels the furniture of the pages it reads.
 """
@@ -73,6 +78,32 @@ def mark_furniture(ext: Extraction) -> None:
             furniture.add(block.id)
     for entry in ext.ledger:
         if entry.block in furniture and entry.disposition == "output":
+            entry.disposition = "excluded"
+
+
+def mark_watermarks(ext: Extraction, off_direction: dict[str, str]) -> None:
+    """Exclude text written across its page's direction that repeats on other pages (in place).
+    *off_direction* maps the id of each block whose lines all run in another direction than its page's text to
+    the block's text."""
+    done = {p.n for p in ext.pages if p.status == PageStatus.DONE}
+    pages_of: dict[str, set[int]] = defaultdict(set)
+    for block in ext.blocks:
+        if block.id in off_direction and block.anchors[0].page in done and _shape(off_direction[block.id]):
+            pages_of[_shape(off_direction[block.id])].add(block.anchors[0].page)
+    marked: set[str] = set()
+    for block in ext.blocks:
+        shape = _shape(off_direction.get(block.id, ""))
+        if block.id not in off_direction or block.anchors[0].page not in done or len(pages_of.get(shape, ())) < 2:
+            continue
+        pages = len(pages_of[shape])
+        block.kind, block.status = BlockKind.WATERMARK, BlockStatus.EXCLUDED
+        block.decisions.append(Decision(
+            stage=DecisionStage.EXCLUDE, choice=BlockKind.WATERMARK.value, actor=ACTOR,
+            reason=f"watermark: text across its page's text direction, the same on {pages} pages",
+            evidence={"pages": pages, "shape": shape[:60]}))
+        marked.add(block.id)
+    for entry in ext.ledger:
+        if entry.block in marked and entry.disposition == "output":
             entry.disposition = "excluded"
 
 

@@ -139,6 +139,40 @@ def test_structure_fix_may_move_but_not_lose_content():
     assert not outcome.adopted and {g.name: g.passed for g in outcome.gate}["structure_valid"] is False
 
 
+def _fused_table_block():
+    # an unruled table read as one row: the first column's three lines in one cell (Phase 3, paper01)
+    grid = _grid([["类别", "例子"], ["逐元素运算 数组运算 矩阵运算", "Add, Sub Concat, Slice MatMul"]])
+    return Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
+                 observations=[_obs("o-base", "native_pdf", cells=grid)], chosen_observation="o-base")
+
+
+def test_splitting_a_cell_into_rows_keeps_content():
+    split = _candidate([["类别", "例子"], ["逐元素运算", "Add, Sub"], ["数组运算", "Concat, Slice"],
+                        ["矩阵运算", "MatMul"]])
+    outcome = review_table(_fused_table_block(), split, allowed_cells=set(), actor="t")
+    assert outcome.adopted, outcome.gate
+
+
+def test_a_split_that_drops_or_alters_text_is_rejected():
+    dropped = _candidate([["类别", "例子"], ["逐元素运算", "Add, Sub"], ["数组运算", "Concat, Slice"], ["", "MatMul"]])
+    altered = _candidate([["类别", "例子"], ["逐元素运算", "Add, Sub"], ["数组运", "Concat, Slice"], ["矩阵运算", "MatMul"]])
+    for candidate in (dropped, altered):
+        outcome = review_table(_fused_table_block(), candidate, allowed_cells=set(), actor="t")
+        assert not outcome.adopted and {g.name: g.passed for g in outcome.gate}["structure_valid"] is False
+
+
+def test_merging_cells_keeps_content_but_each_repeated_cell_must_survive():
+    def block():
+        grid = _grid([["名称", "说明"], ["甲", "第一"], ["", "项"], ["乙", "同上"], ["丙", "同上"]])
+        return Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
+                     observations=[_obs("o-base", "native_pdf", cells=grid)], chosen_observation="o-base")
+
+    merged = _candidate([["名称", "说明"], ["甲", "第一项"], ["乙", "同上"], ["丙", "同上"]])
+    assert review_table(block(), merged, allowed_cells=set(), actor="t").adopted
+    once = _candidate([["名称", "说明"], ["甲", "第一项"], ["乙", "同上"], ["丙", ""]])  # one "同上" gone
+    assert not review_table(block(), once, allowed_cells=set(), actor="t").adopted
+
+
 def test_a_missing_column_is_filled_only_where_a_structure_issue_named_it():
     # Q45: cells the OCR missed may come from the image alone — inside the region a structure issue names
     with_column = [["项目", "单价", "数值"], ["甲", "5", "3"], ["乙", "7", "20"]]

@@ -30,7 +30,8 @@ from parserx.ir.state import DocumentState
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
 
 ACTOR = "program:content.continuation"
-_FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER, BlockKind.FOOTNOTE})
+_FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER, BlockKind.WATERMARK,
+                        BlockKind.FOOTNOTE})
 _FIRST = frozenset({BlockKind.TEXT, BlockKind.LIST})  # the part that is cut: body text or a list item
 _CONTINUING = frozenset("，、,-–—/（(《“‘「『[")  # punctuation inside a sentence
 _CLOSING = frozenset("”’」』）)]】》〉\"'")

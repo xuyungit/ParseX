@@ -63,7 +63,7 @@ DOCX: dict[str, BlockKind] = {
 SOURCES: dict[str, dict[str, BlockKind]] = {"paddleocr": PADDLEOCR, "layout": LAYOUT, "docx": DOCX}
 
 # Kinds that are page furniture: not rendered, recorded as excluded (guide §6.3).
-FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER})
+FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER, BlockKind.WATERMARK})
 
 # Title labels rank titles: the document title above section titles (Q33). A rank is evidence
 # for a level, which the document-level unification settles (hierarchy/levels.py).

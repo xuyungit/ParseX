@@ -6,11 +6,15 @@ One pass over PyMuPDF's ``rawdict`` per page:
 - PyMuPDF text blocks become TEXT blocks with a PdfAnchor, a native
   Observation and ``TextStyle`` evidence (dominant font size, bold);
 - ruled tables found by ``page.find_tables`` become TABLE blocks; the lines
-  inside a table are accounted to it;
+  inside a table are accounted to it.  Cell text is divided among cells only
+  along its own direction: a line in another direction than the table's text
+  that is not wholly inside one cell (a stamp or watermark drawn across the
+  table) is no cell's content and stays a text line of its own;
 - placed images become Assets and FIGURE blocks (a page-covering image on a
   page without a usable text layer is a SCAN block);
-- repeated margin text (running headers, footers, page numbers) is excluded
-  as page furniture (``content/furniture.py``);
+- repeated margin text (running headers, footers, page numbers) and text in
+  another direction than its page's text that repeats across pages
+  (watermarks) are excluded as page furniture (``content/furniture.py``);
 - the native layer quality check decides whether the page's content comes
   from here (page ``done``) or from the scan engine (page ``pending``); the
   native blocks of a pending page stay as the fallback until the scan engine
@@ -32,9 +36,10 @@ from pathlib import Path
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")  # PyMuPDF prints an advert to stdout otherwise
 
 import fitz  # noqa: E402
+from pymupdf import table as pymupdf_table  # noqa: E402  (the page characters of the last find_tables)
 
 from parserx.content.extraction import Extraction  # noqa: E402
-from parserx.content.furniture import mark_furniture  # noqa: E402
+from parserx.content.furniture import mark_furniture, mark_watermarks  # noqa: E402
 from parserx.content.order import reading_order, row_order  # noqa: E402
 from parserx.content.quality import NativeVerdict, PageSignals, assess_native_layer  # noqa: E402
 from parserx.content.text import join_wrapped  # noqa: E402
@@ -66,6 +71,9 @@ class _Line:
     chars: int  # non-whitespace characters
     size: float
     bold: bool
+    direction: tuple[float, float] = (1.0, 0.0)  # PyMuPDF line "dir" (cos, sin), rounded
+    glyphs: tuple[tuple[str, float, float, float, float], ...] = ()  # (char, x0, y0, x1, y1)
+    origins: tuple[tuple[str, float, float], ...] = ()  # (char, origin in PDF space): the key of PyMuPDF's table chars
     item: str = ""
 
 
@@ -80,14 +88,16 @@ class _Region:
 
 def extract_pdf(path: Path | str) -> Extraction:
     ext = Extraction(format="pdf", engines={ENGINE: ENGINE_VERSION})
+    off_direction: dict[str, str] = {}  # block id → text of blocks written across their page's text direction
     with fitz.open(path) as doc:
         for index in range(doc.page_count):
-            _extract_page(doc, doc[index], index + 1, ext)
+            off_direction.update(_extract_page(doc, doc[index], index + 1, ext))
     mark_furniture(ext)
+    mark_watermarks(ext, off_direction)
     return ext
 
 
-def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) -> None:
+def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) -> dict[str, str]:
     rect = page.rect
     lines = _lines(page)
     for seq, line in enumerate(lines, 1):
@@ -99,9 +109,11 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
     free = lines
     if verdict.ok:
         for table in _tables(page):
-            inside = [ln for ln in free if _centre_in(ln.bbox, table.bbox)]
+            across = {id(ln) for ln in _across(lines, table)}
+            inside = [ln for ln in free if _centre_in(ln.bbox, table.bbox) and id(ln) not in across]
             free = [ln for ln in free if ln not in inside]
-            regions.append(_Region(BlockKind.TABLE, tuple(table.bbox), inside, grid=_grid(table)))
+            regions.append(_Region(BlockKind.TABLE, tuple(table.bbox), inside,
+                                   grid=_grid(table, [ln for ln in lines if id(ln) in across])))
     by_block: dict[int, list[_Line]] = {}
     for line in free:
         by_block.setdefault(line.block, []).append(line)
@@ -114,12 +126,16 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
         regions.append(_Region(kind, _round(info["bbox"]), [], asset=asset))
 
     decision = _source_decision(verdict)
+    main = _main_direction(lines)
+    off_direction: dict[str, str] = {}
     line_items: list[LedgerEntry] = []
     image_regions: list[tuple[str, BBox]] = []
     for seq, index in enumerate(reading_order([r.bbox for r in regions]), 1):
         region = regions[index]
         block_id = ids.block_id_pdf(n, seq)
         ext.blocks.append(_block(block_id, len(ext.blocks), n, region, decision))
+        if region.kind == BlockKind.TEXT and region.lines and all(ln.direction != main for ln in region.lines):
+            off_direction[block_id] = ext.blocks[-1].text
         for line in region.lines:
             line_anchor = PdfAnchor(page=n, bbox=line.bbox, coord_space="page_pt")
             line_items.append(LedgerEntry(item=line.item, unit="native_line", source=line_anchor,
@@ -134,6 +150,7 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
                                       chars=0, disposition="output", block=block_id))
     ext.pages.append(PageState(n=n, unit="pdf_page", status=PageStatus.DONE if verdict.ok else PageStatus.PENDING,
                                size_pt=(round(rect.width, 2), round(rect.height, 2))))
+    return off_direction
 
 
 # ── Lines, signals, tables ──────────────────────────────────────────────
@@ -141,6 +158,7 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction) 
 
 def _lines(page: fitz.Page) -> list[_Line]:
     raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    ctm = page.transformation_matrix
     out: list[_Line] = []
     for index, block in enumerate(raw.get("blocks", [])):
         if block.get("type") != 0:
@@ -154,9 +172,39 @@ def _lines(page: fitz.Page) -> list[_Line]:
             for span in spans:
                 weights[(round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16))] += len(span.get("chars", []))
             (size, bold), _ = weights.most_common(1)[0]
+            chars = [ch for span in spans for ch in span.get("chars", ())]
+            origins = tuple(_origin_key(ch["c"], fitz.Point(ch["origin"]) * ctm) for ch in chars)
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
-                             chars=len("".join(text.split())), size=size, bold=bold))
+                             chars=len("".join(text.split())), size=size, bold=bold,
+                             direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
+                             glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins))
     return out
+
+
+def _main_direction(lines: list[_Line]) -> tuple[float, float]:
+    """The direction most of the characters are written in."""
+    weights: Counter[tuple[float, float]] = Counter()
+    for ln in lines:
+        weights[ln.direction] += ln.chars
+    return weights.most_common(1)[0][0] if weights else (1.0, 0.0)
+
+
+def _across(lines: list[_Line], table) -> list[_Line]:
+    """Lines drawn across *table* rather than written in its cells: a line in another direction than the table's
+    text that is not wholly inside one cell (a stamp, a watermark).  Such a line's characters are no cell's content:
+    cell text is divided among cells only along its own direction."""
+    cells = [cell for row in table.rows for cell in row.cells if cell is not None]
+    touching = [ln for ln in lines if any(_glyph_in(g, table.bbox) for g in ln.glyphs)]
+    in_one_cell = {id(ln) for ln in touching if any(all(_glyph_in(g, cell) for g in ln.glyphs) for cell in cells)}
+    main = _main_direction([ln for ln in touching if id(ln) in in_one_cell] or lines)  # what the cells are written in
+    return [ln for ln in touching if ln.direction != main and id(ln) not in in_one_cell]
+
+
+def _glyph_in(glyph: tuple[str, float, float, float, float], bbox) -> bool:
+    """The glyph's centre is in *bbox*: how PyMuPDF assigns characters to cells."""
+    _, x0, y0, x1, y1 = glyph
+    h, v = (x0 + x1) / 2, (y0 + y1) / 2
+    return bbox[0] <= h < bbox[2] and bbox[1] <= v < bbox[3]
 
 
 def _signals(page: fitz.Page, lines: list[_Line], images: list[dict]) -> PageSignals:
@@ -184,8 +232,8 @@ def _tables(page: fitz.Page) -> list:
         return []
 
 
-def _grid(table) -> TableGrid:
-    rows = table.extract() or []
+def _grid(table, across: list[_Line]) -> TableGrid:
+    rows = (_extract(table, {key for ln in across for key in ln.origins}) if across else table.extract()) or []
     n_cols = max((len(r) for r in rows), default=0)
     cells = [
         Cell(row=r, col=c, content=join_wrapped(normalize_fullwidth_ascii(row[c] or "").split("\n"))
@@ -193,6 +241,24 @@ def _grid(table) -> TableGrid:
         for r, row in enumerate(rows) for c in range(n_cols)
     ]
     return TableGrid(n_rows=len(rows), n_cols=n_cols, cells=cells)
+
+
+def _extract(table, drop: set[tuple[str, float, float]]) -> list[list[str | None]]:
+    """``Table.extract`` without the characters in *drop* (PyMuPDF assigns each character by its centre alone)."""
+    chars = [ch for ch in pymupdf_table.CHARS if _origin_key(ch["text"], ch["matrix"][4:]) not in drop]
+    rows = []
+    for row in table.rows:
+        row_chars = [ch for ch in chars if _glyph_in((ch["text"], ch["x0"], ch["top"], ch["x1"], ch["bottom"]), row.bbox)]
+        rows.append([None if cell is None else pymupdf_table.extract_text(
+            [ch for ch in row_chars if _glyph_in((ch["text"], ch["x0"], ch["top"], ch["x1"], ch["bottom"]), cell)])
+            for cell in row.cells])
+    return rows
+
+
+def _origin_key(char: str, origin) -> tuple[str, float, float]:
+    """A character by its text and its origin in PDF space (PyMuPDF's table code measures glyph boxes its own way;
+    the origin is the same in both)."""
+    return char, round(origin[0], 1), round(origin[1], 1)
 
 
 # ── Images ──────────────────────────────────────────────────────────────
