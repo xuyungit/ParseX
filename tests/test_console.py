@@ -64,6 +64,8 @@ def _agent_run(reporter, clock, outcome):
         (60.0, AgentAction("look", target="p4", page=4, detail="这一行是节标题吗？")),
         (80.0, AgentAction("set_title", target="b-p004-0002", page=4, text="技术领域", level=2)),
         (90.0, AgentAction("close", target="p1", page=1, detail="封面信息，不是节标题")),
+        (95.0, AgentAction("join", page=1, count=11)),
+        (96.0, AgentAction("rejected", target="b-p001-0003", page=1, detail="correct")),
         (179.8, StageEnd("agent", 138.0, detail={"changes": 6, "added": 0, "closed": 3, "open": 0})),
         (179.8, StageStart("export")),
         (180.0, StageEnd("export", 0.2)),
@@ -88,6 +90,8 @@ ParserX · 专利说明书.pdf（14 页，其中 5 页扫描）
       看图  第 4 页 · 这一行是节标题吗？
       设为标题  技术领域 → 2 级
       关闭  第 1 页 · 封面信息，不是节标题
+      接续段落  11 处 · 第 1 页
+      未采用  第 1 页 · 修改未通过程序核对
       ✓ 2 分 18 秒 · 修改 6 处 · 补入 0 处 · 关闭 3 项 · 剩余 0 项
 [4/4] 导出                                      ✓ 0.2 s
 完成  {md}

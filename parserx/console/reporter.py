@@ -297,6 +297,10 @@ class ConsoleReporter:
         if e.action == "set_title" or e.action == "set_level":
             parts.append(" ".join(p for p in (e.text or where, self._msg("level", level=e.level)
                                               if e.level is not None else "") if p))
+        elif e.count > 1:
+            parts.append(" · ".join(p for p in (self._msg("count", n=e.count), where) if p))
+        elif e.action == "rejected":
+            parts.append(" · ".join(p for p in (where, self._msg("rejected_why")) if p))
         else:
             detail = e.text or e.detail
             parts.append(" · ".join(p for p in (where, detail) if p))

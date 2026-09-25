@@ -45,7 +45,31 @@ def _look(block: str | None, page: int | None, seam: int | None, question: str |
                        else _page_of(block), detail=_short(question))
 
 
+GROUP_MIN = 4  # this many same actions from one call are shown as one line with a count
+
+
 def actions(record: dict, text_of: Lookup = lambda _: None) -> list[AgentAction]:
+    """The record's actions; runs of one kind from one call (joining many lines of a page) as one with a count."""
+    out = _actions(record, text_of)
+    grouped: list[AgentAction] = []
+    i = 0
+    while i < len(out):
+        j = i
+        while j < len(out) and out[j].action == out[i].action:
+            j += 1
+        run = out[i:j]
+        if len(run) >= GROUP_MIN and run[0].action not in ("look",):
+            pages = sorted({a.page for a in run if a.page is not None})
+            grouped.append(AgentAction(run[0].action, page=pages[0] if len(pages) == 1 else None,
+                                       target=None if len(pages) == 1 else ",".join(f"p{p}" for p in pages) or None,
+                                       count=len(run)))
+        else:
+            grouped += run
+        i = j
+    return grouped
+
+
+def _actions(record: dict, text_of: Lookup) -> list[AgentAction]:
     if record.get("type") != "call":
         return []
     tool, req = record.get("tool"), record.get("request") or {}

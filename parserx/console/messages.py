@@ -67,6 +67,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "act.describe": {"zh": "描述图片", "en": "describe"},
     "act.table_fix": {"zh": "修正表格", "en": "fix table"},
     "act.rejected": {"zh": "未采用", "en": "not accepted"},
+    "count": {"zh": "{n} 处", "en": "{n} places"},
+    "rejected_why": {"zh": "修改未通过程序核对", "en": "the change did not pass the program's checks"},
     "level": {"zh": "→ {level} 级", "en": "→ level {level}"},
     "agent_done": {"zh": "{seconds} · 修改 {changes} 处 · 补入 {added} 处 · 关闭 {closed} 项 · 剩余 {open} 项",
                    "en": "{seconds} · {changes} changes · {added} added · {closed} closed · {open} left"},

@@ -75,6 +75,7 @@ class AgentAction:
     text: str | None = None  # the document text the action is about (shortened)
     level: int | None = None
     detail: str | None = None  # e.g. the reason of a close
+    count: int = 1  # the same action on several blocks of one call, shown once
 
 
 @dataclass(frozen=True)
