@@ -8,7 +8,7 @@ from typing import Literal
 from parserx.ir.anchor import SourceAnchor
 from parserx.ir.base import Affine, IRModel
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, ObservationStatus, TaskKind
+from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.ir.state import DocumentState
 from parserx.tables.grid import TableGrid
@@ -182,6 +182,11 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
             detail=f"{len(segments)} segment(s) of this block are not seen on the page image where the block sits; "
                    "compare with the image"))
+    for block_id in figures_without_content(state):  # an image shown with nothing a reader who cannot see it gets
+        items.append(Unresolved(
+            target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
+            detail="this image is shown without a description and without transcribed text after it; look at it: "
+                   "describe it if it carries information, or close the item with the reason (a code, a logo …)"))
     for block_id, text, level, evidence in layout_titles(state):  # the page image shows a title the outline lacks
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
@@ -200,6 +205,28 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                                 detail=f"may continue {candidate.first}: "
                                        + ", ".join(f"{k}={v}" for k, v in candidate.evidence.items())))
     return items
+
+
+def figures_without_content(state: DocumentState) -> list[str]:
+    """Shown figures whose content does not reach a reader who cannot see them (Q66, conservation): processing gave
+    them content — a description was attempted, or text was transcribed from them — and none of it is in the output
+    (the description failed, the transcription was removed).  Figures nothing was tried on yet are not listed."""
+    shown = {b.id: b for b in state.blocks if b.status not in HIDDEN}
+    contained: dict[str, list[str]] = {}
+    for r in state.relations:
+        if r.kind == RelationKind.CONTAINS:
+            contained.setdefault(r.src, []).append(r.dst)
+    out = []
+    for block in ordered(state):
+        if block.id not in shown or block.kind != BlockKind.FIGURE or block.semantic is not None:
+            continue
+        described = any(o.task == TaskKind.DESCRIBE for o in block.observations)
+        transcribed = contained.get(block.id, [])
+        if any(d in shown and _all_text(shown[d]).strip() for d in transcribed):
+            continue
+        if described or transcribed:
+            out.append(block.id)
+    return out
 
 
 _QUOTES = 5  # quoted texts per item; the count says how many there are

@@ -182,7 +182,9 @@ def main() -> None:
     tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx init
-    sub.add_parser("init", help="Create global config directory (~/.config/parserx/)")
+    init_cmd = sub.add_parser("init", help="Create global config directory (~/.config/parserx/)")
+    init_cmd.add_argument("--force", action="store_true",
+                          help="Replace an existing config.yaml (kept as config.yaml.bak); .env is never replaced")
 
     # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
     from parserx.tools.cli import add_parsers as _add_tool_parsers
@@ -207,7 +209,7 @@ def main() -> None:
     if args.command == "parse":
         sys.exit(_cmd_parse(args))
     if args.command == "init":
-        _cmd_init()
+        _cmd_init(force=args.force)
     elif args.command == "eval":
         _cmd_eval(args)
     elif args.command == "compare":
@@ -216,91 +218,45 @@ def main() -> None:
         _cmd_tool_eval(args)
 
 
-_CONFIG_TEMPLATE = """\
-# ParserX Global Configuration
-# Credentials are resolved from environment variables (set in .env alongside this file).
-
-providers:
-  pdf:
-    engine: pymupdf
-  docx:
-    engine: docling
-
-builders:
-  ocr:
-    engine: paddleocr
-    lang: ch_sim+en
-    endpoint: ${PADDLE_OCR_ENDPOINT}
-    token: ${PADDLE_OCR_TOKEN}
-    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.5}
-    selective: true
-
-processors:
-  header_footer:
-    enabled: true
-  chapter:
-    enabled: true
-    llm_fallback: true
-  table:
-    enabled: true
-    vlm_fallback: true
-  image:
-    enabled: true
-    vlm_description: true
-    skip_decorative: true
-  formula:
-    enabled: true
-  line_unwrap:
-    enabled: true
-  text_clean:
-    enabled: true
-
-services:
-  vlm:
-    provider: openai
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${VLM_MODEL:gpt-4o-mini}
-    api_key: ${OPENAI_API_KEY}
-  llm:
-    provider: openai
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${LLM_MODEL:gpt-4o-mini}
-    api_key: ${OPENAI_API_KEY}
-
-output:
-  format: markdown
-  image_dir: images
-"""
-
 _ENV_TEMPLATE = """\
-# ParserX API credentials
-# Fill in the values below, then they will be picked up automatically.
+# ParserX service credentials, read by ~/.config/parserx/config.yaml.
 
+# OpenAI (VLM and LLM: gpt-6-luna by default)
 OPENAI_API_KEY=
-OPENAI_BASE_URL=
+# OPENAI_BASE_URL=https://api.openai.com/v1
+# VLM_MODEL=gpt-6-luna
+# LLM_MODEL=gpt-6-luna
 
-# Optional: PaddleOCR service (needed for scanned PDF pages)
+# PaddleOCR (AI Studio jobs API): the scan engine for scanned pages and text in images
 PADDLE_OCR_ENDPOINT=
 PADDLE_OCR_TOKEN=
-
-# Optional: override model names
-# VLM_MODEL=gpt-4o-mini
-# LLM_MODEL=gpt-4o-mini
+# PADDLE_OCR_MODEL=PaddleOCR-VL-1.6
 """
 
 
-def _cmd_init() -> None:
+def config_template(cache_dir: Path | None = None) -> str:
+    """The global config: the project's production settings (``parserx/config/template.yaml``), with the response
+    cache in one place for every working directory."""
+    text = (Path(__file__).parent / "config" / "template.yaml").read_text(encoding="utf-8")
+    return text.replace("__CACHE_DIR__", str(cache_dir or Path.home() / ".cache" / "parserx"))
+
+
+def _cmd_init(force: bool = False, config_dir: Path | None = None) -> None:
     from parserx.config.schema import _GLOBAL_CONFIG_DIR
 
-    config_dir = _GLOBAL_CONFIG_DIR
+    config_dir = config_dir or _GLOBAL_CONFIG_DIR
     config_path = config_dir / "config.yaml"
     env_path = config_dir / ".env"
 
     config_dir.mkdir(parents=True, exist_ok=True)
 
     created = []
+    if force and config_path.exists():
+        backup = config_path.with_name("config.yaml.bak")
+        config_path.replace(backup)
+        print(f"  kept the old config as {backup}", file=sys.stderr)
     if not config_path.exists():
-        config_path.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
+        config_path.write_text(config_template(), encoding="utf-8")
         created.append(str(config_path))
     else:
         print(f"  exists: {config_path}", file=sys.stderr)
@@ -317,7 +273,7 @@ def _cmd_init() -> None:
             print(f"  {p}", file=sys.stderr)
         print(f"\nNext: edit {env_path} to fill in your API keys.", file=sys.stderr)
     else:
-        print("Global config already exists. Nothing to do.", file=sys.stderr)
+        print("Global config already exists. Nothing to do (--force replaces config.yaml).", file=sys.stderr)
 
 
 def _cmd_parse(args: argparse.Namespace) -> int:

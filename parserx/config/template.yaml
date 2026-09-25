@@ -1,0 +1,124 @@
+# ParserX global configuration (written by `parserx init`; the same settings as the project's parserx.yaml).
+# Credentials come from environment variables, e.g. ~/.config/parserx/.env next to this file.
+
+providers:
+  pdf:
+    engine: pymupdf
+  docx:
+    engine: docling
+
+builders:
+  metadata:
+    heading_font_ratio: 1.2
+    header_zone_ratio: 0.08
+    footer_zone_ratio: 0.08
+    repetition_threshold: 0.5
+  layout:
+    enabled: true
+    model: paddleocr-online
+  ocr:
+    engine: paddleocr
+    lang: ch_sim+en
+    endpoint: ${PADDLE_OCR_ENDPOINT}
+    token: ${PADDLE_OCR_TOKEN}
+    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.6}
+    selective: true
+
+processors:
+  header_footer:
+    enabled: true
+    llm_fallback: true
+  chapter:
+    enabled: true
+    llm_fallback: true
+  table:
+    enabled: true
+    vlm_fallback: true
+    cross_page_merge: true
+  image:
+    enabled: true
+    classification: true
+    vlm_description: true
+    skip_decorative: true
+    vlm_prompt_style: strict_auto
+    vlm_response_format: json
+    vlm_structured_output_mode: json_schema
+    vlm_retry_attempts: 1
+    vlm_max_tokens: 8192
+    vlm_max_description_chars: 1200
+    vlm_skip_large_text_overlap_chars: 1200
+    vlm_debug_raw_preview_chars: 1200
+  formula:
+    enabled: true
+  vlm_review:
+    # Its json_schema is not strict-valid (no additionalProperties: false), so
+    # the endpoint rejected every json_schema request with a 400 and the call
+    # was resent as json_object.  Ask for json_object directly: same output,
+    # one request instead of two.
+    structured_output_mode: json_object
+  line_unwrap:
+    enabled: true
+    llm_fallback: false
+  text_clean:
+    enabled: true
+    fix_cjk_spaces: true
+    fix_encoding: true
+  reading_order:
+    enabled: true
+    method: geometric
+
+services:
+  vlm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    model: ${VLM_MODEL:gpt-6-luna}
+    api_key: ${OPENAI_API_KEY}
+    # gpt-6-luna is a reasoning model: it rejects temperature, so it is never
+    # sent (auto-detection would waste one rejected request per concurrent
+    # worker before the service learns).  effort=none for transcription work.
+    send_temperature: false
+    reasoning_effort: none
+    min_output_tokens: 1024
+    max_concurrent: 6
+    timeout: 180
+  llm:
+    provider: openai
+    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    model: ${LLM_MODEL:gpt-6-luna}
+    api_key: ${OPENAI_API_KEY}
+    send_temperature: false
+    reasoning_effort: none
+    min_output_tokens: 256
+
+verification:
+  hallucination_detection: true
+  completeness_check: true
+  structure_validation: true
+  hallucination_threshold: 0.3
+
+output:
+  format: markdown
+  chapter_split: true
+  image_dir: images
+  table_format: markdown
+
+# Response cache (guide §8.3): every OCR / VLM / LLM response is recorded and
+# replayed.  read_write: replay hits, record misses · read_only: offline
+# replay, a miss is an error · refresh: always request and record · off.
+cache:
+  mode: read_write
+  dir: __CACHE_DIR__
+
+# Scheduling (guide §8.2): transport retries happen in the gateway (the OpenAI
+# SDK never retries); prices turn recorded token usage into cost_usd; budget
+# limits are per document and unlimited by default.
+scheduling:
+  retry:
+    max_attempts: 3
+    backoff_s: 2.0
+  prices:               # USD per 1M tokens, official endpoint, 2026-09-23 (guide §10.3)
+    gpt-6-luna:   {input: 0.10, cached_input: 0.01, output: 0.50}
+    gpt-5.6-luna: {input: 0.20, cached_input: 0.02, output: 1.20}
+    gpt-5.4-mini: {input: 0.75, cached_input: 0.075, output: 4.50}
+    gpt-5.6-terra: {input: 2.00, cached_input: 0.20, output: 12.00}
+    gpt-6-sol:    {input: 2.00, cached_input: 0.20, output: 10.00}

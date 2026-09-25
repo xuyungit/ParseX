@@ -44,6 +44,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "kind.text_suspicious": {"zh": "可疑字符", "en": "suspicious characters"},
     "kind.text_unaccounted": {"zh": "页面上有而输出里没有的文字", "en": "text on the page but not in the output"},
     "kind.text_not_seen": {"zh": "输出里有而页面上读不到的文字", "en": "output text not seen on the page"},
+    "kind.figure_without_content": {"zh": "没有描述也没有文字的图片", "en": "images without description or text"},
     "kind.title_candidate": {"zh": "标题候选", "en": "title candidates"},
     "kind.evidence_conflict": {"zh": "证据冲突", "en": "conflicting evidence"},
     "kind.structure_pending": {"zh": "待定的标题层级", "en": "undecided title levels"},

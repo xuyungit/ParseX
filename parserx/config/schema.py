@@ -453,8 +453,9 @@ def load_config_with_result(path: str | Path | None = None) -> ConfigLoadResult:
     Lookup order for config (when no --config given):
       ./parserx.yaml → ~/.config/parserx/config.yaml → built-in defaults
     """
-    # Load .env: project-local first, then global
-    load_dotenv(override=False)
+    # Load .env: project-local (the working directory) first, then global.  Without a path, load_dotenv would
+    # search upwards from this module's directory instead.
+    load_dotenv(Path.cwd() / ".env", override=False)
     global_env = _GLOBAL_CONFIG_DIR / ".env"
     if global_env.exists():
         load_dotenv(global_env, override=False)

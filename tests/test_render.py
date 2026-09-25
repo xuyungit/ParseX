@@ -6,7 +6,7 @@ from parserx.eval.normalize import canonicalize
 from parserx.ir.anchor import AssetAnchor, DocxAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, EvidenceLevel, PageStatus
+from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, EvidenceLevel, PageStatus, RelationKind
 from parserx.ir.schema import validate_sidecar
 from parserx.ir.semantic import ChartSemantic, Evidenced, GenericSemantic, Series
 from parserx.ir.state import DocumentState, LedgerEntry, PageState
@@ -228,3 +228,28 @@ def test_every_linked_image_is_exported_and_working_images_are_not(tmp_path):
     assert f"](images/{linked})" in paths.markdown.read_text()
     assert [p.name for p in (tmp_path / "out" / "images").iterdir()] == [linked]
     assert [i["file"] for i in json.loads(paths.summary.read_text())["images"]] == [f"images/{linked}"]
+
+
+def test_a_shown_image_without_description_or_text_is_a_review_item():
+    # Q66: a shown image carries its content to a reader who cannot see it — a description, or its text after it
+    from parserx.ir.relation import Relation
+    from parserx.tools.envelope import UnresolvedKind
+    from parserx.tools.views import unresolved_items
+
+    photo = GenericSemantic(type="photo", summary=Evidenced(value="桥", level=EvidenceLevel.INFERRED))
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation
+
+    failed = Observation(id="o-bare", engine="vlm", engine_version="gpt-6-luna", task=TaskKind.DESCRIBE,
+                         anchor=_pdf(1), status=ObservationStatus.FAILED, error="timeout")
+    bare = _figure("bare", 1)
+    bare.observations = [failed]  # the description was attempted and failed
+    blocks = [_figure("described", 0, semantic=photo), bare, _figure("read", 2), _figure("emptied", 3),
+              _figure("untried", 7),
+              _figure("hidden", 4, status=BlockStatus.EXCLUDED),
+              _block("read-t", BlockKind.TEXT, 5, text="图中的文字"),
+              _block("emptied-t", BlockKind.TITLE, 6, text="税", status=BlockStatus.EXCLUDED)]
+    state = _state(blocks, pages=1)
+    state.relations = [Relation(id=f"r-{f}", kind=RelationKind.CONTAINS, src=f, dst=f"{f}-t") for f in ("read", "emptied")]
+    items = [u.target for u in unresolved_items(state) if u.kind == UnresolvedKind.FIGURE_WITHOUT_CONTENT]
+    assert items == ["bare", "emptied"]

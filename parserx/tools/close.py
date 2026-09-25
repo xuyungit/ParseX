@@ -22,6 +22,7 @@ CLOSABLE = frozenset({
     UnresolvedKind.TEXT_UNACCOUNTED, UnresolvedKind.TEXT_NOT_SEEN, UnresolvedKind.TITLE_CANDIDATE,
     UnresolvedKind.TEXT_SUSPICIOUS, UnresolvedKind.TABLE_ARITHMETIC, UnresolvedKind.TABLE_MERGE_CANDIDATE,
     UnresolvedKind.STRUCTURE_PENDING, UnresolvedKind.EVIDENCE_CONFLICT, UnresolvedKind.TABLE_UNCERTAIN,
+    UnresolvedKind.FIGURE_WITHOUT_CONTENT,
 })
 
 

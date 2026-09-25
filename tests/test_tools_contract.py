@@ -860,3 +860,12 @@ def test_ask_about_some_rows_of_a_table_sees_a_sharper_strip(ws):
     assert env2.result.adopted is True  # the strip is an image of this block
     bad, code = _call("ask_image", ws, {"block": table.id, "rows": [5, 9], "question": "?"}, context=context)
     assert not bad.ok and code == 2  # the table has 2 rows
+
+
+def test_structure_changes_return_the_items_they_open(ws):
+    # a title without a level is open work: the call that made it says so (the agent sees what its change opened)
+    block = next(b for b in json.loads((ws / "state.json").read_text())["blocks"] if b["kind"] == "text")["id"]
+    env, _ = _call("apply_structure", ws, {"changes": [{"op": "set_role", "block": block, "kind": "title",
+                                                        "reason": "test"}]})
+    data = _assert_contract(env, "apply_structure")
+    assert [(u["target"], u["kind"]) for u in data["unresolved"]] == [(block, "structure_pending")]

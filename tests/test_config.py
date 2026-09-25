@@ -224,3 +224,32 @@ def test_frozen_config_without_the_pipeline_field_ran_v1():
     resolved.pop("pipeline")  # frozen before the v1 | v2 switch existed
     assert resolved_fingerprint(resolved) == config_fingerprint(ParserXConfig(pipeline="v1"))
     assert ParserXConfig().pipeline == "v2" and ParserXConfig().runtime.mode == "hybrid"  # Q61, Q13
+
+
+def test_init_template_has_the_production_settings(tmp_path, monkeypatch):
+    # the global config written by `parserx init` processes like the project's parserx.yaml; only the credential
+    # variable names and the cache directory differ
+    from parserx.cli import _cmd_init, config_template
+    from parserx.config.schema import load_config
+
+    for name, value in {"OPENAI_BASE_URL_B": "https://e", "OPENAI_BASE_URL": "https://e", "OPENAI_API_KEY_B": "k",
+                        "OPENAI_API_KEY": "k", "PADDLE_OCR_ENDPOINT": "https://o", "PADDLE_OCR_TOKEN": "t"}.items():
+        monkeypatch.setenv(name, value)
+    for name in ("VLM_MODEL", "LLM_MODEL", "VLM_MODEL_B", "LLM_MODEL_B", "PADDLE_OCR_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)  # no ./.env (the repository's sets other model names)
+    monkeypatch.setattr("parserx.config.schema._GLOBAL_CONFIG_DIR", tmp_path / "no-global")
+    (tmp_path / "global.yaml").write_text(config_template(tmp_path / "cache"), encoding="utf-8")
+    ours, project = load_config(tmp_path / "global.yaml"), load_config(_REPO / "parserx.yaml")
+    assert ours.cache.dir == str(tmp_path / "cache")
+    ours.cache.dir = project.cache.dir
+    assert ours == project
+
+    config_dir = tmp_path / "parserx"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text("old: true\n")
+    (config_dir / ".env").write_text("OPENAI_API_KEY=mine\n")
+    _cmd_init(force=True, config_dir=config_dir)
+    assert (config_dir / "config.yaml.bak").read_text() == "old: true\n"
+    assert "gpt-6-sol" in (config_dir / "config.yaml").read_text()
+    assert (config_dir / ".env").read_text() == "OPENAI_API_KEY=mine\n"
