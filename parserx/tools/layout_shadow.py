@@ -52,6 +52,32 @@ def _pages_done(state) -> set[int | None]:
             and isinstance(o.anchor, PdfAnchor)}
 
 
+def on_page_regions(detector, data: bytes, size: tuple[int, int], dpi: int, cache) -> list[Region]:
+    """Detections of a small image placed on a blank page of the layout resolution (A4 at *dpi*), in the image's
+    pixels.  The detector is trained on pages: alone, a one-line equation or a QR code is often misread; on a
+    page it is seen as what it is."""
+    import io
+
+    from PIL import Image
+
+    width, height = size
+    margin = dpi // 2
+    page = Image.new("RGB", (max(round(8.27 * dpi), width + 2 * margin), max(round(11.69 * dpi), height + 2 * margin)),
+                     "white")
+    with Image.open(io.BytesIO(data)) as image:
+        page.paste(image.convert("RGB"), (margin, margin))
+    buf = io.BytesIO()
+    page.save(buf, "PNG")
+    out = []
+    for region in detect_cached(detector, buf.getvalue(), cache):
+        x0, y0, x1, y1 = (region.bbox[0] - margin, region.bbox[1] - margin, region.bbox[2] - margin,
+                          region.bbox[3] - margin)
+        x0, y0, x1, y1 = max(0.0, x0), max(0.0, y0), min(float(width), x1), min(float(height), y1)
+        if x1 > x0 and y1 > y0:
+            out.append(Region(bbox=(x0, y0, x1, y1), label=region.label, score=region.score))
+    return out
+
+
 def run_layout(ctx: ToolContext, req) -> ToolOutput:
     from parserx.tools.recognize import OBSERVATION_VIEWS, RecognizeResult, SelectionOutcome
 
@@ -104,7 +130,12 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
             continue
         decorative_first = route(width=asset.width, height=asset.height, pixel_std=std, regions=[],
                                  config=ctx.config.routing)
-        regions = [] if decorative_first.route == ImageRoute.DECORATIVE else detect_cached(detector, data, cache)
+        if decorative_first.route != ImageRoute.DECORATIVE:
+            regions = detect_cached(detector, data, cache)
+        elif decorative_first.evidence.get("decorative") == "blank":
+            regions = []
+        else:  # confirm the candidate: small images are read reliably only as a part of a page (P4-4)
+            regions = on_page_regions(detector, data, (asset.width, asset.height), dpi, cache)
         result = route(width=asset.width, height=asset.height, pixel_std=std, regions=regions,
                        config=ctx.config.routing)
         figure_routes.append((block_id, anchor, result, regions))

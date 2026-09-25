@@ -65,9 +65,18 @@ def test_cheap_filter(size, std, reason):
     assert cheap_filter(*size, pixel_std=std, config=CFG) == reason
 
 
-def test_decorative_wins_before_detection():
-    result = route(width=20, height=400, pixel_std=30.0, regions=[_r("text", (0, 0, 20, 400))], config=CFG)
-    assert result.route == ImageRoute.DECORATIVE and result.evidence["decorative"] == "short_side"
+def test_a_decorative_shape_is_decorative_only_without_text_in_it():
+    # P4-4: shape alone does not decide — a one-line equation is a thin strip; text or a formula detected in it
+    # keeps it (routed by its content), an image or nothing detected confirms the decorative candidate
+    formula = route(width=542, height=40, pixel_std=30.0, regions=[_r("display_formula", (10, 2, 530, 38))],
+                    config=CFG)
+    assert formula.route == ImageRoute.SCAN and formula.evidence["decorative_shape"] == "strip"
+    logo = route(width=75, height=78, pixel_std=30.0, regions=[_r("image", (0, 0, 75, 78))], config=CFG)
+    assert logo.route == ImageRoute.DECORATIVE and logo.evidence["decorative"] == "trivial"
+    nothing = route(width=20, height=400, pixel_std=30.0, regions=[], config=CFG)
+    assert nothing.route == ImageRoute.DECORATIVE and nothing.evidence["decorative"] == "short_side"
+    blank = route(width=300, height=300, pixel_std=0.1, regions=[_r("text", (0, 0, 300, 300))], config=CFG)
+    assert blank.route == ImageRoute.DECORATIVE  # a blank image holds nothing, whatever a detector says
 
 
 def test_route_evidence_is_flat():
@@ -211,3 +220,25 @@ def test_onnxruntime_telemetry_is_off():
     import parserx.layout.detector  # noqa: F401
 
     assert os.environ["ORT_DISABLE_TELEMETRY"] == "1"
+
+
+def test_small_images_are_detected_on_a_page_and_mapped_back():
+    # P4-4: a decorative-shaped image is confirmed on a blank page of the layout resolution
+    from parserx.tools.layout_shadow import on_page_regions
+
+    seen = {}
+
+    class PageDetector:
+        version = "fake-page-detector"
+
+        def detect(self, png):
+            with Image.open(io.BytesIO(png)) as page:
+                seen["size"] = page.size
+            return [Region(bbox=(60.0, 55.0, 590.0, 85.0), label="display_formula", score=0.8),
+                    Region(bbox=(700.0, 900.0, 800.0, 1000.0), label="text", score=0.9)]  # elsewhere on the page
+
+    buf = io.BytesIO()
+    Image.new("RGB", (542, 40), "white").save(buf, "PNG")
+    regions = on_page_regions(PageDetector(), buf.getvalue(), (542, 40), 100, None)
+    assert seen["size"] == (827, 1169)
+    assert [(r.label, r.bbox) for r in regions] == [("display_formula", (10.0, 5.0, 540.0, 35.0))]
