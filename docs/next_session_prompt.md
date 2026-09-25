@@ -12,7 +12,7 @@
 
 **先做五件事**，任一不通过先处理，不要绕过：
 
-1. 读指导 §0、§2、§3、§9.5、§12、§14（尤其 Q13、Q40、Q56、Q57–Q61）与 docs/v2_phase4_plan.md 全文；再读两份报告：eval_reports/2026-09-25_p4_runtime_comparison.md 与 eval_reports/2026-09-25_p4_page_reading.md。§4–§8 在实现对应部分时再读。
+1. 读指导 §0、§2、§3、§9.5、§12、§14（尤其 Q13、Q40，"信号设计"的 Q56，阶段四的 Q57–Q61）与 docs/v2_phase4_plan.md 全文；再读两份报告：eval_reports/2026-09-25_p4_runtime_comparison.md 与 eval_reports/2026-09-25_p4_page_reading.md。§4–§8 在实现对应部分时再读。
 2. 运行 `uv run python scripts/check_services.py`，OCR、LLM、VLM 三项都要 OK。
 3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 849 通过、4 个已知失败（v1 的旧测试，不要修）。
 4. 运行两个 L1，都要 PASS：
@@ -21,6 +21,8 @@
 5. 回放两个冻结 run，都要 PASS：
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-23_p0_v1_gpt-6-luna`
    - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-24_p1_v2_toolkit`
+
+注意：§14 中另有一组编号重复的 Q56–Q58，来自另一个会话的 Agent 运行时调研（docs/v2_agent_runtime_research.md：自研薄循环、多家模型、与缺陷修复的先后）。它们属于"第三方 Agent 框架"这个以后单独的议题，本轮不处理；遇到编号时以问题内容区分。
 
 **然后**：
 
