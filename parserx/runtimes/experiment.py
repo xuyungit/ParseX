@@ -91,12 +91,14 @@ _VALUE = re.compile(r"\{\{(\w+)\}\}")
 _ROUND = re.compile(r"r\d+")
 
 
-def render_task(template: str, *, round_name: str, values: dict[str, Any], options: set[str] = frozenset()) -> str:
+def render_task(template: str, *, round_name: str | None, values: dict[str, Any],
+                options: set[str] = frozenset()) -> str:
     """The task (AGENTS.md) for one round: ``{{#rN}}…{{/rN}}`` blocks of other rounds are dropped, and so are the
-    other ``{{#name}}…{{/name}}`` blocks unless *name* is one of the chosen *options* (e.g. ``vision_tool``)."""
+    other ``{{#name}}…{{/name}}`` blocks unless *name* is one of the chosen *options* (e.g. ``vision_tool``,
+    ``experiment`` or ``product``).  *round_name* None drops every round block (the product's task, P4-1)."""
     names = {m.group(1) for m in _BLOCK.finditer(template)}
     rounds = {n for n in names if _ROUND.fullmatch(n)}
-    if round_name not in rounds:
+    if round_name is not None and round_name not in rounds:
         raise KeyError(f"the template has no block for round {round_name!r} (has {sorted(rounds)})")
 
     def keep(m: re.Match) -> str:

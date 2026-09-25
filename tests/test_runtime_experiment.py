@@ -148,9 +148,9 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
 
     template = (files("parserx.runtimes") / "agent_task.md").read_text(encoding="utf-8")
     values = {"input_name": "input.pdf", "budget_minutes": 30, "skills": "SKILL-TEXT"}
-    r1 = render_task(template, round_name="r1", values=values)
-    assert r1 == render_task(template, round_name="r1", values=values)  # stable
-    r2 = render_task(template, round_name="r2", values=values)
+    r1 = render_task(template, round_name="r1", values=values, options={"experiment"})
+    assert r1 == render_task(template, round_name="r1", values=values, options={"experiment"})  # stable
+    r2 = render_task(template, round_name="r2", values=values, options={"experiment"})
     section = "## 本轮规则"
 
     def outside_rules(text):
@@ -164,8 +164,8 @@ def test_shipped_task_differs_between_rounds_only_in_the_round_rules():
                      "apply_structure", "check", "export", "tool schema", "doc_text"):
             assert tool in text
     # the two ways of seeing images differ only where images are read
-    agent = render_task(template, round_name="r1", values=values, options={"vision_agent"})
-    tool = render_task(template, round_name="r1", values=values, options={"vision_tool"})
+    agent = render_task(template, round_name="r1", values=values, options={"vision_agent", "experiment"})
+    tool = render_task(template, round_name="r1", values=values, options={"vision_tool", "experiment"})
     assert "--image crop" in agent and "ask_image" not in agent
     assert "ask_image" in tool and "--image crop" not in tool
 

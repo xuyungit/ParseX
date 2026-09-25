@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -62,6 +63,10 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return {k: v for k, v in dotenv_values(path).items() if v is not None}
 
 
+def _terminated(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="px", add_help=False)
     parser.add_argument("--env-file", type=Path, required=True)
@@ -83,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"px: {exc}\n\n{usage}", file=sys.stderr)
         return 2
     os.environ.update(secrets)
+    # A deadline or Ctrl-C stops the agent with SIGTERM: raise, so the running tool records its call (P4-1).
+    signal.signal(signal.SIGTERM, _terminated)
     sys.argv = ["parserx", *parserx_args]
     from parserx.cli import main as parserx_main
 

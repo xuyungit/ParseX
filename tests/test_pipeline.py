@@ -11,7 +11,7 @@ from parserx.pipeline import Pipeline
 
 def _pipeline_no_ocr():
     """Create a Pipeline with OCR disabled (no credentials needed)."""
-    cfg = ParserXConfig()
+    cfg = ParserXConfig(pipeline="v1")
     cfg.builders.ocr.engine = "none"
     return Pipeline(cfg)
 
@@ -47,7 +47,7 @@ def test_parse_nonexistent():
 
 
 def test_pipeline_init_without_ocr_credentials():
-    Pipeline(ParserXConfig())
+    Pipeline(ParserXConfig(pipeline="v1"))
 
 
 def test_parse_runs_image_extraction_without_output_dir(tmp_path: Path, monkeypatch):
@@ -261,7 +261,7 @@ def test_quality_check_skips_without_llm():
 
 def _pipeline_layout_check():
     """Pipeline with layout complexity check enabled, OCR disabled."""
-    cfg = ParserXConfig()
+    cfg = ParserXConfig(pipeline="v1")
     cfg.builders.ocr.engine = "none"
     cfg.builders.quality_check.layout_complexity_check = True
     return Pipeline(cfg)
@@ -399,7 +399,7 @@ def test_layout_complexity_respects_config_toggle():
         ),
     )
 
-    cfg = ParserXConfig()
+    cfg = ParserXConfig(pipeline="v1")
     cfg.builders.quality_check.layout_complexity_check = False
     cfg.builders.ocr.engine = "none"
     pipeline = Pipeline(cfg)

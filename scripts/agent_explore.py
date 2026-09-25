@@ -308,7 +308,7 @@ def _run_one(args, snapshot: dict, doc: str) -> int:
     skills_json = _run([str(_toolkit(args) / "venv" / "bin" / "python"), "-P", "-m", "parserx.runtimes.experiment",
                         "skills"]).stdout
     skills = json.loads(skills_json)  # the snapshot's skills, also inlined in the task (one step fewer)
-    agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}"},
+    agents_md = render_task(template, round_name=snapshot["rules"], options={f"vision_{args.vision}", "experiment"},
                             values={"input_name": f"input{input_path.suffix.lower()}", "budget_minutes": minutes,
                                     "skills": "\n\n".join(skills[name].strip() for name in
                                                              ("transcription", "figure", "structure"))})

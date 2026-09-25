@@ -63,6 +63,11 @@ class ToolContext:
         self.gateway.budget.preload(stats.requests, stats.cost_usd or 0.0, stats.wall_time_s)
         self._ocr: PaddleOCRService | None = None
         self._vlm: dict[Any, MeteredService] = {}
+        self.reporter: Callable[[Any], None] | None = None  # progress events of ``parserx parse`` (P4-2)
+
+    def report(self, event: Any) -> None:
+        if self.reporter is not None:
+            self.reporter(event)
 
     # Service factories: tests replace these to plug in fake services behind the real gateway.
     def _new_ocr(self) -> PaddleOCRService:
@@ -195,6 +200,14 @@ def invoke(
     try:
         out = run(ctx, req)
         failures, fatal = out.failures, False
+    except (KeyboardInterrupt, SystemExit):
+        # Stopped from outside (Ctrl-C, a deadline's SIGTERM): the call record still claims what this call
+        # committed, so the workspace stays verifiable and a later run can continue from it (P4-1).
+        failure = Failure(code=FailureCode.INTERRUPTED, message="the call was interrupted", retryable=True)
+        ctx.ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),
+                         "envelope": _fatal(name, state.id, state.version, failure).model_dump(
+                             mode="json", exclude={"result"}), "result": None})
+        raise
     except ToolFailure as exc:
         out, failures, fatal = None, [exc.failure], True
         code = 2 if exc.failure.code == FailureCode.INVALID_REQUEST else 0

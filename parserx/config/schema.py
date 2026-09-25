@@ -280,9 +280,23 @@ class RoutingConfig(BaseModel):
     low_confidence: float = 0.5  # every detection below → UNCERTAIN
 
 
-class RuntimeConfig(BaseModel):
-    """The v2 fixed-sequence runtime (guide §7, plan P1-10)."""
+class AgentConfig(BaseModel):
+    """The main agent of the hybrid runtime (Q13, Q40, Q57): chosen apart from the service models."""
 
+    engine: Literal["codex"] = "codex"
+    model: str = "gpt-6-sol"
+    effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
+    deadline_min: int = 30  # Q39: documents of up to large_pages pages
+    large_pages: int = 100
+    large_deadline_min: int = 90
+
+
+class RuntimeConfig(BaseModel):
+    """The v2 runtimes (guide §7): the fixed sequence (plan P1-10) and, for ``parserx parse``, the hybrid (Q13):
+    the fixed sequence first, then the agent on documents with open review items or not complete."""
+
+    mode: Literal["hybrid", "fixed"] = "hybrid"  # read by ``parserx parse``; evaluation runs the fixed sequence
+    agent: AgentConfig = Field(default_factory=AgentConfig)
     describe_figures: bool = True  # describe shown figures (each at most once, within the budget)
     layout_shadow: bool = True  # run the layout detector and image routing (P1-9)
     page_reading: bool = True  # read every PDF page locally and compare it with the output (guide §9.5, Q56)
@@ -327,7 +341,7 @@ class ParserXConfig(BaseModel):
     """Top-level ParserX configuration."""
 
     # v1: the processor pipeline; v2: workspace + toolkit through the fixed-sequence runtime.
-    pipeline: Literal["v1", "v2"] = "v1"
+    pipeline: Literal["v1", "v2"] = "v2"  # Q61: v2 by default; v1 stays behind ``--pipeline v1`` until Phase 5
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)

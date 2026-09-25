@@ -182,7 +182,9 @@ def test_regression_config_turns_off_every_llm_call_and_keeps_the_rest():
     assert reg.processors.line_unwrap.llm_fallback is False
     assert reg.processors.content_value.llm_fallback is False
 
+    assert reg.pipeline == "v1" and base.pipeline == "v2"  # Q61: the v1 regression pins its pipeline
     for cfg in (base, reg):
+        cfg.pipeline = "v1"
         cfg.builders.quality_check.enabled = False
         for name in ("chapter", "line_unwrap", "content_value", "header_footer"):
             getattr(cfg.processors, name).llm_fallback = False
@@ -213,3 +215,12 @@ def test_fingerprint_ignores_transport_and_prices_but_not_budget():
     budget = apply_overrides(base, ["scheduling.budget.usd=0.5"])
     assert config_fingerprint(transport) == config_fingerprint(base)
     assert config_fingerprint(budget) != config_fingerprint(base)  # an exhausted budget changes outputs
+
+
+def test_frozen_config_without_the_pipeline_field_ran_v1():
+    from parserx.eval.reporting import config_fingerprint, resolved_fingerprint
+
+    resolved = ParserXConfig(pipeline="v1").model_dump(mode="json")
+    resolved.pop("pipeline")  # frozen before the v1 | v2 switch existed
+    assert resolved_fingerprint(resolved) == config_fingerprint(ParserXConfig(pipeline="v1"))
+    assert ParserXConfig().pipeline == "v2" and ParserXConfig().runtime.mode == "hybrid"  # Q61, Q13

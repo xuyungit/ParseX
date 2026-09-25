@@ -3,6 +3,8 @@
 # the response cache replays).  Only overrides live here.
 extends: ../parserx.yaml
 
+pipeline: v1              # the v1 regression (the default became v2 with Q61)
+
 builders:
   quality_check:
     enabled: false        # LLM formula-fragment page check

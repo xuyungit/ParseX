@@ -51,6 +51,7 @@ class FailureCode(StrEnum):
     VERSION_CONFLICT = "version_conflict"
     WORKSPACE_TAMPERED = "workspace_tampered"  # state.json changed outside the tools (plan P2-1)
     INTERNAL_ERROR = "internal_error"
+    INTERRUPTED = "interrupted"  # the call was stopped (Ctrl-C, deadline): its committed changes stay, claimed
 
 
 class Failure(IRModel):

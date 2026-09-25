@@ -62,11 +62,32 @@ class Review(IRModel):
 REVIEW_ITEMS_MAX = 200
 
 
+class AgentRecord(IRModel):
+    """What the main agent of the hybrid runtime did (P4-1); its cost is the model's list price (Q57)."""
+
+    engine: str
+    model: str
+    effort: str
+    wall_s: float
+    usd_at_list_price: float | None
+    tool_calls: int
+    changes: int  # accepted structure changes, corrections and table reviews
+    added: int  # text added from the page image (``correct add``)
+    closed: int  # review items checked on the image and closed
+    review_open_before: int
+    review_open_after: int
+    audit: list[str] = []  # hygiene notes: paths outside the agent's directory it named, other tools it used
+
+
 class Processing(IRModel):
     engines: dict[str, str]  # engine → version / model, from the readings the document uses
     requests: dict[str, int]
     cost_usd: float | None
     wall_time_s: float
+    # ``parserx parse`` (P4-1): fixed · hybrid:agent · hybrid:fallback (with the reason); None from other entries
+    runtime: str | None = None
+    runtime_note: str | None = None
+    agent: AgentRecord | None = None
 
 
 class DocumentSummary(IRModel):

@@ -178,7 +178,7 @@ def test_pipeline_renders_captioned_output(tmp_path: Path, monkeypatch):
     )
     doc = Document(pages=[Page(number=1, elements=[image, caption])])
 
-    cfg = ParserXConfig()
+    cfg = ParserXConfig(pipeline="v1")
     cfg.builders.ocr.engine = "none"
     pipeline = Pipeline(cfg)
 
