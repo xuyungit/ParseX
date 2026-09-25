@@ -53,14 +53,14 @@ def unaccounted_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
             continue
         blocks = [(b, box) for b, box in places.get(reading.n, []) if b.status in _ACCOUNTS]
         pictures = [box for b, box in places.get(reading.n, []) if b.kind == BlockKind.FIGURE] + list(reading.not_prose)
-        page_text = _norm(" ".join(_text(b) for b, _ in blocks))
+        page_text = normalize(" ".join(_text(b) for b, _ in blocks))
         for line in reading.lines:
-            text = _norm(line.text)
+            text = normalize(line.text)
             if len(text) < 2 or any(_inside(_centre(line.bbox), box) for box in pictures):
                 continue
             holders = ([b for b, box in blocks if _inside(_centre(line.bbox), box)]
                        or [b for b, box in blocks if _overlap(line.bbox, box)])
-            if holders and _pairs_share(text, _norm(" ".join(_text(b) for b in holders))) >= NEAR:
+            if holders and pairs_share(text, normalize(" ".join(_text(b) for b in holders))) >= NEAR:
                 continue
             if page_text and fuzz.partial_ratio(text, page_text) >= SOMEWHERE:
                 continue
@@ -68,9 +68,9 @@ def unaccounted_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
     pages_of: dict[str, set[int]] = defaultdict(set)
     for n, lines in found.items():
         for line in lines:
-            pages_of[_norm(line.text)].add(n)
+            pages_of[normalize(line.text)].add(n)
     return {n: kept for n, lines in sorted(found.items())
-            if (kept := [ln for ln in lines if len(pages_of[_norm(ln.text)]) < 2])}
+            if (kept := [ln for ln in lines if len(pages_of[normalize(ln.text)]) < 2])}
 
 
 def unseen_segments(state: DocumentState) -> dict[str, list[str]]:
@@ -84,14 +84,36 @@ def unseen_segments(state: DocumentState) -> dict[str, list[str]]:
                  if isinstance(a, PdfAnchor) and a.coord_space == "page_pt" and a.page in readings]
         if not spans or any(_inside(_centre(spans[0][1]), box) for box in readings[spans[0][0]].not_prose):
             continue
-        near = _norm(" ".join(ln.text for n, box in spans for ln in readings[n].lines if _inside(_centre(ln.bbox), box)))
-        pages = _norm(" ".join(ln.text for n in sorted({n for n, _ in spans}) for ln in readings[n].lines))
+        near = normalize(" ".join(ln.text for n, box in spans for ln in readings[n].lines if _inside(_centre(ln.bbox), box)))
+        pages = normalize(" ".join(ln.text for n in sorted({n for n, _ in spans}) for ln in readings[n].lines))
         unseen = [seg for seg in _segments(block)
-                  if len(text := _norm(seg)) >= 2 and _pairs_share(text, near) < NEAR
+                  if len(text := normalize(seg)) >= 2 and pairs_share(text, near) < NEAR
                   and fuzz.partial_ratio(text, pages) < SOMEWHERE]
         if unseen:
             out[block.id] = unseen
     return out
+
+
+def text_at(state: DocumentState, page: int, box: BBox) -> str | None:
+    """What the local reading of *page* shows inside *box* (lines by their centre); None: the page was not read."""
+    reading = next((r for r in state.readings if r.n == page and r.lines), None)
+    if reading is None:
+        return None
+    return " ".join(ln.text for ln in reading.lines if _inside(_centre(ln.bbox), box))
+
+
+def text_near(state: DocumentState, block: Block) -> str | None:
+    """What the local reading shows where *block* sits (every page it spans); None: none of them was read."""
+    seen = [text_at(state, a.page, a.bbox) for a in block.anchors
+            if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
+    return None if all(s is None for s in seen) else " ".join(s for s in seen if s)
+
+
+def holders_of(state: DocumentState, page: int, box: BBox, text: str) -> list[str]:
+    """Blocks at *box* of *page* that account for *text* already (output, excluded or merged)."""
+    wanted = normalize(text)
+    return [b.id for b, where in _places(state).get(page, []) if b.status in _ACCOUNTS and _overlap(box, where)
+            and pairs_share(wanted, normalize(_text(b))) >= NEAR]
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -117,12 +139,14 @@ def _text(block: Block) -> str:
     return f"{block.text or ''} {cells}"
 
 
-def _norm(text: str) -> str:
+def normalize(text: str) -> str:
+    """Letters and digits only (NFKC, full width folded, markup dropped): what the two readings are compared on."""
     text = _MARKUP.sub("", unicodedata.normalize("NFKC", normalize_fullwidth_ascii(text)))
     return "".join(ch.lower() for ch in text if ch.isalnum())
 
 
-def _pairs_share(text: str, other: str) -> float:
+def pairs_share(text: str, other: str) -> float:
+    """Share of *text*'s adjacent-character pairs found in *other* (both normalized)."""
     pairs = [text[i:i + 2] for i in range(len(text) - 1)]
     have = {other[i:i + 2] for i in range(len(other) - 1)}
     return sum(p in have for p in pairs) / len(pairs) if pairs else 1.0

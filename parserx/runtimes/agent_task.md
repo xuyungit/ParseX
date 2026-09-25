@@ -38,7 +38,7 @@
 | `read` | `--page N` 或 `--block ID [--context K]`：当前采用的内容；`--observations` 看各来源的识别结果 |
 {{#vision_agent}}| `read --image crop` / `--image page` | 取块的裁剪图或整页图（返回路径） |
 {{/vision_agent}}{{#vision_tool}}| `ask_image` | `--block ID`（表格可加 `--rows 首行 末行`）、`--page N` 或 `--seam N`（跨页接缝），`--question "……"`：视觉模型读图作答 |
-{{/vision_tool}}| `correct` | 按图修改：正文给出要替换的片段，表格给出单元格；原生文字层的数字不能改 |
+{{/vision_tool}}| `correct` | 按图修改：正文给出要替换的片段，表格给出单元格；`add` 补入图上有、却不在任何块里的文字；原生文字层的数字只有本地读数显示为新值时才能改 |
 | `review_table` | 表格的行列结构问题，由视觉模型复核后经接受门采用 |
 | `apply_structure` | 结构：`set_role`（设为标题时可带 `level`）、`set_level`、`merge_tables`、`mark_pending`、`exclude` / `restore`、`move_after`、`add_relation` |
 | `describe_figure` | `--block ID` 或 `--blocks ID1,ID2`：补充图片描述 |
@@ -58,7 +58,16 @@
  "cells": [{"row": 1, "col": 2, "content": "图上的写法"}]}
 ```
 
-表格里网格内的空位也可以补填。原生文字层中的数字程序不允许改。
+表格里网格内的空位也可以补填。原生文字层中的数字，只有页面的本地读数（程序自己读的，与你的读图无关）在该位置显示为你改的值时，程序才采用。
+
+图上有、却不在任何块里的文字（待办清单的 `text_unaccounted`，给出页码与位置），看图确认后补入：
+
+```
+{"image": "<图像 id>", "reason": "图上有这一行，文字层没有",
+ "add": {"page": 2, "bbox": [72, 200, 200, 214], "text": "图上的写法", "after": null}}
+```
+
+`bbox` 用待办项给出的位置（页面点）；`after` 为 null 时按位置排进阅读顺序，也可填前一块的 id。程序只在你看过该处的图、且页面本地读数在该处也有这段文字时才补入。
 
 `apply_structure`（`./px tool apply_structure --ws ws --changes - --json`，加 `--atomic` 表示任一条被拒则全部不生效），变更列表中每条是以下之一：
 

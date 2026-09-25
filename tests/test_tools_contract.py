@@ -514,6 +514,60 @@ def test_a_correction_needs_the_image_and_keeps_native_numbers(ws):
     assert not env.ok and code == 2 and env.failures[0].code == "invalid_request"
 
 
+def _give_reading(ws, n, lines):
+    """A local reading of page *n* (what ``process`` stores; tests give it directly)."""
+    from parserx.ir.state import PageReading, ReadLine
+
+    with Workspace.open(ws).txn("test:reading") as state:
+        state.readings = sorted([r for r in state.readings if r.n != n] + [PageReading(
+            n=n, engine="test", dpi=150, lines=[ReadLine(bbox=b, text=t, score=0.99) for t, b in lines])],
+            key=lambda r: r.n)
+
+
+def test_the_agent_adds_text_the_page_shows_and_no_block_has(ws):
+    context = _context()
+    native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
+    _give_reading(ws, 1, [("SENTINEL-NATIVE 标题", (72, 72, 300, 95)), (NATIVE, native.anchors[0].bbox),
+                          ("专家评审组名单", (72, 200, 200, 214))])
+    add = {"page": 1, "bbox": [72, 200, 200, 214], "text": "专家评审组名单"}
+    env, _ = _call("correct", ws, {"image": "a-0000000000000000", "reason": "r", "add": add}, context=context)
+    assert env.result.adopted is False  # no image of the place was read
+    page_image = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
+    env, code = _call("correct", ws, {"image": page_image, "reason": "图上有这一行，文字层没有", "add": add},
+                      context=context)
+    data = _assert_contract(env, "correct")
+    assert code == 0 and data["result"]["adopted"] is True, data["result"]["gate"]
+    state = Workspace.open(ws).load()
+    added = next(b for b in state.blocks if b.text == "专家评审组名单")
+    assert added.kind == BlockKind.TEXT and added.anchors[0].bbox == (72, 200, 200, 214)
+    order = [b.id for b in sorted(state.blocks, key=lambda b: b.order)]
+    assert order.index(native.id) < order.index(added.id)  # placed by its position on the page
+    entry = next(e for e in state.ledger if e.block == added.id)
+    assert entry.unit == "agent_text" and entry.disposition == "output"
+    checked = _call("check", ws, context=context)[0].result  # the reading was given outside a tool: check, not verify
+    assert checked.accounting.unassigned == 0 and checked.accounting.output == checked.accounting.discovered
+    for text, bbox in (("图上没有的一行", [72, 600, 200, 614]),  # the local reading does not show it
+                       (NATIVE, list(native.anchors[0].bbox))):  # a block already has it
+        env, _ = _call("correct", ws, {"image": page_image, "reason": "r",
+                                       "add": {"page": 1, "bbox": bbox, "text": text}}, context=context)
+        assert env.result.adopted is False
+    assert sum(1 for b in Workspace.open(ws).load().blocks if b.text == NATIVE) == 1
+
+
+def test_native_numbers_change_only_as_the_local_reading_shows(ws):
+    context = _context()
+    native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
+    image = _looked_at(ws, native.id, context)
+    edit = {"block": native.id, "image": image, "reason": "图上是 900", "edits": [{"find": "100 万元", "replace": "900 万元"}]}
+    _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为100万元", native.anchors[0].bbox)])  # the page shows 100
+    assert _call("correct", ws, edit, context=context)[0].result.adopted is False
+    _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为900万元", native.anchors[0].bbox)])  # the page shows 900
+    env, _ = _call("correct", ws, edit, context=context)
+    assert env.result.adopted is True
+    assert "local reading" in next(g.detail for g in env.result.gate if g.name == "numeric_consistency")
+
+
+
 def test_agent_corrects_table_cells(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)

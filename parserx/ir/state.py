@@ -29,6 +29,7 @@ LedgerUnit = Literal[
     "docx_image",
     "docx_deleted",      # text removed by a tracked deletion (excluded, guide §6.9)
     "docx_unsupported",  # element the Phase 1 reader does not handle (failed)
+    "agent_text",        # text the agent read from a page image where no block had it, backed by the local reading (Q56)
 ]
 
 
