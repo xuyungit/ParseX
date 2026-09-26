@@ -63,7 +63,7 @@ def _state() -> DocumentState:
             kind=BlockKind.TITLE, level=1, observations=[obs], chosen_observation=obs.id, text=obs.text,
             decisions=[Decision(
                 stage=DecisionStage.HEADING_ROLE, choice="title", reason="adapter", evidence={"font_size": 16.0},
-                actor="adapter:v1", refs=[obs.id],
+                actor="program:hierarchy.typography", refs=[obs.id],
             )],
         ),
         _block(id="b-p001-0002", kind=BlockKind.TABLE, order=1, cells=grid),

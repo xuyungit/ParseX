@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import io
 import posixpath
+import unicodedata
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
@@ -157,6 +158,8 @@ class _Style:
     num: tuple[str, int] | None = None
     size: float | None = None
     bold: bool | None = None
+    east_asia: str | None = None  # w:rFonts: the face of CJK text
+    ascii: str | None = None  # the face of other text
 
 
 class _Styles:
@@ -165,22 +168,23 @@ class _Styles:
         self.default_paragraph: str | None = None
         self.default_size: float | None = None
         self.default_bold: bool | None = None
+        self.default_faces: tuple[str | None, str | None] = (None, None)
         if root is None:
             return
         defaults = root.find(f"{_w('docDefaults')}/{_w('rPrDefault')}/{_w('rPr')}")
-        self.default_size, self.default_bold = _run_props(defaults)
+        self.default_size, self.default_bold, self.default_faces = _run_props(defaults)
         for style in root.findall(_w("style")):
             sid = _attr(style, "styleId") or ""
             ppr = style.find(_w("pPr"))
             outline = ppr.find(_w("outlineLvl")) if ppr is not None else None
             num = ppr.find(_w("numPr")) if ppr is not None else None
-            size, bold = _run_props(style.find(_w("rPr")))
+            size, bold, (east_asia, ascii_face) = _run_props(style.find(_w("rPr")))
             self.styles[sid] = _Style(
                 name=_attr(style.find(_w("name")), "val"),
                 based_on=_attr(style.find(_w("basedOn")), "val"),
                 outline=int(_attr(outline, "val")) if outline is not None and (_attr(outline, "val") or "").isdigit() else None,
                 num=_num_pr(num),
-                size=size, bold=bold,
+                size=size, bold=bold, east_asia=east_asia, ascii=ascii_face,
             )
             if _attr(style, "type") == "paragraph" and _attr(style, "default") in ("1", "true"):
                 self.default_paragraph = sid
@@ -197,13 +201,19 @@ class _Styles:
         return next((getattr(s, attr) for s in self.chain(sid) if getattr(s, attr) is not None), None)
 
 
-def _run_props(rpr) -> tuple[float | None, bool | None]:
+def _run_props(rpr) -> tuple[float | None, bool | None, tuple[str | None, str | None]]:
+    """Size (pt), bold and the (East Asian, ASCII) faces a run properties element sets; None where it sets none.
+    A theme face is named by its theme slot (``minorEastAsia``)."""
     if rpr is None:
-        return None, None
+        return None, None, (None, None)
     sz = rpr.find(_w("sz"))
     b = rpr.find(_w("b"))
+    fonts = rpr.find(_w("rFonts"))
     size = float(_attr(sz, "val")) / 2 if sz is not None and (_attr(sz, "val") or "").isdigit() else None
-    return size, (_on(b) if b is not None else None)
+    faces = (None, None)
+    if fonts is not None:
+        faces = (_attr(fonts, "eastAsia") or _attr(fonts, "eastAsiaTheme"), _attr(fonts, "ascii") or _attr(fonts, "asciiTheme"))
+    return size, (_on(b) if b is not None else None), faces
 
 
 def _num_pr(num) -> tuple[str, int] | None:
@@ -363,7 +373,9 @@ class _Piece:
 class _Para:
     parts: list[str] = field(default_factory=list)  # text between page breaks
     pieces: list[_Piece] = field(default_factory=list)
-    runs: list[tuple[int, float | None, bool | None, str | None]] = field(default_factory=list)  # chars, size, bold, rStyle
+    # chars, size, bold, rStyle, (East Asian, ASCII) faces, mostly CJK
+    runs: list[tuple[int, float | None, bool | None, str | None, tuple[str | None, str | None], bool]] = \
+        field(default_factory=list)
     breaks: int = 0  # explicit page breaks inside the paragraph
     inserted: int = 0  # tracked insertions / move destinations read as content
     fields: list[str] = field(default_factory=list)  # field stack: "instr" | "result"
@@ -414,13 +426,15 @@ def _inline(node, para: _Para, path: str) -> None:
 
 def _run(r, para: _Para, path: str) -> None:
     rpr = r.find(_w("rPr"))
-    size, bold = _run_props(rpr)
+    size, bold, faces = _run_props(rpr)
     style = _attr(rpr.find(_w("rStyle")), "val") if rpr is not None else None
-    before = sum(len(p) for p in para.parts)
+    before = "".join(para.parts)
     _run_children(r, para, path)
-    added = sum(len(p) for p in para.parts) - before
+    added = len("".join(para.parts)) - len(before)
     if added:
-        para.runs.append((added, size, bold, style))
+        text = "".join(para.parts)[len(before):]
+        cjk = sum(1 for ch in text if unicodedata.east_asian_width(ch) in "WF")
+        para.runs.append((added, size, bold, style, faces, cjk * 2 > len(text.strip() or text)))
 
 
 def _run_children(node, para: _Para, path: str) -> None:
@@ -686,9 +700,15 @@ class _Reader:
                 if rendered[0]:
                     prefix = rendered[0] + ("" if rendered[1] == "nothing" else " ")
         sizes: Counter[float] = Counter()
+        faces: Counter[str] = Counter()
         bold_chars = total = 0
         p_size, p_bold = self.styles.first(sid, "size"), self.styles.first(sid, "bold")
-        for chars, size, bold, rstyle in para.runs:
+        for chars, size, bold, rstyle, (east_asia, ascii_face), cjk in para.runs:
+            slot = "east_asia" if cjk else "ascii"
+            face = (east_asia if cjk else ascii_face) or self.styles.first(rstyle, slot) \
+                or self.styles.first(sid, slot) or self.styles.default_faces[0 if cjk else 1]
+            if face:
+                faces[face] += chars
             size = size if size is not None else self.styles.first(rstyle, "size") or p_size or self.styles.default_size
             bold = bold if bold is not None else self.styles.first(rstyle, "bold")
             bold = bold if bold is not None else (p_bold if p_bold is not None else self.styles.default_bold)
@@ -699,6 +719,7 @@ class _Reader:
         return TextStyle(
             font_size=sizes.most_common(1)[0][0] if sizes else p_size or self.styles.default_size,
             bold=(bold_chars * 2 > total) if total else None,
+            font=faces.most_common(1)[0][0] if faces else None,
             style_name=self.styles.styles[sid].name if sid in self.styles.styles else None,
             outline_level=outline, numbering=numbering,
         ), prefix

@@ -12,6 +12,7 @@ from parserx.config.schema import ParserXConfig
 from parserx.hierarchy.docx_styles import propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, engine_titles
 from parserx.hierarchy.levels import unify_levels
+from parserx.hierarchy.typography_titles import ACTOR as TYPOGRAPHY_ACTOR
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, DocumentStatus, ObservationStatus, TaskKind
@@ -79,10 +80,10 @@ def test_pdf_runs_through_every_step_and_balances(pdf, tmp_path):
     steps = [s.step for s in outcome.envelopes[1].result.steps]
     assert steps == ["recognize", "layout", "reading", "describe_figure", "structure", "check"]
     assert "SENTINEL-OCR 扫描文字 3 件" in outcome.markdown and "> [图片语义] photo" in outcome.markdown
-    assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# Annual Report")  # adapter:v1 title
+    assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# Annual Report")  # set larger than the body: the title
     assert "\n## SENTINEL-OCR 标题\n" in outcome.markdown  # the scan engine's paragraph_title, under it
     actors = {b["text"]: b["decisions"][-1]["actor"] for b in sidecar["blocks"] if b["kind"] == "title" and b["level"]}
-    assert actors == {"Annual Report": "adapter:v1", "SENTINEL-OCR 标题": ENGINE_ACTOR}
+    assert actors == {"Annual Report": TYPOGRAPHY_ACTOR, "SENTINEL-OCR 标题": ENGINE_ACTOR}
 
 
 def test_output_is_byte_identical_across_runs(pdf, tmp_path):
@@ -108,45 +109,26 @@ def test_docx_structure_from_styles(tmp_path):
     assert list_block["kind"] == "list"
 
 
-def test_docx_headings_the_styles_do_not_declare_join_the_outline(tmp_path, monkeypatch):
-    # Q48: a hand-formatted document — v1's typographic detection (stubbed here) supplies the undeclared titles,
-    # matched in reading order (the table-of-contents line "1.1 范围 3" is not the heading), in one outline
-    from parserx.runtimes import v1_structure
-
+def test_docx_headings_the_styles_do_not_declare_join_the_outline(tmp_path):
+    # Q48, Q72: a hand-formatted document — bold numbered paragraphs are titles by agreeing evidence, placed in one
+    # outline with the declared chapter; the table-of-contents line "1.1 范围 3" points at a title and is not one
     doc = Document()
     doc.add_paragraph("目录")
-    doc.add_paragraph("1.1 范围 3")
+    doc.add_paragraph().add_run("1.1 范围 3").bold = True
     doc.add_paragraph("第一章 总则", style="Heading 1")
-    doc.add_paragraph("1.1 范围")
-    doc.add_paragraph("本规范适用于桥梁支座。")
-    doc.add_paragraph("1.2 术语")
-    doc.add_paragraph("下列术语适用于本规范。")
+    doc.add_paragraph().add_run("1.1 范围").bold = True
+    doc.add_paragraph("本规范适用于桥梁支座，规定了支座的结构、材料、制造与检验。")
+    doc.add_paragraph().add_run("1.2 术语").bold = True
+    doc.add_paragraph("下列术语适用于本规范，未列出的术语按相关标准执行。")
     path = tmp_path / "doc.docx"
     doc.save(path)
-    monkeypatch.setattr(v1_structure, "v1_headings_docx",
-                        lambda p, c: [(1, "第一章 总则"), (3, "1.1 范围"), (3, "1.2 术语")])
     outcome = run(path, tmp_path / "ws", tmp_path / "out", _config(), context_factory=_Session(_context()))
-    assert outcome.markdown == ("目录\n\n1.1 范围 3\n\n# 第一章 总则\n\n## 1.1 范围\n\n本规范适用于桥梁支座。\n\n"
-                                "## 1.2 术语\n\n下列术语适用于本规范。\n")
+    assert outcome.markdown == ("目录\n\n1.1 范围 3\n\n# 第一章 总则\n\n## 1.1 范围\n\n"
+                                "本规范适用于桥梁支座，规定了支座的结构、材料、制造与检验。\n\n## 1.2 术语\n\n"
+                                "下列术语适用于本规范，未列出的术语按相关标准执行。\n")
     actors = {b["text"]: [d["actor"] for d in b["decisions"] if d["stage"] in ("heading_role", "heading_level")]
               for b in json.loads(outcome.sidecar_json)["blocks"]}
-    assert "adapter:v1" in actors["1.1 范围"] and "adapter:v1" not in actors["第一章 总则"]
-
-
-def test_v1_failing_on_a_docx_leaves_the_declared_titles(tmp_path, monkeypatch):
-    from parserx.runtimes import v1_structure
-
-    def broken(path, config):
-        raise ValueError("unreadable")
-
-    doc = Document()
-    doc.add_paragraph("Background", style="Heading 1")
-    doc.add_paragraph("Body text.")
-    doc.save(tmp_path / "doc.docx")
-    monkeypatch.setattr(v1_structure, "v1_headings_docx", broken)
-    outcome = run(tmp_path / "doc.docx", tmp_path / "ws", tmp_path / "out", _config(),
-                  context_factory=_Session(_context()))
-    assert outcome.markdown == "# Background\n\nBody text.\n"
+    assert TYPOGRAPHY_ACTOR in actors["1.1 范围"] and TYPOGRAPHY_ACTOR not in actors["第一章 总则"]
 
 
 def test_v2_switch_returns_a_parse_result_with_sidecar(tmp_path):
@@ -237,53 +219,3 @@ def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
     assert (out / "report.md").read_text() == "# Background\n\nBody text.\n"
     summary = json.loads((out / "report.json").read_text())
     assert summary["status"] == "complete" and summary["outline"][0]["text"] == "Background"
-
-
-def test_v1_docx_headings_do_not_render_drawings(tmp_path, monkeypatch):
-    # Docling renders a drawing (a shape, a chart) through LibreOffice; in a sandbox that cannot run LibreOffice
-    # its whole read failed.  The adapter only needs the headings: drawings are skipped.
-    import docling.backend.docx.drawingml.utils as dml
-    from docx.oxml import parse_xml
-
-    from parserx.config.schema import load_config
-    from parserx.runtimes.v1_structure import v1_headings_docx
-
-    def no_libreoffice(*args, **kwargs):
-        raise RuntimeError("LibreOffice unavailable")
-
-    monkeypatch.setattr(dml.subprocess, "run", no_libreoffice)
-    doc = Document()
-    doc.add_paragraph("第一章 总则", style="Heading 1")
-    doc.element.body[-1].addprevious(parse_xml(
-        '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
-        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:r><w:drawing><wp:inline>'
-        '<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Shape"/><a:graphic>'
-        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"/></a:graphic>'
-        '</wp:inline></w:drawing></w:r></w:p>'))
-    doc.add_paragraph("本规范适用于桥梁支座。")
-    doc.save(tmp_path / "shape.docx")
-    headings = v1_headings_docx(tmp_path / "shape.docx", load_config(None))
-    assert [text for _, text in headings] == ["第一章 总则"]
-
-
-
-def test_a_v1_heading_on_the_first_line_of_a_block_is_split_off(tmp_path, monkeypatch):
-    # P4-3: a title joined to the next line by a line break is divided there (text unchanged), then set as title;
-    # the rest can be the next heading
-    from parserx.runtimes import v1_structure
-
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text((72, 90), "TensorFlow:\nLarge-Scale Machine Learning\nMartin Abadi and others", fontsize=11)
-    for i in range(6):
-        page.insert_text((72, 200 + 16 * i), f"Body line {i} of the paper with enough words in it.", fontsize=10)
-    path = tmp_path / "paper.pdf"
-    doc.save(path)
-    monkeypatch.setattr(v1_structure, "v1_headings",
-                        lambda p, c: [(1, 1, "TensorFlow:"), (1, 1, "Large-Scale Machine Learning")])
-    outcome = run(path, tmp_path / "ws", tmp_path / "out", _config(), context_factory=_Session(_context()))
-    assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# TensorFlow:\n\n# Large-Scale Machine Learning\n\n"
-                                       "Martin Abadi and others\n")
-    sidecar = json.loads(outcome.sidecar_json)
-    assert sidecar["accounting"]["unassigned"] == 0

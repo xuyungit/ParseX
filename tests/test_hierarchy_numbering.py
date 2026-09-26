@@ -37,6 +37,18 @@ def test_a_numbering_style_first_seen_under_another_is_one_level_below_it():
     assert unify_levels(titles) == {"a": 2, "b": 2, "c": 2, "d": 2}
 
 
+def test_levels_a_file_declares_stay_and_the_others_fit_around_them():
+    # a DOCX outline level is the file's own statement; titles found by other evidence take levels around it
+    titles = [("t", "采购文件", 1), ("a", "二、资格条件", 7), ("b", "第二章 供应商须知", 1), ("c", "1. 总则", 5),
+              ("d", "1.1 项目概况", 5)]
+    assert unify_levels(titles, fixed={"b"}) == {"t": 1, "a": 2, "b": 1, "c": 2, "d": 3}
+    titles += [("e", "第三章 技术规格书", 4), ("f", "1.锚具", 5)]  # the declared chapter settles its pattern
+    assert unify_levels(titles, fixed={"b"})["e"] == 1
+    titles = [("a", "二、资格条件", 1), ("b", "第二章 供应商须知", 1), ("c", "1. 总则", 2)]
+    assert unify_levels(titles)["b"] == 2  # unfixed, the numbering nesting moves the chapter under "二、"
+    assert unify_levels(titles, fixed={"b"})["b"] == 1
+
+
 def _doc(paragraphs):
     blocks = []
     for i, (text, level) in enumerate(paragraphs):

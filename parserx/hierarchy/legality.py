@@ -52,7 +52,7 @@ from parserx.workspace.queries import HIDDEN, ordered
 
 _CONTENT_KINDS = frozenset({BlockKind.TABLE, BlockKind.FIGURE, BlockKind.FORMULA, BlockKind.SCAN})
 _NUMERAL = r"[0-9０-９]+|[一二三四五六七八九十百千零〇两]+|[IVXLCDM]+|[ivxlcdm]+"
-_NUMBERING_RE = re.compile(
+NUMBERING_RE = re.compile(
     r"^\s*(?:"
     r"第\s*(?:[0-9０-９]+|[一二三四五六七八九十百千零〇两]+)\s*[章节条篇部编]"  # 第三章
     r"|[A-Za-z]\s*[.．]\s*[0-9０-９]+(?:\s*[.．]\s*[0-9０-９]+)*"  # C.1 / C.0.1 (appendix), before Roman C.
@@ -70,7 +70,7 @@ def numbering_signature(text: str) -> str | None:
     """The shape of a leading number, or None when the text starts without one: ``1.2.3`` → ``N.N.N``.  The numerals'
     class is part of the style (P4-3): arabic ``N``, Chinese ``C``, Roman ``R`` / ``r`` — ``一、`` and ``1、``,
     ``（一）`` and ``（1）`` are different levels of one document.  In ``第…章`` the unit makes the style: ``第N章``."""
-    match = _NUMBERING_RE.match(text)
+    match = NUMBERING_RE.match(text)
     if not match:
         return None
     token = re.sub(r"\s+", "", match.group(0)).rstrip(".．")

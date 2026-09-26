@@ -31,14 +31,21 @@ from collections import Counter
 from parserx.hierarchy.legality import numbering_signature
 
 
-def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
-    """``titles`` = (block id, text, proposed level) in reading order → unified level per block id."""
+def unify_levels(titles: list[tuple[str, str, int]], *, fixed: set[str] = frozenset()) -> dict[str, int]:
+    """``titles`` = (block id, text, proposed level) in reading order → unified level per block id.
+
+    Titles in *fixed* keep their proposed level (a level the file itself declares); the others fit around them."""
     by_signature: dict[str, Counter[int]] = {}
-    for _, text, level in titles:
+    for block_id, text, level in titles:
         signature = numbering_signature(text)
-        if signature is not None:
+        if signature is not None and block_id not in fixed:
             by_signature.setdefault(signature, Counter())[level] += 1
     agreed = {sig: min(counts, key=lambda lv: (-counts[lv], lv)) for sig, counts in by_signature.items()}
+    for block_id, text, level in titles:  # a declared level settles its numbering pattern
+        if block_id in fixed and (signature := numbering_signature(text)) is not None:
+            agreed.setdefault(signature, level)
+            if signature in by_signature:
+                agreed[signature] = level
     unified: dict[str, int] = {}
     previous: int | None = None
     levels_of: dict[tuple[int, ...], int] = {}  # the level each leading number was given
@@ -47,6 +54,15 @@ def unify_levels(titles: list[tuple[str, str, int]]) -> dict[str, int]:
     for block_id, text, level in titles:
         proposed = level
         signature = numbering_signature(text)
+        if block_id in fixed:
+            unified[block_id] = previous = level
+            number = leading_number(text)
+            if number is not None:
+                levels_of[number] = level
+            if signature is not None:
+                seen.add(signature)
+                above = (signature, level, proposed, text)
+            continue
         level = agreed.get(signature, level) if signature is not None else level
         number = leading_number(text)
         parent = levels_of.get(number[:-1]) if number is not None and len(number) > 1 else None

@@ -10,8 +10,8 @@ The fixed sequence of the pipeline runtime, as a tool the agent calls first:
 3. ``describe_figure`` — every shown figure without a description, in one concurrent batch, except images
    routed SCAN whose content was transcribed;
 4. confirmed cross-page table continuations (``tables.merge``);
-5. titles through ``apply_structure``: DOCX styles and outline levels; PDF ``adapter:v1`` on native text and the
-   scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
+5. titles through ``apply_structure``: DOCX styles and outline levels, then titles by agreeing evidence on native
+   text (``hierarchy.typography_titles``) and the scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
    other source is sent again once both are in place);
 6. paragraphs cut by a page break (``content.continuation``, PDF): ``continues`` between the two parts;
 7. ``check``.
@@ -33,6 +33,7 @@ from parserx.content.select import transcribed
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
 from parserx.hierarchy.levels import title_changes, unify_levels
+from parserx.hierarchy.typography_titles import ACTOR as TYPOGRAPHY_ACTOR, REASON as TYPOGRAPHY_REASON, typography_titles
 from parserx.ir.base import IRModel
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
@@ -256,43 +257,33 @@ def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: li
 
 
 def docx_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
-    """DOCX titles (Q48): those the styles and outline levels declare first; the ones a hand-formatted document
-    leaves undeclared (bold or larger numbered lines) from v1's typographic detection, placed in the same outline.
+    """DOCX titles: those the styles and outline levels declare first (Q24); the ones a hand-formatted document
+    leaves undeclared from agreeing evidence (``hierarchy.typography_titles``, Q72), placed in the same outline.
     A block the styles already make a title or a list item keeps that."""
-    from parserx.runtimes import v1_structure  # the temporary adapter (Phase 4 removes it)
-
     declared = propose_docx_structure(state)
     taken = {c["block"] for c in declared if c["op"] == "set_role"}
-    found = [t for t in v1_structure.matched_titles_docx(source, state, config) if t[0] not in taken]
+    found = typography_titles(state, skip=taken, titled=any(c["op"] == "set_level" and c["level"] == 1
+                                                          and "Title style" in c["reason"] for c in declared))
     if not found:
         return [(DOCX_ACTOR, declared)]
     position = {b.id: i for i, b in enumerate(ordered(state))}
     texts = {b.id: b.text for b in state.blocks}
     combined = sorted([(c["block"], texts[c["block"]], c["level"]) for c in declared if c["op"] == "set_level"]
                       + [t[:3] for t in found], key=lambda t: position[t[0]])
+    fixed = {c["block"] for c in declared if c["op"] == "set_level"}  # the file's own levels stay
     return [(DOCX_ACTOR, declared),
-            (v1_structure.ACTOR, title_changes(found, unify_levels(combined), reason=v1_structure.REASON))]
+            (TYPOGRAPHY_ACTOR, title_changes(found, unify_levels(combined, fixed=fixed), reason=TYPOGRAPHY_REASON))]
 
 
 def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
-    """PDF titles from two sources, unified as one outline: v1's detection on native text, the scan engine's labels.
-    Titles the layout detector sees on native text are a worklist signal (``title_candidate``), not applied here."""
-    from parserx.runtimes import v1_structure  # the temporary adapter (Phase 4 removes it)
-
-    native = v1_structure.matched_titles(source, state, config)
+    """PDF titles from two sources, unified as one outline: agreeing evidence on native text
+    (``hierarchy.typography_titles``, Q72) and the scan engine's labels."""
     scanned = engine_titles(state)
+    native = typography_titles(state, titled=any(t[3].get("label") == "doc_title" for t in scanned))
     position = {b.id: i for i, b in enumerate(ordered(state))}
-
-    def place(block_id: str) -> tuple[int, int]:  # a part split off a block (<id>-s1) follows it
-        root = block_id
-        while root not in position and "-s" in root:
-            root = root.rsplit("-s", 1)[0]
-        return position[root], block_id.count("-s") - root.count("-s")
-
-    combined = sorted(native + scanned, key=lambda t: place(t[0]))
+    combined = sorted(native + scanned, key=lambda t: position[t[0]])
     levels = unify_levels([t[:3] for t in combined])
-    return [(v1_structure.ACTOR, v1_structure.split_changes(native)
-             + title_changes(native, levels, reason=v1_structure.REASON)),
+    return [(TYPOGRAPHY_ACTOR, title_changes(native, levels, reason=TYPOGRAPHY_REASON)),
             (ENGINE_ACTOR, title_changes(scanned, levels, reason=ENGINE_REASON))]
 
 

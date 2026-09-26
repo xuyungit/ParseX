@@ -11,5 +11,5 @@ class Decision(IRModel):
     choice: str
     reason: str
     evidence: dict[str, float | int | str | bool]  # flat scalars only
-    actor: str  # "program:<module>" | "pipeline" | "agent" | "tool:<name>" | "adapter:v1"
+    actor: str  # "program:<module>" | "pipeline" | "agent" | "tool:<name>" (older runs: "adapter:v1")
     refs: list[str] = []  # Observation / Relation / Block ids used as evidence

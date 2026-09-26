@@ -12,7 +12,7 @@ from parserx.tools.views import OutlineNode, outline_nodes, unresolved_items
 class ApplyStructureRequest(IRModel):
     changes: list[StructureChange]
     atomic: bool = False  # any rejection → nothing applied
-    actor: str = "agent"  # who decided: agent / pipeline / adapter:v1 …, recorded on every Decision
+    actor: str = "agent"  # who decided: agent / pipeline / program:<module> …, recorded on every Decision
 
 
 class ApplyStructureResult(IRModel):

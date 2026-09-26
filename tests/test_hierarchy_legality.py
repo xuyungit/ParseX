@@ -44,12 +44,12 @@ def test_legal_batch_is_accepted_and_applied():
     changes = _changes({"op": "set_role", "block": "p1", "kind": "title", "reason": "numbered heading"},
                        {"op": "set_level", "block": "p1", "level": 2, "reason": "under chapter"})
     assert check_changes(state, changes) == []
-    outcome = apply_changes(state, changes, actor="adapter:v1")
+    outcome = apply_changes(state, changes, actor="program:hierarchy.typography")
     assert outcome.accepted == [0, 1] and outcome.rejected == []
     p1 = next(b for b in state.blocks if b.id == "p1")
     assert (p1.kind, p1.level, p1.text) == (BlockKind.TITLE, 2, "1.1 范围")
     assert [d.stage for d in p1.decisions] == ["heading_role", "heading_level"]
-    assert p1.decisions[0].actor == "adapter:v1"
+    assert p1.decisions[0].actor == "program:hierarchy.typography"
 
 
 def test_unknown_block():

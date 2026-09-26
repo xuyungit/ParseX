@@ -292,3 +292,24 @@ def test_footnotes_become_markdown_footnotes_and_comments_are_excluded(tmp_path)
     comment = next(b for b in ext.blocks if b.text == "Check this")
     assert comment.status == BlockStatus.EXCLUDED and comment.decisions[-1].choice == "comment"
     assert {e.disposition for e in ext.ledger if e.block == comment.id} == {"excluded"}
+
+
+def test_the_face_a_paragraph_is_set_in_is_style_evidence(tmp_path):
+    # Chinese official documents set headings in 黑体 at the body's size: the face is the only typographic difference
+    doc = Document()
+    defaults = doc.styles.element.find(".//{*}docDefaults")
+    defaults.remove(defaults.find("{*}rPrDefault"))
+    defaults.append(parse_xml(  # defaults: 仿宋 for CJK text, Times New Roman otherwise
+        f'<w:rPrDefault {W}><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" '
+        'w:eastAsia="仿宋_GB2312"/><w:sz w:val="32"/></w:rPr></w:rPrDefault>'))
+    heading = doc.add_paragraph()
+    run = heading.add_run("一、企业基本情况")
+    run._r.get_or_add_rPr().append(parse_xml(f'<w:rFonts {W} w:ascii="Times New Roman" w:eastAsia="黑体"/>'))
+    doc.add_paragraph("企业成立于二〇一〇年，主要从事桥梁支座的研发与生产。")
+    doc.add_paragraph("Bearing test report")
+    path = tmp_path / "faces.docx"
+    doc.save(path)
+    styles = {b.text: b.observations[0].style for b in _text_blocks(extract_docx(path))}
+    assert styles["一、企业基本情况"].font == "黑体"
+    assert styles["企业成立于二〇一〇年，主要从事桥梁支座的研发与生产。"].font == "仿宋_GB2312"  # the default
+    assert styles["Bearing test report"].font == "Times New Roman"  # Latin text: the ASCII face
