@@ -406,3 +406,57 @@ def test_each_character_belongs_to_the_smallest_cell_holding_it():
     assert _owner((60, 10, 70, 20), cells) == 2
     assert _owner((40, 70, 50, 80), cells) == 0  # only the frame holds it
     assert _owner((200, 200, 210, 210), cells) is None
+
+
+def test_monospaced_lines_are_measured_from_glyph_widths(tmp_path):
+    # P4-6: code is set in a monospaced face; the PDF's font flags do not always say so, the glyph widths do
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 90), "The deploy step runs the following command:", fontsize=11, fontname="helv")
+    page.insert_text((72, 130), "parted /dev/sdf -s -- mklabel gpt\nkolla-ansible -i multinode deploy",
+                     fontsize=10, fontname="cour")
+    page.insert_text((72, 200), "Order 2025 12345 67890", fontsize=11, fontname="helv")
+    page.insert_text((72, 240), "工程项目名称：XX-01 标项目 谈判编号：XTGCTP", fontsize=11, fontname="china-s")
+    path = tmp_path / "code.pdf"
+    doc.save(path)
+    ext = extract_pdf(path)
+    style = {b.text.split("\n")[0]: b.observations[0].style for b in ext.blocks if b.text}
+    assert style["parted /dev/sdf -s -- mklabel gpt"].monospace == "Courier"
+    assert style["The deploy step runs the following command:"].monospace is None
+    assert style["Order 2025 12345 67890"].monospace is None  # digits do not count: equal-width in most faces
+    assert style["工程项目名称：XX-01 标项目 谈判编号：XTGCTP"].monospace is None  # a CJK face's half-width ASCII
+
+
+def test_monospaced_text_renders_as_a_code_block_with_its_lines():
+    from parserx.ir.block import Block
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation, TextStyle
+    from parserx.ir.state import DocumentState, PageState
+    from parserx.render import render_markdown
+
+    anchor = PdfAnchor(page=1, bbox=(0, 0, 100, 20), coord_space="page_pt")
+
+    def block(bid, order, text, mono, font="Helvetica"):
+        obs = Observation(id=f"o-{bid}", engine="native_pdf", engine_version="1", task=TaskKind.EXTRACT, anchor=anchor,
+                          text=text, style=TextStyle(monospace=font if mono else None, font=font),
+                          status=ObservationStatus.OK)
+        return Block(id=bid, kind=BlockKind.TEXT, order=order, anchors=[anchor], observations=[obs],
+                     chosen_observation=obs.id, text=text)
+
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status="complete",
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                          blocks=[block("a", 0, "Run the command below to show the flavor of the node:", False),
+                                  block("b", 1, "# comment\nparted /dev/sdf -s\nkolla-ansible deploy", True, "Monaco"),
+                                  block("c", 2, "+------+", None, "Monaco"),  # too short to measure, same face
+                                  block("d", 3, "| disk | 100 |", True, "Monaco"),
+                                  block("e", 4, "Then continue with the next step of the deployment, which checks "
+                                                "every node of the cluster and reports what it finds.", False)])
+    assert render_markdown(state) == ("<!-- PAGE 1 -->\n\nRun the command below to show the flavor of the node:\n\n"
+                                      "```\n# comment\nparted /dev/sdf -s\nkolla-ansible deploy\n+------+\n"
+                                      "| disk | 100 |\n```\n\nThen continue with the next step of the deployment, which checks every "
+                                      "node of the cluster and reports what it finds.\n")
+    # a document without prose in another face has no code by this evidence
+    alone = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status="complete",
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                          blocks=[block("a", 0, "Plain text printout", True, "Courier")])
+    assert "```" not in render_markdown(alone)

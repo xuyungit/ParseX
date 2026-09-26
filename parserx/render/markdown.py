@@ -56,6 +56,7 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
         by_unit.setdefault(block_unit(state, block), []).append(block)
     parts: list[str] = []
     section = 1
+    body = body_face(state)
     for page in state.pages:
         if state.format == "pdf":
             parts.append(f"<!-- PAGE {page.n} -->")
@@ -64,9 +65,9 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
         elif page.starts_with == "section_break":
             section += 1
             parts.append(f"<!-- SECTION {section} -->")
-        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed))
+        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body))
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
-        parts.extend(_render_all(blocks, assets, image_dir, transcribed))
+        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body))
     return "\n\n".join(parts) + "\n"
 
 
@@ -114,15 +115,35 @@ def _transcription_starts(state: DocumentState) -> dict[str, str]:
 
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
-                notes: dict[str, str] | None = None) -> list[str]:
+                notes: dict[str, str] | None = None, body: str | None = None) -> list[str]:
     out = []
+    code: list[str] = []  # lines of the code block being collected
+    face: str | None = None
     for block in blocks:
-        if block.status in _VISIBLE:
-            rendered = _render(block, assets, image_dir)
-            if rendered:
-                if notes and block.id in notes:
-                    out.append(notes[block.id])
-                out.append(rendered)
+        if block.status not in _VISIBLE:
+            continue
+        style = _style(block)
+        this = code_face(block, body)
+        if this is None and face is not None and block.kind == BlockKind.TEXT and style is not None \
+                and style.font == face:
+            this = face  # a line in the same face too short to measure (a rule of dashes)
+        if this is not None and (face is None or this == face) and not (notes and block.id in notes):
+            code.append((block.text or "").strip("\n"))
+            face = this
+            continue
+        if code:
+            out.append("```\n" + "\n".join(code) + "\n```")
+            code, face = [], None
+        if this is not None:  # code in another face starts right away
+            code, face = [(block.text or "").strip("\n")], this
+            continue
+        rendered = _render(block, assets, image_dir)
+        if rendered:
+            if notes and block.id in notes:
+                out.append(notes[block.id])
+            out.append(rendered)
+    if code:
+        out.append("```\n" + "\n".join(code) + "\n```")
     return out
 
 
@@ -149,6 +170,30 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str) -> str:
     if kind == BlockKind.FORMULA:
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
     return _MARKUP_START.sub(r"\1\\\2", text)
+
+
+def _style(block: Block):
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    return chosen.style if chosen is not None else None
+
+
+def body_face(state: DocumentState) -> str | None:
+    """The face most of the document's prose is set in (by characters, blocks not set in a monospaced face)."""
+    weights: dict[str, int] = {}
+    for block in state.blocks:
+        style = _style(block)
+        if block.kind == BlockKind.TEXT and style is not None and style.font and not style.monospace:
+            weights[style.font] = weights.get(style.font, 0) + len("".join((block.text or "").split()))
+    return max(sorted(weights), key=weights.get) if weights else None
+
+
+def code_face(block: Block, body: str | None) -> str | None:
+    """The face of a code block: text set in a monospaced face that is not the body's (P4-6), else None.  A document
+    without prose in another face has no code by this evidence."""
+    style = _style(block)
+    if body is None or block.kind != BlockKind.TEXT or style is None or not style.monospace or style.monospace == body:
+        return None
+    return style.monospace
 
 
 # ── Figure semantics ────────────────────────────────────────────────────

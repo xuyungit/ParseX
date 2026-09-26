@@ -83,6 +83,7 @@ class _Line:
     glyphs: tuple[tuple[str, float, float, float, float], ...] = ()  # (char, x0, y0, x1, y1)
     origins: tuple[tuple[str, float, float], ...] = ()  # (char, origin in PDF space): the key of PyMuPDF's table chars
     item: str = ""
+    mono: bool | None = None  # set in a monospaced face (glyph widths); None: no span measurable
 
 
 @dataclass
@@ -193,11 +194,37 @@ def _lines(page: fitz.Page) -> list[_Line]:
             (size, bold, font), _ = weights.most_common(1)[0]
             chars = [ch for span in spans for ch in span.get("chars", ())]
             origins = tuple(_origin_key(ch["c"], fitz.Point(ch["origin"]) * ctm) for ch in chars)
+            measured = [m for m in (_monospaced(span) for span in spans) if m is not None]
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
                              chars=len("".join(text.split())), size=size, bold=bold, font=font,
                              direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
-                             glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins))
+                             glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins,
+                             mono=all(measured) if measured else None))
     return out
+
+
+MONO_LETTERS = 5  # distinct ASCII letters a span needs before its glyph widths say anything (sample size)
+MONO_SPREAD = 1.01  # widest / narrowest letter advance of a monospaced face: measurement tolerance of glyph boxes
+
+
+def _monospaced(span: dict) -> bool | None:
+    """Whether a span is set in a monospaced face, from its glyphs: every ASCII letter advances by the same width
+    (P4-6: the code of a manual; the font's own fixed-pitch flag is often missing).  Letters only: digits are
+    equal-width in most proportional faces too.  None when the span has too few distinct letters to tell."""
+    chars = span.get("chars", ())
+    if any(_wide(ch["c"]) for ch in chars):  # a CJK face draws ASCII at one width: no evidence of code
+        return None
+    letters = [ch for ch in chars if ch["c"].isascii() and ch["c"].isalpha()]
+    if len({ch["c"] for ch in letters}) < MONO_LETTERS:
+        return None
+    widths = [ch["bbox"][2] - ch["bbox"][0] for ch in letters]
+    return min(widths) > 0 and max(widths) / min(widths) <= MONO_SPREAD
+
+
+def _wide(ch: str) -> bool:
+    import unicodedata
+
+    return unicodedata.east_asian_width(ch) in ("W", "F")
 
 
 def _main_direction(lines: list[_Line]) -> tuple[float, float]:
@@ -438,7 +465,15 @@ def _style(lines: list[_Line]) -> TextStyle:
         fonts[ln.font] += ln.chars
         bold += ln.chars if ln.bold else 0
     total = sum(sizes.values()) or 1
-    return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total, font=fonts.most_common(1)[0][0] or None)
+    measured = [ln for ln in lines if ln.mono is not None]  # lines of other faces (CJK comments) do not vote
+    mono = None
+    if measured and all(ln.mono for ln in measured):
+        faces: Counter[str] = Counter()
+        for ln in measured:
+            faces[ln.font] += ln.chars
+        mono = faces.most_common(1)[0][0] or None
+    return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total, font=fonts.most_common(1)[0][0] or None,
+                     monospace=mono)
 
 
 # ── Geometry ────────────────────────────────────────────────────────────

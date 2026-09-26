@@ -27,6 +27,7 @@ class TextStyle(IRModel):
     style_name: str | None = None  # DOCX style display name, resolved along basedOn
     outline_level: int | None = None  # w:outlineLvl including style inheritance, 0-based
     numbering: Numbering | None = None
+    monospace: str | None = None  # PDF: the monospaced face the block's measurable lines are set in (code, P4-6)
 
 
 class Observation(IRModel):
