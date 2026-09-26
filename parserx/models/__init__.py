@@ -1,21 +1,5 @@
-from parserx.models.elements import (
-    Document,
-    DocumentMetadata,
-    FontInfo,
-    FontStatistics,
-    NumberingPattern,
-    Page,
-    PageElement,
-    PageType,
-)
+"""Result types shared by the pipeline entry and the evaluation."""
 
-__all__ = [
-    "Document",
-    "DocumentMetadata",
-    "FontInfo",
-    "FontStatistics",
-    "NumberingPattern",
-    "Page",
-    "PageElement",
-    "PageType",
-]
+from parserx.models.results import ParseResult
+
+__all__ = ["ParseResult"]
