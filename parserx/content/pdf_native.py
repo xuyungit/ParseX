@@ -121,7 +121,8 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
     free = lines
     if verdict.ok:
         grids = [t for t in _tables(page) if any(_glyph_in(g, t.bbox) for ln in lines for g in ln.glyphs if g[0].strip())]
-        seen = tables_seen(page) if grids and tables_seen is not None else None
+        seen = tables_seen(page) if lines and tables_seen is not None else None
+        accepted: list[BBox] = []
         for table in grids:
             if seen is not None and not any(_overlap(table.bbox, box) for box in seen):
                 ext.warnings.append(f"page {n}: ruled lines the layout detector does not see as a table "
@@ -130,9 +131,19 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
             across = {id(ln) for ln in _across(lines, table)}
             inside = [ln for ln in free if _centre_in(ln.bbox, table.bbox) and id(ln) not in across]
             free = [ln for ln in free if ln not in inside]
+            accepted.append(tuple(table.bbox))
             regions.append(_Region(BlockKind.TABLE, tuple(table.bbox), inside,
                                    grid=_grid(table, [ln for ln in lines if id(ln) not in across],
                                               [ln for ln in lines if id(ln) in across])))
+        for box in seen or []:  # P4-6: a table without ruled lines (a three-line table), where the detector sees one
+            if any(_overlap(box, other) for other in accepted):
+                continue
+            found = _unruled_table(page, box, free)
+            if found is not None:
+                inside, grid, bbox = found
+                free = [ln for ln in free if ln not in inside]
+                accepted.append(bbox)
+                regions.append(_Region(BlockKind.TABLE, bbox, inside, grid=grid))
     by_block: dict[int, list[_Line]] = {}
     for line in free:
         by_block.setdefault(line.block, []).append(line)
@@ -276,6 +287,31 @@ def _tables(page: fitz.Page) -> list:
         return list(page.find_tables().tables)
     except Exception:  # noqa: BLE001 - table detection is optional evidence; the lines stay as text
         return []
+
+
+def _unruled_table(page: fitz.Page, box: BBox, free: list[_Line]) -> tuple[list[_Line], TableGrid, BBox] | None:
+    """The table in a region the layout detector calls a table, from the alignment of its text (no ruled lines):
+    (lines it holds, grid, bbox), or None unless the text aligns into two or more non-empty rows and columns — the
+    detector and the alignment are two independent readings that must agree.  The region grows to every line whose
+    centre is in it, so no character is cut off; rows and columns without text are dropped."""
+    inside = [ln for ln in free if _centre_in(ln.bbox, box)]
+    if len(inside) < 2:
+        return None
+    bbox = _union([box, *(ln.bbox for ln in inside)])
+    try:
+        found = page.find_tables(clip=fitz.Rect(bbox), vertical_strategy="text", horizontal_strategy="text").tables
+    except Exception:  # noqa: BLE001 - table detection is optional evidence
+        return None
+    if not found:
+        return None
+    rows = [[normalize_fullwidth_ascii(c or "") for c in row] for row in _cell_texts(found[0], inside, set()) or []]
+    rows = [row for row in rows if any(c.strip() for c in row)]
+    keep = [c for c in range(max((len(r) for r in rows), default=0)) if any(c < len(r) and r[c].strip() for r in rows)]
+    if len(rows) < 2 or len(keep) < 2:
+        return None
+    cells = [Cell(row=r, col=k, content=join_wrapped(row[c].split("\n")) if c < len(row) else "")
+             for r, row in enumerate(rows) for k, c in enumerate(keep)]
+    return inside, TableGrid(n_rows=len(rows), n_cols=len(keep), cells=cells), _round(bbox)
 
 
 def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:

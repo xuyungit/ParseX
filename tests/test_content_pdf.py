@@ -460,3 +460,38 @@ def test_monospaced_text_renders_as_a_code_block_with_its_lines():
                           pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
                           blocks=[block("a", 0, "Plain text printout", True, "Courier")])
     assert "```" not in render_markdown(alone)
+
+
+def _three_line_table(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 80), "The damage cases are listed in the table below, one row per case.", fontsize=10)
+    page.draw_line((72, 100), (420, 100))
+    y = 115
+    for row in (("Case", "Beta1", "Beta2", "Alpha"), ("large", "1.50", "0.60", "1.20"), ("small", "1.50", "0.95", "1.20"),
+                ("none", "1.50", "1.00", "1.20")):
+        for k, text in enumerate(row):
+            page.insert_text((80 + 90 * k, y), text, fontsize=10)
+        y += 18
+    page.draw_line((72, 120), (420, 120))
+    page.draw_line((72, y), (420, y))
+    page.insert_text((72, y + 30), "The values follow from the load test of the bridge in 2014.", fontsize=10)
+    path = tmp_path / "three_line.pdf"
+    doc.save(path)
+    return path, (72, 98, 420, y + 2)
+
+
+def test_a_table_without_ruled_columns_where_the_detector_sees_one(tmp_path):
+    # P4-6: three-line tables (horizontal rules only) are read from the alignment of their text inside the region
+    # the layout detector marks as a table; both readings must agree (two or more rows and columns)
+    path, region = _three_line_table(tmp_path)
+    ext = extract_pdf(path, tables_seen=lambda page: [region])
+    tables = [b for b in ext.blocks if b.kind == BlockKind.TABLE]
+    assert len(tables) == 1
+    rows = [[c.content if c else "" for c in row] for row in tables[0].cells.slot_matrix()]
+    assert rows[0] == ["Case", "Beta1", "Beta2", "Alpha"] and rows[-1] == ["none", "1.50", "1.00", "1.20"]
+    texts = [b.text for b in ext.blocks if b.kind == BlockKind.TEXT]
+    assert any(t.startswith("The damage cases") for t in texts) and any(t.startswith("The values") for t in texts)
+    assert all(e.disposition == "output" for e in ext.ledger)
+    # without the detector's region the same page is text only
+    assert not [b for b in extract_pdf(path, tables_seen=lambda page: []).blocks if b.kind == BlockKind.TABLE]
