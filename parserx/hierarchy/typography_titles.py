@@ -48,11 +48,12 @@ _PAGE_REFERENCE = re.compile(r"[\s.．·…_\-]*\d+\s*$")
 Typography = tuple[str | None, float | None, bool]
 
 
-def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(),
-                      titled: bool = False) -> list[tuple[str, str, int, dict]]:
+def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(), titled: bool = False,
+                      others: set[str] = frozenset()) -> list[tuple[str, str, int, dict]]:
     """(block id, text, proposed level, evidence) in reading order for the paragraphs two kinds of evidence make
     titles, and the document's title.  Blocks in *skip* (already decided by stronger evidence, e.g. DOCX heading
-    styles) are left alone; *titled*: another source already gives the document its title."""
+    styles) are left alone; *titled*: another source already gives the document its title; *others*: titles from
+    another source ranked below a document title (the scan engine's labels) — these titles use the same scale."""
     body = body_typography(state, skip=skip)
     paragraphs = [(b, s) for b, s in _paragraphs(state) if b.id not in skip]
     found: list[tuple[Block, TextStyle, dict]] = []
@@ -62,11 +63,12 @@ def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(),
             found.append((block, style, evidence))
     found = _nested(paragraphs, found, body)
     found = _without_contents_entries(found, paragraphs)
-    title = None if titled else _document_title(paragraphs, found, body)
+    first_other = min((i for i, b in enumerate(ordered(state)) if b.id in others), default=None)
+    title = None if titled else _document_title(paragraphs, found, body, state, first_other)
     if title is not None and title[0].id not in {b.id for b, _, _ in found}:
         found.insert(0, title)
     levels = _typographic_levels([(b.id, s) for b, s, _ in found], None if title is None else title[0].id,
-                                 titled=titled)
+                                 titled=titled or bool(others))
     return [(b.id, b.text, levels[b.id], {**ev, "kinds": ", ".join(sorted(ev))}) for b, _s, ev in found]
 
 
@@ -94,10 +96,11 @@ def _nested(paragraphs, found, body) -> list[tuple[Block, TextStyle, dict]]:
     return sorted([*found, *added.values()], key=lambda t: order[t[0].id])
 
 
-def _document_title(paragraphs, found, body) -> tuple[Block, TextStyle, dict] | None:
+def _document_title(paragraphs, found, body, state, first_other) -> tuple[Block, TextStyle, dict] | None:
     """The document's title: the paragraph set largest among the one-line, unnumbered, set-apart paragraphs that
     open the document before its first title (its position is the second evidence), when no title is set larger;
-    else the first title, when it is set larger than every other."""
+    else the first title, when it is set larger than every other and comes before the other source's titles
+    (*first_other*: the reading position of the first of them)."""
     sizes = [s.font_size or 0.0 for _, s, _ in found]
     first = found[0][0].id if found else None
     opening = []
@@ -111,9 +114,12 @@ def _document_title(paragraphs, found, body) -> tuple[Block, TextStyle, dict] | 
         top = max(s.font_size or 0.0 for _, s, _ in opening)
         if all(top >= size for size in sizes):
             return next(o for o in opening if (o[1].font_size or 0.0) == top)
-    if len(sizes) > 1 and sizes[0] > max(sizes[1:]):
-        return found[0]
-    return None
+    if not found or not all(sizes[0] > size for size in sizes[1:]):
+        return None
+    if first_other is not None:
+        position = next(i for i, b in enumerate(ordered(state)) if b.id == found[0][0].id)
+        return found[0] if position < first_other else None
+    return found[0] if len(sizes) > 1 else None
 
 
 def _without_contents_entries(found: list[tuple[Block, TextStyle, dict]],

@@ -279,7 +279,9 @@ def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> lis
     """PDF titles from two sources, unified as one outline: agreeing evidence on native text
     (``hierarchy.typography_titles``, Q72) and the scan engine's labels."""
     scanned = engine_titles(state)
-    native = typography_titles(state, titled=any(t[3].get("label") == "doc_title" for t in scanned))
+    # the scan engine's labels rank sections below a document title: native titles use the same scale
+    native = typography_titles(state, titled=any(t[3].get("label") == "doc_title" for t in scanned),
+                               others={t[0] for t in scanned})
     position = {b.id: i for i, b in enumerate(ordered(state))}
     combined = sorted(native + scanned, key=lambda t: position[t[0]])
     levels = unify_levels([t[:3] for t in combined])

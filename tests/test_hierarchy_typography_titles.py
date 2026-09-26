@@ -78,6 +78,10 @@ def test_levels_follow_the_documents_own_typography_under_its_title():
     # another source (the scan engine, a Title style) already gave the document its title
     assert _titles(_block("h1", "1 概述", BOLD), titled=True) == {"h1": 2}
     assert _titles(_block("h1", "1 概述", BOLD)) == {"h1": 1}
+    # the scan engine's labels rank sections below a title: native titles of the same document use that scale
+    assert _titles(_block("h1", "1 概述", BOLD), others={"body3"}) == {"h1": 1}  # it opens the document: its title
+    scanned_first = _block("scan", "一、概况", BODY)  # stands for a title the scan engine read before it
+    assert _titles(scanned_first, _block("h1", "1 概述", BOLD), others={"scan"}) == {"h1": 2}
 
 
 def test_a_contents_entry_is_not_a_second_title():
