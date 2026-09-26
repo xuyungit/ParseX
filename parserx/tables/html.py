@@ -1,7 +1,6 @@
-"""HTML table parsing shared by the v1 OCR builder and TableGrid.
+"""HTML table parsing for ``TableGrid.from_html`` (scan engine tables) and the OmniDocBench ground truth conversion.
 
-Moved verbatim from ``parserx/builders/ocr.py`` (Phase 0, P0-1); the v1
-builder imports these helpers back, so its behaviour is unchanged.
+Originally v1's OCR builder code (moved in Phase 0, P0-1; the builder itself was removed in Phase 5).
 """
 
 from __future__ import annotations
