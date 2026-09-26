@@ -693,8 +693,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 包 | 用途 | 位置 |
 |---|---|---|
 | pymupdf 1.27.2 | PDF 读取、渲染 | 主依赖；1.28 改变了文字层分块，按 Q76 推迟（见 §14） |
-| openai 2.30.0、httpx | VLM 客户端（服务层） | 主依赖；3.x 是大版本，列入"以后" |
-| pydantic、pyyaml、python-dotenv、pillow、numpy、requests、jsonschema、rapidfuzz、lxml | 数据模型、配置、图像、OCR jobs API、sidecar 校验、评测与读数比对、DOCX 直接读 OOXML | 主依赖（lxml、httpx 原先经 docling / openai 间接安装，现显式列出） |
+| openai 3.19、httpx2 | VLM 客户端（服务层） | 主依赖；2026-09-26 从 2.30 升级：3.x 的 HTTP 层换成 httpx2（重试判定的传输错误类型随之改名），回放与真实调用都通过 |
+| pydantic、pyyaml、python-dotenv、pillow、numpy、requests、jsonschema、rapidfuzz、lxml | 数据模型、配置、图像、OCR jobs API、sidecar 校验、评测与读数比对、DOCX 直接读 OOXML | 主依赖（lxml 原先经 docling 间接安装，现显式列出） |
 | rapid-layout、rapidocr、onnxruntime | 本地版面检测（§6.2）、本地读数（Q56） | 主依赖 |
 | pdfplumber、python-docx、datasets、huggingface-hub | `parserx tool-eval` 的内置对照解析器、OmniDocBench 下载 | 可选组 `bench`；pdfplumber、python-docx 也在 dev 组（测试造 DOCX） |
 | pytest、pytest-asyncio | 测试 | dev 组 |

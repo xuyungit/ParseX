@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-import httpx
+import httpx2
 from openai import OpenAI
 
 from parserx.config.schema import ServiceConfig
@@ -325,7 +325,7 @@ class OpenAICompatibleService:
             "input": [{"role": "user", "content": content}],
             "stream": True,
             # a stalled stream fails after the idle limit (retried by the gateway), not after the full timeout
-            "timeout": httpx.Timeout(self._config.timeout, read=self._config.stream_idle_timeout),
+            "timeout": httpx2.Timeout(self._config.timeout, read=self._config.stream_idle_timeout),
             **extra,
             **self._generation_kwargs("responses", temperature, max_tokens),
         }

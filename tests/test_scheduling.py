@@ -4,7 +4,7 @@ import json
 import threading
 
 import fitz
-import httpx
+import httpx2
 import openai
 import pytest
 import requests
@@ -183,8 +183,8 @@ def test_failures_are_outcomes_not_applied():
 
 
 def _status_error(cls, status):
-    request = httpx.Request("POST", "https://api.example/v1/responses")
-    return cls("err", response=httpx.Response(status, request=request), body=None)
+    request = httpx2.Request("POST", "https://api.example/v1/responses")
+    return cls("err", response=httpx2.Response(status, request=request), body=None)
 
 
 def _http_error(status):
@@ -194,8 +194,8 @@ def _http_error(status):
 
 
 @pytest.mark.parametrize("exc, retryable", [
-    (openai.APIConnectionError(request=httpx.Request("POST", "https://x")), True),
-    (openai.APITimeoutError(request=httpx.Request("POST", "https://x")), True),
+    (openai.APIConnectionError(request=httpx2.Request("POST", "https://x")), True),
+    (openai.APITimeoutError(request=httpx2.Request("POST", "https://x")), True),
     (_status_error(openai.RateLimitError, 429), True),
     (_status_error(openai.InternalServerError, 503), True),
     (_status_error(openai.BadRequestError, 400), False),
@@ -203,8 +203,8 @@ def _http_error(status):
     (requests.Timeout(), True),
     (_http_error(502), True),
     (_http_error(404), False),
-    (httpx.ReadTimeout("stalled mid-stream"), True),  # raised while reading a stream: not wrapped by the SDK
-    (httpx.RemoteProtocolError("peer closed connection"), True),
+    (httpx2.ReadTimeout("stalled mid-stream"), True),  # raised while reading a stream: not wrapped by the SDK
+    (httpx2.RemoteProtocolError("peer closed connection"), True),
     (TransientError("OCR queue full (10010)"), True),
     (UnparseableResponse("not json"), False),  # handled by the parse retry, not the transport retry
     (PageCountMismatch(3, 2), False),

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 import openai
 import requests
 
@@ -34,8 +34,8 @@ def _retryable_status(status: int | None) -> bool:
 def is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, TransientError):
         return True
-    # httpx errors reach here raw when a streamed answer breaks off: the SDK only wraps the opening request
-    if isinstance(exc, (openai.APIConnectionError, httpx.TransportError, requests.ConnectionError,
+    # httpx2 errors reach here raw when a streamed answer breaks off: the SDK only wraps the opening request
+    if isinstance(exc, (openai.APIConnectionError, httpx2.TransportError, requests.ConnectionError,
                         requests.Timeout, ConnectionError, TimeoutError)):
         return True
     if isinstance(exc, openai.APIStatusError):
