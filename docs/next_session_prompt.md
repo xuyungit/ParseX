@@ -1,4 +1,4 @@
-# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后）
+# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后；Q79–Q81 之后更新）
 
 复制下面整段作为新会话的第一条消息。
 
@@ -22,17 +22,24 @@
 
 报告：eval_reports/2026-09-26_p5-7_cleanup_exit.md。
 
+**阶段五之后**：
+
+- Q79：标题只对有大纲的文档计分；
+- Q80：依赖升级，段落由版面检测器分；
+- Q81：Agent 先读懂全文再定标题（`skim` 工具，structure Skill 改为通用阅读方法）；修正再次调用 `process` 覆盖 Agent 结构决定的缺陷。
+  交 Agent 的 10 篇有大纲文档，角色 F1 0.680–0.690（此前 0.664），heading_f1 持平。见 eval_reports/2026-09-26_skim_reading_method.md。
+
 ## 先做四件事
 
 任一不通过先处理，不要绕过：
 
 1. 阅读：
-   - 指导 §0、§2、§3、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78；
+   - 指导 §0、§2、§3、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78、Q81；
    - 阶段五退出报告全文；
-   - eval_reports/2026-09-26_p5-2_headings.md；
+   - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 592 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 598 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
@@ -42,8 +49,12 @@
 
 请我从下面的清单（退出报告 §4）选定本轮主题，再写分解（事实、工作项、顺序、退出条件、待决问题），请我确认后再动代码：
 
-1. **Agent 的标题修改有得有失**：混合方案的标题与固定流水线持平（0.697 / 0.699），Agent 在 4 篇上改好、3 篇上改坏。同类问题是 Agent 定层级不稳定。
-2. **只有一种证据的标题**：编号或排版之一，固定流水线不采用，Agent 也少补。例如 real_doc01 的"三、采购文件的发售："、receipt 的"账单与付款"。
+1. ~~Agent 的标题修改~~：Q81 已做（先读懂全文）。剩下的待决：
+   - **只出现在页眉里的部分名**：patent01 的"权利要求书""说明书"；页眉被排除，结构少一层。程序层面的问题，要全语料衡量；
+   - **real_doc01 标注**：附着合同的层级、"响应文件格式"下各项；
+   - **节选文档的绝对层级**：val_word_template01、unseen_scan_form01；
+   - **`process` 不报告自己对状态的改动**。
+2. **只有一种证据的标题**：讨论材料建议加"编号同级"信号（eval_reports/2026-09-26_headings_discussion.md §2.4，建议 B），尚未决定。
 3. **公式待核对项多时逐项交 Agent，成本高**：paper_chn02 本次 $1.56。
 4. **扫描 PDF 上不可见的 OCR 文字层可作为独立读数**。
 5. **DOCX 页面层**（Q69）。
