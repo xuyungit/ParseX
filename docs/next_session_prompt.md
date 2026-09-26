@@ -1,4 +1,4 @@
-# 下一轮会话启动提示词（2026-09-25 生成，阶段四）
+# 下一轮会话启动提示词（2026-09-26 生成，阶段五）
 
 复制下面整段作为新会话的第一条消息。
 
@@ -6,34 +6,35 @@
 
 你在 /Users/xuyun/Projects/ParserX 工作。这是一个把 PDF / DOCX（含扫描件与图片）转成适合大模型使用的 Markdown 的工具。
 
-- **当前**：v2 重建已完成阶段零至三。设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
-- **Q13 已定**：默认用混合方案——先跑固定流水线；文档摘要里有待核对项（`review.open > 0`）或状态不是 complete，就交给 Agent（Codex）处理。
-- **本轮目标**：按 docs/v2_phase4_plan.md 做阶段四"能力完善"，把 ParserX 做成可以交给用户用的版本：`parserx parse` 默认走混合方案，控制台清楚显示进度与结果；补齐典型文档仍会碰到的能力缺口。
+- **当前**：v2 重建已完成阶段零至四。设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
+- **产品现状**：`parserx parse` 默认走混合方案（Q13）：先跑固定流水线；文档摘要里有待核对项或状态不是 complete，就交给 Agent（Codex）处理。阶段四全语料运行 B：混合方案在文字、表格、标题上的平均值都高于 v1（eval_reports/2026-09-26_p4-7_full_run_b.md）。
+- **本轮目标**：阶段五"清理"（指导 §12）：删除死代码与死依赖（§11.4），§11.5 的正确性要求全部落到 v2 的测试，README 反映真实状态。
 
 **先做五件事**，任一不通过先处理，不要绕过：
 
-1. 读指导 §0、§2、§3、§9.5、§12、§14（尤其 Q13、Q40、Q56，以及阶段四的 Q57–Q61）与 docs/v2_phase4_plan.md 全文；再读两份报告：eval_reports/2026-09-25_p4_runtime_comparison.md 与 eval_reports/2026-09-25_p4_page_reading.md。§4–§8 在实现对应部分时再读。
+1. 读指导 §0、§2、§3、§9.5、§10.4、§11、§12、§14（尤其 Q13、Q40、Q56、Q59、Q69–Q71），再读 eval_reports/2026-09-26_p4-7_full_run_b.md 与 docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`，OCR、LLM、VLM 三项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 849 通过、4 个已知失败（v1 的旧测试，不要修）。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 918 通过、4 个已知失败（v1 的旧测试，不要修；阶段五随模块删除，要求已登记在 §11.5）。
 4. 运行两个 L1，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --core --config configs/regression_v2.yaml --repeat 2`
 5. 回放两个冻结 run，都要 PASS：
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-23_p0_v1_gpt-6-luna`
-   - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-25_p4_v2_toolkit`（P4-4 重新冻结；此前为 `2026-09-24_p1_v2_toolkit`）
+   - `uv run python scripts/regression_test.py --config configs/regression_v2.yaml --replay eval_runs/2026-09-25_p4_v2_toolkit`
 
 **然后**：
 
-- 计划已确认，Q57–Q61 都已定。其中：
-  - Q60：界面默认中文，`--lang en` 切换为英文；命令、参数、JSON 字段名始终用英文；
-  - Q61：`parserx parse` 默认用混合方案（v2）；v1 保留 `--pipeline v1` 入口，去留在阶段五再讨论。
-- 直接按计划 §3 的顺序开始：P4-1 混合运行时 → P4-2 控制台交互。这两项完成后，先让我试用一次，再做 P4-3 标题、P4-4 图片、P4-5 DOCX 页面、P4-6 专项与逐篇差距、P4-7 收尾。
-- 做计划时遇到新的需要我拍板的问题，集中列出一次问，附上建议。
+- 先写阶段五的分解 docs/v2_phase5_plan.md（格式同前几个阶段：事实、工作项、退出条件、待决问题），请我确认后再动代码。必须回答：
+  - v2 的标题仍依赖 adapter:v1（Q59）：删除 v1 之前，是迁移它依赖的排版判断，还是由 v2 自有路径替代；无论哪种，都要在全语料上验证不降低；
+  - `pipeline: v1` 开关、v1 的 L1 与 v1 冻结 run 的去留；
+  - §11.4 删除清单与依赖清单（§10.4）逐项核对；
+  - Q71（被遮挡的文字）等待决问题。
+- 需要我拍板的问题集中列出一次问，附上建议。
 
 **约束**：
 
 - **环境**：只用 uv（`uv run python …`、`uv add …`）。
-- **标注**：改 ground_truth/ 下的任何文件，都要先经我同意。
+- **标注**：改 ground_truth/ 下的任何文件，都要先经我同意；有明确证据证明原标注不合理、而我们的解析更合理时，要改标注，并记入 docs/annotation_changes.md。
 - **规则要谨慎**：
   - 不为单篇文档加规则或阈值；
   - 带魔法数字的规则尤其要谨慎：能与文档自身比较的就不用绝对阈值，非用不可的写明是测量容差，并登记理由。
