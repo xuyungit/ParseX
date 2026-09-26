@@ -13,7 +13,9 @@ Checks are correctness constraints, not guesses about meaning:
 - reordering cannot form a cycle; relations are not duplicated;
 - tables merge only when the second can continue the first
   (``tables.merge.merge_candidate``), and only rows that repeat the first
-  table's header are dropped.
+  table's header are dropped;
+- the program's proposals leave alone the blocks whose structure the agent
+  decided (calling ``process`` again re-proposes the program's titles).
 
 Changes are checked one by one against the state as the earlier accepted
 changes of the batch leave it, so a batch can set a role and then a level.
@@ -106,7 +108,7 @@ def apply_changes(state: DocumentState, changes: list[StructureChange], *, actor
             return ApplyOutcome(accepted=[], rejected=rejected)
     outcome = ApplyOutcome()
     for index, change in enumerate(changes):
-        problem = _problem(state, change)
+        problem = _problem(state, change) or _decided_by_agent(state, change, actor)
         if problem is not None:
             outcome.rejected.append(Rejection(index=index, rule=problem[0], detail=problem[1]))
             continue
@@ -184,6 +186,25 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
         if change.drop_rows and not repeats_header(first.cells, second.cells, change.drop_rows):
             return (LegalityRule.ROWS_NOT_DUPLICATE,
                     f"the first {change.drop_rows} rows of {change.second} do not repeat the header of {change.first}")
+    return None
+
+
+_STRUCTURE_STAGES = frozenset({DecisionStage.HEADING_ROLE, DecisionStage.HEADING_LEVEL, DecisionStage.STRUCTURE,
+                               DecisionStage.EXCLUDE})
+
+
+def _program(actor: str) -> bool:
+    return actor.startswith(("program:", "pipeline"))
+
+
+def _decided_by_agent(state: DocumentState, change: StructureChange, actor: str) -> tuple[LegalityRule, str] | None:
+    if not _program(actor):
+        return None
+    blocks = {b.id: b for b in state.blocks}
+    for name in _block_refs(change):
+        decided = [d for d in blocks[name].decisions if d.stage in _STRUCTURE_STAGES and not _program(d.actor)]
+        if decided:
+            return LegalityRule.DECIDED_BY_AGENT, f"{decided[-1].actor} decided {name}: {decided[-1].choice}"
     return None
 
 

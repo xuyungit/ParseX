@@ -125,6 +125,7 @@ class LegalityRule(StrEnum):
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
     NO_LINE_BREAK = "no_line_break"  # split: the block has no such line break with text on both sides
+    DECIDED_BY_AGENT = "decided_by_agent"  # a program proposal on a block whose structure the agent decided
 
 
 class Rejection(IRModel):

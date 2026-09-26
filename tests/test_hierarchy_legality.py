@@ -284,3 +284,16 @@ def test_the_chinese_four_level_numbering_is_legal():
         {"op": "set_role", "block": f"t{i}", "kind": "title", "reason": "r"},
         {"op": "set_level", "block": f"t{i}", "level": lv, "reason": "r"})]
     assert apply_changes(state, _changes(*changes), actor="t").rejected == []
+
+
+def test_the_program_does_not_override_the_agents_structure_decisions():
+    # a second `process` call re-proposes the program's titles; what the agent decided on a block stays
+    state = _state()
+    demote = _changes({"op": "set_role", "block": "h1", "kind": "text", "reason": "a contents entry"})
+    assert apply_changes(state, demote, actor="agent").accepted == [0]
+    again = _changes({"op": "set_role", "block": "h1", "kind": "title", "level": 1, "reason": "typography"},
+                     {"op": "set_role", "block": "p1", "kind": "title", "level": 1, "reason": "typography"})
+    outcome = apply_changes(state, again, actor="program:hierarchy.typography")
+    assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == [(0, "decided_by_agent")]
+    assert next(b for b in state.blocks if b.id == "h1").kind == BlockKind.TEXT
+    assert apply_changes(state, again[:1], actor="agent").accepted == [0]  # the agent may change its mind
