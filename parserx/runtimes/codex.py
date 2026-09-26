@@ -213,7 +213,8 @@ SYSTEM_ROOTS = tuple(Path(p) for p in (
 _STOP = r"\s'\"`;|&<>(){}\[\],=\\"
 _ABSOLUTE = re.compile(rf"(?<![\w.:/~$)\]}}<-])/[A-Za-z._~][^{_STOP}]*")  # not after "<": an HTML closing tag
 _PARENT = re.compile(rf"(?<![\w./])\.\.(?![.\w])(?:/[^{_STOP}]*)?")
-_HOME = re.compile(rf"(?<![\w.~/$])(?:~|\$HOME|\$\{{HOME\}})(?=/|[{_STOP}]|$)(?:/[^{_STOP}]*)?")
+# a home path: ~ or $HOME, then a path, the end of a word, or a shell separator — not "~]" of a quoted shell prompt
+_HOME = re.compile(rf"(?<![\w.~/$])(?:~|\$HOME|\$\{{HOME\}})(?=/|[\s'\"`;|&<>()]|$)(?:/[^{_STOP}]*)?")
 
 
 def _within(path: Path, root: Path) -> bool:

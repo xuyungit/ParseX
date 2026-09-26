@@ -144,3 +144,10 @@ def test_a_command_that_yields_is_closed_when_the_agent_acts_again():
     timing = timing_from_events([e for e, _ in events], [t for _, t in events])
     assert timing.yielded == 1 and timing.steps == 2 and timing.model_s == 14.0 and timing.command_s == 39.0
     assert timing.model_s + timing.command_s == timing.wall_s
+
+
+def test_a_quoted_shell_prompt_is_not_a_home_path():
+    # the agent quotes the document's "[root@host ~]#" in a question: no path is named
+    quoted = _cmd(1, "./px tool ask_image --ws ws --question \"是否写有 [root@installserver ~]# openstack flavor show\" --json")
+    assert _audit(quoted).ok
+    assert not _audit(_cmd(2, "cat ~/.ssh/id_rsa")).ok and not _audit(_cmd(3, "cd ~ && ls")).ok
