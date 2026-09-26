@@ -446,25 +446,6 @@ SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))
 PDF_TEXT = SAMPLE_DIR / "pdf_text01.pdf"
 
 
-@pytest.mark.skipif(not PDF_TEXT.exists(), reason="Test PDF not available")
-def test_real_pdf_chapter_detection():
-    """End-to-end: parse real PDF and verify headings are detected."""
-    from parserx.config.schema import ParserXConfig
-    from parserx.pipeline import Pipeline
-
-    config = ParserXConfig()
-    # Skip if OCR service credentials are not configured
-    ocr_cfg = config.builders.ocr
-    if ocr_cfg.engine != "none" and (not ocr_cfg.endpoint or not ocr_cfg.token):
-        pytest.skip("OCR credentials not configured")
-
-    pipeline = Pipeline(config)
-    result = pipeline.parse(PDF_TEXT)
-
-    # The procurement doc should have chapter headings (第X章)
-    assert "# " in result or "## " in result, "Expected heading markers in output"
-
-
 # ── Numbering coherence tests ─────────────────────────────────────────
 
 
@@ -1088,5 +1069,3 @@ def test_toc_block_requires_multiple_numeric_tail_entries():
     ChapterProcessor().process(doc)
     assert toc.metadata.get("toc_header") is not True
     assert e1.metadata.get("toc_entry") is not True
-
-

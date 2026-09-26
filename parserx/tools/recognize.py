@@ -126,7 +126,17 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                       failures=failures)
     size = ctx.config.tools.scan_batch_pages
     batches = [pages[i:i + size] for i in range(0, len(pages), size)]
-    ocr = ctx.ocr()
+    try:
+        ocr = ctx.ocr()
+    except ToolFailure as exc:  # no scan engine (--no-ocr): as if it gave no result — the fallbacks stay, listed
+        with ctx.ws.txn("tool:recognize") as state:
+            for n in pages:
+                mark_scan_failed(state, n, exc.failure.message, skipped=False)
+        failures.append(exc.failure.model_copy(update={"targets": [f"p{n}" for n in pages]}))
+        state = ctx.ws.load()
+        return output(RecognizeResult(observations=[], observations_total=0,
+                                      pages=[r for r in page_rows(state) if r.n in set(requested)], selections=[]),
+                      failures=failures)
     source = ctx.ws.source_path
 
     def fetch(batch: list[int]):

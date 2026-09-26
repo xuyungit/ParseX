@@ -132,21 +132,3 @@ def test_chapter_image_paths_are_rebased(tmp_path: Path):
 
 SAMPLE_DIR = Path(os.environ.get("PARSERX_SAMPLE_DIR", "sample_docs"))
 PDF_TEXT = SAMPLE_DIR / "pdf_text01.pdf"
-
-
-@pytest.mark.skipif(not PDF_TEXT.exists(), reason="Test PDF not available")
-def test_real_pdf_chapter_split(tmp_path: Path):
-    """End-to-end: parse real PDF and split into chapters."""
-    from parserx.pipeline import Pipeline
-
-    pipeline = Pipeline()
-    final_path = pipeline.parse_to_dir(PDF_TEXT, tmp_path)
-
-    assert final_path.exists()
-    assert (tmp_path / "index.md").exists()
-
-    chapters = sorted((tmp_path / "chapters").glob("ch_*.md"))
-    assert len(chapters) >= 3  # Should have multiple chapters
-
-    index = (tmp_path / "index.md").read_text(encoding="utf-8")
-    assert "第一章" in index

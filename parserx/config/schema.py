@@ -341,8 +341,6 @@ class CacheConfig(BaseModel):
 class ParserXConfig(BaseModel):
     """Top-level ParserX configuration."""
 
-    # v1: the processor pipeline; v2: workspace + toolkit through the fixed-sequence runtime.
-    pipeline: Literal["v1", "v2"] = "v2"  # Q61: v2 by default; v1 stays behind ``--pipeline v1`` until Phase 5
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)

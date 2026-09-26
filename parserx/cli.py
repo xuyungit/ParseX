@@ -14,8 +14,6 @@ os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")
 
 from parserx.config.schema import ConfigLoadResult, apply_overrides, load_config_with_result
 from parserx.eval.reporting import build_config_report_metadata
-from parserx.models.results import ParseResult
-from parserx.pipeline import Pipeline
 
 
 def main() -> None:
@@ -34,18 +32,16 @@ def main() -> None:
         help="Output directory (default: ./output/<filename>/; with several inputs: the parent, default ./output/)",
     )
     parse_cmd.add_argument("-c", "--config", type=Path, help="Config YAML path")
-    parse_cmd.add_argument("--pipeline", choices=("v1", "v2"),
-                           help="v2 (default): workspace + toolkit, writes the output package; v1: the old pipeline")
     parse_cmd.add_argument("--runtime", choices=("hybrid", "fixed"),
-                           help="v2: hybrid (default) hands documents with open review items to the agent; "
+                           help="hybrid (default) hands documents with open review items to the agent; "
                                 "fixed runs the standard processing only")
     parse_cmd.add_argument("--lang", choices=("zh", "en"), default=os.environ.get("PARSERX_LANG", "zh"),
                            help="Interface language of the console (default: zh)")
     parse_cmd.add_argument("--json", action="store_true",
-                           help="v2: write the result summary as JSON to stdout at the end")
-    parse_cmd.add_argument("-q", "--quiet", action="store_true", help="v2: only errors and the result")
+                           help="write the result summary as JSON to stdout at the end")
+    parse_cmd.add_argument("-q", "--quiet", action="store_true", help="only errors and the result")
     parse_cmd.add_argument("--keep-work", action="store_true",
-                           help="v2: keep the work directory (<output>/.parserx-work/) after the run")
+                           help="keep the work directory (<output>/.parserx-work/) after the run")
     parse_cmd.add_argument(
         "--set", dest="overrides", action="append", default=[],
         help="Override config with dotted.path=value (repeatable)",
@@ -55,34 +51,16 @@ def main() -> None:
         "--stdout", action="store_true",
         help="Print Markdown to stdout instead of writing files",
     )
-    parse_cmd.add_argument(
-        "--split-chapters", action="store_true",
-        help="Also generate index.md and per-chapter files",
-    )
     # ── Convenience flags ──────────────────────────────────────────────
     parse_cmd.add_argument(
         "--no-vlm", action="store_true",
-        help="Disable VLM (image description, table/formula correction)",
+        help="Disable the VLM (figure descriptions, table and formula review)",
     )
     parse_cmd.add_argument(
         "--no-ocr", action="store_true",
-        help="Disable OCR (process native text only)",
-    )
-    parse_cmd.add_argument(
-        "--no-llm", action="store_true",
-        help="Disable LLM fallback (pure rule-based processing)",
+        help="Disable the scan engine (native text only; scanned pages stay unrecognised)",
     )
     parse_cmd.add_argument("--vlm-model", help="Override VLM model name")
-    parse_cmd.add_argument("--llm-model", help="Override LLM model name")
-    parse_cmd.add_argument(
-        "--no-formula", action="store_true",
-        help="Skip formula detection",
-    )
-    parse_cmd.add_argument(
-        "--no-table-vlm", action="store_true",
-        help="Disable VLM table correction",
-    )
-    parse_cmd.add_argument("--ocr-lang", help="OCR language (default: ch_sim+en)")
 
     # parserx eval
     eval_cmd = sub.add_parser("eval", help="Evaluate parsing against ground truth")
@@ -283,42 +261,11 @@ def _cmd_parse(args: argparse.Namespace) -> int:
 
     loaded = load_config_with_result(args.config)
     config = apply_overrides(loaded.config, all_overrides)
-    if getattr(args, "pipeline", None):
-        config.pipeline = args.pipeline
     if getattr(args, "runtime", None):
         config.runtime.mode = args.runtime
-    if config.pipeline == "v2":
-        from parserx.console.cli import parse_v2
+    from parserx.console.cli import parse_v2
 
-        return parse_v2(args, config, loaded)
-    for path in args.input:
-        _cmd_parse_v1(args, config, path)
-    return 0
-
-
-def _cmd_parse_v1(args: argparse.Namespace, config, input_path: Path) -> None:
-
-    # Chapter splitting: honour both --split-chapters flag and config default
-    if args.split_chapters:
-        config.output.chapter_split = True
-    elif not args.split_chapters and not any("chapter_split" in o for o in args.overrides):
-        # Default off for CLI usage (config default is True for eval pipelines)
-        config.output.chapter_split = False
-
-    pipeline = Pipeline(config)
-
-    if args.stdout:
-        # Legacy stdout mode
-        result = pipeline.parse(input_path)
-        print(result)
-        return
-
-    # Directory output mode (default)
-    output_dir = args.output or Path("output") / input_path.stem
-    if len(args.input) > 1:
-        output_dir = (args.output or Path("output")) / input_path.stem
-    result = pipeline.parse_result_to_dir(input_path, output_dir)
-    _print_summary(input_path, output_dir, result)
+    return parse_v2(args, config, loaded)
 
 
 def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:
@@ -328,55 +275,9 @@ def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:
         overrides.append("services.vlm.endpoint=")
     if getattr(args, "no_ocr", False):
         overrides.append("builders.ocr.engine=none")
-    if getattr(args, "no_llm", False):
-        overrides.append("services.llm.endpoint=")
     if getattr(args, "vlm_model", None):
         overrides.append(f"services.vlm.model={args.vlm_model}")
-    if getattr(args, "llm_model", None):
-        overrides.append(f"services.llm.model={args.llm_model}")
-    if getattr(args, "no_formula", False):
-        overrides.append("processors.formula.enabled=false")
-    if getattr(args, "no_table_vlm", False):
-        overrides.append("processors.table.vlm_fallback=false")
-    if getattr(args, "ocr_lang", None):
-        overrides.append(f"builders.ocr.lang={args.ocr_lang}")
     return overrides
-
-
-def _print_summary(
-    input_path: Path,
-    output_dir: Path,
-    result: ParseResult,
-) -> None:
-    """Print a human-readable processing summary to stderr."""
-
-    # Page type breakdown
-    pt = result.page_types
-    page_parts = []
-    for key in ("native", "scanned", "mixed"):
-        if pt.get(key, 0) > 0:
-            page_parts.append(f"{pt[key]} {key}")
-    page_detail = f" ({', '.join(page_parts)})" if page_parts else ""
-
-    # API calls
-    api = result.api_calls
-    api_parts = []
-    for key in ("ocr", "vlm", "llm"):
-        if api.get(key, 0) > 0:
-            api_parts.append(f"{key.upper()} {api[key]}")
-    api_line = " \u00b7 ".join(api_parts) if api_parts else "none"
-
-    images_extracted = result.images_total - result.images_skipped
-
-    lines = [
-        f"Done: {input_path.name} \u2192 {output_dir}/",
-        f"  Pages:      {result.page_count}{page_detail}",
-        f"  Images:     {images_extracted} extracted, {result.images_skipped} skipped",
-        f"  API calls:  {api_line}",
-    ]
-    if result.warnings:
-        lines.append(f"  Warnings:   {len(result.warnings)}")
-    print("\n".join(lines), file=sys.stderr)
 
 
 def _cmd_eval(args: argparse.Namespace) -> None:

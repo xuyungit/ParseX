@@ -1,4 +1,4 @@
-"""Live end-to-end tests that call real OCR/LLM/VLM services from .env."""
+"""Live end-to-end tests of the fixed pipeline that call the real scan engine and VLM from .env."""
 
 from __future__ import annotations
 
@@ -18,11 +18,9 @@ load_dotenv(ROOT / ".env", override=False)
 
 pytestmark = pytest.mark.live_e2e
 
-_REQUIRED_ENV_VARS = [
-    "OPENAI_BASE_URL",
-    "OPENAI_API_KEY",
-    "LLM_MODEL",
-    "VLM_MODEL",
+_REQUIRED_ENV_VARS = [  # what parserx.yaml reads for the VLM and the scan engine
+    "OPENAI_BASE_URL_B",
+    "OPENAI_API_KEY_B",
     "PADDLE_OCR_ENDPOINT",
     "PADDLE_OCR_TOKEN",
 ]
@@ -34,13 +32,11 @@ def _live_services_ready() -> bool:
 
 def _require_live_services() -> None:
     if not _live_services_ready():
-        pytest.skip("Live OCR/LLM/VLM credentials are not configured in .env")
+        pytest.skip("Live scan engine / VLM credentials are not configured in .env")
 
 
 def _load_live_config():
     config = load_config(ROOT / "parserx.yaml")
-    # Keep verification focused on parsing behavior; avoid unrelated warning flakiness.
-    config.verification.hallucination_detection = False
     config.cache.mode = "off"  # these tests check real requests: a recorded response would be replayed instead
     return config
 
@@ -108,32 +104,6 @@ def _make_pdf_with_inline_image(pdf_path: Path, image_path: Path) -> Path:
     return pdf_path
 
 
-def _make_pdf_for_llm_fallback(pdf_path: Path) -> Path:
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text(
-        (72, 110),
-        "This document describes the procurement scope and delivery expectations.",
-        fontsize=11,
-        fontname="helv",
-    )
-    page.insert_text(
-        (72, 160),
-        "1 Procurement Scope",
-        fontsize=11,
-        fontname="helv",
-    )
-    page.insert_text(
-        (72, 210),
-        "The scope section defines the baseline work items for the project.",
-        fontsize=11,
-        fontname="helv",
-    )
-    doc.save(pdf_path)
-    doc.close()
-    return pdf_path
-
-
 def test_live_e2e_ocr_from_scanned_pdf(tmp_path: Path):
     _require_live_services()
 
@@ -149,8 +119,7 @@ def test_live_e2e_ocr_from_scanned_pdf(tmp_path: Path):
     pdf_path = _make_pdf_with_fullpage_image(tmp_path / "ocr_input.pdf", image_path)
 
     config = _load_live_config()
-    config.processors.image.enabled = False
-    config.processors.chapter.llm_fallback = False
+    config.runtime.describe_figures = False
 
     result = Pipeline(config).parse_result(pdf_path)
 
@@ -165,34 +134,10 @@ def test_live_e2e_vlm_image_description(tmp_path: Path):
     image_path = _make_diagram_image(tmp_path / "diagram.png")
     pdf_path = _make_pdf_with_inline_image(tmp_path / "vlm_input.pdf", image_path)
 
-    config = _load_live_config()
-    config.builders.ocr.engine = "none"
-    config.processors.chapter.llm_fallback = False
+    config = _load_live_config()  # the scan engine stays on: the page's picture may send it to the scan engine
 
     result = Pipeline(config).parse_result(pdf_path)
 
     assert result.api_calls["vlm"] >= 1
     assert len(result.markdown.strip()) > 0
     assert "[图片]" in result.markdown or "![" in result.markdown
-
-
-def test_live_e2e_llm_heading_fallback(tmp_path: Path):
-    _require_live_services()
-
-    pdf_path = _make_pdf_for_llm_fallback(tmp_path / "llm_input.pdf")
-
-    config_off = _load_live_config()
-    config_off.builders.ocr.engine = "none"
-    config_off.processors.image.enabled = False
-    config_off.processors.chapter.llm_fallback = False
-
-    config_on = _load_live_config()
-    config_on.builders.ocr.engine = "none"
-    config_on.processors.image.enabled = False
-    config_on.processors.chapter.llm_fallback = True
-
-    result_off = Pipeline(config_off).parse_result(pdf_path)
-    result_on = Pipeline(config_on).parse_result(pdf_path)
-
-    assert result_off.api_calls["llm"] == 0
-    assert result_on.api_calls["llm"] >= 1

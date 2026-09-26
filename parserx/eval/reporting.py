@@ -133,16 +133,11 @@ def resolved_fingerprint(resolved: dict[str, Any]) -> str:
     """Fingerprint of a frozen run's resolved config, computed as today's ``config_fingerprint`` would.
 
     Fields added to the config schema after the freeze take their defaults on
-    both sides, so an old frozen run stays replayable as long as its settings
-    are unchanged.
+    both sides, and fields removed from it are ignored (``pipeline``, the v1
+    sections: Phase 5), so an old frozen run stays replayable as long as the
+    settings that still exist are unchanged.
     """
-    resolved = {**{k: v for k, v in _EARLIER_DEFAULTS.items() if k not in resolved}, **resolved}
     return config_fingerprint(ParserXConfig.model_validate(resolved))
-
-
-# Top-level fields whose default changed after runs were frozen without them: such a run used the earlier value
-# (``pipeline``: before the v1 | v2 switch there was only v1; the default became v2 with Q61).
-_EARLIER_DEFAULTS = {"pipeline": "v1"}
 
 
 def _strip_secrets(value: Any) -> Any:

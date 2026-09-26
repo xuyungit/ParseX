@@ -200,7 +200,7 @@ def test_scan_engine_title_labels_propose_levels():
 
 
 def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
-    # Q42: `parserx parse <doc> -o <dir> --pipeline v2` gives Markdown, images/, the summary and the sidecar
+    # Q42: `parserx parse <doc> -o <dir>` gives Markdown, images/, the summary and the sidecar
     import sys
 
     import parserx.cli
@@ -211,7 +211,7 @@ def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
     path = tmp_path / "report.docx"
     doc.save(path)
     out = tmp_path / "out"
-    monkeypatch.setattr(sys, "argv", ["parserx", "parse", str(path), "-o", str(out), "--pipeline", "v2"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "parse", str(path), "-o", str(out)])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     assert exit_info.value.code == 0

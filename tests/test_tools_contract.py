@@ -968,3 +968,21 @@ def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_no
     assert not _text_not_carried(ctx(["ipmi_address"]), described, asset)
     assert _text_not_carried(ctx(["ipmi_address", "Kg key for IPMIv2 authentication."]), described, asset)
     assert not _text_not_carried(ctx(["|", "·"]), described, asset)  # no letters or digits: no evidence
+
+
+def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):
+    # `parserx parse --no-ocr`: scanned pages stay unrecognised, listed as missing; the run does not fail
+    config = _config()
+    config.builders.ocr.engine = "none"
+    config.runtime.layout_shadow = False
+
+    class NoScanEngine(_context()):
+        def _new_ocr(self):
+            return ToolContext._new_ocr(self)  # the real factory: refuses an engine that is not configured
+
+    env, code = _call("process", ws, {}, config=config, context=NoScanEngine)
+    assert code == 0
+    result = _assert_contract(env, "process")["result"]
+    assert result["pages"] == {"done": 1, "failed": 1} and result["check"]["exportable"]
+    assert result["check"]["document_status"] == "partial"
+    assert any("scan engine not configured" in f.message for f in env.failures)

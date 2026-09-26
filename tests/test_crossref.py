@@ -6,7 +6,6 @@ from parserx.assembly.crossref import CrossReferenceResolver
 from parserx.assembly.markdown import MarkdownRenderer
 from parserx.config.schema import ParserXConfig
 from parserx.models.elements import Document, Page, PageElement
-from parserx.pipeline import Pipeline
 
 
 def test_resolver_attaches_figure_caption_and_skips_original_text():
@@ -161,36 +160,3 @@ def test_resolver_accepts_caption_at_exact_length_boundary():
 
     assert len(caption_text) == 160
     assert image.metadata["caption"] == caption_text
-
-
-def test_pipeline_renders_captioned_output(tmp_path: Path, monkeypatch):
-    image = PageElement(
-        type="image",
-        page_number=1,
-        bbox=(100, 100, 400, 300),
-        metadata={"saved_path": "images/fig-1.png", "width": 300, "height": 200},
-    )
-    caption = PageElement(
-        type="text",
-        page_number=1,
-        bbox=(150, 310, 360, 330),
-        content="Figure 1. Pipeline overview",
-    )
-    doc = Document(pages=[Page(number=1, elements=[image, caption])])
-
-    cfg = ParserXConfig(pipeline="v1")
-    cfg.builders.ocr.engine = "none"
-    pipeline = Pipeline(cfg)
-
-    monkeypatch.setattr(pipeline, "_extract", lambda path: doc)
-    monkeypatch.setattr(pipeline, "_extract_and_describe_images", lambda d, source, images_dir: d)
-
-    dummy = tmp_path / "dummy.pdf"
-    dummy.write_bytes(b"%PDF-1.4 fake")
-
-    pipeline.parse_to_dir(dummy, tmp_path)
-    markdown = (tmp_path / "output.md").read_text(encoding="utf-8")
-
-    assert "![](images/fig-1.png)" in markdown
-    assert markdown.count("Figure 1. Pipeline overview") == 1
-    assert "*Figure 1. Pipeline overview*" in markdown

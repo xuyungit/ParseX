@@ -42,7 +42,7 @@ from parserx.runtimes.events import Step
 from parserx.tables.merge import propose_merges
 from parserx.tools import check_export, describe_figure, recognize, structure
 from parserx.tools.context import ToolContext, ToolOutput, output
-from parserx.tools.envelope import Failure
+from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.layout_shadow import layout_todo
 from parserx.tools.formulas import formula_pages, read_formula_pages
 from parserx.tools.page_reading import read_pages, reading_todo
@@ -117,7 +117,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if ctx.config.runtime.formulas:  # formulas of native pages: whole pages read, passages chosen (Q70)
         pages = formula_pages(ctx.ws.load())
         if pages:
-            counts, problems = read_formula_pages(ctx, pages)
+            counts, problems = _unless_unconfigured(failures, lambda: read_formula_pages(ctx, pages), ({}, []))
             failures += problems
             steps.append(StepSummary(step="formulas", detail=f"{len(pages)} pages read; passages: " + ", ".join(
                 f"{k} {v}" for k, v in sorted(counts.items()))))
@@ -126,7 +126,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     candidates = _textual_images(ctx, state)
     if candidates:
         ctx.report(Step("process", "transcribe", total=len(candidates)))
-        out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
+        out = _unless_unconfigured(failures, lambda: recognize.run(
+            ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr")), _NOTHING_READ)
         failures += out.failures
         steps.append(StepSummary(step="transcribe_images",
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
@@ -138,7 +139,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                 and b.semantic is None and b.id not in read_as_text]
         if todo:
             ctx.report(Step("process", "describe", total=len(todo)))
-            out = describe_figure.run(ctx, describe_figure.DescribeFigureRequest(blocks=todo))
+            out = _unless_unconfigured(failures, lambda: describe_figure.run(
+                ctx, describe_figure.DescribeFigureRequest(blocks=todo)), _NOTHING_DESCRIBED)
             failures += out.failures
             steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
                                                                     "figures described"))
@@ -148,7 +150,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     candidates = [c for c in candidates if routes_of(state).get(c) == ImageRoute.UNCERTAIN]
     if candidates:
         ctx.report(Step("process", "transcribe", total=len(candidates)))
-        out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
+        out = _unless_unconfigured(failures, lambda: recognize.run(
+            ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr")), _NOTHING_READ)
         failures += out.failures
         steps.append(StepSummary(step="transcribe_uncarried",
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
@@ -254,6 +257,22 @@ def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: li
                     {"changes": changes, "actor": actor}))
                 accepted += len(out.result.accepted)
     return accepted
+
+
+_NOTHING_READ = output(recognize.RecognizeResult(observations=[], observations_total=0, pages=[], selections=[]))
+_NOTHING_DESCRIBED = output(describe_figure.DescribeFigureResult(type=None, semantic=None, items=[]))
+
+
+def _unless_unconfigured(failures: list[Failure], step, nothing):
+    """Run an optional step; a service that is not configured (``--no-ocr``, ``--no-vlm``) skips it, listed as a
+    failure, instead of failing the whole processing."""
+    try:
+        return step()
+    except ToolFailure as exc:
+        if exc.failure.code != FailureCode.SERVICE_ERROR:
+            raise
+        failures.append(exc.failure)
+        return nothing
 
 
 def docx_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:

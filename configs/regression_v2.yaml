@@ -1,4 +1,3 @@
-# v2 regression config (plan P1-10): the regression config with the workspace + toolkit runtime.
+# The v2 regression config of Phases 1–4 (plan P1-10). Since Phase 5 there is one pipeline and
+# regression.yaml is its config; this file stays so recorded commands of frozen runs still work.
 extends: regression.yaml
-
-pipeline: v2

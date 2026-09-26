@@ -206,7 +206,7 @@ def test_json_goes_to_stdout_and_progress_to_stderr(tmp_path, monkeypatch, capsy
     doc.write_bytes(b"%PDF")
 
     def fake(path, out_dir, config, *, reporter, keep_work):
-        assert config.pipeline == "v2" and config.runtime.mode == "hybrid" and out_dir == tmp_path / "out"
+        assert config.runtime.mode == "hybrid" and out_dir == tmp_path / "out"
         outcome = _outcome(tmp_path, name="a", source="a.pdf")
         reporter(DocEnd(outcome))
         return outcome
@@ -250,17 +250,6 @@ def test_ctrl_c_says_where_the_work_is_kept(tmp_path, monkeypatch, capsys):
     code, out, err = _run_cli(monkeypatch, capsys, [str(doc), "-o", str(tmp_path / "out")], fake)
     assert code == 130 and out == ""
     assert "已中断，工作区保留在" in err and ".parserx-work" in err and "再次运行同一命令会从中断处继续" in err
-
-
-def test_pipeline_v1_stays_available(tmp_path, monkeypatch, capsys):
-    import parserx.cli as cli
-
-    calls = []
-    monkeypatch.setattr(cli, "_cmd_parse_v1", lambda args, config, path: calls.append((config.pipeline, path)))
-    monkeypatch.setattr("sys.argv", ["parserx", "parse", str(tmp_path / "a.pdf"), "--pipeline", "v1"])
-    with pytest.raises(SystemExit) as exit_info:
-        cli.main()
-    assert exit_info.value.code == 0 and calls == [("v1", tmp_path / "a.pdf")]
 
 
 def test_action_lines_name_pages_kinds_and_docx_blocks():
