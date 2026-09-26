@@ -98,7 +98,8 @@ def _nested(paragraphs, found, body) -> list[tuple[Block, TextStyle, dict]]:
 
 def _document_title(paragraphs, found, body, state, first_other) -> tuple[Block, TextStyle, dict] | None:
     """The document's title: the paragraph set largest among the one-line, unnumbered, set-apart paragraphs that
-    open the document before its first title (its position is the second evidence), when no title is set larger;
+    open the document before its first title (its position is the second evidence), when no title is set larger
+    and the titles set like it are numbered sections (unnumbered ones would be its siblings);
     else the first title, when it is set larger than every other and comes before the other source's titles
     (*first_other*: the reading position of the first of them)."""
     sizes = [s.font_size or 0.0 for _, s, _ in found]
@@ -112,8 +113,13 @@ def _document_title(paragraphs, found, body, state, first_other) -> tuple[Block,
             opening.append((block, style, {"typography": ", ".join(apart), "position": "opens the document"}))
     if opening:
         top = max(s.font_size or 0.0 for _, s, _ in opening)
-        if all(top >= size for size in sizes):
-            return next(o for o in opening if (o[1].font_size or 0.0) == top)
+        lead = next(o for o in opening if (o[1].font_size or 0.0) == top)
+        # set like some titles, it heads them only when they are numbered sections; else it is their sibling
+        alike = [b for b, s, _ in found if (s.font_size or 0.0, bool(s.bold)) == (top, bool(lead[1].bold))]
+        if all(top >= size for size in sizes) and all(numbering_signature(b.text) for b in alike):
+            return lead
+        if alike:  # set like titles that are not numbered: their sibling (a title at their level, not over them)
+            found.insert(0, (lead[0], lead[1], {**lead[2], "sibling": alike[0].id}))
     if not found or not all(sizes[0] > size for size in sizes[1:]):
         return None
     if first_other is not None:

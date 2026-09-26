@@ -75,6 +75,10 @@ def test_levels_follow_the_documents_own_typography_under_its_title():
                     _block("h1", "1 概述", TextStyle(font_size=14.0, bold=True, font="SimSun")),
                     _block("h2", "1.1 范围", BOLD), _block("h3", "（一）适用对象", BOLD, "paragraph_title"))
     assert found == {"title": 1, "h1": 2, "h2": 3, "h3": 3}  # h3: same typography as h2 (numbering unifies later)
+    # an unnumbered opening line set like the unnumbered titles after it is their sibling, not the title over them
+    chapter = TextStyle(font_size=16.0, bold=False, font="SimSun")
+    found = _titles(_block("c1", "Chapter One", chapter), _block("c2", "Chapter Two", chapter, "paragraph_title"))
+    assert found == {"c1": 1, "c2": 1}
     # another source (the scan engine, a Title style) already gave the document its title
     assert _titles(_block("h1", "1 概述", BOLD), titled=True) == {"h1": 2}
     assert _titles(_block("h1", "1 概述", BOLD)) == {"h1": 1}
