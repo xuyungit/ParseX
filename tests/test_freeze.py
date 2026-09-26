@@ -75,6 +75,16 @@ def test_replay_ignores_volatile_fields_but_not_scores_or_outputs():
     assert any("a" in d and "output_sha256" in d for d in diffs)
 
 
+def test_a_field_recorded_after_the_freeze_is_not_a_difference():
+    # a later version records more per document (Q79 added "outline"); a field the frozen run has is still compared
+    frozen = _record(a=0.9)
+    replay = _record(a=0.9)
+    replay["documents"]["a"]["outline"] = True
+    assert replay_differences(replay, frozen) == []
+    del replay["documents"]["a"]["char_f1"]
+    assert any("char_f1" in d for d in replay_differences(replay, frozen))
+
+
 def test_replay_reports_missing_documents_and_config_changes():
     frozen = _record(a=0.9, b=0.8)
     replay = _record(a=0.9)

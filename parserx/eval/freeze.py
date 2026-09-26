@@ -156,7 +156,7 @@ def replay_differences(record: dict, frozen: dict) -> list[str]:
         if now is None:
             diffs.append(f"{name}: missing from the replay")
             continue
-        for key in sorted(set(then) | set(now)):
+        for key in sorted(then):  # a field recorded only since the freeze is not something the replay missed
             if key in _VOLATILE or (rescored and key != "output_sha256"):
                 continue
             if then.get(key) != now.get(key):
