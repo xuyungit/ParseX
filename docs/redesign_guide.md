@@ -696,7 +696,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 包 | 用途 | 位置 |
 |---|---|---|
-| pymupdf 1.27.2 | PDF 读取、渲染 | 主依赖；升级到 1.28 按 Q76 在阶段五最后单独评估 |
+| pymupdf 1.27.2 | PDF 读取、渲染 | 主依赖；1.28 改变了文字层分块，按 Q76 推迟（见 §14） |
 | openai 2.30.0、httpx | VLM 客户端（服务层） | 主依赖；3.x 是大版本，列入"以后" |
 | pydantic、pyyaml、python-dotenv、pillow、numpy、requests、jsonschema、rapidfuzz、lxml | 数据模型、配置、图像、OCR jobs API、sidecar 校验、评测与读数比对、DOCX 直接读 OOXML | 主依赖（lxml、httpx 原先经 docling / openai 间接安装，现显式列出） |
 | rapid-layout、rapidocr、onnxruntime | 本地版面检测（§6.2）、本地读数（Q56） | 主依赖 |
@@ -880,7 +880,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q73 | "标题不降低"的对照 | ✅ 用户按建议决定（2026-09-26）：固定流水线对现在（带 adapter:v1，0.582 / 0.690，24 篇），混合方案对运行 B（0.756 / 0.868）；平均值不降，逐篇下降超过 0.005 的列明并按 §9.5 定位 |
 | Q74 | v1 的去留 | ✅ 用户按建议决定（2026-09-26）：删除 `pipeline: v1` 开关、`--pipeline` 与 v1 的 L1；v1 冻结 run 目录保留，只作静态比较基线（不能再回放）；删除前打本地标签 `v1-final` |
 | Q75 | 只对 v1 有效的参数与配置 | ✅ 用户按建议决定（2026-09-26）：删除 `--split-chapters`、`--no-formula`、`--no-table-vlm`、`--no-llm`、`--llm-model`、`--ocr-lang` 与对应配置段（旧配置中多出的键照旧被忽略）；`services.llm` 从模板与 `check_services.py` 去掉；扫描引擎配置仍在 `builders.ocr`，路径不改 |
-| Q76 | pymupdf 1.27 → 1.28 | ✅ 用户按建议决定（2026-09-26）：阶段五最后单独一项；全语料离线对比，输出不变或只变好才升级，否则推迟并记录 |
+| Q76 | pymupdf 1.27 → 1.28 | ✅ 用户按建议决定（2026-09-26）：阶段五最后单独一项；全语料离线对比，输出不变或只变好才升级，否则推迟并记录。**结果（2026-09-26）：推迟**。试升 1.28.2：页面渲染 112 页逐像素相同，但文字层分块方式变了——26 个 PDF 中 6 个的原生块不同（paper_chn01 531 → 1515 块、paper01 351 → 421，receipt、patent01、paper_chn02、ocr_scan_jtg3362 的块边界改变），分块是原生提取的基础；另外 1.28 写出的批量 PDF 字节不同，20 篇的扫描引擎请求键变了，无法离线对比，重新请求又会混入 VLM 的波动。能回放的 11 篇输出逐字节相同。升级须连同分块的适配一起在全语料上评估，列入"以后" |
 | Q77 | §11.5 第 4 条（页眉页脚第 1 页身份信息保留上限） | ✅ 用户按建议决定（2026-09-26）：撤销。v2 按 §6.9 与 Q34 排除全部页眉页脚（含第 1 页），文字在 sidecar 可查 |
 | Q78 | 混合方案的标题低于运行 B（P5-2：0.685 对 0.774），Q72 退路甲的条件未满足，怎么办 | ✅ 用户决定（2026-09-26）：接受，按文档记录差距与原因（[P5-2 报告](../eval_reports/2026-09-26_p5-2_headings.md) §3）；阶段五收尾时在最终代码上再量一次。补充：真值标注本身由解析工具生成，偏离最合适的结果、不如我们的解析时，改标注并记入 [annotation_changes.md](annotation_changes.md)，可灵活处理 |
 
