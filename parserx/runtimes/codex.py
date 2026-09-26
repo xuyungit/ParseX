@@ -16,7 +16,8 @@
   keywords (``expected.md``, ``ground_truth`` …), other documents' directories,
   the tool snapshot and Codex's own home are forbidden; tools other than the
   shell (web search, MCP, sub-agents) and file edits inside the workspace or
-  export directory fail the run.
+  export directory fail the run.  Reading the workspace's own files instead of
+  using the tools is noted, not failed (user decision, 2026-09-26).
 """
 
 from __future__ import annotations
@@ -186,7 +187,7 @@ def timing_from_events(events: list[dict], times: list[float]) -> AgentTiming:
 
 # ── Audit ────────────────────────────────────────────────────────────────
 
-HitKind = Literal["forbidden", "outside", "workspace_write", "tool_type", "unknown_type"]
+HitKind = Literal["forbidden", "outside", "workspace_write", "tool_type", "unknown_type", "workspace_read"]
 
 
 class AuditHit(IRModel):
@@ -263,9 +264,13 @@ def audit_events(events: Iterable[dict], *, doc_dir: Path, home: Path, forbidden
     for item_id, item in items.items():
         kind = str(item.get("type"))
         if kind == "command_execution":
-            hit = _audit_command(item_id, str(item.get("command", "")), doc_dir, home, forbidden)
+            command = str(item.get("command", ""))
+            hit = _audit_command(item_id, command, doc_dir, home, forbidden)
             if hit is not None:
                 hits.append(hit)
+            elif (internal := _workspace_internals(command, doc_dir)):
+                notes.append(AuditHit(item=item_id, kind="workspace_read", evidence=command[:300],
+                                      detail=f"reads the workspace's own files instead of using the tools: {internal}"))
         elif kind == "file_change":
             for change in item.get("changes") or []:
                 path = _normal(doc_dir / str(change.get("path", "")))
@@ -285,6 +290,22 @@ def audit_events(events: Iterable[dict], *, doc_dir: Path, home: Path, forbidden
                 notes.append(AuditHit(item=item_id, kind="unknown_type", detail=f"unexpected item type {kind}",
                                       evidence=json.dumps(item, ensure_ascii=False)[:300]))
     return AuditResult(ok=not hits, hits=hits, notes=notes)
+
+
+_WS_PATH = re.compile(rf"(?<![\w.-])(?:\./)?ws/[^{_STOP}]+")
+_WS_IMAGES = ("ws/renders/", "ws/assets/")  # images the tools return for viewing
+
+
+def _workspace_internals(command: str, doc_dir: Path) -> str | None:
+    """A workspace file (state, call log …) a command names outside the tools; images handed back are fine."""
+    if re.search(r"(?:^|[\s'\"])\./px\b", command) and "python" not in command.split("./px", 1)[1][:12]:
+        return None  # a tool call: the tools read the workspace
+    text = command.replace(str(doc_dir) + "/", "")
+    for match in _WS_PATH.finditer(text):
+        path = match.group(0).removeprefix("./")
+        if not path.startswith(_WS_IMAGES):
+            return path
+    return None
 
 
 def _audit_command(item_id: str, command: str, doc_dir: Path, home: Path,

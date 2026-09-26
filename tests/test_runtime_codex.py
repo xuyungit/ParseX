@@ -151,3 +151,15 @@ def test_a_quoted_shell_prompt_is_not_a_home_path():
     quoted = _cmd(1, "./px tool ask_image --ws ws --question \"是否写有 [root@installserver ~]# openstack flavor show\" --json")
     assert _audit(quoted).ok
     assert not _audit(_cmd(2, "cat ~/.ssh/id_rsa")).ok and not _audit(_cmd(3, "cd ~ && ls")).ok
+
+
+def test_direct_reads_of_workspace_internals_are_noted_not_failed():
+    # user decision (2026-09-26): the workspace is read through the tools; reading its files directly is recorded
+    result = _audit(
+        _cmd(1, "/bin/zsh -lc \"python3 -c 'import json; print(json.load(open(\\\"ws/state.json\\\"))[\\\"id\\\"])'\""),
+        _cmd(2, f"/bin/zsh -lc 'tail -n 3 {DOC}/ws/calls.jsonl'"),
+        _cmd(3, "/bin/zsh -lc './px tool read --ws ws --page 1 --json'"),  # the tool itself: nothing to note
+        _cmd(4, f"/bin/zsh -lc 'file {DOC}/ws/renders/p1.png ws/assets/a-1.png'"),  # images the tools hand back
+    )
+    assert result.ok and result.hits == []
+    assert [(n.item, n.kind) for n in result.notes] == [("item_1", "workspace_read"), ("item_2", "workspace_read")]
