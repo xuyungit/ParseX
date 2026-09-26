@@ -12,25 +12,23 @@ dependencies = [
     "pillow>=10.0",
     "numpy>=1.26",
     "requests>=2.33.1",
-    "docling>=2.0",
     "python-dotenv>=1.2.2",
-    "python-docx>=1.2.0",
-    "pdfplumber>=0.11.9",
-    "pypdf>=6.9.2",
-    "llama-parse>=0.6.94",
     "rapidfuzz>=3.14.6",
     "jsonschema>=4.26.0",
     "rapid-layout>=1.2.1",
     "onnxruntime>=1.30.0",
     "rapidocr>=3.7.0",
+    "lxml>=6.1.3",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
-docx = ["docling>=2.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 bench = [
     "datasets>=3.0",
     "huggingface-hub>=0.25",
+    "pdfplumber>=0.11.10",
+    "python-docx>=1.2.0",
 ]
 
 [project.scripts]
@@ -43,14 +41,15 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "fonttools>=4.62.1",
+    "pdfplumber>=0.11.10",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "python-docx>=1.2.0",
 ]
 
 [tool.pytest.ini_options]
 markers = [
-    "live_e2e: calls real OCR/LLM/VLM services configured via .env",
+    "live_e2e: calls the real scan engine and VLM configured via .env",
     "live_layout: runs the real layout detector (downloads its model on first use)",
 ]
 addopts = "-m 'not live_layout'"

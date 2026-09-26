@@ -13,11 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pdfplumber
-from docx import Document as WordDocument
-from docx.document import Document as WordDocumentType
-from docx.table import Table
-from docx.text.paragraph import Paragraph
 from dotenv import load_dotenv
 
 from parserx.config.schema import ParserXConfig
@@ -111,6 +106,10 @@ class BuiltinDocPdfAdapter(ToolAdapter):
         )
 
     def _docx_to_markdown(self, path: Path) -> str:
+        from docx import Document as WordDocument  # the ``bench`` extra (python-docx)
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
         document = WordDocument(str(path))
         blocks: list[str] = []
 
@@ -145,6 +144,8 @@ class BuiltinDocPdfAdapter(ToolAdapter):
         return _join_markdown_blocks(blocks)
 
     def _pdf_to_markdown(self, path: Path) -> str:
+        import pdfplumber  # the ``bench`` extra
+
         blocks: list[str] = []
         with pdfplumber.open(path) as pdf:
             for page_number, page in enumerate(pdf.pages, start=1):
@@ -309,7 +310,10 @@ def _run_subprocess(cmd: list[str], *, cwd: Path) -> None:
     raise RuntimeError(detail)
 
 
-def _iter_block_items(parent: WordDocumentType):
+def _iter_block_items(parent):
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
     parent_element = parent.element.body
     for child in parent_element.iterchildren():
         tag = child.tag.rsplit("}", 1)[-1]
@@ -327,7 +331,7 @@ def _heading_level_from_style(style_name: str) -> int | None:
     return None
 
 
-def _table_rows(table: Table) -> list[list[str]]:
+def _table_rows(table) -> list[list[str]]:
     rows: list[list[str]] = []
     for row in table.rows:
         rows.append([_collapse_ws(cell.text) for cell in row.cells])

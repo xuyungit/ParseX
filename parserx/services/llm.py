@@ -578,11 +578,6 @@ def _is_structured_output_unsupported(exc: Exception) -> bool:
     return any(indicator in message for indicator in indicators)
 
 
-def create_llm_service(config: ServiceConfig) -> OpenAICompatibleService:
-    """Factory: create LLM service from config."""
-    return OpenAICompatibleService(config)
-
-
 def create_vlm_service(config: ServiceConfig) -> OpenAICompatibleService:
     """Factory: create VLM service from config."""
     return OpenAICompatibleService(config)

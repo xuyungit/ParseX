@@ -692,17 +692,17 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 ### 10.4 Python 依赖
 
-| 包 | 当前 | 处置 |
+阶段五 P5-5（2026-09-26）后与 `pyproject.toml` 一致：
+
+| 包 | 用途 | 位置 |
 |---|---|---|
-| pymupdf 1.27.2（最新 1.28.2） | 使用中 | 保留，阶段五升级 |
-| openai 2.30.0（最新 3.19.0） | 使用中 | 3.x 是大版本，验证后再升 |
-| pydantic 2.12.5、python-docx 1.2.0、requests、pillow、numpy、pyyaml、python-dotenv | 使用中 | 保留 |
-| docling 2.84.0 | 仅 DOCX provider | 阶段四移除 |
-| pdfplumber 0.11.9 | 仅 `tool_eval/adapters.py` | 移到 `bench` 可选依赖 |
-| pypdf、llama-parse | 无引用 | 删除 |
-| rapid-layout 1.2.1、onnxruntime | ✅ 已加入（P1-9） | 阶段一；pp_doc_layoutv3 模型首次使用时下载到 rapid-layout 包目录 |
-| jsonschema | ✅ 已显式加入（P1-1） | sidecar schema 校验（原先只经 docling-core 间接安装） |
-| rapidfuzz | 新增（2026-09-23） | 评测的 LCS 与精确编辑距离（Q21） |
+| pymupdf 1.27.2 | PDF 读取、渲染 | 主依赖；升级到 1.28 按 Q76 在阶段五最后单独评估 |
+| openai 2.30.0、httpx | VLM 客户端（服务层） | 主依赖；3.x 是大版本，列入"以后" |
+| pydantic、pyyaml、python-dotenv、pillow、numpy、requests、jsonschema、rapidfuzz、lxml | 数据模型、配置、图像、OCR jobs API、sidecar 校验、评测与读数比对、DOCX 直接读 OOXML | 主依赖（lxml、httpx 原先经 docling / openai 间接安装，现显式列出） |
+| rapid-layout、rapidocr、onnxruntime | 本地版面检测（§6.2）、本地读数（Q56） | 主依赖 |
+| pdfplumber、python-docx、datasets、huggingface-hub | `parserx tool-eval` 的内置对照解析器、OmniDocBench 下载 | 可选组 `bench`；pdfplumber、python-docx 也在 dev 组（测试造 DOCX） |
+| pytest、pytest-asyncio | 测试 | dev 组 |
+| ~~docling~~、~~pypdf~~、~~llama-parse~~、~~fonttools~~ | — | 已删除（docling 随 adapter:v1 与 v1 的 DOCX provider 退役；其余无引用） |
 
 ## 11. 代码迁移清单
 
@@ -753,6 +753,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 ### 11.4 删除（阶段五）
 
 `parserx/processors/chapter.py`、`processors/image.py` 的路由与纠正逻辑、`processors/vlm_review.py`、`builders/ocr.py` 中的结果整合与去重、`models/elements.py` 的自由字典、Docling 依赖、`pypdf`、`llama-parse`、根目录 `eng.traineddata`。
+
+✅ 阶段五已执行（P5-4、P5-5，2026-09-26）：连同 `processors/`、`providers/`、`builders/`、`assembly/`、`verification/` 整个删除（约 11,500 行，20 个测试文件），v1 的配置段与只对 v1 有效的命令行参数一并删除；v1 可从本地标签 `v1-final` 取回。
 
 ### 11.5 正确性要求登记（随模块替换迁移，不随测试删除消失）
 
