@@ -3,11 +3,12 @@
 One pass over PyMuPDF's ``rawdict`` per page:
 
 - every non-empty text line is a ledger item (``native_line``);
-- PyMuPDF text blocks become TEXT blocks with a PdfAnchor, a native
-  Observation and ``TextStyle`` evidence (dominant font size, bold);
+- text lines are grouped into paragraphs by the layout detector's text regions (``content/paragraphs.py``, Q80;
+  geometry where no region is): TEXT blocks with a PdfAnchor, a native Observation and ``TextStyle`` evidence
+  (dominant font size, bold).  The library's own blocks are not used: they change between versions;
 - ruled tables found by ``page.find_tables`` become TABLE blocks; the lines
   inside a table are accounted to it.  A ruled grid is a table only when it
-  holds text and, given a layout detector (``tables_seen``), the detector sees a
+  holds text and, given a layout detector (``layout``), the detector sees a
   table there too — otherwise the rules frame a drawing or a page of text, and
   the lines stay text (Phase 3 D3).  Each character belongs to one cell, the
   smallest holding it (a frame drawn around cells holds nothing of theirs, D6).
@@ -26,9 +27,6 @@ One pass over PyMuPDF's ``rawdict`` per page:
   native blocks of a pending page stay as the fallback until the scan engine
   succeeds.  On such a page every embedded image is part of the scan (SCAN
   block): the scan engine reads the whole page render, figures included.
-
-Phase 1 organises content by PyMuPDF blocks; assignment by layout-detector
-boxes is decided in Phase 4 from the shadow run (plan R4).
 """
 
 from __future__ import annotations
@@ -42,12 +40,12 @@ from pathlib import Path
 
 os.environ.setdefault("PYMUPDF_SUGGEST_LAYOUT_ANALYZER", "0")  # PyMuPDF prints an advert to stdout otherwise
 
-import fitz  # noqa: E402
+import pymupdf  # noqa: E402
 from pymupdf import table as pymupdf_table  # noqa: E402  (the page characters of the last find_tables)
 
 from parserx.content.extraction import Extraction  # noqa: E402
 from parserx.content.furniture import mark_furniture, mark_watermarks  # noqa: E402
-from parserx.content.order import reading_order, row_order  # noqa: E402
+from parserx.content.order import reading_order  # noqa: E402
 from parserx.content.quality import NativeVerdict, PageSignals, assess_native_layer  # noqa: E402
 from parserx.content.text import join_wrapped  # noqa: E402
 from parserx.ir import ids  # noqa: E402
@@ -59,11 +57,13 @@ from parserx.ir.decision import Decision  # noqa: E402
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
 from parserx.ir.observation import Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
+from parserx.content.paragraphs import group_lines  # noqa: E402
+from parserx.layout import labels  # noqa: E402
 from parserx.content.text import normalize_fullwidth_ascii  # noqa: E402
 from parserx.tables.grid import Cell, TableGrid  # noqa: E402
 
 ENGINE = "native_pdf"
-ENGINE_VERSION = f"pymupdf-{fitz.VersionBind}"
+ENGINE_VERSION = f"pymupdf-{pymupdf.VersionBind}"
 ACTOR = "program:content.pdf_native"
 _RENDER_DPI = 144  # inline images without an xref are rendered from the page
 
@@ -93,21 +93,24 @@ class _Region:
     asset: Asset | None = None
 
 
-def extract_pdf(path: Path | str, *, tables_seen: Callable[[fitz.Page], list[BBox]] | None = None) -> Extraction:
-    """*tables_seen*: the table regions a layout detector sees on a page (page points), asked only for pages where
-    ruled grids are found; None reads every ruled grid that holds text as a table."""
+def extract_pdf(path: Path | str, *, layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
+                check_tables: bool = True) -> Extraction:
+    """*layout*: the regions a layout detector sees on a page, (label, bbox in page points), asked for pages whose
+    text layer is usable: text regions make the paragraphs, table regions confirm ruled grids (*check_tables*).
+    None: paragraphs by geometry, and every ruled grid that holds text is read as a table."""
     ext = Extraction(format="pdf", engines={ENGINE: ENGINE_VERSION})
     off_direction: dict[str, str] = {}  # block id → text of blocks written across their page's text direction
-    with fitz.open(path) as doc:
+    with pymupdf.open(path) as doc:
         for index in range(doc.page_count):
-            off_direction.update(_extract_page(doc, doc[index], index + 1, ext, tables_seen))
+            off_direction.update(_extract_page(doc, doc[index], index + 1, ext, layout, check_tables))
     mark_furniture(ext)
     mark_watermarks(ext, off_direction)
     return ext
 
 
-def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
-                  tables_seen: Callable[[fitz.Page], list[BBox]] | None = None) -> dict[str, str]:
+def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extraction,
+                  layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
+                  check_tables: bool = True) -> dict[str, str]:
     rect = page.rect
     lines = _lines(page)
     for seq, line in enumerate(lines, 1):
@@ -117,9 +120,11 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
 
     regions: list[_Region] = []
     free = lines
+    detected = layout(page) if verdict.ok and lines and layout is not None else None
     if verdict.ok:
         grids = [t for t in _tables(page) if any(_glyph_in(g, t.bbox) for ln in lines for g in ln.glyphs if g[0].strip())]
-        seen = tables_seen(page) if lines and tables_seen is not None else None
+        seen = ([box for label, box in detected if labels.LAYOUT.get(label) == BlockKind.TABLE]
+                if detected is not None and check_tables else None)
         accepted: list[BBox] = []
         for table in grids:
             if seen is not None and not any(_overlap(table.bbox, box) for box in seen):
@@ -142,12 +147,9 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
                 free = [ln for ln in free if ln not in inside]
                 accepted.append(bbox)
                 regions.append(_Region(BlockKind.TABLE, bbox, inside, grid=grid))
-    by_block: dict[int, list[_Line]] = {}
-    for line in free:
-        by_block.setdefault(line.block, []).append(line)
-    for group in by_block.values():
-        group = [group[i] for i in row_order([ln.bbox for ln in group])]  # streams can be out of visual order
-        regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in group]), group))
+    for group in group_lines(free, detected):  # paragraphs, each in visual order (Q80)
+        members = [free[i] for i in group]
+        regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in members]), members))
     for info in images:
         asset = ext.add_asset(*_image_asset(doc, page, n, info))
         kind = BlockKind.FIGURE if verdict.ok else BlockKind.SCAN
@@ -184,8 +186,8 @@ def _extract_page(doc: fitz.Document, page: fitz.Page, n: int, ext: Extraction,
 # ── Lines, signals, tables ──────────────────────────────────────────────
 
 
-def _lines(page: fitz.Page) -> list[_Line]:
-    raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+def _lines(page: pymupdf.Page) -> list[_Line]:
+    raw = page.get_text("rawdict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)
     ctm = page.transformation_matrix
     out: list[_Line] = []
     for index, block in enumerate(raw.get("blocks", [])):
@@ -198,7 +200,7 @@ def _lines(page: fitz.Page) -> list[_Line]:
                 continue
             (size, bold, font) = _line_typography(spans)
             chars = [ch for span in spans for ch in span.get("chars", ())]
-            origins = tuple(_origin_key(ch["c"], fitz.Point(ch["origin"]) * ctm) for ch in chars)
+            origins = tuple(_origin_key(ch["c"], pymupdf.Point(ch["origin"]) * ctm) for ch in chars)
             measured = [m for m in (_monospaced(span) for span in spans) if m is not None]
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
                              chars=len("".join(text.split())), size=size, bold=bold, font=font,
@@ -280,7 +282,7 @@ def _glyph_in(glyph: tuple[str, float, float, float, float], bbox) -> bool:
     return bbox[0] <= h < bbox[2] and bbox[1] <= v < bbox[3]
 
 
-def _signals(page: fitz.Page, lines: list[_Line], images: list[dict]) -> PageSignals:
+def _signals(page: pymupdf.Page, lines: list[_Line], images: list[dict]) -> PageSignals:
     page_area = page.rect.width * page.rect.height or 1.0
     areas = [_area(tuple(info["bbox"])) for info in images]
     dominant = images[areas.index(max(areas))]["bbox"] if images else None
@@ -298,14 +300,14 @@ def _signals(page: fitz.Page, lines: list[_Line], images: list[dict]) -> PageSig
     )
 
 
-def _tables(page: fitz.Page) -> list:
+def _tables(page: pymupdf.Page) -> list:
     try:
         return list(page.find_tables().tables)
     except Exception:  # noqa: BLE001 - table detection is optional evidence; the lines stay as text
         return []
 
 
-def _unruled_table(page: fitz.Page, box: BBox, free: list[_Line]) -> tuple[list[_Line], TableGrid, BBox] | None:
+def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[list[_Line], TableGrid, BBox] | None:
     """The table in a region the layout detector calls a table, from the alignment of its text (no ruled lines):
     (lines it holds, grid, bbox), or None unless the text aligns into two or more non-empty rows and columns — the
     detector and the alignment are two independent readings that must agree.  The region grows to every line whose
@@ -315,7 +317,7 @@ def _unruled_table(page: fitz.Page, box: BBox, free: list[_Line]) -> tuple[list[
         return None
     bbox = _union([box, *(ln.bbox for ln in inside)])
     try:
-        found = page.find_tables(clip=fitz.Rect(bbox), vertical_strategy="text", horizontal_strategy="text").tables
+        found = page.find_tables(clip=pymupdf.Rect(bbox), vertical_strategy="text", horizontal_strategy="text").tables
     except Exception:  # noqa: BLE001 - table detection is optional evidence
         return None
     if not found:
@@ -430,7 +432,7 @@ def _origin_key(char: str, origin) -> tuple[str, float, float]:
 # ── Images ──────────────────────────────────────────────────────────────
 
 
-def _image_asset(doc: fitz.Document, page: fitz.Page, n: int, info: dict) -> tuple[Asset, bytes]:
+def _image_asset(doc: pymupdf.Document, page: pymupdf.Page, n: int, info: dict) -> tuple[Asset, bytes]:
     bbox = _round(info["bbox"])
     source = PdfAnchor(page=n, bbox=bbox, coord_space="page_pt")
     payload = _xref_image(doc, info.get("xref", 0))
@@ -438,13 +440,13 @@ def _image_asset(doc: fitz.Document, page: fitz.Page, n: int, info: dict) -> tup
         data, media_type, width, height = payload
         return Asset.from_bytes(data, media_type=media_type, width=width, height=height,
                                 role="original", source=source), data
-    pix = page.get_pixmap(clip=fitz.Rect(bbox), dpi=_RENDER_DPI)
+    pix = page.get_pixmap(clip=pymupdf.Rect(bbox), dpi=_RENDER_DPI)
     data = pix.tobytes("png")
     return Asset.from_bytes(data, media_type="image/png", width=pix.width, height=pix.height,
                             role="render", source=source, dpi=_RENDER_DPI), data
 
 
-def _xref_image(doc: fitz.Document, xref: int) -> tuple[bytes, str, int, int] | None:
+def _xref_image(doc: pymupdf.Document, xref: int) -> tuple[bytes, str, int, int] | None:
     """Original image bytes; formats browsers cannot show are converted to PNG."""
     if not xref:
         return None
@@ -465,9 +467,9 @@ def _xref_image(doc: fitz.Document, xref: int) -> tuple[bytes, str, int, int] | 
         return buf.getvalue(), "image/png", image.width, image.height
     if ext in ("png", "jpeg"):
         return data, f"image/{ext}", info["width"], info["height"]
-    pix = fitz.Pixmap(doc, xref)
+    pix = pymupdf.Pixmap(doc, xref)
     if pix.n - pix.alpha >= 4:
-        pix = fitz.Pixmap(fitz.csRGB, pix)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
     return pix.tobytes("png"), "image/png", pix.width, pix.height
 
 

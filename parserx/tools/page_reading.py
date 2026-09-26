@@ -10,7 +10,7 @@ are local and kept in the derived cache, so a replay does not load the models.  
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 
 from parserx.content.scan import render_page_at
 from parserx.ir.state import DocumentState, PageReading, ReadLine
@@ -34,7 +34,7 @@ def read_pages(ctx: ToolContext, pages: list[int]) -> int:
     reader, detector, cache = ctx.reader(), ctx.detector(), ctx.cache
     dpi, layout_dpi = ctx.config.tools.reading_dpi, ctx.config.layout.page_dpi
     readings = []
-    with fitz.open(ctx.ws.source_path) as doc:
+    with pymupdf.open(ctx.ws.source_path) as doc:
         for n in pages:
             back = doc[n - 1].derotation_matrix
             png, _, _ = render_page_at(doc, n, dpi)
@@ -52,8 +52,8 @@ def read_pages(ctx: ToolContext, pages: list[int]) -> int:
     return len(readings)
 
 
-def _page_box(box, dpi: int, back: fitz.Matrix) -> tuple[float, float, float, float]:
+def _page_box(box, dpi: int, back: pymupdf.Matrix) -> tuple[float, float, float, float]:
     """A box in render pixels as page points of the unrotated page."""
     k = 72.0 / dpi
-    rect = fitz.Rect(box[0] * k, box[1] * k, box[2] * k, box[3] * k) * back
+    rect = pymupdf.Rect(box[0] * k, box[1] * k, box[2] * k, box[3] * k) * back
     return tuple(round(v, 1) for v in (rect.x0, rect.y0, rect.x1, rect.y1))

@@ -3,7 +3,7 @@ readings); does the merge keep every character?  Usage: formula_merge_experiment
 import sys, tempfile, json, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])); sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fitz
+import pymupdf
 from formula_page_experiment import lost, _centre_in
 from parserx.config.schema import load_config
 from parserx.content import scan
@@ -23,7 +23,7 @@ PROMPT = ("你是编辑。图中是文档的一段。给你两份读数：A 是 
           "B 是 OCR（有 LaTeX 结构，个别字符可能认错、可能漏掉公式编号）。请以图为准，输出这段的最终文字：正文照抄，公式用 LaTeX（行内 $…$，"
           "行间 $$…$$），字符以 A 为准、结构以 B 为准。只输出结果。")
 tasks = []
-with fitz.open(gt / "input.pdf") as pdf:
+with pymupdf.open(gt / "input.pdf") as pdf:
     pages = list(range(1, pdf.page_count + 1))
     results = ctx.ocr().recognize_pdf(scan.batch_pdf(pdf, pages))
     native = [b for b in state.blocks if b.kind.value == "text" and b.text and isinstance(b.anchors[0], PdfAnchor)]
@@ -40,7 +40,7 @@ with fitz.open(gt / "input.pdf") as pdf:
             miss = sum(lost(text, content).values())
             if miss == 0: continue
             path = S / f"merge_{doc}_{len(tasks)}.png"
-            path.write_bytes(pdf[n - 1].get_pixmap(dpi=200, clip=fitz.Rect(box) + (-4, -4, 4, 4)).tobytes("png"))
+            path.write_bytes(pdf[n - 1].get_pixmap(dpi=200, clip=pymupdf.Rect(box) + (-4, -4, 4, 4)).tobytes("png"))
             tasks.append({"path": path, "native": text, "ocr": content, "miss": miss, "lost": "".join(sorted(lost(text, content).elements()))})
 vlm = ctx.vlm("low")
 t0 = time.monotonic()

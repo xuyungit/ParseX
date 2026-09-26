@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import fitz
+import pymupdf
 
 VECTOR_MEDIA = {"image/x-emf": ".emf", "image/emf": ".emf", "image/x-wmf": ".wmf", "image/wmf": ".wmf"}
 RENDERER = "libreoffice"
@@ -88,7 +88,7 @@ def render_vectors(items: dict[str, tuple[bytes, str]]) -> Rendered:
 def _drawing(pdf: bytes) -> str | None:
     """The LibreOffice version when *pdf* was made from a drawing (Draw), None when from anything else."""
     try:
-        with fitz.open(stream=pdf, filetype="pdf") as doc:
+        with pymupdf.open(stream=pdf, filetype="pdf") as doc:
             meta = doc.metadata or {}
     except Exception:  # noqa: BLE001 - unreadable output: not a drawing
         return None
@@ -101,7 +101,7 @@ def _drawing(pdf: bytes) -> str | None:
 def render_drawing(pdf: bytes) -> bytes | None:
     """What is drawn on the first page of *pdf*, cropped to its extent, as PNG; None when nothing is drawn."""
     try:
-        doc = fitz.open(stream=pdf, filetype="pdf")
+        doc = pymupdf.open(stream=pdf, filetype="pdf")
     except Exception:  # noqa: BLE001 - LibreOffice wrote something PyMuPDF cannot open: no rendering
         return None
     with doc:
@@ -109,9 +109,9 @@ def render_drawing(pdf: bytes) -> bytes | None:
             return None
         page = doc[0]
         area = page.rect.get_area()
-        drawn = fitz.Rect()
+        drawn = pymupdf.Rect()
         for kind, box in page.get_bboxlog():
-            rect = fitz.Rect(box) & page.rect
+            rect = pymupdf.Rect(box) & page.rect
             if not kind.startswith(_DRAWN) or rect.is_empty:
                 continue
             if kind == "fill-path" and rect.get_area() >= _BACKGROUND * area:
@@ -120,4 +120,4 @@ def render_drawing(pdf: bytes) -> bytes | None:
         if drawn.is_empty:
             return None
         zoom = min(DPI / 72, MAX_SIDE / max(drawn.width, drawn.height))
-        return page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=drawn, alpha=False).tobytes("png")
+        return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=drawn, alpha=False).tobytes("png")

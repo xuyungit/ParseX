@@ -35,9 +35,9 @@ def has_outline(doc_dir: Path, expected_md: str | None = None) -> bool:
         return False
     pdf = doc_dir / "input.pdf"
     if pdf.is_file():
-        import fitz
+        import pymupdf
 
-        with fitz.open(pdf) as doc:
+        with pymupdf.open(pdf) as doc:
             if doc.page_count <= MAX_SHORT_PAGES:
                 return False
     return True

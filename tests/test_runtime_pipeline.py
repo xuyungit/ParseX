@@ -3,7 +3,7 @@
 import io
 import json
 
-import fitz
+import pymupdf
 import pytest
 from docx import Document
 from PIL import Image
@@ -52,12 +52,12 @@ def _png(w, h, seed):
 
 @pytest.fixture
 def pdf(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 90), "Annual Report", fontsize=20, fontname="hebo")
     for i in range(8):
         page.insert_text((72, 140 + 16 * i), f"Body line {i} of the report with enough words in it.", fontsize=10)
-    page.insert_image(fitz.Rect(72, 400, 372, 625), stream=_png(400, 300, 1))
+    page.insert_image(pymupdf.Rect(72, 400, 372, 625), stream=_png(400, 300, 1))
     scanned = doc.new_page(width=595, height=842)
     scanned.insert_image(scanned.rect, stream=_png(300, 424, 2))
     path = tmp_path / "doc.pdf"
@@ -132,7 +132,7 @@ def test_docx_headings_the_styles_do_not_declare_join_the_outline(tmp_path):
 
 
 def test_v2_switch_returns_a_parse_result_with_sidecar(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     doc.new_page().insert_text((72, 72), "Native only", fontsize=11)
     path = tmp_path / "native.pdf"
     doc.save(path)

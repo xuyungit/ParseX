@@ -2,7 +2,7 @@
 
 import json
 
-import fitz
+import pymupdf
 
 from parserx.eval.outline import has_outline
 
@@ -14,7 +14,7 @@ def _doc(tmp_path, name, expected, pages=None, meta=None):
     d.mkdir()
     (d / "expected.md").write_text(expected, encoding="utf-8")
     if pages:
-        pdf = fitz.open()
+        pdf = pymupdf.open()
         for _ in range(pages):
             pdf.new_page()
         pdf.save(d / "input.pdf")

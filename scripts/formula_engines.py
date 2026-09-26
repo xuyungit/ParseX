@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-import fitz  # noqa: E402
+import pymupdf  # noqa: E402
 from rapidfuzz import fuzz  # noqa: E402
 
 from parserx.config.schema import load_config  # noqa: E402
@@ -60,14 +60,14 @@ for doc in DOCS:
     workspace_init(gt / "input.pdf", tmp / "ws", config=config)
     ctx = ToolContext(Workspace.open(tmp / "ws"), config)
     regions = []
-    with fitz.open(gt / "input.pdf") as pdf:
+    with pymupdf.open(gt / "input.pdf") as pdf:
         for page in pdf:
             dpi = config.layout.page_dpi
             png = page.get_pixmap(dpi=dpi).tobytes("png")
             for r in detect_cached(ctx.detector(), png, ctx.cache):
                 if r.label != "display_formula":
                     continue
-                rect = fitz.Rect(*(v * 72 / dpi for v in r.bbox)) + (-3, -3, 3, 3)
+                rect = pymupdf.Rect(*(v * 72 / dpi for v in r.bbox)) + (-3, -3, 3, 3)
                 native = page.get_text("text", clip=rect).strip()
                 crop = page.get_pixmap(dpi=200, clip=rect)
                 regions.append({"page": page.number + 1, "native": native, "png": crop.tobytes("png"),

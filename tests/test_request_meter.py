@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
-import fitz
+import pymupdf
 
 from parserx.config.schema import OCRBuilderConfig
 from parserx.scheduling import MeteredService, RequestMeter, ServiceGateway
@@ -23,7 +23,7 @@ class _FakeLLM:
 
 
 def _pdf_bytes(pages: int) -> bytes:
-    doc = fitz.open()
+    doc = pymupdf.open()
     for _ in range(pages):
         doc.new_page()
     return doc.tobytes()

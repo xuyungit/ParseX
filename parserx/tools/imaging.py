@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import fitz
+import pymupdf
 from PIL import Image
 
 from parserx.content.scan import render_page_at
@@ -20,7 +20,7 @@ from parserx.ir.base import Affine, BBox
 
 
 def page_png(source: Path, n: int, dpi: int) -> tuple[bytes, int, int]:
-    with fitz.open(source) as doc:
+    with pymupdf.open(source) as doc:
         return render_page_at(doc, n, dpi)
 
 

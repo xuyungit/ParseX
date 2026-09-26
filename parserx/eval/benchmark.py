@@ -131,10 +131,10 @@ def _page_to_expected_md(page: dict) -> str:
 
 def _image_to_pdf(image_path: Path, pdf_path: Path) -> None:
     """Convert a page image to a single-page PDF using PyMuPDF."""
-    import fitz
+    import pymupdf
 
-    doc = fitz.open()
-    img = fitz.open(str(image_path))
+    doc = pymupdf.open()
+    img = pymupdf.open(str(image_path))
     # Get image dimensions
     page = img[0]
     rect = page.rect

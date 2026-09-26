@@ -5,7 +5,7 @@ import shutil
 import struct
 import zipfile
 
-import fitz
+import pymupdf
 import pytest
 from docx import Document
 from PIL import Image
@@ -39,7 +39,7 @@ def _about(size, expected) -> bool:
 
 
 def _pdf(draw) -> bytes:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.draw_rect(page.rect, color=None, fill=(1, 1, 1))  # the page background LibreOffice paints
     draw(page)
@@ -47,7 +47,7 @@ def _pdf(draw) -> bytes:
 
 
 def test_the_drawing_is_rendered_without_the_page_around_it():
-    png = vector.render_drawing(_pdf(lambda p: p.draw_rect(fitz.Rect(100, 200, 244, 272), color=None, fill=(0, 0, 1))))
+    png = vector.render_drawing(_pdf(lambda p: p.draw_rect(pymupdf.Rect(100, 200, 244, 272), color=None, fill=(0, 0, 1))))
     with Image.open(io.BytesIO(png)) as image:
         assert _about(image.size, (400, 200))  # 2 × 1 inch at 200 dpi
         assert image.getpixel((200, 100)) == (0, 0, 255)
@@ -59,7 +59,7 @@ def test_a_blank_drawing_gives_nothing():
 
 def test_large_drawings_are_capped(monkeypatch):
     monkeypatch.setattr(vector, "MAX_SIDE", 1000)
-    png = vector.render_drawing(_pdf(lambda p: p.draw_rect(fitz.Rect(0, 0, 595, 421), color=None, fill=(1, 0, 0))))
+    png = vector.render_drawing(_pdf(lambda p: p.draw_rect(pymupdf.Rect(0, 0, 595, 421), color=None, fill=(1, 0, 0))))
     with Image.open(io.BytesIO(png)) as image:
         assert _about(image.size, (1000, 708))
 

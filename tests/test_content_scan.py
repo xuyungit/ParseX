@@ -2,7 +2,7 @@
 
 import io
 
-import fitz
+import pymupdf
 from PIL import Image
 
 from parserx.content.scan import PageScan, batch_pdf, page_blocks, scan_order
@@ -116,15 +116,15 @@ def test_malformed_table_html_is_kept_as_text():
 
 
 def test_batch_pdf_is_byte_stable(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     for i in range(3):
         doc.new_page().insert_text((72, 72), f"page {i + 1}")
     path = tmp_path / "src.pdf"
     doc.save(path)
-    with fitz.open(path) as src:
+    with pymupdf.open(path) as src:
         a, b = batch_pdf(src, [1, 3]), batch_pdf(src, [1, 3])
     assert a == b
-    with fitz.open(stream=a, filetype="pdf") as sub:
+    with pymupdf.open(stream=a, filetype="pdf") as sub:
         assert [p.get_text().strip() for p in sub] == ["page 1", "page 3"]
 
 
@@ -156,7 +156,7 @@ def test_images_batch_into_a_stable_pdf_one_page_each():
     images = [(_png_bytes(400, 200), 400, 200), (_png_bytes(300, 600), 300, 600)]
     data = image_batch_pdf(images)
     assert data == image_batch_pdf(images)
-    with fitz.open(stream=data, filetype="pdf") as pdf:
+    with pymupdf.open(stream=data, filetype="pdf") as pdf:
         assert [(round(p.rect.width), round(p.rect.height)) for p in pdf] == [(400, 200), (300, 600)]
 
 

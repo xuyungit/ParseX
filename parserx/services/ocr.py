@@ -275,10 +275,10 @@ def _page_count(file_bytes: bytes, mime: str) -> int:
     """Pages submitted in one job: the PDF page count, or 1 for an image."""
     if mime != "application/pdf":
         return 1
-    import fitz  # PyMuPDF
+    import pymupdf  # PyMuPDF
 
     try:
-        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+        with pymupdf.open(stream=file_bytes, filetype="pdf") as doc:
             return doc.page_count
     except Exception:
         return 0

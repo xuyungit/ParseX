@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-import fitz
+import pymupdf
 
 from parserx.content import scan
 from parserx.content.text import join_wrapped
@@ -95,7 +95,7 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
     source = ctx.ws.source_path
 
     def fetch(batch):
-        with fitz.open(source) as doc:
+        with pymupdf.open(source) as doc:
             data = scan.batch_pdf(doc, batch)
         return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
 
@@ -125,8 +125,8 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
         if not _lost(state, n, natives, blocks, native_text, reading_text):
             continue
         box = _union([blocks[b].anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading])
-        with fitz.open(source) as doc:
-            png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=fitz.Rect(box) + (-4, -4, 4, 4)).tobytes("png")
+        with pymupdf.open(source) as doc:
+            png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=pymupdf.Rect(box) + (-4, -4, 4, 4)).tobytes("png")
         path = ctx.ws.root / "renders" / f"formula-{natives[0]}.png"
         write_once(path, png)
         need_editor.append((index, path, native_text, reading_text))

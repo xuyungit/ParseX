@@ -3,7 +3,7 @@
 import json
 import threading
 
-import fitz
+import pymupdf
 import httpx2
 import openai
 import pytest
@@ -273,7 +273,7 @@ def test_parsed_answer_is_never_requested_again():
 
 
 def _pdf(pages: int) -> bytes:
-    doc = fitz.open()
+    doc = pymupdf.open()
     for _ in range(pages):
         doc.new_page()
     return doc.tobytes()

@@ -2,7 +2,7 @@
 
 import io
 
-import fitz
+import pymupdf
 import pytest
 from PIL import Image
 
@@ -25,7 +25,7 @@ def _png(w=64, h=48, color=(200, 30, 30)) -> bytes:
 
 @pytest.fixture
 def pdf_path(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     # written out of visual order: the extractor must restore top-to-bottom, left-to-right
     page.insert_text((72, 400), "Closing paragraph first line\nand its second line", fontsize=11)
@@ -33,7 +33,7 @@ def pdf_path(tmp_path):
     page.insert_text((320, 200), "Right column", fontsize=11)
     page.insert_text((72, 200), "Left column", fontsize=11)
     page.insert_text((72, 300), "中文段落内容", fontsize=11, fontname="china-s")
-    page.insert_image(fitz.Rect(72, 500, 136, 548), stream=_png())
+    page.insert_image(pymupdf.Rect(72, 500, 136, 548), stream=_png())
     scanned = doc.new_page(width=595, height=842)
     scanned.insert_image(scanned.rect, stream=_png(300, 420, (90, 90, 90)))
     path = tmp_path / "doc.pdf"
@@ -45,7 +45,7 @@ def test_blocks_follow_visual_order_with_styles(pdf_path):
     ext = extract_pdf(pdf_path)
     page1 = [b for b in ext.blocks if isinstance(b.anchors[0], PdfAnchor) and b.anchors[0].page == 1]
     texts = [b.text for b in page1 if b.kind == BlockKind.TEXT]
-    assert texts == ["Chapter One", "Left column Right column", "中文段落内容",
+    assert texts == ["Chapter One", "Left column", "Right column", "中文段落内容",  # a column gap is not one line
                      "Closing paragraph first line\nand its second line"]
     assert [b.id for b in page1] == [f"b-p001-{i:04d}" for i in range(1, len(page1) + 1)]
     title = page1[0]
@@ -93,7 +93,7 @@ def test_extraction_is_deterministic(pdf_path):
 
 
 def test_line_based_table_becomes_a_grid(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     xs, ys = [72, 200, 328], [100, 130, 160]
     for x in xs:
@@ -189,7 +189,7 @@ def test_single_column_with_short_lines_reads_top_to_bottom():
 
 
 def test_two_column_page_extracts_in_column_order(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     for x, side in ((57, "Left"), (306, "Right")):  # typeset column by column, as layout programs write them
         for i in range(20):
@@ -201,10 +201,10 @@ def test_two_column_page_extracts_in_column_order(tmp_path):
 
 
 def test_invisible_text_over_tiled_images_is_an_ocr_layer(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
-    page.insert_image(fitz.Rect(0, 0, 595, 400), stream=_png(200, 134))  # a scan split into two tiles
-    page.insert_image(fitz.Rect(0, 400, 595, 842), stream=_png(200, 150, (10, 10, 10)))
+    page.insert_image(pymupdf.Rect(0, 0, 595, 400), stream=_png(200, 134))  # a scan split into two tiles
+    page.insert_image(pymupdf.Rect(0, 400, 595, 842), stream=_png(200, 150, (10, 10, 10)))
     page.insert_text((72, 100), "中华人民共和压业标准" * 3, fontsize=11, fontname="china-s", render_mode=3)
     path = tmp_path / "searchable-scan.pdf"
     doc.save(path)
@@ -216,7 +216,7 @@ def test_invisible_text_over_tiled_images_is_an_ocr_layer(tmp_path):
 
 
 def _paged_pdf(tmp_path, pages, header=None, footer=None, name="paged.pdf"):
-    doc = fitz.open()
+    doc = pymupdf.open()
     for n in range(1, pages + 1):
         page = doc.new_page(width=595, height=842)
         if header:
@@ -261,7 +261,7 @@ _ROWS = [("名称", "数量", "说明"), ("甲", "8", "第一项"), ("乙", "12"
 
 def _stamped_pdf(tmp_path, pages, stamp=None, cell_label=None, name="stamped.pdf"):
     """A ruled 3×3 table per page; *stamp* is drawn at 45° across it, *cell_label* upright-rotated inside one cell."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     xs, ys = [72, 232, 392, 522], [100, 160, 220, 280]
     for _ in range(pages):
         page = doc.new_page(width=595, height=842)
@@ -276,8 +276,8 @@ def _stamped_pdf(tmp_path, pages, stamp=None, cell_label=None, name="stamped.pdf
             page.insert_text((200, 150), cell_label, fontsize=11, fontname="china-s", rotate=90)
         page.insert_text((72, 400), "表后正文", fontsize=11, fontname="china-s")
         if stamp:
-            pivot = fitz.Point(100, 330)
-            page.insert_text(pivot, stamp, fontsize=40, morph=(pivot, fitz.Matrix(45)))
+            pivot = pymupdf.Point(100, 330)
+            page.insert_text(pivot, stamp, fontsize=40, morph=(pivot, pymupdf.Matrix(45)))
     path = tmp_path / name
     doc.save(path)
     return path
@@ -326,7 +326,7 @@ def _ruled(page, xs, ys):
 
 
 def test_a_row_of_aligned_items_without_rules_is_split_into_rows(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     _ruled(page, [72, 250, 480], [100, 116, 200])  # rules only above, below the header and at the bottom
     page.insert_text((78, 111), "Category", fontsize=9)
@@ -343,7 +343,7 @@ def test_a_row_of_aligned_items_without_rules_is_split_into_rows(tmp_path):
 
 
 def test_a_row_whose_cells_just_wrap_stays_one_row(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     _ruled(page, [72, 250, 480], [100, 116, 200])
     page.insert_text((78, 111), "Name", fontsize=9)
@@ -353,7 +353,7 @@ def test_a_row_whose_cells_just_wrap_stays_one_row(tmp_path):
         words, line, lines = text.split(), "", []
         for word in words:  # fill each line to the cell's width, as a wrapping paragraph does
             trial = f"{line} {word}".strip()
-            if fitz.get_text_length(trial, fontsize=9) > x1 - x0 - 12 and line:
+            if pymupdf.get_text_length(trial, fontsize=9) > x1 - x0 - 12 and line:
                 lines.append(line)
                 line = word
             else:
@@ -369,7 +369,7 @@ def test_a_row_whose_cells_just_wrap_stays_one_row(tmp_path):
 
 
 def test_a_ruled_grid_without_text_is_no_table(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     _ruled(page, [100, 150, 200, 250], [100, 130])  # boxes of a diagram
     page.insert_text((72, 300), "Figure 8: Model parallel training", fontsize=9)
@@ -380,7 +380,7 @@ def test_a_ruled_grid_without_text_is_no_table(tmp_path):
 
 
 def test_a_grid_the_layout_detector_does_not_see_is_read_as_text(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     _ruled(page, [72, 400, 520], [100, 300])  # a frame around body text and a margin note
     page.insert_text((80, 120), "1. Deployment", fontsize=11)
@@ -388,12 +388,12 @@ def test_a_grid_the_layout_detector_does_not_see_is_read_as_text(tmp_path):
     page.insert_text((405, 120), "Comment: how is it checked?", fontsize=7)
     path = tmp_path / "framed.pdf"
     doc.save(path)
-    seen_nothing = extract_pdf(path, tables_seen=lambda page: [])
+    seen_nothing = extract_pdf(path, layout=lambda page: [])
     assert not any(b.kind == BlockKind.TABLE for b in seen_nothing.blocks)
     text = " ".join(b.text for b in seen_nothing.blocks)
     assert "The inventory file lists every group." in text and "Comment: how is it checked?" in text
     assert any("layout detector" in w for w in seen_nothing.warnings)
-    seen_table = extract_pdf(path, tables_seen=lambda page: [(70.0, 98.0, 525.0, 305.0)])
+    seen_table = extract_pdf(path, layout=lambda page: [("table", (70.0, 98.0, 525.0, 305.0))])
     assert any(b.kind == BlockKind.TABLE for b in seen_table.blocks)
     assert any(b.kind == BlockKind.TABLE for b in extract_pdf(path).blocks)  # no detector: grids as found
 
@@ -410,7 +410,7 @@ def test_each_character_belongs_to_the_smallest_cell_holding_it():
 
 def test_monospaced_lines_are_measured_from_glyph_widths(tmp_path):
     # P4-6: code is set in a monospaced face; the PDF's font flags do not always say so, the glyph widths do
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 90), "The deploy step runs the following command:", fontsize=11, fontname="helv")
     page.insert_text((72, 130), "parted /dev/sdf -s -- mklabel gpt\nkolla-ansible -i multinode deploy",
@@ -463,7 +463,7 @@ def test_monospaced_text_renders_as_a_code_block_with_its_lines():
 
 
 def _three_line_table(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 80), "The damage cases are listed in the table below, one row per case.", fontsize=10)
     page.draw_line((72, 100), (420, 100))
@@ -485,7 +485,7 @@ def test_a_table_without_ruled_columns_where_the_detector_sees_one(tmp_path):
     # P4-6: three-line tables (horizontal rules only) are read from the alignment of their text inside the region
     # the layout detector marks as a table; both readings must agree (two or more rows and columns)
     path, region = _three_line_table(tmp_path)
-    ext = extract_pdf(path, tables_seen=lambda page: [region])
+    ext = extract_pdf(path, layout=lambda page: [("table", region)])
     tables = [b for b in ext.blocks if b.kind == BlockKind.TABLE]
     assert len(tables) == 1
     rows = [[c.content if c else "" for c in row] for row in tables[0].cells.slot_matrix()]
@@ -494,17 +494,17 @@ def test_a_table_without_ruled_columns_where_the_detector_sees_one(tmp_path):
     assert any(t.startswith("The damage cases") for t in texts) and any(t.startswith("The values") for t in texts)
     assert all(e.disposition == "output" for e in ext.ledger)
     # without the detector's region the same page is text only
-    assert not [b for b in extract_pdf(path, tables_seen=lambda page: []).blocks if b.kind == BlockKind.TABLE]
+    assert not [b for b in extract_pdf(path, layout=lambda page: []).blocks if b.kind == BlockKind.TABLE]
 
 
 def test_a_block_of_several_lines_spans_every_line(tmp_path):
     # §11.5 (from v1's line-unwrap merge): joining lines into one block keeps every line's extent in its anchor
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "Short\nand a considerably longer middle line\nend", fontsize=11)
     path = tmp_path / "lines.pdf"
     doc.save(path)
-    lines = [ln["bbox"] for b in fitz.open(path)[0].get_text("dict")["blocks"] for ln in b["lines"]]
+    lines = [ln["bbox"] for b in pymupdf.open(path)[0].get_text("dict")["blocks"] for ln in b["lines"]]
     ext = extract_pdf(path)
     (block,) = [b for b in ext.blocks if b.kind == BlockKind.TEXT]
     assert block.text.split("\n") == ["Short", "and a considerably longer middle line", "end"]
@@ -528,11 +528,11 @@ def test_gaps_between_glyphs_are_word_spaces_except_between_ideographs():
 
 def test_a_lines_face_is_the_face_of_its_main_script(tmp_path):
     # a CJK line with a little inline code is set in its CJK face; a line mostly of code, in the code's face
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
-    page.insert_htmlbox(fitz.Rect(72, 72, 500, 90), "<p>删除故障的逻辑卷 <code>ab</code></p>")
-    page.insert_htmlbox(fitz.Rect(72, 200, 500, 218), "<p>停止 <code>docker stop ceph_osd_6 now</code></p>")
-    page.insert_htmlbox(fitz.Rect(72, 300, 500, 318), "<p>4.&nbsp;&nbsp;&nbsp;&nbsp;换盘</p>")  # number and spaces in Latin
+    page.insert_htmlbox(pymupdf.Rect(72, 72, 500, 90), "<p>删除故障的逻辑卷 <code>ab</code></p>")
+    page.insert_htmlbox(pymupdf.Rect(72, 200, 500, 218), "<p>停止 <code>docker stop ceph_osd_6 now</code></p>")
+    page.insert_htmlbox(pymupdf.Rect(72, 300, 500, 318), "<p>4.&nbsp;&nbsp;&nbsp;&nbsp;换盘</p>")  # number and spaces in Latin
     path = tmp_path / "mixed.pdf"
     doc.save(path)
     fonts = {b.text.split()[0]: b.observations[0].style.font for b in extract_pdf(path).blocks

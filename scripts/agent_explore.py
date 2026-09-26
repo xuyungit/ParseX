@@ -252,9 +252,9 @@ def _forbidden(args) -> dict[str, Path]:
 
 def _pages(path: Path) -> int | None:
     if path.suffix.lower() == ".pdf":
-        import fitz
+        import pymupdf
 
-        with fitz.open(path) as pdf:
+        with pymupdf.open(path) as pdf:
             return pdf.page_count
     try:
         with zipfile.ZipFile(path) as zf:

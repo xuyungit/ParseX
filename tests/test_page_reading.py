@@ -136,12 +136,12 @@ def test_nothing_to_compare_without_a_reading():
 
 
 def test_process_reads_every_page_and_lists_what_only_the_image_shows(tmp_path):
-    import fitz
+    import pymupdf
 
     from parserx.tools import call_tool, workspace_init
     from tests.test_tools_contract import FakeReader, _config, _context
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "A line in the text layer of page one.", fontsize=11)
     turned = doc.new_page(width=595, height=842)

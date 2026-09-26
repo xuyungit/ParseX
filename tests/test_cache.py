@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import fitz
+import pymupdf
 import pytest
 
 from parserx.cache import CacheMiss, ResponseCache, open_cache, service_identity
@@ -114,7 +114,7 @@ def test_concurrent_writes_leave_valid_entries(tmp_path):
 
 
 def _pdf(pages: int) -> bytes:
-    doc = fitz.open()
+    doc = pymupdf.open()
     for _ in range(pages):
         doc.new_page()
     return doc.tobytes(no_new_id=True)

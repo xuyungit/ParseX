@@ -47,7 +47,8 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
     with tempfile.TemporaryDirectory(prefix="parserx-init-") as scratch:
         try:
             readable = doc_to_docx(source, Path(scratch)) if suffix == ".doc" else source
-            ext = (extract_pdf(readable, tables_seen=_tables_seen(config)) if suffix == ".pdf"
+            ext = (extract_pdf(readable, layout=_page_layout(config), check_tables=config.layout.check_tables)
+                   if suffix == ".pdf"
                    else extract_docx(readable))
         except Exception as exc:  # noqa: BLE001 - an unreadable input is reported, not raised
             return fail(FailureCode.INVALID_REQUEST, f"input could not be read: {type(exc).__name__}: {exc}", 2)
@@ -69,27 +70,22 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
     return envelope, 0
 
 
-def _tables_seen(config: ParserXConfig):
-    """The table regions the local layout detector sees on a page, in page points of the unrotated page (Phase 3
-    D3): evidence that ruled lines make a table.  The render is the layout step's, so its detections are cached."""
-    if not config.layout.check_tables:
-        return None
-    import fitz
+def _page_layout(config: ParserXConfig):
+    """The regions the local layout detector sees on a page, (label, bbox in page points of the unrotated page):
+    its text regions make the paragraphs (Q80), its table regions confirm ruled grids (Phase 3 D3).  The render is
+    the layout step's, so the detections are cached and not repeated there."""
+    import pymupdf
 
     from parserx.cache.store import open_cache
-    from parserx.ir.enums import BlockKind
-    from parserx.layout import labels
     from parserx.layout.detector import RapidLayoutDetector, detect_cached
 
     detector = RapidLayoutDetector(config.layout.model, config.layout.conf_thresh)
     cache = open_cache(config.cache)
     dpi = config.layout.page_dpi
 
-    def seen(page) -> list[tuple[float, float, float, float]]:
+    def regions(page) -> list[tuple[str, tuple[float, float, float, float]]]:
         png = page.get_pixmap(dpi=dpi).tobytes("png")
         k, back = 72.0 / dpi, page.derotation_matrix
-        return [tuple(fitz.Rect(*(v * k for v in r.bbox)) * back) for r in detect_cached(detector, png, cache)
-                if labels.LAYOUT.get(r.label) == BlockKind.TABLE]
+        return [(r.label, tuple(pymupdf.Rect(*(v * k for v in r.bbox)) * back)) for r in detect_cached(detector, png, cache)]
 
-    return seen
-
+    return regions

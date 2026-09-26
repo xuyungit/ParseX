@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-import fitz  # noqa: E402
+import pymupdf  # noqa: E402
 from rapidfuzz import fuzz  # noqa: E402
 
 from parserx.config.schema import load_config  # noqa: E402
@@ -103,7 +103,7 @@ def main() -> int:
         ws = Workspace.open(tmp / "ws")
         ctx = ToolContext(ws, config)
         state = ws.load()
-        with fitz.open(gt / "input.pdf") as pdf:
+        with pymupdf.open(gt / "input.pdf") as pdf:
             pages = list(range(1, pdf.page_count + 1))
             results = ctx.ocr().recognize_pdf(scan.batch_pdf(pdf, pages))
             entries = {}  # page → [(label, content, bbox in page points)]
@@ -119,7 +119,7 @@ def main() -> int:
                 for r in detect_cached(ctx.detector(), png, ctx.cache):
                     if r.label == "display_formula":
                         box = tuple(v * 72 / config.layout.page_dpi for v in r.bbox)
-                        regions.append((page.number + 1, box, page.get_text("text", clip=fitz.Rect(box)).strip()))
+                        regions.append((page.number + 1, box, page.get_text("text", clip=pymupdf.Rect(box)).strip()))
         page_md = "\n\n".join(c for n in pages for _, c, _ in entries[n] if c.strip())
         current = (fixed / "outputs" / f"{doc}.md").read_text(encoding="utf-8") if fixed else ""
 

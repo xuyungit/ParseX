@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-import fitz
+import pymupdf
 
 from parserx.content import scan
 from parserx.content.select import integrate_image, integrate_scan_page, mark_scan_failed, transcribed
@@ -140,7 +140,7 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
     source = ctx.ws.source_path
 
     def fetch(batch: list[int]):
-        with fitz.open(source) as doc:
+        with pymupdf.open(source) as doc:
             data = scan.batch_pdf(doc, batch)
         results = ocr.recognize_pdf(data)
         return ocr.request_key(data, "application/pdf"), results
@@ -165,7 +165,7 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                                                        reason=outcome.error or outcome.status))
                 continue
             raw_ref, results = outcome.value
-            with fitz.open(source) as doc:
+            with pymupdf.open(source) as doc:
                 for n, result in zip(batch, results):
                     page = result.raw["layoutParsingResults"][0]
                     pruned = page.get("prunedResult") or {}

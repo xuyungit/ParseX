@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-import fitz
+import pymupdf
 import pytest
 from jsonschema import Draft202012Validator
 from PIL import Image
@@ -32,11 +32,11 @@ def _png(w, h, color):
 
 @pytest.fixture
 def pdf(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 90), "SENTINEL-NATIVE 标题", fontsize=18, fontname="china-s")
     page.insert_text((72, 140), NATIVE, fontsize=11, fontname="china-s")
-    page.insert_image(fitz.Rect(72, 300, 200, 400), stream=_png(128, 100, (200, 40, 40)))
+    page.insert_image(pymupdf.Rect(72, 300, 200, 400), stream=_png(128, 100, (200, 40, 40)))
     scanned = doc.new_page(width=595, height=842)
     scanned.insert_image(scanned.rect, stream=_png(300, 424, (230, 230, 230)))
     path = tmp_path / "doc.pdf"
@@ -109,7 +109,7 @@ def _context(ocr_behaviour=None, page=None):
             def run_job(file_bytes, filename, mime, job_key=None):
                 if ocr_behaviour is not None:
                     raise ocr_behaviour
-                with fitz.open(stream=file_bytes, filetype="pdf") as sub:
+                with pymupdf.open(stream=file_bytes, filetype="pdf") as sub:
                     return {"layoutParsingResults": [(page or _ocr_page)() for _ in sub]}
 
             service._run_job = run_job
@@ -488,7 +488,7 @@ def test_process_does_the_standard_steps_in_one_call(ws):
 
 
 def test_process_joins_a_paragraph_cut_by_the_page(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     for text in ("供货方应在合同签订后分两批交货，第一批", "不少于总量的百分之六十。"):
         doc.new_page(width=595, height=842).insert_text((72, 400), text, fontsize=11, fontname="china-s")
     doc.save(tmp_path / "cut.pdf")
@@ -926,7 +926,7 @@ def test_structure_changes_return_the_items_they_open(ws):
 
 def test_split_through_the_tool_reports_the_new_block(tmp_path):
     # the diff of apply_structure knows blocks created by the call (a split's second part)
-    doc = fitz.open()
+    doc = pymupdf.open()
     doc.new_page().insert_text((72, 90), "3 Results\nThe measured values follow.", fontsize=11)
     doc.save(tmp_path / "two.pdf")
     ws = tmp_path / "ws"

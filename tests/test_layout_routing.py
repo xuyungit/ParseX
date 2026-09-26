@@ -2,7 +2,7 @@
 
 import io
 
-import fitz
+import pymupdf
 import numpy as np
 import pytest
 from PIL import Image
@@ -99,7 +99,7 @@ def test_every_detector_label_is_mapped():
 def test_real_detector_finds_text_on_a_rendered_page():
     from parserx.layout.detector import RapidLayoutDetector
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 100), "Chapter One", fontsize=22)
     for i in range(12):
@@ -142,7 +142,7 @@ def _shadow_setup(tmp_path):
     from parserx.config.schema import ParserXConfig
     from parserx.tools import ToolContext, workspace_init
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 90), "Chapter One", fontsize=18)
     page.insert_text((72, 150), "Body text of the first page.", fontsize=11)
@@ -152,8 +152,8 @@ def _shadow_setup(tmp_path):
         Image.fromarray(np.random.default_rng(0).integers(0, 255, (h, w, 3), dtype=np.uint8)).save(buf, "PNG")
         return buf.getvalue()
 
-    page.insert_image(fitz.Rect(72, 300, 100, 330), stream=png(70, 84))     # an icon
-    page.insert_image(fitz.Rect(72, 400, 372, 625), stream=png(400, 300))   # a real figure
+    page.insert_image(pymupdf.Rect(72, 300, 100, 330), stream=png(70, 84))     # an icon
+    page.insert_image(pymupdf.Rect(72, 400, 372, 625), stream=png(400, 300))   # a real figure
     path = tmp_path / "doc.pdf"
     doc.save(path)
     config = ParserXConfig()

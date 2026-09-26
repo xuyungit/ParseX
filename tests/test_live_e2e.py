@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import fitz
+import pymupdf
 import pytest
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
@@ -75,7 +75,7 @@ def _make_pdf_with_fullpage_image(pdf_path: Path, image_path: Path) -> Path:
     image = Image.open(image_path)
     width, height = image.size
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=width, height=height)
     page.insert_image(page.rect, filename=str(image_path))
     doc.save(pdf_path)
@@ -84,7 +84,7 @@ def _make_pdf_with_fullpage_image(pdf_path: Path, image_path: Path) -> Path:
 
 
 def _make_pdf_with_inline_image(pdf_path: Path, image_path: Path) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=960, height=1280)
     page.insert_text(
         (72, 90),
@@ -98,7 +98,7 @@ def _make_pdf_with_inline_image(pdf_path: Path, image_path: Path) -> Path:
         fontsize=12,
         fontname="helv",
     )
-    page.insert_image(fitz.Rect(72, 200, 888, 760), filename=str(image_path))
+    page.insert_image(pymupdf.Rect(72, 200, 888, 760), filename=str(image_path))
     doc.save(pdf_path)
     doc.close()
     return pdf_path

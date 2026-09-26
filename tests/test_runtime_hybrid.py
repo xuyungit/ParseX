@@ -5,7 +5,7 @@ import json
 import os
 import stat
 
-import fitz
+import pymupdf
 import pytest
 
 from parserx.runtimes.agent import AgentOutcome, agent_env

@@ -4,7 +4,7 @@ text layer stays and the passage is a review item."""
 
 import json
 
-import fitz
+import pymupdf
 
 from parserx.layout.detector import Region
 from parserx.tools import call_tool, workspace_init
@@ -19,7 +19,7 @@ def test_greek_commands_read_as_their_letters():
 
 
 def _page_pdf(tmp_path):
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((72, 90), "The rest energy follows from the mass as stated below in this short note.", fontsize=10)
     page.insert_text((72, 130), "Here E = mc", fontsize=10)

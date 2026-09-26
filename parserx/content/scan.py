@@ -15,7 +15,7 @@ import io
 import re
 from dataclasses import dataclass, field
 
-import fitz
+import pymupdf
 from PIL import Image
 
 from parserx.ir import ids
@@ -74,9 +74,9 @@ def take_pictures(content: str) -> tuple[str, list[BBox]]:
     return _PICTURE.sub(mark, content), boxes
 
 
-def batch_pdf(src: fitz.Document, pages: list[int]) -> bytes:
+def batch_pdf(src: pymupdf.Document, pages: list[int]) -> bytes:
     """A sub-PDF of *pages* (1-based); identical pages give identical bytes."""
-    temp = fitz.open()
+    temp = pymupdf.open()
     for n in pages:
         temp.insert_pdf(src, from_page=n - 1, to_page=n - 1)
     data = temp.tobytes(no_new_id=True)
@@ -84,7 +84,7 @@ def batch_pdf(src: fitz.Document, pages: list[int]) -> bytes:
     return data
 
 
-def render_page(src: fitz.Document, n: int, width_px: int) -> tuple[bytes, int, int, float]:
+def render_page(src: pymupdf.Document, n: int, width_px: int) -> tuple[bytes, int, int, float]:
     """PNG of page *n* rendered at the width the engine analysed; (bytes, width, height, dpi)."""
     page = src[n - 1]
     dpi = 72.0 * width_px / page.rect.width
@@ -92,7 +92,7 @@ def render_page(src: fitz.Document, n: int, width_px: int) -> tuple[bytes, int, 
     return pix.tobytes("png"), pix.width, pix.height, float(round(dpi))
 
 
-def render_page_at(src: fitz.Document, n: int, dpi: int) -> tuple[bytes, int, int]:
+def render_page_at(src: pymupdf.Document, n: int, dpi: int) -> tuple[bytes, int, int]:
     """PNG of page *n* at *dpi*; (bytes, width, height)."""
     pix = src[n - 1].get_pixmap(dpi=dpi)
     return pix.tobytes("png"), pix.width, pix.height
@@ -242,7 +242,7 @@ def _picture(out: PageScanResult, scan: PageScan, parent: str, k: int, box: BBox
 
 def image_batch_pdf(images: list[tuple[bytes, int, int]]) -> bytes:
     """One page per image (the page is the image's pixel size in points), for the scan engine; stable bytes."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     for data, width, height in images:
         page = doc.new_page(width=width, height=height)
         page.insert_image(page.rect, stream=data)
