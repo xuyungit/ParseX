@@ -32,7 +32,7 @@ from parserx.ir.base import BBox
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus
 from parserx.ir.state import DocumentState, ReadLine
-from parserx.processors.text_clean import normalize_fullwidth_ascii
+from parserx.content.text import normalize_fullwidth_ascii
 
 NEAR = 0.5  # share of a text's adjacent-character pairs the other reading has at the text's place
 SOMEWHERE = 80  # rapidfuzz partial_ratio of the text against all of its page(s): a contiguous near match

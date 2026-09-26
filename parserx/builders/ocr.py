@@ -22,7 +22,8 @@ import fitz  # PyMuPDF
 from parserx.config.schema import OCRBuilderConfig
 from parserx.models.elements import Document, FontInfo, Page, PageElement, PageType
 from parserx.services.ocr import OCRBlock, OCRResult, create_ocr_service
-from parserx.tables.html import (
+from parserx.tables.html import (  # noqa: F401 (html_table_to_markdown moved to tables/html.py, P5-3)
+    html_table_to_markdown,
     _GridSlot,
     _TableConversionError,
     _build_table_grid,
@@ -194,82 +195,6 @@ def _char_overlap_ratio(ocr_text: str, native_bag: Counter) -> float:
     ocr_bag = Counter(ocr_text)
     matched = sum((ocr_bag & native_bag).values())
     return matched / sum(ocr_bag.values())
-
-
-def _escape_md_table_text(text: str) -> str:
-    return (text or "").replace("|", "\\|").replace("\n", "<br>")
-
-
-def _flatten_header_paths(
-    grid: list[list[_GridSlot | None]],
-    header_rows: int,
-) -> list[str]:
-    width = max((len(row) for row in grid), default=0)
-    if header_rows <= 0:
-        return ["      " for _ in range(width)]
-    paths: list[str] = []
-    for col in range(width):
-        parts: list[str] = []
-        last_key = None
-        for row in range(header_rows):
-            slot = grid[row][col]
-            if slot is None or not slot.text.strip():
-                continue
-            if slot.col_span_cont:
-                continue
-            key = (slot.row_from, slot.col_from, slot.text)
-            if key == last_key:
-                continue
-            last_key = key
-            if not parts or parts[-1] != slot.text:
-                parts.append(slot.text)
-        paths.append(" > ".join(parts) if parts else "      ")
-    return paths
-
-
-def _render_markdown_table(
-    grid: list[list[_GridSlot | None]],
-    header_paths: list[str],
-    header_rows: int,
-) -> str:
-    width = len(header_paths)
-    lines = [
-        "| " + " | ".join(_escape_md_table_text(header) for header in header_paths) + " |",
-        "| " + " | ".join(["---"] * width) + " |",
-    ]
-    for row_idx in range(header_rows, len(grid)):
-        row = grid[row_idx]
-        if not any(slot is not None for slot in row):
-            continue
-        values: list[str] = []
-        for col in range(width):
-            slot = row[col]
-            if slot is None or not slot.is_origin:
-                values.append("")
-            else:
-                values.append(slot.text)
-        if all(not value for value in values):
-            continue
-        lines.append("| " + " | ".join(_escape_md_table_text(value) for value in values) + " |")
-    return "\n".join(lines)
-
-
-def html_table_to_markdown(html: str) -> str:
-    """Convert an HTML <table> string to Markdown table format."""
-    cleaned = re.sub(r"</?li>|</?i>", "", html)
-    try:
-        table = _get_table(cleaned)
-        rows = _collect_rows(table)
-        grid = _build_table_grid(rows)
-        header_rows = _detect_header_block(grid)
-        if header_rows == 0 and len(grid) >= 1:
-            header_rows = 1
-        header_paths = _flatten_header_paths(grid, header_rows)
-        return _render_markdown_table(grid, header_paths, header_rows)
-    except _TableConversionError:
-        return html
-    except Exception:
-        return html
 
 
 class OCRBuilder:

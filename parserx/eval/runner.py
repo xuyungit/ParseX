@@ -16,7 +16,6 @@ from parserx.eval.metrics import (
 )
 from parserx.eval.key_content import KINDS as KEY_KINDS
 from parserx.eval.reporting import ReportMetadata, append_metadata_section
-from parserx.pipeline import Pipeline
 from parserx.eval.warnings import summarize_warning_types, warning_label
 
 log = logging.getLogger(__name__)
@@ -38,6 +37,8 @@ class EvalRunner:
 
     def __init__(self, config: ParserXConfig | None = None):
         self._config = config or ParserXConfig()
+        from parserx.pipeline import Pipeline  # imported here: the pipeline's modules use parserx.eval helpers
+
         self._pipeline = Pipeline(self._config)
         self.failed_docs: list[tuple[str, str]] = []
         # Requested (via include_docs) but never evaluated: a hard-check failure.

@@ -22,7 +22,7 @@ import fitz  # PyMuPDF
 from parserx.config.schema import FormulaProcessorConfig
 from parserx.models.elements import Document, PageElement
 from parserx.services.llm import OpenAICompatibleService
-from parserx.text_utils import compute_edit_distance, normalize_for_comparison
+from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 log = logging.getLogger(__name__)
 

@@ -19,7 +19,7 @@ from PIL import Image
 from parserx.config.schema import ImageProcessorConfig, TableProcessorConfig
 from parserx.models.elements import Document, Page, PageElement
 from parserx.services.llm import OpenAICompatibleService
-from parserx.text_utils import compute_edit_distance, normalize_for_comparison
+from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 log = logging.getLogger(__name__)
 

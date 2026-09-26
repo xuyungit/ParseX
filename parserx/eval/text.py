@@ -1,4 +1,4 @@
-"""Shared text normalization and comparison helpers."""
+"""Text normalization and edit distance for the metrics (moved from ``parserx/text_utils.py``, P5-3)."""
 
 from __future__ import annotations
 

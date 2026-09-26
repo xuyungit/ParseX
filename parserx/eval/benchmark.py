@@ -91,7 +91,7 @@ def _select_pages(data: list[dict]) -> list[tuple[int, dict, str]]:
 # ── Ground truth conversion ────────────────────────────────────────────
 
 
-from parserx.builders.ocr import html_table_to_markdown as _html_table_to_markdown
+from parserx.tables.html import html_table_to_markdown as _html_table_to_markdown
 
 
 def _page_to_expected_md(page: dict) -> str:

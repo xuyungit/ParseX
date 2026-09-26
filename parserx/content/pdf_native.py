@@ -59,9 +59,7 @@ from parserx.ir.decision import Decision  # noqa: E402
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
 from parserx.ir.observation import Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
-from parserx.processors.text_clean import normalize_fullwidth_ascii  # noqa: E402
-# v1 algorithms reused as-is (guide §11.1): gap-based word spaces, same-row line joining.
-from parserx.providers.pdf import _join_block_lines, _reconstruct_line_from_chars  # noqa: E402
+from parserx.content.text import normalize_fullwidth_ascii  # noqa: E402
 from parserx.tables.grid import Cell, TableGrid  # noqa: E402
 
 ENGINE = "native_pdf"
@@ -510,6 +508,95 @@ def _style(lines: list[_Line]) -> TextStyle:
         mono = faces.most_common(1)[0][0] or None
     return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total, font=fonts.most_common(1)[0][0] or None,
                      monospace=mono)
+
+
+# ── Lines (from v1's provider, guide §11.1): gap-based word spaces, same-row line joining ──
+
+
+def _is_cjk_or_fullwidth_punct(ch: str) -> bool:
+    """Return True if *ch* is CJK or fullwidth punctuation.
+
+    Fullwidth ASCII *letters* (Ａ-Ｚ, ａ-ｚ) and *digits* (０-９) are
+    excluded — they are Latin text rendered in wide form, and word-space
+    detection must still apply between them.
+    """
+    cp = ord(ch)
+    return (
+        0x3400 <= cp <= 0x4DBF  # CJK Unified Extension A
+        or 0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs
+        or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility Ideographs
+        or 0x20000 <= cp <= 0x2A6DF  # CJK Extension B
+        or 0x3000 <= cp <= 0x303F  # CJK Symbols and Punctuation
+        or 0xFF01 <= cp <= 0xFF0F  # Fullwidth punctuation ！＂＃…／
+        or 0xFF1A <= cp <= 0xFF20  # Fullwidth ：；＜＝＞？＠
+        or 0xFF3B <= cp <= 0xFF40  # Fullwidth ［＼］＾＿｀
+        or 0xFF5B <= cp <= 0xFF65  # Fullwidth ｛｜｝～ + halfwidth forms
+        or 0xFE30 <= cp <= 0xFE4F  # CJK Compatibility Forms
+    )
+
+
+def _join_block_lines(line_entries: list[tuple[str, tuple]]) -> str:
+    """Join text lines within a block, merging same-visual-row segments.
+
+    PyMuPDF sometimes splits a single visual line into multiple ``line``
+    objects when there is a large horizontal gap between text segments
+    (e.g., ``"1"`` and ``"Introduction"`` rendered with a wide space).
+    Both lines share the same y-coordinate range, so we detect overlap
+    and join them with a space instead of a newline.
+    """
+    if not line_entries:
+        return ""
+    parts: list[str] = [line_entries[0][0]]
+    for i in range(1, len(line_entries)):
+        _text, bbox = line_entries[i]
+        prev_bbox = line_entries[i - 1][1]
+        # Vertical overlap ratio: if the y-ranges overlap by >50% of
+        # the shorter line's height, the two lines are on the same row.
+        overlap = min(prev_bbox[3], bbox[3]) - max(prev_bbox[1], bbox[1])
+        min_height = min(prev_bbox[3] - prev_bbox[1], bbox[3] - bbox[1])
+        if min_height > 0 and overlap / min_height > 0.5:
+            parts.append(" " + _text)
+        else:
+            parts.append("\n" + _text)
+    return "".join(parts)
+
+
+def _reconstruct_line_from_chars(line_spans: list[dict]) -> str:
+    """Rebuild a text line from rawdict spans, inserting spaces at gaps.
+
+    PDFs often encode word boundaries as physical gaps between character
+    positions rather than explicit space characters.  This function detects
+    those gaps by comparing adjacent character bboxes and inserts a space
+    when the gap exceeds a font-size-relative threshold.
+
+    Between two adjacent CJK ideographs no space is inserted regardless of
+    the gap, because CJK scripts do not use inter-word spaces.
+    """
+    # Flatten all chars across spans, keeping font size.
+    chars: list[tuple[str, float, float, float]] = []  # (ch, x0, x1, font_size)
+    for span in line_spans:
+        font_size = span.get("size", 12.0)
+        for ch_dict in span.get("chars", []):
+            c = ch_dict.get("c", "")
+            if not c:
+                continue
+            bbox = ch_dict.get("bbox", (0, 0, 0, 0))
+            chars.append((c, bbox[0], bbox[2], font_size))
+
+    if not chars:
+        return ""
+
+    parts: list[str] = [chars[0][0]]
+    for i in range(1, len(chars)):
+        prev_ch, _, prev_x1, prev_sz = chars[i - 1]
+        curr_ch, curr_x0, _, curr_sz = chars[i]
+        gap = curr_x0 - prev_x1
+        threshold = (prev_sz + curr_sz) * 0.125  # 0.25 * avg font size
+        if gap > threshold and not (_is_cjk_or_fullwidth_punct(prev_ch) and _is_cjk_or_fullwidth_punct(curr_ch)):
+            parts.append(" ")
+        parts.append(curr_ch)
+
+    return "".join(parts)
 
 
 # ── Geometry ────────────────────────────────────────────────────────────

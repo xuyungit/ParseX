@@ -20,7 +20,7 @@ from parserx.eval.key_content import KeyContentMetrics, compute_key_content_erro
 from parserx.eval.normalize import canonicalize, char_sequence
 from parserx.eval.order import OrderMetrics, compute_order_metrics
 from parserx.eval.tables import TableMetrics, compute_table_metrics
-from parserx.text_utils import compute_edit_distance, normalize_for_comparison
+from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.

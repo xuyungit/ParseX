@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from parserx.models.elements import Document
-from parserx.text_utils import normalize_for_comparison
+from parserx.eval.text import normalize_for_comparison
 
 _IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 _HTML_TABLE_RE = re.compile(r"<table[\s>]", re.IGNORECASE)

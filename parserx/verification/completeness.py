@@ -6,7 +6,7 @@ import re
 
 from parserx.assembly.markdown import get_image_reference_text
 from parserx.models.elements import Document, PageElement
-from parserx.text_utils import normalize_for_comparison
+from parserx.eval.text import normalize_for_comparison
 
 _PAGE_MARKER_RE = re.compile(r"<!-- PAGE (\d+) -->")
 _TABLE_ROW_RE = re.compile(r"^\|.*\|$")

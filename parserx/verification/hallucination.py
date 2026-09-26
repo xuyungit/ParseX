@@ -6,7 +6,7 @@ import re
 
 from parserx.config.schema import VerificationConfig
 from parserx.models.elements import Document, PageElement
-from parserx.text_utils import compute_edit_distance
+from parserx.eval.text import compute_edit_distance
 
 
 TEXT_IMAGE_CLASS = "text_image"

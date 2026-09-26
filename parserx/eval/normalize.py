@@ -1,7 +1,7 @@
 """Evaluation-side normalization (metric version 2.0).
 
-Kept separate from ``parserx.text_utils``: v1 processors use that module for
-their own thresholds, so changing it would change v1 output.
+Kept separate from ``parserx.eval.text`` (formerly ``parserx.text_utils``): v1
+processors use that module for their own thresholds, so changing it would change v1 output.
 
 Both sides of every comparison go through the same steps:
 

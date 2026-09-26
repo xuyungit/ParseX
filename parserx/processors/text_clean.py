@@ -12,47 +12,7 @@ import re
 from parserx.config.schema import TextCleanConfig
 from parserx.models.elements import Document
 
-# ── Full-width → half-width normalization ─────────────────────────────────
-
-# Build translation table: full-width ASCII letters, digits, and selected
-# math/bracket symbols → half-width equivalents.
-# Chinese punctuation（，。：；！？）is intentionally EXCLUDED.
-_FULLWIDTH_TABLE = str.maketrans(
-    {
-        # Digits FF10-FF19
-        **{chr(0xFF10 + i): chr(0x30 + i) for i in range(10)},
-        # Uppercase letters FF21-FF3A
-        **{chr(0xFF21 + i): chr(0x41 + i) for i in range(26)},
-        # Lowercase letters FF41-FF5A
-        **{chr(0xFF41 + i): chr(0x61 + i) for i in range(26)},
-        # Math and bracket symbols (NOT Chinese punctuation)
-        "\uFF0B": "+",   # ＋
-        "\uFF0D": "-",   # －
-        "\uFF0E": ".",   # ．  (full-width full stop, NOT Chinese period 。)
-        "\uFF0F": "/",   # ／
-        "\uFF1D": "=",   # ＝
-        "\uFF1C": "<",   # ＜
-        "\uFF1E": ">",   # ＞
-        "\uFF3B": "[",   # ［
-        "\uFF3C": "\\",  # ＼
-        "\uFF3D": "]",   # ］
-        "\uFF3E": "^",   # ＾
-        "\uFF3F": "_",   # ＿
-        "\uFF40": "`",   # ｀
-        "\uFF5B": "{",   # ｛
-        "\uFF5D": "}",   # ｝
-        "\uFF5E": "~",   # ～
-    }
-)
-
-
-def normalize_fullwidth_ascii(text: str) -> str:
-    """Convert full-width ASCII letters, digits, and math symbols to half-width.
-
-    Preserves Chinese-standard full-width punctuation（，。：；！？）which
-    is correct in CJK text.
-    """
-    return text.translate(_FULLWIDTH_TABLE)
+from parserx.content.text import normalize_fullwidth_ascii  # noqa: E402,F401 (moved to v2, P5-3)
 
 # ── CJK space fix (migrated from legacy pipeline pdf_extract.py L34-57) ──────
 

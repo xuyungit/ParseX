@@ -511,3 +511,16 @@ def test_a_block_of_several_lines_spans_every_line(tmp_path):
     union = (min(b[0] for b in lines), min(b[1] for b in lines), max(b[2] for b in lines), max(b[3] for b in lines))
     assert block.anchors[0].bbox == pytest.approx(union, abs=0.01)
     assert block.anchors[0].bbox[2] > lines[0][2] + 50  # wider than the first line: the middle line widened it
+
+
+def test_gaps_between_glyphs_are_word_spaces_except_between_ideographs():
+    from parserx.content.pdf_native import _join_block_lines, _reconstruct_line_from_chars
+
+    def span(chars, size=10.0):
+        return {"size": size, "chars": [{"c": c, "bbox": (x, 0, x + 5, 10)} for c, x in chars]}
+
+    assert _reconstruct_line_from_chars([span([("A", 0), ("B", 5), ("C", 20)])]) == "AB C"  # a gap > size / 4
+    assert _reconstruct_line_from_chars([span([("桥", 0), ("梁", 20)])]) == "桥梁"
+    # PyMuPDF splits one visual row at a wide gap: the parts join with a space, other rows with a line break
+    assert _join_block_lines([("1", (0, 0, 5, 10)), ("Introduction", (40, 0, 120, 10)),
+                              ("Body", (0, 20, 30, 30))]) == "1 Introduction\nBody"
