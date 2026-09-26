@@ -36,7 +36,7 @@ ISOLATION_LIST = REPO_ROOT / "configs" / "isolation_set.txt"
 
 # Record fields that legitimately differ between a live run and its replay.
 _VOLATILE = frozenset({"wall_time_seconds", "requests", "attempts", "cache_hits", "ocr_pages", "cost_usd"})
-_PACKAGES = ("pymupdf", "openai", "rapidfuzz", "docling", "pydantic")
+_PACKAGES = ("pymupdf", "openai", "rapidfuzz", "pydantic", "rapidocr", "rapid-layout")
 _CODE_DIRS = ("parserx", "scripts", "configs", "parserx.yaml", "pyproject.toml")
 
 
@@ -118,7 +118,6 @@ def build_manifest(
         "services": {
             "ocr": {"endpoint": endpoint_identity(config.builders.ocr.endpoint), "model": config.builders.ocr.model},
             "vlm": {"endpoint": endpoint_identity(config.services.vlm.endpoint), "model": config.services.vlm.model},
-            "llm": {"endpoint": endpoint_identity(config.services.llm.endpoint), "model": config.services.llm.model},
         },
         "environment": {"python": platform.python_version(), "packages": versions},
         "gt_dirs": [str(d.relative_to(REPO_ROOT)) if d.is_relative_to(REPO_ROOT) else str(d) for d in gt_dirs],

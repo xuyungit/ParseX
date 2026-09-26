@@ -199,11 +199,10 @@ def main() -> None:
 _ENV_TEMPLATE = """\
 # ParserX service credentials, read by ~/.config/parserx/config.yaml.
 
-# OpenAI (VLM and LLM: gpt-6-luna by default)
+# OpenAI (the VLM: gpt-6-luna by default)
 OPENAI_API_KEY=
 # OPENAI_BASE_URL=https://api.openai.com/v1
 # VLM_MODEL=gpt-6-luna
-# LLM_MODEL=gpt-6-luna
 
 # PaddleOCR (AI Studio jobs API): the scan engine for scanned pages and text in images
 PADDLE_OCR_ENDPOINT=

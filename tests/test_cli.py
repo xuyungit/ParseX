@@ -60,7 +60,7 @@ def test_cmd_compare_warns_when_both_configs_omitted(
     assert "Compare Base config: no project parserx.yaml found" in caplog.text
     assert "Compare Experiment config: no project parserx.yaml found" in caplog.text
     assert len(seen_configs) == 2
-    assert all(config.providers.pdf.engine == "pymupdf" for config in seen_configs)
+    assert all(config.builders.ocr.engine == "paddleocr" for config in seen_configs)
 
 
 def test_cmd_eval_logs_resolved_project_config_path(

@@ -302,14 +302,14 @@ def test_apply_overrides_supports_dotted_paths():
         ParserXConfig(),
         [
             "builders.ocr.engine=none",
-            "processors.chapter.llm_fallback=false",
-            "services.llm.model=test-model",
+            "runtime.formulas=false",
+            "services.vlm.model=test-model",
         ],
     )
 
     assert config.builders.ocr.engine == "none"
-    assert config.processors.chapter.llm_fallback is False
-    assert config.services.llm.model == "test-model"
+    assert config.runtime.formulas is False
+    assert config.services.vlm.model == "test-model"
 
 
 def test_format_report_includes_warning_and_api_sections():
@@ -317,7 +317,6 @@ def test_format_report_includes_warning_and_api_sections():
         ParserXConfig(),
         [
             "services.vlm.model=demo-vlm",
-            "services.llm.model=demo-llm",
         ],
     )
     results = [
@@ -343,7 +342,7 @@ def test_format_report_includes_warning_and_api_sections():
         results,
         metadata=build_config_report_metadata(
             config,
-            overrides=["services.vlm.model=demo-vlm", "services.llm.model=demo-llm"],
+            overrides=["services.vlm.model=demo-vlm"],
         ),
     )
 

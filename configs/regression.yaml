@@ -1,18 +1,4 @@
-# Regression config (guide §12 P0-2): the production config with every LLM
-# call turned off, so regression runs depend only on OCR/VLM responses (which
-# the response cache replays).  Only overrides live here.  L1: regression_test.py --core --repeat 2.
+# Regression config (guide §12 P0-2, Phase 5): the production config.  Regression runs depend only on the
+# scan engine and VLM responses, which the response cache replays (the v1 LLM switches that used to be
+# turned off here are gone with v1).  Overrides go here.  L1: regression_test.py --core --repeat 2.
 extends: ../parserx.yaml
-
-builders:
-  quality_check:
-    enabled: false        # LLM formula-fragment page check
-
-processors:
-  chapter:
-    llm_fallback: false   # heading LLM fallback (the main source of heading_f1 drift)
-  header_footer:
-    llm_fallback: false   # not read by v1 code; set for explicitness
-  line_unwrap:
-    llm_fallback: false   # already false in defaults; pinned here
-  content_value:
-    llm_fallback: false   # already false in defaults; pinned here

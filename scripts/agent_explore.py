@@ -187,8 +187,7 @@ def cmd_snapshot(args) -> int:
         "codex_version": _codex_version(),
         "rules": args.rules,  # which {{#rN}} block of the task template this round uses (plan §2.3)
         "agent": {"runtime": "codex", "model": args.model, "reasoning_effort": args.effort},
-        "services": {"vlm": config.services.vlm.model, "llm": config.services.llm.model,
-                     "ocr": config.builders.ocr.model},
+        "services": {"vlm": config.services.vlm.model, "ocr": config.builders.ocr.model},
         "config": {"file": str(CONFIG.relative_to(REPO_ROOT)), "fingerprint": config_fingerprint(config)},
         "service_env": secret_names(load_raw_config(CONFIG)),  # supplied by px-run from the repository .env
         "skills": {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in skills.items()},

@@ -16,160 +16,18 @@ from pydantic import BaseModel, Field
 # ── Sub-configs ─────────────────────────────────────────────────────────
 
 
-class PDFProviderConfig(BaseModel):
-    engine: str = "pymupdf"
-
-
-class DOCXProviderConfig(BaseModel):
-    engine: str = "docling"
-
-
-class ProvidersConfig(BaseModel):
-    pdf: PDFProviderConfig = Field(default_factory=PDFProviderConfig)
-    docx: DOCXProviderConfig = Field(default_factory=DOCXProviderConfig)
-
-
-class MetadataBuilderConfig(BaseModel):
-    heading_font_ratio: float = 1.2
-    heading_max_char_ratio: float = 0.10
-    header_zone_ratio: float = 0.08
-    footer_zone_ratio: float = 0.08
-    repetition_threshold: float = 0.5
-
-
-class LayoutBuilderConfig(BaseModel):
-    enabled: bool = True
-    model: str = "paddleocr-online"
-
-
 class OCRBuilderConfig(BaseModel):
-    engine: str = "paddleocr"
-    lang: str = "ch_sim+en"
+    """The scan engine (PaddleOCR-VL through the AI Studio jobs API, guide §10.2).  It stays under
+    ``builders.ocr``, where earlier versions kept it, so existing config files keep working (Q75)."""
+
+    engine: str = "paddleocr"  # "none": no scan engine (``parserx parse --no-ocr``)
     endpoint: str = ""
     token: str = ""
     model: str = "PaddleOCR-VL-1.6"
-    selective: bool = True
-    force_full_page: bool = False
-    batch: bool = True  # Batch OCR: assemble pages into temp PDF, one API call
-    vector_figure_extraction: bool = True  # Detect vector figures via OCR layout
-    vector_figure_render_dpi: int = 200    # DPI for rendering vector figure regions
-    vector_figure_min_drawings: int = 5    # Min drawing commands to trigger OCR on NATIVE pages
-    use_layout_reading_order: bool = True  # Use OCR layout engine for reading order on multi-column native pages
-
-
-class QualityCheckConfig(BaseModel):
-    """Page quality check: deterministic layout analysis + LLM formula detection."""
-
-    enabled: bool = True
-    layout_complexity_check: bool = False  # Deterministic: reclassify complex-layout pages for OCR
-    pre_filter_short_ratio: float = 0.25
-    max_text_chars: int = 2000
 
 
 class BuildersConfig(BaseModel):
-    metadata: MetadataBuilderConfig = Field(default_factory=MetadataBuilderConfig)
-    layout: LayoutBuilderConfig = Field(default_factory=LayoutBuilderConfig)
     ocr: OCRBuilderConfig = Field(default_factory=OCRBuilderConfig)
-    quality_check: QualityCheckConfig = Field(default_factory=QualityCheckConfig)
-
-
-class ProcessorToggle(BaseModel):
-    enabled: bool = True
-    llm_fallback: bool = True
-
-
-class TableProcessorConfig(ProcessorToggle):
-    vlm_fallback: bool = True
-    cross_page_merge: bool = True
-    vlm_refine_merged_tables: bool = False
-
-
-class ImageProcessorConfig(ProcessorToggle):
-    classification: bool = True
-    vlm_description: bool = True
-    skip_decorative: bool = True
-    vlm_prompt_style: str = "strict_auto"
-    vlm_response_format: str = "json"
-    vlm_structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
-    vlm_retry_attempts: int = 1
-    vlm_max_tokens: int = 8192
-    vlm_max_description_chars: int = 1200
-    vlm_skip_large_text_overlap_chars: int = 1200
-    vlm_correction_mode: bool = True
-    vlm_refine_all_ocr: bool = False
-    vlm_debug_raw_preview_chars: int = 1200
-
-
-class FormulaProcessorConfig(BaseModel):
-    enabled: bool = True
-    model: str = "unimernet"
-    vlm_correction: bool = False
-    vlm_structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
-    vlm_max_candidates: int = 6
-    vlm_candidate_max_chars: int = 1200
-    vlm_max_tokens: int = 1200
-
-
-class CodeBlockConfig(BaseModel):
-    enabled: bool = True
-
-
-class LineUnwrapConfig(BaseModel):
-    enabled: bool = True
-    llm_fallback: bool = False
-    llm_batch_size: int = 30
-
-
-class TextCleanConfig(BaseModel):
-    enabled: bool = True
-    fix_cjk_spaces: bool = True
-    fix_encoding: bool = True
-    normalize_fullwidth: bool = True
-
-
-class ContentValueConfig(ProcessorToggle):
-    llm_fallback: bool = False
-    suppress_low_value: bool = True
-    low_value_threshold: float = 0.25
-    gray_zone_margin: float = 0.1
-    max_llm_candidates: int = 12
-
-
-class ReadingOrderConfig(BaseModel):
-    enabled: bool = True
-    method: str = "geometric"
-
-
-class VLMReviewConfig(BaseModel):
-    """Page-level VLM review for OCR correction and missing-text recovery."""
-
-    enabled: bool = True
-    review_all_pages: bool = False
-    min_text_chars_for_skip: int = 500
-    render_dpi: int = 200
-    max_pages_per_doc: int = 50
-    max_tokens: int = 4096
-    structured_output_mode: Literal["off", "json_object", "json_schema"] = "json_schema"
-
-
-class HeaderFooterConfig(ProcessorToggle):
-    """Header/footer detection and first-page identity retention."""
-
-    max_retained_identity: int = 2
-
-
-class ProcessorsConfig(BaseModel):
-    header_footer: HeaderFooterConfig = Field(default_factory=HeaderFooterConfig)
-    code_block: CodeBlockConfig = Field(default_factory=CodeBlockConfig)
-    chapter: ProcessorToggle = Field(default_factory=ProcessorToggle)
-    table: TableProcessorConfig = Field(default_factory=TableProcessorConfig)
-    image: ImageProcessorConfig = Field(default_factory=ImageProcessorConfig)
-    formula: FormulaProcessorConfig = Field(default_factory=FormulaProcessorConfig)
-    line_unwrap: LineUnwrapConfig = Field(default_factory=LineUnwrapConfig)
-    text_clean: TextCleanConfig = Field(default_factory=TextCleanConfig)
-    content_value: ContentValueConfig = Field(default_factory=ContentValueConfig)
-    reading_order: ReadingOrderConfig = Field(default_factory=ReadingOrderConfig)
-    vlm_review: VLMReviewConfig = Field(default_factory=VLMReviewConfig)
 
 
 class ServiceConfig(BaseModel):
@@ -305,23 +163,7 @@ class RuntimeConfig(BaseModel):
 
 
 class ServicesConfig(BaseModel):
-    vlm: ServiceConfig = Field(default_factory=ServiceConfig)
-    llm: ServiceConfig = Field(default_factory=ServiceConfig)
-
-
-class VerificationConfig(BaseModel):
-    hallucination_detection: bool = True
-    completeness_check: bool = True
-    structure_validation: bool = True
-    product_quality_check: bool = True
-    hallucination_threshold: float = 0.3
-
-
-class OutputConfig(BaseModel):
-    format: str = "markdown"
-    chapter_split: bool = True
-    image_dir: str = "images"
-    table_format: str = "markdown"
+    vlm: ServiceConfig = Field(default_factory=ServiceConfig)  # the tools' VLM tasks (Q40: economy model)
 
 
 # ── Top-level config ────────────────────────────────────────────────────
@@ -339,15 +181,11 @@ class CacheConfig(BaseModel):
 
 
 class ParserXConfig(BaseModel):
-    """Top-level ParserX configuration."""
+    """Top-level ParserX configuration.  Keys of earlier versions (``pipeline``, ``providers``, ``processors``,
+    ``verification``, ``output``, ``services.llm`` …) are ignored."""
 
-
-    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)
-    processors: ProcessorsConfig = Field(default_factory=ProcessorsConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
-    verification: VerificationConfig = Field(default_factory=VerificationConfig)
-    output: OutputConfig = Field(default_factory=OutputConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)

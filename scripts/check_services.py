@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Smoke-check the external services ParserX depends on: OCR, LLM, VLM.
+"""Smoke-check the external services ParserX depends on: the scan engine (OCR) and the VLM.
 
 Usage:
-    uv run python scripts/check_services.py [--config PATH] [--skip ocr,llm,vlm]
+    uv run python scripts/check_services.py [--config PATH] [--skip ocr,vlm]
 
 Each check makes one small real call with the resolved configuration and
 prints OK / FAIL with latency.  Exit code is 1 if any check fails.
@@ -53,7 +53,7 @@ def _usage(meter, service: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", type=Path, default=None, help="Config file (default: auto-detect)")
-    parser.add_argument("--skip", default="", help="Comma-separated checks to skip: ocr,llm,vlm")
+    parser.add_argument("--skip", default="", help="Comma-separated checks to skip: ocr,vlm")
     args = parser.parse_args()
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
 
@@ -83,22 +83,6 @@ def main() -> int:
                 return f"model={oc.model} blocks={len(result.blocks)} text={result.blocks[0].text[:30]!r}"
 
             ok &= _run("ocr", check_ocr)
-
-        if "llm" not in skip:
-            lc = cfg.services.llm
-
-            def check_llm():
-                if not lc.endpoint or not lc.api_key:
-                    raise RuntimeError("LLM not configured (endpoint/api_key)")
-                from parserx.services.llm import create_llm_service
-
-                llm = MeteredService(create_llm_service(lc), meter, "llm", gateway=gateway)
-                out = llm.complete("Reply with the single word OK.", "ping", temperature=0.0, max_tokens=16)
-                if not out.strip():
-                    raise RuntimeError("empty response")
-                return f"model={lc.model} endpoint={lc.endpoint} -> {out.strip()[:20]!r} {_usage(meter, 'llm')}"
-
-            ok &= _run("llm", check_llm)
 
         if "vlm" not in skip:
             vc = cfg.services.vlm
