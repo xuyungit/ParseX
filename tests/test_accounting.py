@@ -58,6 +58,24 @@ def test_output_item_on_a_hidden_block_is_a_silent_loss():
     assert result.mismatched == ["i-1"] and not result.exportable
 
 
+def test_a_duplicate_whose_original_is_hidden_is_a_silent_loss():
+    # §11.5: content judged a duplicate must still reach the output through what it duplicates
+    state = _state()
+    state.blocks[0].status = BlockStatus.EXCLUDED  # the original is gone ...
+    state.ledger[0].disposition = "excluded"
+    state.blocks[0].decisions.append(Decision(stage="exclude", choice="ui", reason="r", evidence={}, actor="x"))
+    result = check(state)
+    assert result.mismatched == ["i-2"] and not result.exportable  # ... so the duplicate's text is lost
+    state.blocks.append(Block(id="b-new", kind=BlockKind.TEXT, order=4, anchors=[_a()], text="新"))
+    state.ledger.append(LedgerEntry(item="i-5", unit="ocr_block", source=_a(), chars=1, disposition="output",
+                                    block="b-new"))
+    state.blocks[0].status, state.ledger[0].disposition = BlockStatus.DUPLICATE, "duplicate"
+    state.relations.append(Relation(id="r-2", kind="duplicate_of", src="b-out", dst="b-new"))
+    assert check(state).mismatched == []  # a chain of duplicates ending in a shown block is a destination
+    state.relations = [r for r in state.relations if r.src != "b-dup"]
+    assert check(state).mismatched == []  # superseded without an overlapping block: the page reading checks it
+
+
 def test_illegal_references_are_listed():
     state = _state()
     state.ledger[0].block = "b-nowhere"

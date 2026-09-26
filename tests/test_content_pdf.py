@@ -495,3 +495,19 @@ def test_a_table_without_ruled_columns_where_the_detector_sees_one(tmp_path):
     assert all(e.disposition == "output" for e in ext.ledger)
     # without the detector's region the same page is text only
     assert not [b for b in extract_pdf(path, tables_seen=lambda page: []).blocks if b.kind == BlockKind.TABLE]
+
+
+def test_a_block_of_several_lines_spans_every_line(tmp_path):
+    # §11.5 (from v1's line-unwrap merge): joining lines into one block keeps every line's extent in its anchor
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 100), "Short\nand a considerably longer middle line\nend", fontsize=11)
+    path = tmp_path / "lines.pdf"
+    doc.save(path)
+    lines = [ln["bbox"] for b in fitz.open(path)[0].get_text("dict")["blocks"] for ln in b["lines"]]
+    ext = extract_pdf(path)
+    (block,) = [b for b in ext.blocks if b.kind == BlockKind.TEXT]
+    assert block.text.split("\n") == ["Short", "and a considerably longer middle line", "end"]
+    union = (min(b[0] for b in lines), min(b[1] for b in lines), max(b[2] for b in lines), max(b[3] for b in lines))
+    assert block.anchors[0].bbox == pytest.approx(union, abs=0.01)
+    assert block.anchors[0].bbox[2] > lines[0][2] + 50  # wider than the first line: the middle line widened it

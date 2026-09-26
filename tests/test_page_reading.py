@@ -89,6 +89,17 @@ def test_a_superseded_reading_is_no_destination():
     assert unaccounted_lines(state) == {}
 
 
+def test_only_a_shown_figure_holds_the_text_inside_it():
+    # §11.5: an image that is not shown is no destination for the text on it (a hidden strip or background
+    # would otherwise hide every line it covers from the comparison)
+    state = _form([_line("3901", (110, 260, 140, 275))])
+    figure = _block("b-f", 1, (100, 250, 150, 300), kind=BlockKind.FIGURE)
+    state.blocks.append(figure)
+    assert unaccounted_lines(state) == {}  # shown: its description or transcription is the text's destination
+    figure.status = BlockStatus.EXCLUDED
+    assert list(unaccounted_lines(state)) == [1]
+
+
 def test_output_text_not_seen_on_the_page_is_listed():
     block = _block("b-1", 1, (100, 100, 500, 140), "近年来桥梁隔震技术得到了较快发展。\n扫描全能王 创建")
     reading = PageReading(n=1, engine="local", dpi=150, lines=[_line("近年来桥梁隔震技术得到了较快发展。", (100, 100, 500, 118)),

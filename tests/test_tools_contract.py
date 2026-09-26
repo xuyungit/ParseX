@@ -438,6 +438,36 @@ def test_batch_results_do_not_depend_on_completion_order(ws, monkeypatch):
         assert block.semantic.summary.value.endswith(asset)
 
 
+def test_batch_inputs_do_not_depend_on_other_tasks(pdf, tmp_path, monkeypatch):
+    # §11.5 (v1's image-processor race): each request's image, prompt and context are fixed before any task
+    # runs, so a batch whose first figure answers last sends exactly what describing each figure alone sends
+    import threading
+    import time as _time
+
+    def requests(root, batches, slow_first):
+        assert workspace_init(pdf, root, config=_config())[1] == 0
+        context = _context()
+        _call("recognize", root, {"pages": [2], "engine": "paddleocr"}, context=context)
+        figures = sorted(b.id for b in Workspace.open(root).load().blocks if b.kind == BlockKind.FIGURE)
+        fake, original, sent, first = context.fake_vlm, context.fake_vlm.describe_image, {}, threading.Event()
+
+        def record(image_path, prompt, **kw):
+            if slow_first and not first.is_set():
+                first.set()
+                _time.sleep(0.2)
+            sent[Path(image_path).name] = (Path(image_path).read_bytes(), prompt, kw["context"])
+            return original(image_path, prompt, **kw)
+
+        monkeypatch.setattr(fake, "describe_image", record)
+        for batch in batches(figures):
+            _call("describe_figure", root, {"blocks": batch}, context=context)
+        return sent
+
+    together = requests(tmp_path / "a", lambda figures: [figures], slow_first=True)
+    alone = requests(tmp_path / "b", lambda figures: [[f] for f in reversed(figures)], slow_first=False)
+    assert len(together) >= 2 and together == alone
+
+
 def test_process_does_the_standard_steps_in_one_call(ws):
     config = _config()
     config.runtime.layout_shadow = False  # the layout step has its own tests (fake detector)

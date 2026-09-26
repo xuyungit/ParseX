@@ -6,7 +6,10 @@ ledger entry with exactly one disposition.  The check verifies:
 - balance: ``discovered = output + merged + duplicate + excluded + failed``,
   with no unassigned entry;
 - agreement: an entry's disposition matches its block's status — an item
-  marked ``output`` on a block that is not rendered is a silent loss;
+  marked ``output`` on a block that is not rendered is a silent loss, and so is
+  a duplicate whose ``duplicate_of`` chain ends only in hidden blocks (a
+  duplicate without the relation was superseded page-wide; the page reading
+  comparison checks that its text reached the output);
 - references: every id a block, relation, decision, anchor, page or image
   record names exists, and ids are unique;
 - assets: every asset file exists (when the workspace root is given).
@@ -24,7 +27,7 @@ from pathlib import Path
 
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockStatus, DocumentStatus, PageStatus
+from parserx.ir.enums import BlockStatus, DocumentStatus, PageStatus, RelationKind
 from parserx.ir.state import AccountingSummary, DocumentState, Missing
 from parserx.workspace.views import PageRow, page_rows
 
@@ -67,8 +70,10 @@ def check(state: DocumentState, root: Path | str | None = None) -> CheckResult:
     )
     blocks = {b.id: b for b in state.blocks}
     unassigned = [e.item for e in state.ledger if e.disposition is None]
+    orphaned = _orphaned_duplicates(state, blocks)
     mismatched = [e.item for e in state.ledger if e.disposition is not None and e.block in blocks
-                  and blocks[e.block].status not in _AGREES[e.disposition]]
+                  and (blocks[e.block].status not in _AGREES[e.disposition]
+                       or (e.disposition == "duplicate" and e.block in orphaned))]
     illegal = _illegal_refs(state)
     missing_assets = []
     if root is not None:
@@ -81,6 +86,27 @@ def check(state: DocumentState, root: Path | str | None = None) -> CheckResult:
         missing_assets=missing_assets, pages=page_rows(state), document_status=status, missing=missing,
         exportable=not (unassigned or mismatched or illegal or missing_assets or pending),
     )
+
+
+def _orphaned_duplicates(state: DocumentState, blocks: dict) -> set[str]:
+    """Duplicate blocks whose ``duplicate_of`` relations lead (through other duplicates) to no shown block.
+
+    A merged block counts as shown: its content is in the block it was merged into (checked on its own entries)."""
+    targets: dict[str, list[str]] = {}
+    for relation in state.relations:
+        if relation.kind == RelationKind.DUPLICATE_OF and relation.dst in blocks:
+            targets.setdefault(relation.src, []).append(relation.dst)
+
+    def reaches_output(block_id: str, seen: set[str]) -> bool:
+        for dst in targets.get(block_id, ()):
+            if dst in seen:
+                continue
+            status = blocks[dst].status
+            if status in _VISIBLE or status == BlockStatus.MERGED or (status == BlockStatus.DUPLICATE and reaches_output(dst, seen | {dst})):
+                return True
+        return False
+
+    return {b for b in targets if blocks[b].status == BlockStatus.DUPLICATE and not reaches_output(b, {b})}
 
 
 def _illegal_refs(state: DocumentState) -> list[IllegalRef]:

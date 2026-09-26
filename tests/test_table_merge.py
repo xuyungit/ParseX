@@ -104,6 +104,9 @@ def test_merge_legality():
     assert rules(state, {"first": "t1", "second": "t2", "drop_rows": 1, "reason": "r"}) == ["rows_not_duplicate"]
     assert rules(state, {"first": "t2", "second": "t1", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
     assert rules(state, {"first": "t1", "second": "after", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
+    # §11.5: a table with other columns never continues the one before it, whoever asks
+    other_columns = _continued([["a", "b"], ["1", "2"]])
+    assert rules(other_columns, {"first": "t1", "second": "t2", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
 
 
 def test_a_table_over_three_pages_merges_into_the_first():

@@ -52,7 +52,9 @@ def unaccounted_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
         if not reading.lines:  # the page read as empty: no evidence either way
             continue
         blocks = [(b, box) for b, box in places.get(reading.n, []) if b.status in _ACCOUNTS]
-        pictures = [box for b, box in places.get(reading.n, []) if b.kind == BlockKind.FIGURE] + list(reading.not_prose)
+        # a shown figure's text goes to its description or transcription; a hidden one is no destination (§11.5)
+        pictures = [box for b, box in places.get(reading.n, [])
+                    if b.kind == BlockKind.FIGURE and b.status in _SHOWN] + list(reading.not_prose)
         page_text = normalize(" ".join(_text(b) for b, _ in blocks))
         for line in reading.lines:
             text = normalize(line.text)
