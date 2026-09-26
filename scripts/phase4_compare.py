@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from parserx.eval.metrics import _extract_headings, _normalize_heading, evaluate_markdown  # noqa: E402
+from parserx.eval.outline import has_outline  # noqa: E402
 
 V1 = REPO_ROOT / "eval_runs" / "2026-09-23_p0_v1_gpt-6-luna"
 GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public")
@@ -66,7 +67,7 @@ def main() -> int:
             outcome = (rec or {}).get("outcome") or {}
             agent = outcome.get("agent") or {}
             rows.append({
-                "doc": d.name,
+                "doc": d.name, "outline": has_outline(d, expected),
                 "v1": scores(V1 / "outputs" / f"{d.name}.md", expected, d.name),
                 "fixed": scores(args.fixed / "outputs" / f"{d.name}.md", expected, d.name),
                 "hybrid": scores(hybrid_md, expected, d.name),
@@ -94,7 +95,8 @@ def main() -> int:
               f"{'—' if r['hygiene'] is None else ('✅' if r['hygiene'] else '❌')} |")
     print()
     for m in ("char_f1", "table_f1", "heading_f1", "role_f1"):
-        both = [r for r in rows if all((r[k] or {}).get(m) is not None for k in ("v1", "fixed", "hybrid"))]
+        both = [r for r in rows if all((r[k] or {}).get(m) is not None for k in ("v1", "fixed", "hybrid"))
+                and (r["outline"] or m in ("char_f1", "table_f1"))]  # headings: documents with an outline (Q79)
         if both:
             means = [sum(r[k][m] for r in both) / len(both) for k in ("v1", "fixed", "hybrid")]
             print(f"{m:10s} v1 {means[0]:.3f} · fixed {means[1]:.3f} · hybrid {means[2]:.3f}  (n={len(both)})")

@@ -3,8 +3,8 @@
 
 Runs the working tree's fixed pipeline from a frozen run's response cache (read-only: a request the cache lacks
 fails the document instead of calling a service), then compares per document with the baseline outputs and v1:
-heading_f1 and role F1 (means over the documents v1 has scores for, and over all), and char_f1 / table F1 moves
-beyond the tolerance.
+heading_f1 and role F1 (means over the documents v1 has scores for, and over all; documents with an outline only,
+Q79), and char_f1 / table F1 moves beyond the tolerance.
 
     uv run python scripts/heading_compare.py --out /tmp/p5-2/try1
     uv run python scripts/heading_compare.py --out /tmp/p5-2/try1 --no-run   # compare only
@@ -22,6 +22,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from phase4_compare import GT_DIRS, TOLERANCE, V1, scores  # noqa: E402
+
+from parserx.eval.outline import has_outline  # noqa: E402
 
 BASELINE = REPO_ROOT / "eval_runs" / "2026-09-26_p4-7b_v2_fixed_full"
 
@@ -48,11 +50,12 @@ def main() -> int:
         args.out.mkdir(parents=True, exist_ok=True)
         run(args.out, args.cache_run)
 
-    rows = []
+    rows, outline = [], {}
     for gt in GT_DIRS:
         for d in sorted(gt.iterdir()):
             if (d / "expected.md").is_file():
                 expected = (d / "expected.md").read_text(encoding="utf-8")
+                outline[d.name] = has_outline(d, expected)  # headings count only with an outline (Q79)
                 rows.append((d.name, {k: scores(p / f"{d.name}.md", expected, d.name) for k, p in
                                       (("v1", V1 / "outputs"), ("base", args.baseline), ("new", args.out))}))
 
@@ -71,11 +74,12 @@ def main() -> int:
             elif (a is None) != (b is None):
                 info.append(f"{m} {f(a)}→{f(b)}")
         if args.all or heading[1] != heading[2] or role[1] != role[2] or info:
-            print(f"{name[:42]:42} {' '.join(map(f, heading)):>22} {' '.join(map(f, role)):>22}  {'; '.join(info)}")
+            mark = "" if outline[name] else "  (no outline)"
+            print(f"{name[:42]:42} {' '.join(map(f, heading)):>22} {' '.join(map(f, role)):>22}  {'; '.join(info)}{mark}")
     print()
     for label, keys in (("with v1 scores", ("v1", "base", "new")), ("all scored", ("base", "new"))):
         for m in ("heading_f1", "role_f1"):
-            both = [s for _, s in rows if all((s[k] or {}).get(m) is not None for k in keys)]
+            both = [s for name, s in rows if outline[name] and all((s[k] or {}).get(m) is not None for k in keys)]
             means = " · ".join(f"{k} {sum(s[k][m] for s in both) / len(both):.3f}" for k in keys)
             print(f"{m:10s} {label:15s} {means}  (n={len(both)})")
     return 0

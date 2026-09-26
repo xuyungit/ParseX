@@ -49,6 +49,7 @@ def document_scores(result: EvalResult) -> dict:
         "order_tau": result.order.tau,
         "order_coverage": result.order.coverage,
         "heading_f1": result.headings.f1,
+        "outline": result.outline,
         "key_errors": result.key_content.total,
         "key_missing": dict(result.key_content.missing),
         "key_extra": dict(result.key_content.extra),
@@ -168,6 +169,8 @@ def _compare_document(name: str, cur: dict, base: dict, tolerance: float, outcom
         now, then = cur.get(key), base.get(key)
         if now is None or then is None:
             continue
+        if key == "heading_f1" and not cur.get("outline", True):
+            continue  # no outline to judge (Q79): headings are reported, not checked
         higher_is_better = key in _SCORES_HIGHER
         tol = 0 if key in _COUNTS_LOWER else tolerance
         delta = now - then if higher_is_better else then - now  # > 0 means better

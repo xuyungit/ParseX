@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
+from parserx.eval.outline import has_outline
 from parserx.eval.metrics import (
     CostMetrics,
     EvalResult,
@@ -155,6 +156,7 @@ class EvalRunner:
         log.info("Evaluating: %s", doc_dir.name)
         try:
             result = self.evaluate_single(input_path, expected_path, name=doc_dir.name)
+            result.outline = has_outline(doc_dir)
         except NotReplayable as exc:
             log.error("  NOT EXECUTED: %s — %s", doc_dir.name, exc)
             self.not_executed.append((doc_dir.name, str(exc)))
@@ -218,7 +220,7 @@ class EvalRunner:
 
         table_f1 = [r.tables.cell_f1 for r in results]
         order_tau = [r.order.tau for r in results]
-        heading_f1 = [r.headings.f1 for r in results]
+        heading_f1 = [r.headings.f1 for r in results if r.outline]  # documents with an outline (Q79)
         key_missing = {k: sum(r.key_content.missing[k] for r in results) for k in KEY_KINDS}
         key_extra = {k: sum(r.key_content.extra[k] for r in results) for k in KEY_KINDS}
         total_ocr = sum(r.cost.ocr_calls for r in results)
@@ -241,7 +243,7 @@ class EvalRunner:
             f" | char_bag_f1 (diagnostic) {avg(r.text.char_bag_f1 for r in results)}",
             f"- Reading order tau: {avg(order_tau)} ({applicable(order_tau)} docs)"
             f" | coverage {avg(r.order.coverage for r in results)}",
-            f"- Heading F1: {avg(heading_f1)} ({applicable(heading_f1)} docs with headings)",
+            f"- Heading F1: {avg(heading_f1)} ({applicable(heading_f1)} docs with an outline)",
             "- Key content errors (missing/extra): "
             + ", ".join(f"{k} {key_missing[k]}/{key_extra[k]}" for k in KEY_KINDS),
             f"- Real requests (OCR/VLM/LLM): {total_ocr}/{total_vlm}/{total_llm} (OCR pages {total_pages})",

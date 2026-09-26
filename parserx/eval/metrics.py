@@ -126,6 +126,7 @@ class EvalResult:
     cost: CostMetrics = field(default_factory=CostMetrics)
     warnings: list[str] = field(default_factory=list)
     residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
+    outline: bool = True  # heading scores count in averages and checks (``eval/outline.py``, Q79)
 
 
 # ── Text metrics ────────────────────────────────────────────────────────
