@@ -1,242 +1,179 @@
 # ParserX
 
-**高保真文档解析，面向知识库、RAG 和文档分析。**
-
-ParserX 将 PDF 和 DOCX 文件转换为结构良好的 Markdown — 保留章节层级、表格、图片和公式 — 同时通过选择性、规则优先的处理策略控制 API 成本。
+**面向大模型使用的文档解析：把 PDF、DOCX（含扫描件与嵌入图片）转成忠实的 Markdown。**
 
 [English](README.md) | 中文
 
-## 要解决什么问题
+ParserX 把 PDF、DOCX、DOC 转成大模型可用的 Markdown，同时给出机器可读的记录：每一份内容去了哪里。重点是中文与中英混排的文档：报告、规范、合同、论文、扫描表单。
 
-当前的文档解析工具分为两个极端：
+优先级：**页面上的信息不丢** > **标题层级正确** > 各类基准分数。
 
-| 方案 | 代表工具 | 优点 | 缺点 |
-|------|---------|------|------|
-| **简单提取** | pdfplumber、PyMuPDF | 速度快、成本低、无 GPU | 丢失表格结构、章节层级、图片含义 |
-| **全 AI 解析** | 逐页 LLM 流水线 | 质量较高 | 单文档 200+ 次 API 调用，慢且昂贵，结果不确定 |
-
-ParserX 走第三条路：**确定性规则优先，AI 仅在必要时介入**。流水线通过字体元数据、页面几何信息和编号模式分析，在无需任何 LLM 调用的情况下完成 70–80% 的结构检测。AI（OCR、VLM）仅在必要时选择性调用 — 只对扫描页做 OCR，只对信息性图片调用 VLM — 相比暴力全量调用，API 成本降低 10–20 倍。
-
-## 与同类工具的对比
-
-| 能力 | PyMuPDF | Marker | MinerU | Docling | **ParserX** |
-|------|---------|--------|--------|---------|-------------|
-| 章节/标题检测 | - | 启发式 + LLM | 布局模型 | 布局模型 | **字体分析 + 编号模式**（7 种中英文模式，无需 LLM） |
-| 页眉页脚移除 | - | - | 布局模型 | 布局模型 | **几何定位 + 跨页重复检测**（无需 LLM） |
-| 表格提取 | 基础 | Surya | GPU 模型 | TableFormer | **PyMuPDF 原生 + 跨页合并** |
-| 扫描件 OCR | - | Surya (GPU) | PaddlePaddle (GPU) | EasyOCR | **选择性 OCR**（仅处理扫描/混合页，后端可插拔） |
-| 图片处理 | - | - | - | SmolVLM | **启发式分类 + 选择性 VLM**（跳过 80%+ 装饰性图片） |
-| 需要 GPU | 否 | 是 | 是 | 可选 | **否**（使用远程 API 服务） |
-| 许可证 | AGPL | GPL-3.0 | AGPL | MIT | **MIT** |
-
-### 核心差异化
-
-- **无需 GPU。** 笔记本即可运行。OCR 和 VLM 使用可配置的远程 API 服务。
-- **CJK 优先设计。** 中文编号模式（第X章、一/二/三、(一)(二)(三) 等）、CJK 空格修复、中英文混排支持均为一等公民。
-- **质量可度量。** 内建评估框架，支持文本编辑距离、标题 P/R/F1、表格单元格 F1、处理成本统计。支持 [OmniDocBench](https://huggingface.co/datasets/opendatalab/OmniDocBench) 公开基准测试。
-- **精简可审计。** 约 35 个源文件，无重度框架依赖。每个处理步骤都是独立模块，可以单独阅读、测试和替换。
-
-## 处理流程
+## 工作方式
 
 ```
-                    ┌─────────────────────────────────────────────┐
-  PDF/DOCX ──────▶  │  Provider  │  提取文本、表格、图片            │
-                    │            │  附带字符级元数据                 │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │  Builders  │  字体统计、页面类型分类、          │
-                    │            │  选择性 OCR、图片提取             │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │ Processors │  页眉页脚 → 章节 → 表格 →        │
-                    │            │  图片 → 文本清洗                  │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │  Assembly  │  Markdown 渲染、                 │
-                    │            │  章节切分                        │
-                    └─────────────────────────────────────────────┘
+文档 ─▶ 工作区 ─▶ 标准处理（固定流水线） ─▶ 有待核对项？ ──否──▶ 导出
+                    │                                   │ 是
+                    │  文字层 · 扫描引擎 · 版面检测         ▼
+                    │  本地读数 · 表格 · 图片 · 公式 · 标题   Agent（Codex）用同一套工具、看页面图，核对被指出的地方
+                    ▼                                   │
+             去向检查：每份发现的内容都要有去向  ◀─────────┘
+             （输出、合并、重复、有理由的排除，或记录在案的失败）
 ```
 
-**Provider（输入层）** — 从 PDF（PyMuPDF 字符级提取，支持基于间距的词空格恢复）或 DOCX（Docling OOXML 解析）中提取原始内容。每个文本片段都携带字体名、字号和加粗标记 — 这些元数据驱动下游的标题检测，无需 LLM。
+- **文档工作区**：页面、块、每块的来源（文字层、OOXML、扫描引擎、VLM）、每个决定、内容去向账目都保存在工作区里，不在模型的上下文里。
+- **工具包与程序约束**：工具负责读取、识别、复核表格、描述图片、调整结构。模型提出的修改只是候选，程序能核实才采用。例如：
+  - 数字不能违背证据改写；
+  - 调整结构不改原文；
+  - 大纲层级必须合法。
 
-**Builders（分析层）** — 分析提取的内容：
-- *MetadataBuilder* 计算字体统计（正文字体 vs 标题候选），检测 7 种编号模式
-- *OCRBuilder* 将每页分类为原生/扫描/混合，仅对需要的页面进行 OCR — 对混合页做文本去重，避免重复提取
-- *ImageExtractor* 从文档中提取图片，跳过装饰性图片
+  无理由消失的内容视为缺陷，每次运行都由去向检查核对。
+- **两种运行时，同一套工具**：
+  - 固定流水线按固定顺序做标准处理，确定、快；
+  - **混合方案**（默认）先跑固定流水线；有待核对项时，再交给 Agent（Codex CLI），由它看页面图，按证据修正。
+- **信号只指路，由 Agent 判断**：待核对项来自正确输出必须满足的性质：
+  - 页面上看得到的都在输出里（与每页的本地读数比对）；
+  - 独立读数一致；
+  - 文档自身一致（数字相加、编号连续）；
+  - 结构与版面一致。
+- **标题由一致的证据决定**：一个段落要有两种独立证据同时成立才算标题。证据包括：
+  - 排版与正文不同；
+  - 版面检测器标为标题；
+  - 带章节号；
+  - 编号延伸某个标题的编号。
 
-**Processors（处理层）** — 逐步转换标注后的文档：
-- *HeaderFooterProcessor* 通过几何区域 + 跨页频率移除重复的页眉页脚文本
-- *ChapterProcessor* 根据字体大小比例 + 编号信号分配标题层级
-- *TableProcessor* 合并跨页断裂的表格
-- *ImageProcessor* 分类图片（装饰性/信息性/图表），仅对有信息量的图片调用 VLM 生成描述
-- *TextCleanProcessor* 修复 CJK 空格伪影和编码问题
+  层级来自文档自身的排版与编号；DOCX 还用文件的样式与大纲级别。没有关键词表。
 
-**Assembly（组装层）** — 将处理后的文档渲染为 Markdown，可选按章节切分输出。
+用到的服务：
+- 远程扫描引擎（PaddleOCR-VL，AI Studio jobs API）：识别扫描页与带文字的图片；
+- VLM（OpenAI，默认 `gpt-6-luna`）：描述图片、复核；
+- 本地 CPU 模型：版面检测与页面读数。
 
-## 快速开始
+不需要 GPU。
+
+## 安装
 
 ```bash
-git clone https://github.com/your-org/ParserX.git
-cd ParserX
-uv sync
+# 作为命令行工具
+uv tool install -e /path/to/ParserX
+parserx init                 # 生成 ~/.config/parserx/config.yaml 与 .env
+vim ~/.config/parserx/.env   # 填写服务凭据
+
+# 开发
+git clone <repo> && cd ParserX && uv sync
+uv run parserx --help
 ```
 
-### 基本用法
+`psx` 是 `parserx` 的简写。凭据写在 `~/.config/parserx/.env` 或 `./.env`：
 
 ```bash
-# 解析 PDF 到标准输出
-uv run parserx parse document.pdf
-
-# 输出到文件
-uv run parserx parse document.pdf -o output.md
-
-# 按章节切分输出
-uv run parserx parse document.pdf -o output_dir/ --split-chapters
-
-# 使用配置文件 + 详细日志
-uv run parserx parse document.pdf -c parserx.yaml -v
+OPENAI_API_KEY=...                      # VLM
+PADDLE_OCR_ENDPOINT=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
+PADDLE_OCR_TOKEN=...                    # 扫描引擎，在 https://aistudio.baidu.com/paddleocr 获取
 ```
 
-### 启用 VLM 图片描述
+混合方案需要安装并登录 [Codex CLI](https://github.com/openai/codex)（`codex login`）。没有安装或没有登录时，采用固定流水线的结果，并说明原因。
 
-设置环境变量（或使用 `.env` 文件）指向 OpenAI 兼容的 API 端点：
+## 使用
 
 ```bash
-OPENAI_BASE_URL="https://api.openai.com/v1" \
-OPENAI_API_KEY="your-key" \
-uv run parserx parse document.pdf -c parserx.yaml -v
+parserx parse report.pdf                       # 混合方案（默认）→ ./output/report/
+parserx parse a.pdf b.docx docs/ -o out/       # 多个文件；目录取其中的 PDF/DOCX/DOC
+parserx parse report.pdf --runtime fixed       # 只用固定流水线：确定、不调用 Agent
+parserx parse report.pdf --stdout              # Markdown 输出到 stdout
+parserx parse report.pdf --json                # 结果摘要以 JSON 输出到 stdout（进度在 stderr）
+parserx parse report.pdf --lang en             # 英文界面（默认中文）
+parserx parse report.pdf --no-ocr              # 不用扫描引擎：扫描页不识别（结果为 partial）
+parserx parse report.pdf --no-vlm              # 不用 VLM：图片不描述
+parserx parse report.pdf --set runtime.formulas=false   # 覆盖任意配置
 ```
 
-未设置时，VLM 步骤自动跳过，其余功能正常工作。
+Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继续。
 
-### 启用 OCR（扫描件处理）
+**输出**（`./output/<文件名>/`）：
 
-```bash
-# token 在 https://aistudio.baidu.com/paddleocr 获取
-PADDLE_OCR_ENDPOINT="https://paddleocr.aistudio-app.com/api/v2/ocr/jobs" \
-PADDLE_OCR_TOKEN="your-token" \
-uv run parserx parse scanned.pdf -c parserx.yaml
-```
+| 文件 | 内容 |
+|---|---|
+| `<文件名>.md` | Markdown：标题、段落、表格（GFM；有合并单元格时用 HTML）、图片及描述、LaTeX 公式、页码锚点 |
+| `<文件名>.json` | 摘要：状态（`complete` / `partial` / `failed`）、大纲、表格、图片、缺失内容及原因、待核对项、处理过程与费用 |
+| `<文件名>.blocks.json` | sidecar：每个块的来源、决定与去向账目 |
+| `images/` | Markdown 引用的图片 |
 
-未配置 OCR 凭据时，扫描页将被跳过。所有可用环境变量参见 `.env.example`。
-
-### 真实端到端测试
-
-ParserX 现在包含一组 live E2E pytest 测试，会读取 `.env` 中的真实凭据并实际调用
-在线 OCR、LLM、VLM 服务：
-
-```bash
-uv run pytest tests/test_live_e2e.py -q
-```
-
-如果 `.env` 中已经配置好相关凭据，执行 `uv run pytest tests/ -q`
-时也会自动把这组 live 测试一起跑掉。
-
-## 评估
-
-ParserX 内建评估框架：
-
-```bash
-# 对 ground truth 目录批量评估
-uv run parserx eval ground_truth/ -o report.md
-
-# 下载公开基准测试集（OmniDocBench 子集）
-uv pip install 'parserx[bench]'
-uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
-```
-
-评估指标：归一化编辑距离、字符 F1、标题精确率/召回率/F1、表格单元格 F1、处理成本。
-
-调优 VLM 时，可以直接用 `parserx compare` 做提示词或模型对比，例如：
-- `--set-a processors.image.vlm_prompt_style=strict_bilingual`
-- `--set-b processors.image.vlm_prompt_style=strict_en`
-- `--set-a services.vlm.model=model-a`
-- `--set-b services.vlm.model=model-b`
+退出码：全部写出（complete 或 partial）为 0，有文档失败为 1，Ctrl-C 为 130。
 
 ## 配置
 
-所有设置在 `parserx.yaml` 中管理，凭据通过环境变量注入：
+查找顺序：`--config` > `./parserx.yaml` > `~/.config/parserx/config.yaml` > 默认值。主要设置：
 
 ```yaml
-services:
-  vlm:
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${VLM_MODEL:gpt-5.4-mini}
-    api_key: ${OPENAI_API_KEY}
-
 builders:
-  ocr:
-    engine: paddleocr          # 或 "none" 禁用 OCR
+  ocr:                    # 扫描引擎
+    engine: paddleocr     # "none" 即 --no-ocr
     endpoint: ${PADDLE_OCR_ENDPOINT}
     token: ${PADDLE_OCR_TOKEN}
-    selective: true             # 仅对扫描/混合页做 OCR
-
-processors:
-  header_footer:
-    enabled: true
-  chapter:
-    enabled: true
-  image:
-    vlm_description: true
-    skip_decorative: true
+services:
+  vlm:
+    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    model: ${VLM_MODEL:gpt-6-luna}
+    api_key: ${OPENAI_API_KEY}
+runtime:
+  mode: hybrid            # 或 fixed
+  agent: {model: gpt-6-sol, effort: medium}
+cache:
+  mode: read_write        # 响应缓存与回放（off / read_only / refresh）
+scheduling:
+  budget: {}              # 每篇文档的请求数、费用、时间上限
 ```
 
-完整默认配置参见 [`parserx.yaml`](parserx.yaml)。
+完整的生产配置见 [`parserx.yaml`](parserx.yaml)。旧版本的配置键（`processors`、`providers`、`pipeline` 等）会被忽略。
 
-## 项目状态
-
-ParserX 正在积极开发中。核心流水线已可用并经过测试。
-
-| 组件 | 状态 | 说明 |
-|------|------|------|
-| PDF 提取（PyMuPDF） | ✅ 已完成 | 字符级字体元数据 |
-| DOCX 提取（Docling） | ✅ 已完成 | 样式 → 标题层级映射 |
-| 页眉页脚移除 | ✅ 已完成 | 几何定位 + 跨页重复检测 |
-| 章节/标题检测 | ✅ 已完成 | 字体比例 + 7 种编号模式 |
-| 表格提取 + 跨页合并 | ✅ 已完成 | 列数匹配 + 表头去重 |
-| 选择性 OCR | ✅ 已完成 | 页面分类 + 混合页文本去重 |
-| 图片分类 + VLM 描述 | ✅ 已完成 | 启发式分类 + 并发 VLM 调用 |
-| 文本清洗（CJK） | ✅ 已完成 | 空格修复 + 编码修复 |
-| 评估框架 | ✅ 已完成 | 编辑距离、标题/表格 F1、OmniDocBench |
-| 换行修复 | ✅ 已完成 | CJK/英文续行检测、跨元素合并 |
-| 章节检测 LLM 兜底 | ✅ 已完成 | 低置信候选批量确认 |
-| 公式提取 | ✅ 已完成 | Unicode→LaTeX 正则归一化 |
-| 幻觉检测 | ✅ 已完成 | VLM 输出与原生文本交叉验证 |
-| 阅读顺序 | ✅ 已完成 | 多栏布局检测 + 文档级传播 |
-
-## 开发
+## 评测
 
 ```bash
-# 运行测试
-uv run pytest tests/ -v
-
-# 使用真实文档运行测试（设置样本目录）
-PARSERX_SAMPLE_DIR=/path/to/test/docs uv run pytest tests/ -v
+uv run python scripts/check_services.py                  # 扫描引擎与 VLM 可用
+uv run pytest -q --ignore=tests/test_live_e2e.py         # L0：离线单元与契约测试
+uv run python scripts/regression_test.py --core --repeat 2   # L1：核心文档离线回放两次
+uv run python scripts/regression_test.py --replay eval_runs/<run>   # 回放冻结 run
+uv run parserx eval ground_truth/ -o report.md            # 对照标注评分
 ```
 
-### 项目结构
+指标：
+- 字符 F1，以及考虑顺序的编辑距离；
+- 表格单元格 F1（位置与合并单元格）；
+- 标题 F1（文字与层级）与角色 F1（只看文字）；
+- 关键内容错误；
+- 真实请求数与费用。
+
+冻结 run（`eval_runs/`）保存输出、服务响应与环境，可以离线复现比较。`parserx tool-eval` 在同一套标注上比较其他解析工具（需安装可选组 `bench`）。
+
+## 目录结构
 
 ```
 parserx/
-├── config/       # YAML 配置 + Pydantic 校验
-├── models/       # 核心数据模型 (PageElement, Document)
-├── providers/    # 格式提取器 (PDF, DOCX)
-├── builders/     # 分析层 (元数据, OCR, 图片提取)
-├── processors/   # 处理层 (页眉页脚, 章节, 表格, 图片, 文本清洗)
-├── services/     # AI 服务抽象 (LLM/VLM, OCR)
-├── assembly/     # 输出层 (Markdown 渲染, 章节切分)
-├── eval/         # 评估框架 + OmniDocBench 基准测试
-└── verification/ # 输出验证 (规划中)
+├── ir/          # 数据模型：Block、SourceAnchor、Observation、Relation、Asset、Decision
+├── workspace/   # 文档工作区：状态、查询、完整性
+├── content/     # 原生 PDF、DOCX（OOXML）、扫描引擎、选择步骤、页眉页脚、阅读顺序
+├── layout/      # 本地版面检测            routing/   # 图片路由
+├── reading/     # 本地页面读数与输出的双向比对
+├── tables/      # TableGrid、GFM/HTML、跨页合并、算术核对
+├── hierarchy/   # 标题与层级、结构修改的合法性
+├── accounting/  # 去向检查
+├── tools/       # 工具包及其 JSON CLI（process、read、recognize、review_table、describe_figure 等）
+├── runtimes/    # 固定流水线、混合方案、Codex 适配
+├── console/     # parse 命令的进度与结果（中文 / 英文）
+├── render/      # Markdown、sidecar、摘要
+├── scheduling/  # 服务网关：预算、重试、有序并发、费用
+├── cache/       # 响应缓存                services/  # 扫描引擎与 VLM 客户端
+├── skills/      # Agent 的任务指导           prompts/   # VLM 任务提示词
+└── eval/        # 指标、冻结 run、回归门、OmniDocBench 转换
 ```
 
 ## 文档
 
-- [架构设计](docs/architecture.md) — 技术方案、模块设计、实施状态
-- [需求文档](docs/requirements.md) — 背景、痛点、行业调研、设计目标
+- [设计与研发指导](docs/redesign_guide.md)：架构、决策（§14）、阶段与状态（§12）。
+- [评测](docs/evaluation.md)：指标定义。
+- [需求](docs/requirements.md)：背景与痛点。
+- v1 流水线（基于规则的处理器，用到 2026-09）：见 [docs/architecture.md](docs/architecture.md)，代码保存在本地 git 标签 `v1-final`。
 
-## 许可证
+## 许可
 
 MIT

@@ -16,7 +16,7 @@ from parserx.config.schema import ConfigLoadResult, apply_overrides, load_config
 from parserx.eval.reporting import build_config_report_metadata
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="psx",
         description="ParserX — high-fidelity document parsing for knowledge bases and retrieval",
@@ -169,6 +169,11 @@ def main() -> None:
 
     _add_tool_parsers(sub)
 
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
     if not args.command:

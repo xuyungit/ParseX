@@ -132,3 +132,19 @@ def test_cmd_eval_supports_include_list(
     assert "# ParserX Evaluation Report" in captured.out
     assert seen_include_docs == [{"sample-a", "sample-b"}]
     assert "Doc filter active: 2 document(s)" in caplog.text
+
+
+def test_every_parse_option_is_read():
+    # Phase 5 (Q75): `parserx parse --help` lists only options the command uses
+    import re
+    from pathlib import Path
+
+    import parserx.cli as cli
+
+    parser = cli.build_parser()
+    parse = next(a for a in parser._subparsers._group_actions[0].choices.items() if a[0] == "parse")[1]
+    options = {a.dest for a in parse._actions if a.dest not in ("help", "input")}
+    code = "".join(Path(m.__file__).read_text(encoding="utf-8") for m in (cli, __import__("parserx.console.cli",
+                                                                                                fromlist=["x"])))
+    unread = sorted(d for d in options if not re.search(rf'args\.{d}\b|getattr\(args, "{d}"', code))
+    assert unread == []

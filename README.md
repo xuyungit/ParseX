@@ -1,304 +1,172 @@
 # ParserX
 
-**High-fidelity document parsing for knowledge bases, RAG, and document analysis.**
+**Document parsing for LLM use: PDF and DOCX (including scans and embedded images) to faithful Markdown.**
 
 English | [中文](README_CN.md)
 
-ParserX converts PDF and DOCX files into well-structured Markdown — preserving chapter hierarchy, tables, images, and formulas — while keeping API costs low through selective, rule-first processing.
+ParserX turns PDF, DOCX and DOC files into Markdown that a language model can use, together with a machine-readable
+record of where every piece of content went. It is built for Chinese and mixed Chinese/English documents: reports,
+standards, contracts, papers, scanned forms.
 
-## The Problem
+Priorities, in order: **nothing on the page is lost**, then the **heading hierarchy**, then benchmark scores.
 
-Document parsing tools today fall into two camps:
-
-| Approach | Examples | Pros | Cons |
-|----------|----------|------|------|
-| **Simple extraction** | pdfplumber, PyMuPDF | Fast, cheap, no GPU | Loses table structure, chapter hierarchy, image meaning |
-| **Full AI parsing** | LLM-per-page pipelines | High quality | 200+ API calls per doc, slow, expensive, non-deterministic |
-
-ParserX takes a third path: **deterministic rules first, AI only where needed**. The pipeline analyzes font metadata, page geometry, and numbering patterns to handle 70–80% of structure detection without any LLM calls. AI (OCR, VLM) is invoked selectively — only for scanned pages, only for informational images — cutting API costs by 10–20x compared to brute-force approaches.
-
-## How It Compares
-
-| Feature | PyMuPDF | Marker | MinerU | Docling | **ParserX** |
-|---------|---------|--------|--------|---------|-------------|
-| Chapter/heading detection | - | Heuristic + LLM | Layout model | Layout model | **Font analysis + numbering patterns** (7 CJK/EN patterns, no LLM) |
-| Header/footer removal | - | - | Layout model | Layout model | **Geometric + cross-page repetition** (no LLM) |
-| Table extraction | Basic | Surya | GPU models | TableFormer | **PyMuPDF native + cross-page merge** |
-| OCR for scanned pages | - | Surya (GPU) | PaddlePaddle (GPU) | EasyOCR | **Selective OCR** (only scanned/mixed pages, pluggable backend) |
-| Image handling | - | - | - | SmolVLM | **Heuristic classification + selective VLM** (skips 80%+ decorative images) |
-| GPU required | No | Yes | Yes | Optional | **No** (uses remote API services) |
-| License | AGPL | GPL-3.0 | AGPL | MIT | **MIT** |
-
-### Key Differentiators
-
-- **No GPU required.** Runs on a laptop. OCR and VLM use remote API services (configurable).
-- **CJK-first design.** Chinese numbering patterns (第X章, 一/二/三, (一)(二)(三), etc.), CJK space normalization, and bilingual document support are first-class.
-- **Measurable quality.** Built-in evaluation framework with text edit distance, heading P/R/F1, table cell F1, and cost tracking. Includes public benchmark support via [OmniDocBench](https://huggingface.co/datasets/opendatalab/OmniDocBench).
-- **Minimal, auditable pipeline.** ~35 source files, no deep framework dependency. Each processing step is a standalone module you can read, test, and replace independently.
-
-## Processing Pipeline
+## How it works
 
 ```
-                    ┌─────────────────────────────────────────────┐
-  PDF/DOCX ──────▶  │  Provider  │  Extract text, tables, images  │
-                    │            │  with character-level metadata  │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │  Builders  │  Font statistics, page types,   │
-                    │            │  selective OCR, image extraction │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │ Processors │  Header/footer → Chapter →      │
-                    │            │  Table → Image → TextClean      │
-                    └──────┬──────────────────────────────────────┘
-                           │
-                    ┌──────▼──────────────────────────────────────┐
-                    │  Assembly  │  Markdown rendering,            │
-                    │            │  chapter splitting              │
-                    └─────────────────────────────────────────────┘
+document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ open review items? ──no──▶ export
+                               │                                        │ yes
+                               │  native text · scan engine · layout    ▼
+                               │  local page reading · tables ·     Agent (Codex) checks the flagged places
+                               │  figures · formulas · titles        with the same tools, sees the page images
+                               ▼                                        │
+                        accounting check: every discovered item  ◀──────┘
+                        is output, merged, a duplicate, excluded with a reason, or a recorded failure
 ```
 
-**Provider** — Extracts raw content from PDF (PyMuPDF character-level with gap-based word space recovery) or DOCX (Docling OOXML). Every text span carries font name, size, and bold flag — this metadata drives downstream heading detection without LLM.
+- **Document workspace.** Pages, blocks, their sources (native text layer, OOXML, scan engine, VLM), decisions and
+  the ledger of discovered content live in a workspace, not in a model's context.
+- **Toolkit with program-enforced constraints.** Tools read, recognise, review tables, describe figures and change
+  structure. A model's change is only a candidate: it is accepted only when the program can verify it. For example,
+  numbers may not change against the evidence, structure changes never rewrite text, and the outline stays legal.
+  Content that disappears without a recorded reason is a defect, and the accounting check catches it on every run.
+- **Two runtimes over the same tools.** The fixed pipeline runs the standard processing in a fixed order: it is
+  deterministic and fast. The **hybrid** runtime (the default) first runs the fixed pipeline. When there are open
+  review items, it then hands the document to an agent (Codex CLI), which looks at the flagged places in the page
+  images and fixes what the evidence supports.
+- **Signals point, the agent judges.** Review items come from properties a correct output must have: what is on the
+  page is in the output (checked against a local reading of every page), independent readings agree, the document
+  agrees with itself (numbers add up, numbering continues), and the structure agrees with the layout.
+- **Headings from agreeing evidence.** A paragraph becomes a title when two independent kinds of evidence agree:
+  typography set apart from the body, the layout detector's title label, a section number, or a number that extends
+  a title's number. Levels come from the document's own typography and numbering; DOCX headings also come from the
+  file's styles and outline levels. No keyword lists.
 
-**Builders** — Analyzes the extracted content:
-- *MetadataBuilder* computes font statistics (body font vs heading candidates) and detects 7 numbering patterns
-- *OCRBuilder* classifies each page as native/scanned/mixed, then OCRs only the pages that need it — with text deduplication to avoid double-extracting content on mixed pages
-- *ImageExtractor* pulls images from the document, skipping decorative ones
-
-**Processors** — Transforms the annotated document:
-- *HeaderFooterProcessor* removes repeated header/footer text using geometric zones + cross-page frequency
-- *ChapterProcessor* assigns heading levels from font size ratio + numbering signals, then batch-confirms low-confidence candidates with one LLM fallback call
-- *TableProcessor* merges tables that span across page breaks
-- *ImageProcessor* classifies images (decorative/informational/chart) and calls VLM for descriptions — only for the images that carry real information
-- *TextCleanProcessor* fixes CJK spacing artifacts and encoding issues
-
-**Assembly** — Renders the processed document as Markdown, optionally splitting into chapter files. Figure/table captions are associated before rendering.
+Services: a remote scan engine (PaddleOCR-VL, AI Studio jobs API) for scanned pages and images with text; a VLM
+(OpenAI, `gpt-6-luna` by default) for figure descriptions and reviews; local CPU models for layout detection and
+the page reading. No GPU is needed.
 
 ## Installation
 
-### Global install (recommended)
-
 ```bash
-# Install as a global CLI tool — accessible from anywhere
+# as a command-line tool
 uv tool install -e /path/to/ParserX
+parserx init                 # writes ~/.config/parserx/config.yaml and .env
+vim ~/.config/parserx/.env   # service credentials
 
-# Initialize global config (~/.config/parserx/)
-psx init
-
-# Edit API keys
-vim ~/.config/parserx/.env
+# for development
+git clone <repo> && cd ParserX && uv sync
+uv run parserx --help
 ```
 
-After install, both `psx` and `parserx` commands are available. Use `psx` as the short form.
-
-> **Note:** `-e` (editable) means Python code changes take effect immediately.
-> Only re-run `uv tool install -e /path/to/ParserX --force` if `pyproject.toml` dependencies change.
-
-### Development setup
+`psx` is a short alias of `parserx`. Credentials (`~/.config/parserx/.env` or `./.env`):
 
 ```bash
-git clone https://github.com/your-org/ParserX.git
-cd ParserX
-uv sync
-```
-
-In development mode, use `uv run psx` or `uv run parserx` instead of the bare command.
-
-## Quick Start
-
-```bash
-# Parse a PDF — outputs to ./output/document/
-psx parse document.pdf
-
-# Specify output directory
-psx parse document.pdf -o /tmp/result/
-
-# Also split into chapter files
-psx parse document.pdf --split-chapters
-
-# Print to stdout (no files written)
-psx parse document.pdf --stdout
-
-# Disable VLM / OCR / LLM for faster local-only processing
-psx parse document.pdf --no-vlm --no-ocr --no-llm
-
-# Override model names
-psx parse document.pdf --vlm-model gpt-4o --llm-model gpt-4o-mini
-
-# Use a specific config file with verbose logging
-psx parse document.pdf -c parserx.yaml -v
-```
-
-Output directory structure:
-```
-output/document/
-├── output.md      # Complete Markdown (images use relative paths)
-├── images/        # Extracted images
-│   ├── p1_img1.png
-│   └── p3_img2.jpg
-├── index.md       # Table of contents (with --split-chapters)
-└── chapters/      # Per-chapter files (with --split-chapters)
-```
-
-### Configuration
-
-Config is resolved in order: `--config` flag > `./parserx.yaml` > `~/.config/parserx/config.yaml` > built-in defaults.
-
-API credentials are loaded from `.env` files: `./.env` > `~/.config/parserx/.env`.
-
-Run `psx init` to generate the global config templates with all available options.
-
-### Enable VLM Image Descriptions
-
-Set in `~/.config/parserx/.env` (or project `.env`):
-
-```bash
-OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
-
-Without these, VLM steps are skipped automatically — everything else works.
-
-### Enable OCR for Scanned Documents
-
-```bash
+OPENAI_API_KEY=...                      # VLM
 PADDLE_OCR_ENDPOINT=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
-PADDLE_OCR_TOKEN=your-token   # from https://aistudio.baidu.com/paddleocr
+PADDLE_OCR_TOKEN=...                    # scan engine, from https://aistudio.baidu.com/paddleocr
 ```
 
-Without OCR credentials, scanned pages are skipped.
+The hybrid runtime needs the [Codex CLI](https://github.com/openai/codex), installed and logged in (`codex login`).
+When it is missing or not logged in, ParserX uses the fixed pipeline's result and says why.
 
-### Real End-to-End Test
-
-ParserX also includes a live E2E pytest suite that uses `.env` credentials to
-call the real online OCR, LLM, and VLM services:
+## Usage
 
 ```bash
-uv run pytest tests/test_live_e2e.py -q
+parserx parse report.pdf                       # hybrid (default) → ./output/report/
+parserx parse a.pdf b.docx docs/ -o out/       # several files; a directory contributes its PDF/DOCX/DOC
+parserx parse report.pdf --runtime fixed       # fixed pipeline only: deterministic, no agent
+parserx parse report.pdf --stdout              # Markdown to stdout
+parserx parse report.pdf --json                # the result summary as JSON on stdout (progress on stderr)
+parserx parse report.pdf --lang en             # console in English (default: Chinese)
+parserx parse report.pdf --no-ocr              # without the scan engine: scanned pages stay unrecognised (partial)
+parserx parse report.pdf --no-vlm              # without the VLM: figures are not described
+parserx parse report.pdf --set runtime.formulas=false   # any config value
 ```
 
-If `.env` contains the required service credentials, `uv run pytest tests/ -q`
-will include these live tests automatically.
+Ctrl-C keeps the work directory; running the same command again continues where it stopped.
 
-## Evaluation
+**Output** (`./output/<name>/`):
 
-ParserX includes a built-in evaluation framework:
+| File | Content |
+|---|---|
+| `<name>.md` | The Markdown: headings, paragraphs, tables (GFM, or HTML for merged cells), images with descriptions, formulas as LaTeX, page anchors |
+| `<name>.json` | Summary: status (`complete` / `partial` / `failed`), outline, tables, images, what is missing and why, open review items, processing and cost |
+| `<name>.blocks.json` | The sidecar: every block with its sources, decisions and the accounting ledger |
+| `images/` | Images referenced from the Markdown |
 
-```bash
-# Evaluate against ground truth
-uv run parserx eval ground_truth/ -o report.md
-
-# Quick A/B compare for a feature toggle
-uv run parserx compare ground_truth_public \
-  --label-a no-fallback \
-  --label-b fallback \
-  --set-a processors.chapter.llm_fallback=false \
-  --set-b processors.chapter.llm_fallback=true
-
-# Download public benchmark (OmniDocBench subset)
-uv pip install 'parserx[bench]'
-uv run python -m parserx.eval.benchmark --output-dir ground_truth_public
-```
-
-Metrics: normalized edit distance, character F1, heading precision/recall/F1, table cell F1, warning count, API calls, and processing cost.
-
-For VLM tuning, you can use `parserx compare` with config overrides such as:
-- `--set-a processors.image.vlm_prompt_style=strict_bilingual`
-- `--set-b processors.image.vlm_prompt_style=strict_en`
-- `--set-a services.vlm.model=model-a`
-- `--set-b services.vlm.model=model-b`
-
-Recommended evaluation strategy:
-- `ground_truth_public/` includes a tiny checked-in smoke subset for fast regression runs
-- larger public benchmarks can be added to the same folder layout
-- private ground truth stays outside the repo but uses the same folder layout
-- both should be run during local iteration for parser changes
-
-See [Evaluation Guide](docs/evaluation.md) for the public/private benchmark workflow.
+Exit code 0 when every document was written (complete or partial), 1 when one failed, 130 on Ctrl-C.
 
 ## Configuration
 
-All settings in `parserx.yaml`, credentials via environment variables:
+Resolved in order: `--config` > `./parserx.yaml` > `~/.config/parserx/config.yaml` > defaults. The main settings:
 
 ```yaml
-services:
-  vlm:
-    endpoint: ${OPENAI_BASE_URL}
-    model: ${VLM_MODEL:gpt-5.4-mini}
-    api_key: ${OPENAI_API_KEY}
-
 builders:
-  ocr:
-    engine: paddleocr          # or "none" to disable
+  ocr:                    # the scan engine
+    engine: paddleocr     # "none" = --no-ocr
     endpoint: ${PADDLE_OCR_ENDPOINT}
     token: ${PADDLE_OCR_TOKEN}
-    selective: true             # only OCR scanned/mixed pages
-
-processors:
-  header_footer:
-    enabled: true
-  chapter:
-    enabled: true
-  image:
-    vlm_description: true
-    skip_decorative: true
+services:
+  vlm:
+    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    model: ${VLM_MODEL:gpt-6-luna}
+    api_key: ${OPENAI_API_KEY}
+runtime:
+  mode: hybrid            # or fixed
+  agent: {model: gpt-6-sol, effort: medium}
+cache:
+  mode: read_write        # responses are recorded and replayed (off / read_only / refresh)
+scheduling:
+  budget: {}              # per-document limits on requests, cost, time
 ```
 
-See [`parserx.yaml`](parserx.yaml) for the full default configuration.
+See [`parserx.yaml`](parserx.yaml) for the full production configuration. Keys from earlier versions (`processors`,
+`providers`, `pipeline` …) are ignored.
 
-## Project Status
-
-ParserX is under active development. The core pipeline is functional and tested.
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| PDF extraction (PyMuPDF) | ✅ Done | Character-level font metadata |
-| DOCX extraction (Docling) | ✅ Done | Style → heading level mapping |
-| Header/footer removal | ✅ Done | Geometric + cross-page repetition |
-| Chapter/heading detection | ✅ Done | Font ratio + 7 numbering patterns + batch LLM fallback |
-| Table extraction + cross-page merge | ✅ Done | Column-count matching + header dedup |
-| Selective OCR | ✅ Done | Page classification + text dedup on mixed pages |
-| Image classification + VLM | ✅ Done | Heuristic + concurrent VLM calls |
-| Text cleaning (CJK) | ✅ Done | Space normalization + encoding fix |
-| Evaluation framework | ✅ Done | Edit distance, heading/table F1, OmniDocBench support |
-| Line unwrap | ✅ Done | CJK/English continuation detection, cross-element merge |
-| LLM fallback for chapters | ✅ Done | Batch confirmation for low-confidence heading candidates |
-| Formula extraction | 🚧 Planned | LaTeX output, requires model integration |
-| Hallucination detection | ✅ Done | Cross-validate VLM output against OCR/native text |
-| Reading order | ✅ Done | Multi-column layout detection + document-level propagation |
-
-## Development
+## Evaluation
 
 ```bash
-# Run tests
-uv run pytest tests/ -v
-
-# Run tests with real documents (set sample dir)
-PARSERX_SAMPLE_DIR=/path/to/test/docs uv run pytest tests/ -v
+uv run python scripts/check_services.py                  # scan engine and VLM reachable
+uv run pytest -q --ignore=tests/test_live_e2e.py         # L0: offline unit and contract tests
+uv run python scripts/regression_test.py --core --repeat 2   # L1: core documents, offline replay, twice
+uv run python scripts/regression_test.py --replay eval_runs/<run>   # replay a frozen run
+uv run parserx eval ground_truth/ -o report.md            # scores against ground truth
 ```
 
-### Project Structure
+Metrics: character F1 (order-aware edit distance too), table cell F1 (position and merged cells), heading F1
+(text and level) and role F1 (text only), key-content errors, real requests and cost. Frozen runs
+(`eval_runs/`) record outputs, responses and the environment so that comparisons are reproducible offline.
+`parserx tool-eval` compares other parsers on the same ground truth (install the `bench` extra).
+
+## Project structure
 
 ```
 parserx/
-├── config/       # YAML config + Pydantic schema
-├── models/       # Core data models (PageElement, Document)
-├── providers/    # Format extractors (PDF, DOCX)
-├── builders/     # Analysis (metadata, OCR, image extraction)
-├── processors/   # Transforms (header/footer, chapter, table, image, text)
-├── services/     # AI service abstraction (LLM/VLM, OCR)
-├── assembly/     # Output (Markdown renderer, chapter splitter)
-├── eval/         # Evaluation framework + OmniDocBench benchmark
-└── verification/ # Output validation and quality warnings
+├── ir/          # data model: Block, SourceAnchor, Observation, Relation, Asset, Decision
+├── workspace/   # the document workspace: state, queries, integrity
+├── content/     # native PDF, DOCX (OOXML), scan engine, selection, page furniture, reading order
+├── layout/      # local layout detector          routing/   # image routing
+├── reading/     # local page reading and two-way comparison with the output
+├── tables/      # TableGrid, GFM/HTML, cross-page merge, arithmetic checks
+├── hierarchy/   # titles and levels, legality of structure changes
+├── accounting/  # the accounting check
+├── tools/       # the toolkit and its JSON CLI (process, read, recognize, review_table, describe_figure, …)
+├── runtimes/    # fixed pipeline, hybrid, Codex adapter
+├── console/     # the parse command's progress and summary (zh / en)
+├── render/      # Markdown, sidecar, summary
+├── scheduling/  # service gateway: budgets, retries, ordered concurrency, cost
+├── cache/       # response cache            services/  # scan engine and VLM clients
+├── skills/      # task guides for the agent  prompts/   # VLM task prompts
+└── eval/        # metrics, frozen runs, regression gates, OmniDocBench conversion
 ```
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — Technical design, module details, implementation status
-- [Evaluation Guide](docs/evaluation.md) — Public/private benchmark strategy and iteration workflow
-- [Requirements](docs/requirements.md) — Background, pain points, industry survey, design goals
+- [Design and development guide](docs/redesign_guide.md): architecture, decisions (§14), phases and status (§12).
+- [Evaluation](docs/evaluation.md): metric definitions.
+- [Requirements](docs/requirements.md): background and pain points.
+- The v1 pipeline (rule-based processors, until 2026-09) is described in [docs/architecture.md](docs/architecture.md)
+  and kept in the local git tag `v1-final`.
 
 ## License
 
