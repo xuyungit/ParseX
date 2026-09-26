@@ -182,6 +182,14 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
             detail=f"{len(segments)} segment(s) of this block are not seen on the page image where the block sits; "
                    "compare with the image"))
+    from parserx.tools.formulas import pending_candidates
+
+    for block_id, candidate in pending_candidates(state):  # the page reading has this passage with formulas (Q70)
+        items.append(Unresolved(
+            target=block_id, kind=UnresolvedKind.FORMULA_CANDIDATE, quotes=_quotes([candidate]),
+            detail="the page reading writes this passage with its formulas as LaTeX, but it (and the editor's "
+                   "version) lacks characters the text layer has; look at the image: if the reading is right, correct "
+                   "the block with it (keep every character the image shows), else close the item"))
     for block_id in figures_without_content(state):  # an image shown with nothing a reader who cannot see it gets
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,

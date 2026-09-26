@@ -1,5 +1,5 @@
 """Q70 experiment: blocks whose page reading lacks text-layer characters, merged by a VLM editor (image + both
-readings); does the merge keep every character?  Usage: formula_merge_test.py OUT_DIR DOC (after formula_page_experiment)."""
+readings); does the merge keep every character?  Usage: formula_merge_experiment.py OUT_DIR DOC (after formula_page_experiment)."""
 import sys, tempfile, json, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])); sys.path.insert(0, str(Path(__file__).resolve().parent))

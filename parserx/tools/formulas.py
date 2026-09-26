@@ -1,22 +1,27 @@
-"""Display formulas of native PDF pages as LaTeX (Q70, 2026-09-26): a step of ``process``.
+"""Formulas of native PDF pages (Q70, version 2 — 2026-09-26): whole pages read, passages chosen one by one.
 
-The text layer of a typeset formula holds the right characters in fragments (a fraction's numerator and
-denominator, sub- and superscripts as separate lines or blocks), without its structure.  Where the local layout
-detector marks a ``display_formula`` region, the region's image goes to the scan engine (PaddleOCR-VL, all
-regions of a document in one batched job) for LaTeX.
+The text layer of typeset mathematics holds the right characters without their structure: sub- and superscripts
+flattened (N_o → "No"), fractions and matrices in fragments.  Measured on the corpus (eval report
+2026-09-26_q70_formula_experiment): reading the whole page with the scan engine recovers most inline math
+(paper_chn01: 101 of 124 inline formulas, against 14 in the text layer) and reads display formulas at least as
+well as crops of them (crops cut formulas the detector splits); taken as a whole the page reading loses prose the
+text layer has, so it is adopted passage by passage.
 
-The engine was chosen by measurement (2026-09-26, 24 formula regions of the corpus with an annotated formula,
-notation normalized): scan engine 90.6 similarity to the annotation, VLM on the image 86.2, VLM on the image with
-the text layer's characters 87.5 — the general VLM misreads glyphs (z′ → ζ′, l → L) that the document-trained
-engine reads right.
-
-Acceptance (the selection step's rules, guide §3.3): two independent readings must agree —
-- the scan engine also calls the region a formula;
-- its letters and digits and the text layer's share most adjacent pairs both ways (``reading/compare.NEAR``);
-- every visible native block touching the region lies in it (a replacement never splits a block's text).
-Then one FORMULA block holds the LaTeX and the native fragments become ``duplicate`` (``duplicate_of`` the
-formula; their text stays in the sidecar).  Otherwise the text layer stays and the engine's reading is kept on
-the first fragment as evidence.
+1. **Pages**: native pages where the local layout detector marks a display or inline formula.  Pages whose
+   formulas are plain text need no reading; DOCX formulas are OMML, already LaTeX (Q9); scanned pages are read
+   whole anyway.
+2. **Reading**: those pages, batched, through the scan engine (the scanned-page path, ``scan.page_blocks``).
+3. **Passages**: the native text blocks and the reading's text and formula blocks over the same place form
+   passages (a block belongs to a passage when its centre lies in a block of the other reading).  Only passages
+   where the reading has mathematics are considered: prose stays the text layer's.
+4. **Choice**, per passage (the selection step's rule: two readings, conservation):
+   - the reading carries every letter and digit of the text layer (a character neither the reading nor the
+     local page reading sees — a mis-mapped glyph — does not count) → the reading's blocks replace the native
+     ones (``duplicate_of``; their text stays in the sidecar);
+   - otherwise an **editor** — the VLM, shown the passage's image and both readings, characters from the text
+     layer and structure from the reading — writes one version; adopted when it conserves the characters;
+   - otherwise the text layer stays, both readings are kept as evidence, and the passage is a review item
+     (``formula_candidate``) for the agent, the final editor in the hybrid runtime.
 """
 
 from __future__ import annotations
@@ -27,111 +32,273 @@ from collections import Counter
 import fitz
 
 from parserx.content import scan
+from parserx.content.text import join_wrapped
 from parserx.content.select import ACTOR as SELECT_ACTOR, renumber
 from parserx.ir import ids
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState, LedgerEntry
-from parserx.reading.compare import NEAR, normalize, pairs_share
+from parserx.reading.compare import normalize, text_at
 from parserx.runtimes.events import Step
+from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, service_failure
-from parserx.tools.recognize import _next_block_seq, _next_item
 from parserx.tools.envelope import Failure
+from parserx.tools.imaging import write_once
+from parserx.tools.recognize import _next_block_seq, _next_item
 from parserx.workspace.queries import HIDDEN, block_unit
 
-LABEL = "display_formula"
-_FORMULA_LABELS = frozenset({"display_formula", "formula", "inline_formula", "formula_number"})
-PAD = 2.0  # pt around a region: the detector's box sits tight on the glyphs (measurement tolerance)
-DPI = 200
+LABELS = frozenset({"display_formula", "inline_formula"})  # detector labels that make a page worth reading
+DONE = "formula_page"  # decision choice: the passage was decided (adopted or kept)
+CANDIDATE = "formula_reading"  # observation label: the reading (or the editor's version) not adopted
+PAD = 2.0  # pt: a block's centre may lie this far outside the other block (box rounding, measurement tolerance)
+EDITOR_DPI = 200
+_PASSAGE_KINDS = frozenset({BlockKind.TEXT, BlockKind.FORMULA})
+_EDITOR_PROMPT = (
+    "你是编辑。图中是文档的一段。给你两份读数：A 是 PDF 文字层（字符准确，但公式的上下标、分式等结构丢失，个别字形可能是乱码），"
+    "B 是 OCR（有 LaTeX 结构，个别字符可能认错、可能漏掉公式编号）。请以图为准，输出这段的最终文字：正文照抄，公式用 LaTeX（行内 "
+    "$…$，行间 $$…$$），字符以 A 为准、结构以 B 为准，公式编号保留。只输出结果，不加解释。")
 
 
-def formula_regions(state: DocumentState) -> list[tuple[int, tuple[float, float, float, float], list[str]]]:
-    """(page, region in page points, native blocks in it) for display-formula regions not yet read."""
+def formula_pages(state: DocumentState) -> list[int]:
+    """Native PDF pages with a detected formula, not decided yet."""
     if state.format != "pdf":
         return []
-    out = []
-    seen: set[tuple[int, tuple]] = set()
+    native_pages = {p.n for p in state.pages if p.status == PageStatus.DONE}
+    marked: set[int] = set()
+    done: set[int] = set()
+    scanned: set[int] = set()
     for block in state.blocks:
-        for obs in block.observations:
-            if obs.task != TaskKind.LAYOUT or obs.label != LABEL or not isinstance(obs.anchor, PdfAnchor):
-                continue
-            n = obs.anchor.page
-            k = obs.anchor.transform[0] if obs.anchor.transform else 1.0
-            box = tuple(round(v * k, 1) for v in obs.anchor.bbox)
-            box = (box[0] - PAD, box[1] - PAD, box[2] + PAD, box[3] + PAD)
-            if (n, box) in seen:
-                continue
-            seen.add((n, box))
-            touching = [b for b in state.blocks if b.status not in HIDDEN and block_unit(state, b) == n
-                        and isinstance(b.anchors[0], PdfAnchor) and b.anchors[0].coord_space == "page_pt"
-                        and _overlap(b.anchors[0].bbox, box)]
-            if not touching or any(b.kind not in (BlockKind.TEXT, BlockKind.FORMULA) for b in touching):
-                continue  # nothing to replace, or a table / figure / title shares the place
-            if any(_is_read(b) for b in touching) or not all(_inside(b.anchors[0].bbox, box) for b in touching):
-                continue  # read before, or a block reaches beyond the formula (a replacement never splits text)
-            out.append((n, box, [b.id for b in sorted(touching, key=lambda b: b.order)]))
-    return sorted(out, key=lambda r: (r[0], r[1][1], r[1][0]))
+        n = block_unit(state, block)
+        if any(o.task == TaskKind.LAYOUT and o.label in LABELS for o in block.observations):
+            marked.add(n)
+        if any(d.choice == DONE for d in block.decisions):
+            done.add(n)
+        if block.status not in HIDDEN and block.kind != BlockKind.FIGURE and isinstance(block.anchors[0], PdfAnchor) \
+                and any(o.engine == "paddleocr" and o.task == TaskKind.RECOGNIZE for o in block.observations):
+            scanned.add(n)  # read by the scan engine already (a scanned page)
+    return sorted(n for n in marked & native_pages if n not in done and n not in scanned)
 
 
-def read_formulas(ctx: ToolContext, regions) -> tuple[int, list[Failure]]:
-    """Read the regions with the scan engine and adopt what the readings agree on; (adopted, failures)."""
-    if not regions:
-        return 0, []
-    ctx.report(Step("process", "formulas", total=len(regions)))
-    crops = []
-    with fitz.open(ctx.ws.source_path) as doc:
-        for n, box, _ in regions:
-            page = doc[n - 1]
-            pix = page.get_pixmap(dpi=DPI, clip=fitz.Rect(box) * page.rotation_matrix)
-            crops.append((pix.tobytes("png"), pix.width, pix.height))
+def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, int], list[Failure]]:
+    """Read *pages* whole and decide their passages; (counts by outcome, failures)."""
+    counts: Counter[str] = Counter()
+    if not pages:
+        return dict(counts), []
+    ctx.report(Step("process", "formulas", total=len(pages)))
     ocr = ctx.ocr()
-    data = scan.image_batch_pdf(crops)
-    try:
-        results = ocr.recognize_pdf(data)
-    except Exception as exc:  # noqa: BLE001 - the text layer stays; the failure is reported
-        return 0, [service_failure(exc, [f"p{n}" for n, _, _ in regions])]
-    raw_ref = ocr.request_key(data, "application/pdf")
-    adopted = 0
+    size = ctx.config.tools.scan_batch_pages
+    batches = [pages[i:i + size] for i in range(0, len(pages), size)]
+    source = ctx.ws.source_path
+
+    def fetch(batch):
+        with fitz.open(source) as doc:
+            data = scan.batch_pdf(doc, batch)
+        return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
+
+    failures: list[Failure] = []
+    readings: dict[int, tuple[str, dict]] = {}
+    for outcome in run_ordered(batches, fetch, max_workers=2):
+        if outcome.status != "ok":
+            failures.append(service_failure(outcome.exception, [f"p{n}" for n in outcome.task]))
+            continue
+        raw_ref, results = outcome.value
+        for n, result in zip(outcome.task, results):
+            readings[n] = (raw_ref, result.raw["layoutParsingResults"][0])
+
+    state = ctx.ws.load()
+    blocks = {b.id: b for b in state.blocks}
+    plans = []  # (page, native ids, reading blocks)
+    for n, (raw_ref, raw) in sorted(readings.items()):
+        page_state = next(p for p in state.pages if p.n == n)
+        result = scan.page_blocks(scan.PageScan(page=n, raw=raw, raw_ref=raw_ref, engine_version=ocr.model),
+                                  page_size=page_state.size_pt, first_seq=1, first_item=1)
+        plans += [(n, natives, reading) for natives, reading in _passages(state, n, result.blocks)]
+
+    # the editor, for passages whose reading loses characters of the text layer (concurrently)
+    need_editor = []
+    for index, (n, natives, reading) in enumerate(plans):
+        native_text, reading_text = _texts(blocks, natives, reading)
+        if not _lost(state, n, natives, blocks, native_text, reading_text):
+            continue
+        box = _union([blocks[b].anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading])
+        with fitz.open(source) as doc:
+            png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=fitz.Rect(box) + (-4, -4, 4, 4)).tobytes("png")
+        path = ctx.ws.root / "renders" / f"formula-{natives[0]}.png"
+        write_once(path, png)
+        need_editor.append((index, path, native_text, reading_text))
+    edited: dict[int, str] = {}
+    if need_editor:
+        vlm = ctx.vlm(ctx.config.tools.ask_reasoning_effort)
+        outcomes = run_ordered(need_editor, lambda t: vlm.call(
+            "describe_image", t[1], _EDITOR_PROMPT, context=f"A：\n{t[2]}\n\nB：\n{t[3]}", temperature=0.0,
+            max_tokens=4096, structured_output_mode="off", json_schema_name="parserx_formula_editor"),
+            max_workers=ctx.config.services.vlm.max_concurrent)
+        for outcome in outcomes:
+            if outcome.exception is not None:
+                failures.append(service_failure(outcome.exception, [plans[outcome.task[0]][1][0]]))
+            elif str(outcome.value or "").strip():
+                edited[outcome.task[0]] = str(outcome.value).strip()
+
     with ctx.ws.txn("tool:process:formulas") as state:
         blocks = {b.id: b for b in state.blocks}
-        for (n, box, ids_in), result in zip(regions, results):
-            entries = result.raw["layoutParsingResults"][0].get("prunedResult", {}).get("parsing_res_list", [])
-            latex = " ".join(str(e.get("block_content", "")).strip() for e in entries
-                             if e.get("block_label") in _FORMULA_LABELS).replace("$$", "").strip()
-            native = [blocks[i] for i in ids_in]
-            reading = Observation(
-                id=ids.observation_id(native[0].id, "paddleocr", 1 + sum(o.engine == "paddleocr"
-                                                                         for o in native[0].observations)),
-                engine="paddleocr", engine_version=ocr.model, task=TaskKind.RECOGNIZE, label=LABEL,
-                anchor=PdfAnchor(page=n, bbox=box, coord_space="page_pt"), text=latex or None, raw_ref=raw_ref,
-                status=ObservationStatus.OK)
-            if _agree(latex, " ".join(b.text or "" for b in native), entries):
-                _adopt(state, n, box, native, reading, latex)
-                adopted += 1
+        for index, (n, natives, reading) in enumerate(plans):
+            native_text, reading_text = _texts(blocks, natives, reading)
+            if not _lost(state, n, natives, blocks, native_text, reading_text):
+                _adopt(state, n, [blocks[b] for b in natives], reading, how="reading")
+                counts["reading"] += 1
+            elif index in edited and not _lost(state, n, natives, blocks, native_text, edited[index]):
+                _adopt(state, n, [blocks[b] for b in natives],
+                       [_edited_block(n, [blocks[b] for b in natives], reading, edited[index])], how="editor")
+                counts["editor"] += 1
             else:
-                native[0].observations.append(reading)  # evidence only: the text layer stays
-                native[0].decisions.append(Decision(
-                    stage=DecisionStage.CONTENT_SOURCE, choice="native", actor=SELECT_ACTOR,
-                    reason="formula region read by the scan engine, but the two readings do not agree; the text "
-                           "layer is kept", evidence={"region": LABEL}))
+                _keep([blocks[b] for b in natives], edited.get(index) or reading_text)
+                counts["kept"] += 1
         renumber(state)
-    return adopted, []
+    return dict(counts), failures
 
 
-def _agree(latex: str, native: str, entries: list[dict]) -> bool:
-    """The engine calls it a formula, the two readings share their characters' order (``NEAR`` both ways), and
-    nothing of the text layer is lost (conservation): every letter and digit of the replaced text is in the LaTeX
-    — a paragraph number or an equation number beside the formula keeps the text layer."""
-    if not latex or not any(e.get("block_label") in ("display_formula", "formula") for e in entries):
+def _texts(blocks: dict, natives: list[str], reading: list[Block]) -> tuple[str, str]:
+    return "\n".join(blocks[b].text or "" for b in natives), "\n".join(b.text or "" for b in reading)
+
+
+def _passages(state: DocumentState, n: int, reading: list[Block]) -> list[tuple[list[str], list[Block]]]:
+    """Groups of (native block ids, reading blocks) over the same place, where the reading has mathematics."""
+    natives = [b for b in state.blocks if b.status not in HIDDEN and block_unit(state, b) == n
+               and b.kind in _PASSAGE_KINDS and isinstance(b.anchors[0], PdfAnchor)
+               and b.anchors[0].coord_space == "page_pt" and not any(d.choice == DONE for d in b.decisions)]
+    others = [b for b in state.blocks if b.status not in HIDDEN and block_unit(state, b) == n
+              and b.kind not in _PASSAGE_KINDS and isinstance(b.anchors[0], PdfAnchor)
+              and b.anchors[0].coord_space == "page_pt"]
+    reading = [b for b in reading if b.kind in _PASSAGE_KINDS and b.status not in HIDDEN
+               and not any(_touch(b.anchors[0].bbox, o.anchors[0].bbox) for o in others)]  # not over a title or table
+    parent = list(range(len(natives) + len(reading)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, a in enumerate(natives):
+        for j, b in enumerate(reading):
+            if _touch(a.anchors[0].bbox, b.anchors[0].bbox):
+                parent[find(i)] = find(len(natives) + j)
+    groups: dict[int, tuple[list[str], list[Block]]] = {}
+    for i, a in enumerate(natives):
+        groups.setdefault(find(i), ([], []))[0].append(a.id)
+    for j, b in enumerate(reading):
+        groups.setdefault(find(len(natives) + j), ([], []))[1].append(b)
+    return [(native_ids, blocks) for native_ids, blocks in groups.values()
+            if native_ids and blocks and any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in blocks)]
+
+
+def _lost(state: DocumentState, n: int, natives: list[str], blocks: dict, native_text: str, other: str) -> bool:
+    """Whether *other* lacks letters or digits of the text layer that the local page reading also sees."""
+    missing = Counter(normalize(native_text)) - Counter(normalize(_symbols(other)))
+    if not missing:
         return False
-    a, b = normalize(_symbols(latex)), normalize(native)
-    if not (a and b) or pairs_share(a, b) < NEAR or pairs_share(b, a) < NEAR:
-        return False
-    return not (Counter(b) - Counter(a))
+    seen = text_at(state, n, _union([blocks[b].anchors[0].bbox for b in natives]))
+    if seen is None:
+        return True
+    local = Counter(normalize(seen))
+    return any(local[ch] > 0 for ch in missing)  # a character no one else sees is a mis-mapped glyph
+
+
+def _paragraphs(natives: list[Block], reading: list[Block]) -> list[Block]:
+    """The reading's text items joined back into the text layer's paragraphs: consecutive text items inside the same
+    native block are one paragraph (the engine sometimes returns a paragraph line by line); formulas stay apart."""
+    def host(block: Block) -> str | None:
+        inside = [b.id for b in natives if _centre_in(block.anchors[0].bbox, b.anchors[0].bbox)]
+        return inside[0] if len(inside) == 1 else None
+
+    out: list[Block] = []
+    previous: str | None = None
+    for block in reading:
+        here = host(block)
+        if out and block.kind == BlockKind.TEXT and out[-1].kind == BlockKind.TEXT and here is not None \
+                and here == previous:
+            last = out[-1]
+            text = join_wrapped([last.text or "", block.text or ""])
+            box = _union([last.anchors[0].bbox, block.anchors[0].bbox])
+            anchor = last.anchors[0].model_copy(update={"bbox": box})
+            observations = [o.model_copy(update={"text": text, "anchor": anchor}) for o in last.observations[:1]]
+            out[-1] = last.model_copy(update={"text": text, "anchors": [anchor], "observations": observations})
+        else:
+            out.append(block)
+        previous = here
+    return out
+
+
+def _adopt(state: DocumentState, n: int, natives: list[Block], reading: list[Block], *, how: str) -> None:
+    order = min(b.order for b in natives)
+    reading = _paragraphs(natives, reading)
+    new: list[Block] = []
+    for block in reading:  # the first native's place; renumber keeps them in id (reading) order there
+        block_id = ids.block_id_pdf(n, _next_block_seq(state, n))
+        observations = [o.model_copy(update={"id": ids.observation_id(block_id, o.engine, k)})
+                        for k, o in enumerate(block.observations[:1], 1)]
+        block = block.model_copy(update={
+            "id": block_id, "order": order, "status": BlockStatus.OK, "observations": observations,
+            "chosen_observation": observations[0].id if observations else None,
+            "decisions": [Decision(stage=DecisionStage.CONTENT_SOURCE, choice=DONE, actor=SELECT_ACTOR,
+                                   refs=[b.id for b in natives], evidence={"by": how},
+                                   reason="formulas as LaTeX: the page reading (or its editor's version) carries every "
+                                          "letter and digit of the text layer here (Q70)")]})
+        state.blocks.append(block)
+        new.append(block)
+        state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(n, _next_item(state, n)), unit="ocr_block",
+                                        source=block.anchors[0], chars=len("".join((block.text or "").split())),
+                                        disposition="output", block=block_id))
+    replaced = {b.id for b in natives}
+    for native in natives:
+        native.status = BlockStatus.DUPLICATE
+        state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, native.id, new[0].id),
+                                        kind=RelationKind.DUPLICATE_OF, src=native.id, dst=new[0].id))
+        native.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice=DONE, actor=SELECT_ACTOR,
+                                         refs=[b.id for b in new], evidence={"by": how},
+                                         reason="the passage is now read with its formulas as LaTeX (Q70)"))
+    for entry in state.ledger:
+        if entry.block in replaced:
+            entry.disposition = "duplicate"
+
+
+def _edited_block(n: int, natives: list[Block], reading: list[Block], text: str) -> Block:
+    box = _union([b.anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading])
+    anchor = PdfAnchor(page=n, bbox=box, coord_space="page_pt")
+    display = re.fullmatch(r"\$\$(.+)\$\$", text.strip(), flags=re.S)
+    obs = Observation(id="o-editor", engine="vlm", engine_version="formula-editor", task=TaskKind.CORRECT,
+                      anchor=anchor, text=text, label=CANDIDATE, status=ObservationStatus.OK)
+    return Block(id="b-editor", kind=BlockKind.FORMULA if display else BlockKind.TEXT, order=0, anchors=[anchor],
+                 observations=[obs], chosen_observation=obs.id, text=display.group(1).strip() if display else text)
+
+
+def _keep(natives: list[Block], candidate: str) -> None:
+    first = natives[0]
+    first.observations.append(Observation(
+        id=ids.observation_id(first.id, "paddleocr", 1 + sum(o.engine == "paddleocr" for o in first.observations)),
+        engine="paddleocr", engine_version="page-reading", task=TaskKind.RECOGNIZE, label=CANDIDATE,
+        anchor=first.anchors[0], text=candidate, status=ObservationStatus.OK))
+    for native in natives:
+        native.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice=DONE, actor=SELECT_ACTOR,
+                                         evidence={"by": "kept"}, refs=[first.id],
+                                         reason="the page reading and its editor's version lose characters the "
+                                                "text layer has; the text layer stays, the reading is evidence (Q70)"))
+
+
+def pending_candidates(state: DocumentState) -> list[tuple[str, str]]:
+    """(block id, candidate text) of passages kept with a formula reading not adopted: review items."""
+    out = []
+    for block in state.blocks:
+        if block.status in HIDDEN:
+            continue
+        candidate = next((o for o in reversed(block.observations) if o.label == CANDIDATE), None)
+        if candidate is not None and block.chosen_observation != candidate.id:
+            out.append((block.id, candidate.text or ""))
+    return out
 
 
 _GREEK = {name: chr(code) for name, code in (
@@ -149,39 +316,15 @@ def _symbols(latex: str) -> str:
     return _COMMAND.sub(lambda m: _GREEK.get(m.group(1), m.group(0)), latex)
 
 
-def _adopt(state: DocumentState, n: int, box, native: list[Block], reading: Observation, latex: str) -> None:
-    block_id = ids.block_id_pdf(n, _next_block_seq(state, n))
-    reading = reading.model_copy(update={"id": ids.observation_id(block_id, "paddleocr", 1)})
-    anchor = PdfAnchor(page=n, bbox=box, coord_space="page_pt")
-    formula = Block(id=block_id, kind=BlockKind.FORMULA, order=native[0].order, anchors=[anchor],
-                    observations=[reading], chosen_observation=reading.id, text=latex, decisions=[Decision(
-                        stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine", actor=SELECT_ACTOR,
-                        reason="display formula: the scan engine's LaTeX, consistent with the text layer's "
-                               "characters (Q70)", evidence={"fragments": len(native)}, refs=[b.id for b in native])])
-    replaced = {b.id for b in native}
-    for block in native:
-        block.status = BlockStatus.DUPLICATE
-        state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, block.id, block_id),
-                                        kind=RelationKind.DUPLICATE_OF, src=block.id, dst=block_id))
-        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine", actor=SELECT_ACTOR,
-                                        refs=[block_id], evidence={},
-                                        reason="a fragment of a display formula now read as LaTeX"))
-    for entry in state.ledger:
-        if entry.block in replaced:
-            entry.disposition = "duplicate"
-    state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(n, _next_item(state, n)), unit="ocr_block", source=anchor,
-                                    chars=len("".join(latex.split())), disposition="output", block=block_id))
-    state.blocks.append(formula)
+def _touch(a, b) -> bool:
+    """One box's centre lies in the other (with the measurement tolerance)."""
+    return _centre_in(a, b) or _centre_in(b, a)
 
 
-def _is_read(block: Block) -> bool:
-    return any(o.engine == "paddleocr" and o.label == LABEL for o in block.observations)
+def _centre_in(inner, outer) -> bool:
+    cx, cy = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2
+    return outer[0] - PAD <= cx <= outer[2] + PAD and outer[1] - PAD <= cy <= outer[3] + PAD
 
 
-def _overlap(a, b) -> bool:
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
-def _inside(a, b) -> bool:
-    cx, cy = (a[0] + a[2]) / 2, (a[1] + a[3]) / 2
-    return b[0] <= cx <= b[2] and b[1] <= cy <= b[3]
+def _union(boxes):
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
