@@ -26,7 +26,7 @@
 1. 工作区 `ws/` 已经建立，不要再运行 `workspace init`。
 2. 取得摘要与待办：`./px tool process --ws ws --json`。标准处理已经做过，这一步不会重做，只返回摘要和 `worklist`（需要判断的地方）。
 {{/product}}
-3. 处理 `worklist` 里的项目，再按 `skills/` 做**定向抽查**（数字、单位、日期、标题层级）。**不要逐页通读全文**：工具内部已经读过全文，你的每一步都有时间和费用成本，只看需要判断的地方。
+3. 处理 `worklist` 里的项目，再按 `skills/` 做**定向抽查**（数字、单位、日期、标题层级）。了解全文用 `skim`：它只给文字，不调用任何服务；短文档可以从头到尾读一遍，长文档先看 `skim --outline`，再按需翻看。**不要逐页看图**：看图有时间和费用成本，只在需要判断的地方看。
 {{#experiment}}
 4. `check` 通过后 `export`。导出结果就是最终结果，不需要再读取 `out/` 里的文件核对；导出后如果又做了修改，再导出一次。
 {{/experiment}}
@@ -51,7 +51,8 @@
 |---|---|
 | `process` | 标准处理（见上），可重复调用，已完成的步骤不再做 |
 | `overview` | 各页状态、块统计、标题大纲、未解决项计数 |
-| `read` | `--page N` 或 `--block ID [--context K]`：当前采用的内容；`--observations` 看各来源的识别结果 |
+| `skim` | 快速读文字：默认从头往后 40 块，`--from ID --after N --before N` 前后翻看（结果里的 `after_id` / `before_id` 接着翻）；`--page N` 一页；`--find "文字"` 查找；`--outline` 文档的排版类别与所有像标题的行；`--cls S3` 某一排版类别的全部块；段落默认只显示开头，`--full` 显示全文 |
+| `read` | `--page N` 或 `--block ID [--context K]`：块的详细内容（表格单元格、状态）；`--observations` 看各来源的识别结果与样式 |
 {{#vision_agent}}| `read --image crop` / `--image page` | 取块的裁剪图或整页图（返回路径） |
 {{/vision_agent}}{{#vision_tool}}| `ask_image` | `--block ID`（表格可加 `--rows 首行 末行`）、`--page N` 或 `--seam N`（跨页接缝），`--question "……"`：视觉模型读图作答 |
 {{/vision_tool}}| `correct` | 按图修改：正文给出要替换的片段，表格给出单元格；`add` 补入图上有、却不在任何块里的文字；原生文字层的数字只有本地读数显示为新值时才能改 |

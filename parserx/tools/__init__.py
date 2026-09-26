@@ -27,6 +27,7 @@ from parserx.tools import (
     read,
     recognize,
     review_table,
+    skim,
     structure,
 )
 from parserx.tools.context import ToolContext, invoke
@@ -45,6 +46,7 @@ TOOLS: dict[str, ToolSpec] = {
     "process": ToolSpec(process.ProcessRequest, process.ProcessResult, process.run),
     "overview": ToolSpec(overview.OverviewRequest, overview.OverviewResult, overview.run),
     "read": ToolSpec(read.ReadRequest, read.ReadResult, read.run),
+    "skim": ToolSpec(skim.SkimRequest, skim.SkimResult, skim.run),
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),
     "review_table": ToolSpec(review_table.ReviewTableRequest, review_table.ReviewTableResult, review_table.run),
     "correct": ToolSpec(correct.CorrectRequest, correct.CorrectResult, correct.run),

@@ -20,7 +20,7 @@ from typing import Any
 
 from parserx.config.schema import load_config
 
-TOOL_NAMES = ("process", "overview", "read", "ask_image", "recognize", "review_table", "correct", "close",
+TOOL_NAMES = ("process", "overview", "skim", "read", "ask_image", "recognize", "review_table", "correct", "close",
               "describe_figure", "apply_structure", "check", "export")
 
 
@@ -59,6 +59,17 @@ def _read_opts(p):
     p.add_argument("--observations", action="store_true")
     p.add_argument("--include-hidden", action="store_true", help="also superseded / excluded blocks")
     p.add_argument("--geometry", action="store_true", help="include anchors and coordinates")
+
+
+def _skim_opts(p):
+    p.add_argument("--outline", action="store_true", help="style classes and heading-like lines")
+    p.add_argument("--page", type=int)
+    p.add_argument("--find", help="blocks containing this phrase (spacing and case ignored)")
+    p.add_argument("--cls", help="every block of this style class (ids from --outline)")
+    p.add_argument("--from", dest="start", help="scroll from this block id (default: the beginning)")
+    p.add_argument("--after", type=int, default=40, help="scroll: this block and the ones after it")
+    p.add_argument("--before", type=int, default=0, help="scroll: blocks before --from")
+    p.add_argument("--full", action="store_true", help="whole paragraphs instead of their start")
 
 
 def _recognize_opts(p):
@@ -122,7 +133,7 @@ def _export_opts(p):
 
 
 _TOOL_OPTIONS = {
-    "process": lambda p: None, "overview": lambda p: None, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
+    "process": lambda p: None, "overview": lambda p: None, "skim": _skim_opts, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
     "describe_figure": _describe_opts, "correct": _correct_opts, "close": _close_opts, "ask_image": _ask_opts, "apply_structure": _structure_opts, "check": lambda p: None,
     "export": _export_opts,
 }
@@ -154,6 +165,9 @@ def _request(name: str, args) -> dict[str, Any]:
                                       dpi=args.dpi, pad_pt=args.pad_pt, observations=args.observations,
                                       include_hidden=args.include_hidden, geometry=args.geometry).items()
                 if v is not None}
+    if name == "skim":
+        return {k: v for k, v in dict(outline=args.outline, page=args.page, find=args.find, cls=args.cls, start=args.start,
+                                      after=args.after, before=args.before, full=args.full).items() if v is not None}
     if name == "recognize":
         return {"pages": _pages(args.pages) if args.pages else [],
                 "blocks": args.blocks.split(",") if args.blocks else [],

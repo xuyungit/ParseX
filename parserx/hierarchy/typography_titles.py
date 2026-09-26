@@ -59,7 +59,7 @@ def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(), tit
     paragraphs = [(b, s) for b, s in _paragraphs(state) if b.id not in skip]
     found: list[tuple[Block, TextStyle, dict]] = []
     for block, style in paragraphs:
-        evidence = _evidence(block, style, body)
+        evidence = title_evidence(block, style, body)
         if len(evidence) >= 2 and (_one_line(block) or {"typography", "layout"} <= set(evidence)):
             found.append((block, style, evidence))
     found = _nested(paragraphs, found, body)
@@ -85,7 +85,7 @@ def _nested(paragraphs, found, body) -> list[tuple[Block, TextStyle, dict]]:
         for block, style in paragraphs:
             if block.id in chosen or not _one_line(block):
                 continue
-            evidence = _evidence(block, style, body)
+            evidence = title_evidence(block, style, body)
             number = leading_number(block.text)
             if "numbering" in evidence and number is not None and len(number) > 1 and number[:-1] in numbers:
                 evidence["nesting"] = ".".join(map(str, number[:-1]))
@@ -163,7 +163,7 @@ def body_typography(state: DocumentState, *, skip: set[str] = frozenset()) -> Bo
     weights: Counter[Typography] = Counter()
     wide: Counter[bool] = Counter()
     for block in state.blocks:
-        style = _native_style(block)
+        style = native_style(block)
         if block.kind == BlockKind.TEXT and style is not None and not style.monospace and block.id not in skip:
             weights[_typography(style)] += len("".join((block.text or "").split()))
             wide[_mostly_wide(block.text)] += len("".join((block.text or "").split()))
@@ -179,7 +179,7 @@ def _paragraphs(state: DocumentState):
     for block in ordered(state):
         if block.kind != BlockKind.TEXT or block.status in HIDDEN or isinstance(block.anchors[0], AssetAnchor):
             continue
-        style = _native_style(block)
+        style = native_style(block)
         text = (block.text or "").strip()
         if style is not None and text and not style.monospace:  # code is neither body text nor a title
             yield block, style
@@ -189,7 +189,7 @@ def _one_line(block: Block) -> bool:
     return "\n" not in (block.text or "").strip()
 
 
-def _evidence(block: Block, style: TextStyle, body: Body | None) -> dict:
+def title_evidence(block: Block, style: TextStyle, body: Body | None) -> dict:
     evidence: dict = {}
     apart = set_apart(style, body, block.text)
     if apart:
@@ -243,6 +243,6 @@ def _typography(style: TextStyle) -> Typography:
     return (style.font, style.font_size, bool(style.bold))
 
 
-def _native_style(block: Block) -> TextStyle | None:
+def native_style(block: Block) -> TextStyle | None:
     chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
     return chosen.style if chosen is not None and chosen.engine in ENGINES else None
