@@ -32,11 +32,11 @@
    - eval_reports/2026-09-26_p5-2_headings.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 581 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 592 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
-   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_p5-2_v2_toolkit`
-   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-26_p5-7_fixed_full`
+   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
+   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-26_q80_fixed_full`
 
 ## 然后
 
@@ -48,7 +48,8 @@
 4. **扫描 PDF 上不可见的 OCR 文字层可作为独立读数**。
 5. **DOCX 页面层**（Q69）。
 6. **第三方 Agent 框架**（Q62–Q64）。
-7. **依赖升级**：openai 3.x；pymupdf 1.28（Q76 推迟：文字层分块方式改变）。
+7. ~~依赖升级~~：已完成（openai 3.19；pymupdf 1.28，段落改由版面检测器分，Q80）。
+8. **跨栏续接**：段落在一栏底部没说完、接到下一栏顶部，目前只在跨页时续接（阶段五之后的段落分析发现 8 处）。
 
 ## 约束
 

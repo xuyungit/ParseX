@@ -118,7 +118,7 @@ def evaluate_gate(record: dict, baseline: dict | None, tolerance: float = 0.005)
     for item in record.get("not_executed", []):
         outcome.hard_failures.append(f"not executed: {item['document']} — {item['reason']}")
     for name in record.get("not_reproducible", []):
-        outcome.hard_failures.append(f"not reproducible: {name} — output differs between repeated runs")
+        outcome.hard_failures.append(f"not reproducible: {name} — output differs between runs, or does not replay from the recorded responses")
     for line in record.get("replay_differences", []):
         outcome.hard_failures.append(f"replay differs from the frozen run: {line}")
 

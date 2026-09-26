@@ -28,10 +28,10 @@
 3. 运行测试，都应 PASS：
    - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（581 通过，无已知失败）；
    - L1：`uv run python scripts/regression_test.py --core --repeat 2`；
-   - 冻结 run 回放：`--replay eval_runs/2026-09-26_p5-2_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-26_p5-7_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料）。
+   - 冻结 run 回放：`--replay eval_runs/2026-09-26_q80_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-26_q80_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；PyMuPDF 1.28 与检测器分段之后重新冻结，旧的改名为 `.pre-q80`）。
 4. 为选定的主题写分解，请用户确认后再动代码。
 5. 每完成一项：跑 L0 与 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
-6. 全语料比较：固定流水线用 `scripts/heading_compare.py`（以 p5-7 冻结 run 的缓存离线回放）；混合方案用 `scripts/agent_explore.py`（snapshot + parse）与 `scripts/phase4_compare.py`。v1 冻结 run 只作静态基线，不能回放。
+6. 全语料比较：固定流水线用 `scripts/heading_compare.py`（以全语料冻结 run 的缓存离线回放；段落拼接另用 `scripts/paragraph_segmentation.py`）；混合方案用 `scripts/agent_explore.py`（snapshot + parse）与 `scripts/phase4_compare.py`。v1 冻结 run 只作静态基线，不能回放。
 
 ### 0.3 相关文档
 
@@ -692,7 +692,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 | 包 | 用途 | 位置 |
 |---|---|---|
-| pymupdf 1.27.2 | PDF 读取、渲染 | 主依赖；1.28 改变了文字层分块，按 Q76 推迟（见 §14） |
+| pymupdf 1.28.2 | PDF 读取、渲染、原生表格、矢量图形 | 主依赖；2026-09-26 从 1.27 升级（Q80）：段落改由版面检测器分，不再用库的分块，1.27 与 1.28 的输出逐字节相同；`import fitz` 改为 `import pymupdf` |
 | openai 3.19、httpx2 | VLM 客户端（服务层） | 主依赖；2026-09-26 从 2.30 升级：3.x 的 HTTP 层换成 httpx2（重试判定的传输错误类型随之改名），回放与真实调用都通过 |
 | pydantic、pyyaml、python-dotenv、pillow、numpy、requests、jsonschema、rapidfuzz、lxml | 数据模型、配置、图像、OCR jobs API、sidecar 校验、评测与读数比对、DOCX 直接读 OOXML | 主依赖（lxml 原先经 docling 间接安装，现显式列出） |
 | rapid-layout、rapidocr、onnxruntime | 本地版面检测（§6.2）、本地读数（Q56） | 主依赖 |
@@ -880,7 +880,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q77 | §11.5 第 4 条（页眉页脚第 1 页身份信息保留上限） | ✅ 用户按建议决定（2026-09-26）：撤销。v2 按 §6.9 与 Q34 排除全部页眉页脚（含第 1 页），文字在 sidecar 可查 |
 | Q78 | 混合方案的标题低于运行 B（P5-2：0.685 对 0.774），Q72 退路甲的条件未满足，怎么办 | ✅ 用户决定（2026-09-26）：接受，按文档记录差距与原因（[P5-2 报告](../eval_reports/2026-09-26_p5-2_headings.md) §3）；阶段五收尾时在最终代码上再量一次。补充：真值标注本身由解析工具生成，偏离最合适的结果、不如我们的解析时，改标注并记入 [annotation_changes.md](annotation_changes.md)，可灵活处理 |
 | Q79 | 很短或没有层次结构的文档，标题怎么计分 | ✅ 用户决定（2026-09-26）：这类文档有没有标题、层级如何都算合理。标题分数照常逐篇显示；标题的平均值与回归检查只计有大纲的文档：标注至少 3 个标题、两级，PDF 多于 2 页；`meta.json` 的 `"outline"` 可覆盖（receipt 标为 false）。实现 `parserx/eval/outline.py`，评测报告、回归门、`phase4_compare.py`、`heading_compare.py` 都按此。按此口径（有 v1 分数的 11 篇）：v1 0.605；固定流水线 0.604（带 adapter:v1）→ 0.672；混合方案运行 B 0.757，阶段五 0.747 |
-| Q80 | 依赖版本 | ✅ 用户决定（2026-09-26）：依赖要升级，不固定在旧版本；升级带来的变化要处理。openai 已升 3.x（e6496a1）。PDF：不必只用 PyMuPDF，哪个库更好用哪个；自己做段落拼接须先分析能否处理得足够好（PDF 是排版引擎，纯规则拼接可能失败）——分析与方案待用户确认 |
+| Q80 | 依赖版本 | ✅ 用户决定（2026-09-26）：依赖要升级，不固定在旧版本；升级带来的变化要处理。openai 已升 3.x（e6496a1）。PDF：不必只用 PyMuPDF，哪个库更好用哪个；自己做段落拼接须先分析能否处理得足够好（PDF 是排版引擎，纯规则拼接可能失败）——分析与方案待用户确认。**分析与实施（2026-09-26，[分析报告](../eval_reports/2026-09-26_pdf_library_analysis.md)）**：1.28 与 1.27 的行、字体、渲染完全相同，只有分块不同；三个库读出的文字相同，只有 PyMuPDF 具备我们所需的全部能力——继续用 PyMuPDF（许可暂不考虑）。段落改由版面检测器的文字区域分（`content/paragraphs.py`），区域外按几何兜底，区域内只在字号变化处分段；按标注衡量拼接 F1 0.974（库的分块 0.908、纯几何 0.933）。剩余错误多为衡量误差、标注写法与跨栏续接（后者属于续接步骤，另做）。升级到 1.28，1.27 与 1.28 输出逐字节相同 |
 
 ## 15. 变更记录
 
@@ -999,3 +999,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-26 | v1.22 | **P5-2、P5-3、P5-4 第一批**：adapter:v1 删除，标题由 `hierarchy/typography_titles.py` 按"两种独立证据一致"给出（排版、版面标签、编号、编号嵌套），DOCX 读出字体，PDF 行的排版取主要书写系统，`unify_levels` 保留 DOCX 声明的层级；固定流水线 heading_f1 0.601 → 0.697、角色 F1 0.684 → 0.802（修订后的标注，24 篇），信息类不变；混合方案 0.685（运行 B 0.774），Q78 接受并记录。标注修订：paper_chn02、text_table01、unseen_word_spec01。v2 的辅助函数迁出 v1（`content/`、`eval/text.py`、`tables/html.py`）。只剩一条流水线：`Pipeline` 只跑 v2，`pipeline` 配置字段删除（冻结 run 的指纹按现行 schema 重算，删除的字段忽略），`configs/regression.yaml` 即 v2 回归配置。本地标签 `v1-final`（3db3603）。验收冻结 run `2026-09-26_p5-2_v2_toolkit`（650d790） |
 | 2026-09-26 | v1.23 | **阶段五完成**（[退出报告](../eval_reports/2026-09-26_p5-7_cleanup_exit.md)）：P5-5 依赖、P5-6 README 与 `--help`、Q76 pymupdf 1.28 推迟；P5-7 空缓存全语料冻结 `eval_runs/2026-09-26_p5-7_fixed_full`（a734449）与混合方案真实运行 p5c：固定流水线 char_f1 0.950、表格 F1 0.866、heading_f1 0.699、角色 F1 0.805；混合方案 0.952 / 0.875 / 0.697 / 0.806（运行 B 标题 0.774，Q78 接受；Agent 的标题修改有得有失，净效果约为零）。L0 581 通过、无已知失败。§0.2 改为阶段五之后的启动清单 |
 | 2026-09-26 | v1.24 | **阶段五之后**：openai 2.30 → 3.19（httpx2）；Q79 标题计分范围（`eval/outline.py`，receipt 标为无大纲）；Q80 依赖要升级，PDF 段落拼接与库的选择先分析；Q69 补充按页处理 DOCX 的触发情况 |
+| 2026-09-26 | v1.25 | **Q80 实施**：段落由版面检测器的文字区域分（`content/paragraphs.py`），PyMuPDF 1.27 → 1.28（输出与 1.27 逐字节相同），`import fitz` → `import pymupdf`；全语料 13 篇有变化，全部在容差内或提高；有大纲文档的标题 0.672 → 0.687。新脚本 `scripts/paragraph_segmentation.py`。冻结 run 以空缓存重新冻结为 `2026-09-26_q80_v2_toolkit`、`2026-09-26_q80_fixed_full` |

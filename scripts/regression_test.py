@@ -241,9 +241,16 @@ def main() -> None:
         sys.exit(EXIT_HARD_FAILURE)
     elapsed = time.time() - started
 
+    if freeze_dir is not None:
+        # A frozen run must replay from what it recorded: a request that failed during the freeze (a full queue, an
+        # outage) leaves a document that is neither complete nor reproducible — found here, not at the next replay.
+        offline = EvalRunner(apply_overrides(config, ["cache.mode=read_only"]))
+        again = run_suite(offline, gt_dirs, include)
+        mismatches |= set(repeat_mismatches(run.outputs, again.outputs)) | {name for name, _ in again.not_executed}
+
     record = run_record(run.results, failed=run.failed, not_executed=run.not_executed)
     record["config_fingerprint"] = fingerprint
-    if args.repeat > 1:
+    if args.repeat > 1 or freeze_dir is not None:
         record["not_reproducible"] = sorted(mismatches)
     for name in record["documents"]:
         record["documents"][name]["isolation"] = name in isolation
