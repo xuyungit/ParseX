@@ -244,8 +244,8 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
 
 
 def _next_block_seq(state, n: int) -> int:
-    prefix = f"b-p{n:03d}-"
-    return max((int(b.id[len(prefix):]) for b in state.blocks if b.id.startswith(prefix)), default=0) + 1
+    prefix = f"b-p{n:03d}-"  # the four digits after it: a split's part (…-0012-s1) keeps its block's number
+    return max((int(b.id[len(prefix):len(prefix) + 4]) for b in state.blocks if b.id.startswith(prefix)), default=0) + 1
 
 
 def _next_item(state, n: int) -> int:

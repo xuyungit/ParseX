@@ -34,7 +34,7 @@ _LEVEL = {EvidenceLevel.VISIBLE: "可见", EvidenceLevel.ESTIMATED: "估读", Ev
           EvidenceLevel.UNKNOWN: "未知"}
 _ARROW = {"forward": "→", "backward": "←", "both": "↔", "unknown": "—"}
 _MARKUP_START = re.compile(r"^(\s*)([#>])")
-_MATH_START = ("$", "\\[", "\\(", "\\begin")
+_MATH_START = ("$", "\\[", "\\(")  # delimited already; a bare \begin{aligned} still needs $$ to render
 
 
 def image_file(asset: Asset) -> str:

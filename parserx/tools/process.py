@@ -43,6 +43,7 @@ from parserx.tools import check_export, describe_figure, recognize, structure
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure
 from parserx.tools.layout_shadow import layout_todo
+from parserx.tools.formulas import formula_regions, read_formulas
 from parserx.tools.page_reading import read_pages, reading_todo
 from parserx.tools.views import unresolved_items
 from parserx.workspace.queries import HIDDEN, ordered
@@ -111,6 +112,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         if todo:
             ctx.report(Step("process", "reading", done=0, total=len(todo)))
             steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
+
+    if ctx.config.runtime.formulas:  # display formulas of native pages as LaTeX (Q70)
+        regions = formula_regions(ctx.ws.load())
+        if regions:
+            adopted, problems = read_formulas(ctx, regions)
+            failures += problems
+            steps.append(StepSummary(step="formulas", detail=f"{adopted} of {len(regions)} formula regions as LaTeX"))
 
     state = ctx.ws.load()
     candidates = _textual_images(ctx, state)

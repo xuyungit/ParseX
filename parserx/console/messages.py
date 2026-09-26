@@ -25,6 +25,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "step.layout": {"zh": "版面检测 {total} 页", "en": "layout of {total} pages"},
     "step.layout_figures": {"zh": "图片分类 {figures} 张", "en": "classifying {figures} images"},
     "step.reading": {"zh": "本地读数 {done}/{total} 页", "en": "local reading {done}/{total} pages"},
+    "step.formulas": {"zh": "公式识别为 LaTeX {total} 处", "en": "formulas as LaTeX {total}"},
     "step.transcribe": {"zh": "识别图片中的文字 {total} 张", "en": "reading text in {total} images"},
     "step.describe": {"zh": "图片描述 {total} 张", "en": "describing {total} figures"},
     "step.structure": {"zh": "标题与结构", "en": "titles and structure"},
