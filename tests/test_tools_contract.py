@@ -884,3 +884,34 @@ def test_split_through_the_tool_reports_the_new_block(tmp_path):
     data = _assert_contract(env, "apply_structure")
     assert env.ok and data["result"]["accepted"] == [0]
     assert any(c["target"] == block["id"] + "-s1" for c in data["diff"])
+
+
+def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_not_carry(tmp_path):
+    # P4-6 (conservation): the local reading of the image is compared with its description
+    from types import SimpleNamespace
+
+    from parserx.ir.enums import EvidenceLevel
+    from parserx.ir.semantic import Evidenced, GenericSemantic
+    from parserx.tools.process import _text_not_carried
+
+    class Reader:
+        version = "fake"
+
+        def __init__(self, lines):
+            self.lines = lines
+
+        def read(self, png):
+            return [((0, 0, 10, 10), text, 0.9) for text in self.lines]
+
+    (tmp_path / "img.png").write_bytes(b"png")
+    asset = SimpleNamespace(path="img.png")
+    described = SimpleNamespace(semantic=GenericSemantic(
+        type="other", summary=Evidenced(value="表单截图", level=EvidenceLevel.INFERRED),
+        visible_text=[Evidenced(value="ipmi_address", level=EvidenceLevel.VISIBLE)]))
+
+    def ctx(lines):
+        return SimpleNamespace(reader=lambda: Reader(lines), ws=SimpleNamespace(root=tmp_path), cache=None)
+
+    assert not _text_not_carried(ctx(["ipmi_address"]), described, asset)
+    assert _text_not_carried(ctx(["ipmi_address", "Kg key for IPMIv2 authentication."]), described, asset)
+    assert not _text_not_carried(ctx(["|", "·"]), described, asset)  # no letters or digits: no evidence

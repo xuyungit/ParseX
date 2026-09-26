@@ -113,7 +113,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
 
     state = ctx.ws.load()
-    candidates = _textual_images(state)
+    candidates = _textual_images(ctx, state)
     if candidates:
         ctx.report(Step("process", "transcribe", total=len(candidates)))
         out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
@@ -132,6 +132,16 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             failures += out.failures
             steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
                                                                     "figures described"))
+
+    state = ctx.ws.load()  # text an uncertain image shows that its description does not carry (P4-6)
+    candidates = _textual_images(ctx, state, uncarried=True)
+    candidates = [c for c in candidates if routes_of(state).get(c) == ImageRoute.UNCERTAIN]
+    if candidates:
+        ctx.report(Step("process", "transcribe", total=len(candidates)))
+        out = recognize.run(ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr"))
+        failures += out.failures
+        steps.append(StepSummary(step="transcribe_uncarried",
+                                 detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
 
     ctx.report(Step("process", "structure"))
     state = ctx.ws.load()
@@ -163,14 +173,48 @@ def _image_asset(state: DocumentState, block) -> str | None:
     return next((a.asset for a in block.anchors if isinstance(a, AssetAnchor)), None)
 
 
-def _textual_images(state: DocumentState) -> list[str]:
-    """Shown embedded images (not crops of scanned pages) routed SCAN or MIXED and not yet transcribed (Q42)."""
+def _textual_images(ctx: ToolContext, state: DocumentState, *, uncarried: bool = False) -> list[str]:
+    """Shown embedded images (not crops of scanned pages) not yet transcribed (Q42): routed SCAN or MIXED; with
+    *uncarried* (after the descriptions), routed UNCERTAIN when the local reading of the image has text its
+    description does not carry (P4-6, conservation: the small print of a screenshotted form, an equation)."""
     routes = {r.id: r.route for r in state.images}
-    roles = {a.id: a.role for a in state.assets}
+    assets = {a.id: a for a in state.assets}
     done = transcribed(state)
-    return [b.id for b in ordered(state) if b.kind == BlockKind.FIGURE and b.status not in HIDDEN and b.id not in done
-            and roles.get(_image_asset(state, b)) == "original"
-            and routes.get(_image_asset(state, b)) in (ImageRoute.SCAN, ImageRoute.MIXED)]
+    out = []
+    for block in ordered(state):
+        asset = assets.get(_image_asset(state, block))
+        if block.kind != BlockKind.FIGURE or block.status in HIDDEN or block.id in done or asset is None \
+                or asset.role != "original":
+            continue
+        route = routes.get(asset.id)
+        if route in (ImageRoute.SCAN, ImageRoute.MIXED) or (uncarried and route == ImageRoute.UNCERTAIN
+                                                            and _text_not_carried(ctx, block, asset)):
+            out.append(block.id)
+    return out
+
+
+def _text_not_carried(ctx: ToolContext, block, asset) -> bool:
+    """Whether the local reading of an image has a line its description does not carry, measured as the page
+    comparison measures an unaccounted line (``reading/compare.py``: two letters or digits, its tolerance)."""
+    from rapidfuzz import fuzz
+
+    from parserx.reading.compare import SOMEWHERE, normalize
+    from parserx.reading.local import read_cached
+    from parserx.render.markdown import _semantic_block
+
+    try:
+        lines = read_cached(ctx.reader(), (ctx.ws.root / asset.path).read_bytes(), ctx.cache)
+    except Exception:  # noqa: BLE001 - an image the reader cannot decode (e.g. EMF) gives no evidence
+        return False
+    carried = normalize(_semantic_block(block))
+    return any(len(text := normalize(line)) >= 2 and (not carried or fuzz.partial_ratio(text, carried) < SOMEWHERE)
+               for _, line, _ in lines)
+
+
+def routes_of(state: DocumentState) -> dict[str, ImageRoute]:
+    """Figure block id → its image's route."""
+    routes = {r.id: r.route for r in state.images}
+    return {b.id: routes.get(_image_asset(state, b)) for b in state.blocks if b.kind == BlockKind.FIGURE}
 
 
 def _transcribed_scans(state: DocumentState) -> set[str]:
