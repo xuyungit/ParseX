@@ -46,6 +46,7 @@ _WORD = re.compile(r"[^\W\d_]")
 _PAGE_REFERENCE = re.compile(r"[\s.．·…_\-]*\d+\s*$")
 
 Typography = tuple[str | None, float | None, bool]
+Body = tuple[Typography, bool]  # the body's typography, and whether its text is mostly wide (CJK) characters
 
 
 def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(), titled: bool = False,
@@ -108,7 +109,7 @@ def _document_title(paragraphs, found, body, state, first_other) -> tuple[Block,
     for block, style in paragraphs:
         if block.id == first:
             break
-        apart = set_apart(style, body)
+        apart = set_apart(style, body, block.text)
         if apart and _one_line(block) and numbering_signature(block.text) is None:
             opening.append((block, style, {"typography": ", ".join(apart), "position": "opens the document"}))
     if opening:
@@ -156,15 +157,22 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or ""))
 
 
-def body_typography(state: DocumentState, *, skip: set[str] = frozenset()) -> Typography | None:
-    """The typography most of the document's native text is set in (by characters); titles already decided (*skip*)
-    and code do not count."""
+def body_typography(state: DocumentState, *, skip: set[str] = frozenset()) -> Body | None:
+    """The typography most of the document's native text is set in (by characters), and its script; titles already
+    decided (*skip*) and code do not count."""
     weights: Counter[Typography] = Counter()
+    wide: Counter[bool] = Counter()
     for block in state.blocks:
         style = _native_style(block)
         if block.kind == BlockKind.TEXT and style is not None and not style.monospace and block.id not in skip:
             weights[_typography(style)] += len("".join((block.text or "").split()))
-    return weights.most_common(1)[0][0] if weights else None
+            wide[_mostly_wide(block.text)] += len("".join((block.text or "").split()))
+    return (weights.most_common(1)[0][0], wide.most_common(1)[0][0]) if weights else None
+
+
+def _mostly_wide(text: str | None) -> bool:
+    letters = [c for c in text or "" if c.isalnum()]
+    return sum(unicodedata.east_asian_width(c) in "WF" for c in letters) * 2 > len(letters)
 
 
 def _paragraphs(state: DocumentState):
@@ -181,9 +189,9 @@ def _one_line(block: Block) -> bool:
     return "\n" not in (block.text or "").strip()
 
 
-def _evidence(block: Block, style: TextStyle, body: Typography | None) -> dict:
+def _evidence(block: Block, style: TextStyle, body: Body | None) -> dict:
     evidence: dict = {}
-    apart = set_apart(style, body)
+    apart = set_apart(style, body, block.text)
     if apart:
         evidence["typography"] = ", ".join(apart)
     labels = {o.label for o in block.observations if o.task == TaskKind.LAYOUT}
@@ -202,16 +210,19 @@ def _words_after_number(text: str) -> bool:
     return match is not None and _WORD.search(text[match.end():]) is not None
 
 
-def set_apart(style: TextStyle, body: Typography | None) -> list[str]:
+def set_apart(style: TextStyle, body: Body | None, text: str | None = None) -> list[str]:
+    """How *style* differs from the body: larger, bold where the body is regular, or another face — faces are
+    compared only for text of the body's script (a line mostly of Latin code in a Chinese document is set in
+    another face for its script, not to stand out)."""
     if body is None:
         return []
-    font, size, bold = body
+    (font, size, bold), body_wide = body
     apart = []
     if style.font_size and size and style.font_size > size:
         apart.append(f"size {style.font_size} (body {size})")
     if style.bold and not bold:
         apart.append("bold (body regular)")
-    if style.font and font and style.font != font:
+    if style.font and font and style.font != font and (text is None or _mostly_wide(text) == body_wide):
         apart.append(f"font {style.font} (body {font})")
     return apart
 

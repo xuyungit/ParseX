@@ -196,11 +196,7 @@ def _lines(page: fitz.Page) -> list[_Line]:
             text = normalize_fullwidth_ascii(_reconstruct_line_from_chars(spans))
             if not text.strip():
                 continue
-            weights: Counter[tuple[float, bool, str]] = Counter()
-            for span in spans:
-                weights[(round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16), span.get("font", ""))] += \
-                    len(span.get("chars", []))
-            (size, bold, font), _ = weights.most_common(1)[0]
+            (size, bold, font) = _line_typography(spans)
             chars = [ch for span in spans for ch in span.get("chars", ())]
             origins = tuple(_origin_key(ch["c"], fitz.Point(ch["origin"]) * ctm) for ch in chars)
             measured = [m for m in (_monospaced(span) for span in spans) if m is not None]
@@ -214,6 +210,28 @@ def _lines(page: fitz.Page) -> list[_Line]:
 
 MONO_LETTERS = 5  # distinct ASCII letters a span needs before its glyph widths say anything (sample size)
 MONO_SPREAD = 1.01  # widest / narrowest letter advance of a monospaced face: measurement tolerance of glyph boxes
+
+
+def _line_typography(spans: list[dict]) -> tuple[float, bool, str]:
+    """(size, bold, face) of a line: those of most of the letters and digits of its main script — wide (CJK) or
+    not.  Spaces, punctuation and a leading number in a Latin face do not outvote the words (``4.  换盘``); a
+    Chinese line with a little inline code keeps its Chinese face."""
+    def key(span: dict) -> tuple[float, bool, str]:
+        return round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16), span.get("font", "")
+
+    counts: dict[bool, Counter] = {True: Counter(), False: Counter()}
+    for span in spans:
+        for ch in span.get("chars", ()):
+            c = ch.get("c", "")
+            if c and c.isalnum():
+                counts[_wide(c)][key(span)] += 1
+    wide, narrow = sum(counts[True].values()), sum(counts[False].values())
+    if wide or narrow:
+        return counts[wide >= narrow and wide > 0].most_common(1)[0][0]
+    fallback: Counter = Counter()  # no letters or digits: every character votes
+    for span in spans:
+        fallback[key(span)] += len(span.get("chars", []))
+    return fallback.most_common(1)[0][0]
 
 
 def _monospaced(span: dict) -> bool | None:

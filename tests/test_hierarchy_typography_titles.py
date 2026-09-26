@@ -99,3 +99,13 @@ def test_code_does_not_set_the_body_typography():
     blocks = [_block(f"code{i}", "docker stop ceph_osd_6 && docker rm ceph_osd_6 --force" * 3, code)
               for i in range(8)]
     assert _titles(*blocks, _block("prose", "1. 暂停自平衡", BODY)) == {}  # prose is not "set apart" from code
+
+
+def test_faces_are_compared_within_one_script():
+    # in a Chinese document, a numbered step mostly of Latin code is set in another face than the Chinese body:
+    # that says nothing about a title (different scripts), while a Chinese line in another face does
+    code_face = TextStyle(font_size=12.0, bold=False, font="Menlo")
+    heading_face = TextStyle(font_size=12.0, bold=False, font="SimHei")
+    found = _titles(_block("step", "2. 停止 docker stop ceph_osd_6", code_face),
+                    _block("section", "二、企业基本情况", heading_face))
+    assert set(found) == {"section"}

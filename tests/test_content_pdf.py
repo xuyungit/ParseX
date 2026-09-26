@@ -524,3 +524,19 @@ def test_gaps_between_glyphs_are_word_spaces_except_between_ideographs():
     # PyMuPDF splits one visual row at a wide gap: the parts join with a space, other rows with a line break
     assert _join_block_lines([("1", (0, 0, 5, 10)), ("Introduction", (40, 0, 120, 10)),
                               ("Body", (0, 20, 30, 30))]) == "1 Introduction\nBody"
+
+
+def test_a_lines_face_is_the_face_of_its_main_script(tmp_path):
+    # a CJK line with a little inline code is set in its CJK face; a line mostly of code, in the code's face
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_htmlbox(fitz.Rect(72, 72, 500, 90), "<p>删除故障的逻辑卷 <code>ab</code></p>")
+    page.insert_htmlbox(fitz.Rect(72, 200, 500, 218), "<p>停止 <code>docker stop ceph_osd_6 now</code></p>")
+    page.insert_htmlbox(fitz.Rect(72, 300, 500, 318), "<p>4.&nbsp;&nbsp;&nbsp;&nbsp;换盘</p>")  # number and spaces in Latin
+    path = tmp_path / "mixed.pdf"
+    doc.save(path)
+    fonts = {b.text.split()[0]: b.observations[0].style.font for b in extract_pdf(path).blocks
+             if b.kind == BlockKind.TEXT}
+    cjk_face, code_face = fonts["删除故障的逻辑卷"], fonts["停止"]
+    assert cjk_face != code_face and "Mono" in code_face
+    assert fonts["4."] == cjk_face  # the number and the spaces do not outvote the words
