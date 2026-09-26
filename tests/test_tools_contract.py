@@ -593,6 +593,29 @@ def test_an_item_checked_on_the_image_can_be_closed(ws):
 
 
 
+def test_text_covered_on_the_page_stays_and_the_summary_names_it(ws):
+    """Q71: text the page draws under another element is content; the agent keeps it and marks it occluded."""
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
+    _give_reading(ws, 1, [("给助手发送消息", (72, 700, 300, 712))])  # the page image does not show NATIVE
+    item = next(u for u in _call("check", ws, context=context)[0].unresolved
+                if u.kind == "text_not_seen" and u.target == native.id)
+    image = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
+    request = {"target": item.target, "kind": "title_candidate", "image": image, "reason": "r", "occluded": True}
+    env, code = _call("close", ws, request, context=context)
+    assert not env.ok and code == 2  # only text the page does not show can be occluded
+    request.update(kind="text_not_seen", reason="被悬浮的输入框盖住")
+    env, _ = _call("close", ws, request, context=context)
+    assert env.ok and env.result.closed is True
+    env, _ = _call("export", ws, {"out": str(ws.parent / "out"), "name": "d"}, context=context)
+    assert env.ok, env.failures
+    assert NATIVE in (ws.parent / "out" / "d.md").read_text()
+    summary = json.loads((ws.parent / "out" / "d.json").read_text())
+    assert summary["review"]["occluded"] == [{"target": native.id, "page": 1, "quotes": [q.doc_text for q in item.quotes],
+                                              "reason": "被悬浮的输入框盖住"}]
+
+
 def test_agent_corrects_table_cells(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)

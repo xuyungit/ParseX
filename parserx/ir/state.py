@@ -116,6 +116,7 @@ class ClosedItem(IRModel):
     reason: str
     actor: str
     image: str  # the image it was checked on
+    occluded: bool = False  # text the page draws under another element: content, kept, and named in the summary (Q71)
 
 
 class DocumentState(IRModel):

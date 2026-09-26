@@ -47,6 +47,15 @@ class OpenItem(IRModel):
     quotes: list[str] = []  # the document text the item is about
 
 
+class OccludedText(IRModel):
+    """Text the page draws under another element: kept in the output, named here (Q71)."""
+
+    target: str  # block id
+    page: int | None
+    quotes: list[str]
+    reason: str
+
+
 class Review(IRModel):
     """What is left to check (Q30): the status says whether processing finished; this says whether anything is
     still open — pages pending, failed blocks, titles without a level, possible table continuations."""
@@ -56,6 +65,7 @@ class Review(IRModel):
     items: list[OpenItem]  # in page / block order, at most REVIEW_ITEMS_MAX
     checked: int = 0  # signals the agent checked against the image and closed (``close``)
     checked_by_kind: dict[str, int] = {}
+    occluded: list[OccludedText] = []  # checked on the image: covered on the page, kept in the output
 
 
 REVIEW_ITEMS_MAX = 200
@@ -175,8 +185,20 @@ def _review(state: DocumentState) -> Review:
         checked[c.kind] = checked.get(c.kind, 0) + 1
     return Review(open=len(items), by_kind=dict(sorted(by_kind.items())), checked=len(state.closed),
                   checked_by_kind=dict(sorted(checked.items())),
+                  occluded=_occluded(state),
                   items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail, quotes=[q.doc_text for q in i.quotes])
                          for i in items[:REVIEW_ITEMS_MAX]])
+
+
+def _occluded(state: DocumentState) -> list[OccludedText]:
+    blocks = {b.id: b for b in state.blocks}
+    out = []
+    for c in state.closed:
+        if c.occluded:
+            block = blocks.get(c.target)
+            out.append(OccludedText(target=c.target, quotes=c.quotes, reason=c.reason,
+                                    page=block_unit(state, block) if block is not None and state.format == "pdf" else None))
+    return out
 
 
 def _summary(block: Block | None) -> str | None:

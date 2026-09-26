@@ -6,6 +6,10 @@ with its reason, so the document's open review counts only what is still open.  
 image must have been read in this workspace for the item's block or page (as for ``correct``), and only signals
 close.  Failures (a pending page, a failed block, a skipped budget, a missing asset) are resolved by processing,
 not closed.  A closed item stays closed while it reads the same; new content at the place opens it again.
+
+Text the page image does not show because another element is drawn over it (a floating input box, a stamp) is
+content all the same: the agent closes its ``text_not_seen`` item as *occluded*, the text stays in the output and
+the summary names it (Q71).
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ class CloseRequest(IRModel):
     kind: UnresolvedKind
     image: str  # the image it was checked on: an asset id ``read --image`` or ``ask_image`` returned
     reason: str
+    occluded: bool = False  # text_not_seen only: the text is there, covered on the page by another element
     actor: str = "agent"
 
 
@@ -42,6 +47,9 @@ class CloseResult(IRModel):
 def run(ctx: ToolContext, req: CloseRequest) -> ToolOutput[CloseResult]:
     if req.kind not in CLOSABLE:
         raise ToolFailure(FailureCode.INVALID_REQUEST, f"{req.kind.value} is resolved by processing, not closed",
+                          targets=[req.target])
+    if req.occluded and req.kind != UnresolvedKind.TEXT_NOT_SEEN:
+        raise ToolFailure(FailureCode.INVALID_REQUEST, "only text the page does not show (text_not_seen) is occluded",
                           targets=[req.target])
     state = ctx.ws.load()
     item = next((u for u in unresolved_items(state) if u.target == req.target and u.kind == req.kind), None)
@@ -62,5 +70,6 @@ def run(ctx: ToolContext, req: CloseRequest) -> ToolOutput[CloseResult]:
         return output(CloseResult(closed=False, gate=[image]))
     with ctx.ws.txn(f"tool:close:{req.actor}") as state:
         state.closed.append(ClosedItem(target=req.target, kind=req.kind.value, quotes=[q.doc_text for q in item.quotes],
-                                       reason=req.reason, actor=req.actor, image=req.image))
+                                       reason=req.reason, actor=req.actor, image=req.image,
+                                       occluded=req.occluded))
     return output(CloseResult(closed=True, gate=[image]))

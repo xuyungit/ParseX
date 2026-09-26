@@ -92,6 +92,12 @@
 {"target": "p1", "kind": "title_candidate", "image": "<图像 id>", "reason": "封面信息，不是节标题"}
 ```
 
+文字层有、页面上被别的元素盖住的文字（`text_not_seen`）是原文内容，保留，关闭时加 `"occluded": true`：
+
+```
+{"target": "b-p001-0020", "kind": "text_not_seen", "image": "<图像 id>", "reason": "被悬浮的输入框盖住", "occluded": true}
+```
+
 `target` 与 `kind` 照抄待办项。只有提示类待办能关闭；待识别页、失败块等要处理，不能关闭。关闭后该处内容若变化，待办会重新出现。
 
 `apply_structure`（`./px tool apply_structure --ws ws --changes - --json`，加 `--atomic` 表示任一条被拒则全部不生效），变更列表中每条是以下之一：
