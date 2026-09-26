@@ -46,6 +46,7 @@ from parserx.eval.freeze import (
     build_manifest,
     document_inventory,
     git_state,
+    reannotated,
     replay_differences,
     run_id_for,
     write_frozen_run,
@@ -262,7 +263,10 @@ def main() -> None:
             (args.outputs_dir / f"{name}.md").write_text(markdown, encoding="utf-8")
 
     if frozen is not None:
-        record["replay_differences"] = replay_differences(record, frozen)
+        changed = reannotated(manifest, args.gt_dir)
+        if changed:
+            print(f"annotation changed since the freeze (outputs compared, scores rescored): {', '.join(sorted(changed))}")
+        record["replay_differences"] = replay_differences(record, frozen, reannotated=changed)
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

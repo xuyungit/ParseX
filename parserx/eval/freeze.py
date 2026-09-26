@@ -138,11 +138,26 @@ def write_frozen_run(run_dir: Path, *, record: dict, outputs: dict[str, str], ma
         (out_dir / f"{name}.blocks.json").write_text(sidecar, encoding="utf-8")
 
 
-def replay_differences(record: dict, frozen: dict) -> list[str]:
+def reannotated(manifest: dict, gt_dirs: list[Path]) -> set[str]:
+    """Documents of a frozen run whose annotation (``expected.md``) changed since the freeze (corrections are logged
+    in docs/annotation_changes.md)."""
+    changed = set()
+    for name, entry in manifest.get("documents", {}).items():
+        for gt_dir in gt_dirs:
+            if gt_dir.name != entry.get("gt_dir"):
+                continue
+            doc_dir = gt_dir if gt_dir.name == name and (gt_dir / "expected.md").exists() else gt_dir / name
+            path = doc_dir / "expected.md"
+            if path.exists() and entry.get("expected_sha256") not in (None, _sha256(path)):
+                changed.add(name)
+    return changed
+
+
+def replay_differences(record: dict, frozen: dict, *, reannotated: set[str] = frozenset()) -> list[str]:
     """Everything a faithful replay must reproduce but did not (*frozen* as ``load_record`` returns it).
 
-    A frozen run scored under an older metric version is rescored: then only
-    its outputs must be reproduced, the scores are expected to move.
+    A frozen run scored under an older metric version is rescored, and so is a document whose annotation changed
+    since the freeze (*reannotated*): then only the outputs must be reproduced, the scores are expected to move.
     """
     rescored = record.get("metric_version") != frozen.get("metric_version")
     diffs: list[str] = []
@@ -157,7 +172,7 @@ def replay_differences(record: dict, frozen: dict) -> list[str]:
             diffs.append(f"{name}: missing from the replay")
             continue
         for key in sorted(then):  # a field recorded only since the freeze is not something the replay missed
-            if key in _VOLATILE or (rescored and key != "output_sha256"):
+            if key in _VOLATILE or ((rescored or name in reannotated) and key != "output_sha256"):
                 continue
             if then.get(key) != now.get(key):
                 diffs.append(f"{name}: {key} {then.get(key)!r} → {now.get(key)!r}")

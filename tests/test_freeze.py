@@ -1,11 +1,13 @@
 """Frozen runs (guide §8.4, §9.2 item 6): self-contained, replayable baselines."""
 
+import hashlib
 import json
 
 from parserx.config.schema import ParserXConfig
 from parserx.eval.freeze import (
     document_inventory,
     git_state,
+    reannotated,
     replay_differences,
     run_id_for,
     write_frozen_run,
@@ -127,3 +129,19 @@ def test_replay_under_a_newer_metric_compares_outputs_only():
     assert replay_differences(replay, frozen) == []
     replay["documents"]["a"]["output_sha256"] = "changed"
     assert any("output_sha256" in d for d in replay_differences(replay, frozen))
+
+
+def test_a_document_whose_annotation_changed_is_rescored(tmp_path):
+    # annotations are corrected (docs/annotation_changes.md): the replay must reproduce the output, the scores move
+    doc = tmp_path / "gt" / "a"
+    doc.mkdir(parents=True)
+    (doc / "expected.md").write_text("# old\n", encoding="utf-8")
+    manifest = {"documents": {"a": {"gt_dir": "gt", "expected_sha256": hashlib.sha256(b"# old\n").hexdigest()}}}
+    assert reannotated(manifest, [tmp_path / "gt"]) == set()
+    (doc / "expected.md").write_text("# new\n", encoding="utf-8")
+    assert reannotated(manifest, [tmp_path / "gt"]) == {"a"}
+
+    frozen, replay = _record(a=0.9), _record(a=0.7)
+    assert replay_differences(replay, frozen, reannotated={"a"}) == []
+    replay["documents"]["a"]["output_sha256"] = "changed"
+    assert any("output_sha256" in d for d in replay_differences(replay, frozen, reannotated={"a"}))
