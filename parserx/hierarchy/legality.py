@@ -8,11 +8,13 @@ Checks are correctness constraints, not guesses about meaning:
   the title before it, and its successor at most one level deeper than it);
 - titles sharing a numbering pattern (``1.2`` / ``1.3`` → ``N.N``,
   ``第二章`` → ``第N章``, ``1 Scope`` / ``2. Terms`` → ``N``) share a level
-  within the document;
+  within the document — an experience rule: a change with ``override`` and
+  evidence may break it (Q87);
 - reordering cannot form a cycle;
-- ``join`` joins two paragraphs or two tables in the output; tables only when
-  the second can continue the first (``tables.merge.merge_candidate``), and
-  only rows that repeat the first table's header are dropped;
+- ``join`` joins two paragraphs or two tables in the output; tables only with
+  the same columns (a correctness constraint), on the next page with only page
+  furniture between (an experience rule, ``override`` with evidence), and only
+  rows that repeat the first table's header are dropped;
 - the program's proposals leave alone the blocks whose structure the agent
   decided.
 
@@ -139,7 +141,7 @@ def apply_batch(state: DocumentState, changes: list[StructureChange], *, actor: 
                 judged.add(change.block)
                 block = blocks[change.block]
                 if block.kind == BlockKind.TITLE and block.level is not None:
-                    problem = _level_problem(trial, block, block.level)
+                    problem = _level_problem(trial, block, block.level, numbering=not change.override)
                     if problem is not None:
                         illegal[index] = Rejection(index=index, rule=problem[0], detail=problem[1])
         if not illegal:
@@ -159,6 +161,9 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
     for name in _block_refs(change):
         if name not in blocks:
             return LegalityRule.UNKNOWN_BLOCK, f"no block {name}"
+    if getattr(change, "override", False) and not _evidence_exists(state, change.evidence):
+        return (LegalityRule.OVERRIDE_WITHOUT_EVIDENCE,
+                "an exception to a document convention rests on evidence: give the evidence id (view_source) and why")
     if isinstance(change, SetRole):
         block = blocks[change.block]
         if block.kind in _CONTENT_KINDS:
@@ -169,7 +174,7 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
             if kind in FURNITURE:
                 block.status = BlockStatus.OK  # page furniture given a body role comes back
             try:
-                return _level_problem(state, block, change.level)
+                return _level_problem(state, block, change.level, numbering=not change.override)
             finally:
                 block.kind, block.status = kind, status
         return None
@@ -192,7 +197,7 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
             return LegalityRule.ORDER_CYCLE, f"{change.block} cannot follow {change.after}"
         return None
     if isinstance(change, Join):
-        return _join_problem(state, blocks[change.first], blocks[change.second], change.drop_rows)
+        return _join_problem(state, blocks[change.first], blocks[change.second], change.drop_rows, change.override)
     if isinstance(change, Unjoin):
         if blocks[change.second].status == BlockStatus.MERGED:
             return LegalityRule.TABLES_MERGED, f"{change.second} is merged into {change.first}: joined tables stay one"
@@ -211,13 +216,17 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
     return None
 
 
-def _join_problem(state: DocumentState, first: Block, second: Block, drop_rows: int) -> tuple[LegalityRule, str] | None:
+def _join_problem(state: DocumentState, first: Block, second: Block, drop_rows: int,
+                  override: bool = False) -> tuple[LegalityRule, str] | None:
     if first.id == second.id or first.status in HIDDEN or second.status in HIDDEN:
         return LegalityRule.NOT_JOINABLE, f"{second.id} and {first.id}: two different blocks, both in the output"
     if first.kind == BlockKind.TABLE and second.kind == BlockKind.TABLE:
-        if merge_candidate(state, first, second) is None:
-            return (LegalityRule.NOT_MERGE_CANDIDATE, f"{second.id} cannot continue {first.id}: tables with the same "
-                    "columns on consecutive pages, only page furniture between them")
+        if first.cells is None or second.cells is None or first.cells.n_cols != second.cells.n_cols:
+            return (LegalityRule.NOT_MERGE_CANDIDATE, f"{second.id} cannot continue {first.id}: one table has one "
+                    "set of columns")
+        if not override and merge_candidate(state, first, second) is None:
+            return (LegalityRule.NOT_ADJACENT, f"{second.id} is not on the page after {first.id} with only page "
+                    "furniture between; if the source shows it continues all the same, override with evidence")
         if drop_rows and not repeats_header(first.cells, second.cells, drop_rows):
             return (LegalityRule.ROWS_NOT_DUPLICATE,
                     f"the first {drop_rows} rows of {second.id} do not repeat the header of {first.id}")
@@ -265,7 +274,12 @@ def _block_refs(change: StructureChange) -> list[str]:
     return []
 
 
-def _level_problem(state: DocumentState, block: Block, level: int) -> tuple[LegalityRule, str] | None:
+def _evidence_exists(state: DocumentState, evidence) -> bool:
+    return isinstance(evidence, str) and any(e.id == evidence for e in state.evidence)
+
+
+def _level_problem(state: DocumentState, block: Block, level: int, *,
+                   numbering: bool = True) -> tuple[LegalityRule, str] | None:
     titles = [b for b in ordered(state) if b.kind == BlockKind.TITLE and b.status not in HIDDEN]
     position = next(i for i, b in enumerate(titles) if b.id == block.id)
     before = next((b.level for b in reversed(titles[:position]) if b.level is not None), None)
@@ -274,7 +288,7 @@ def _level_problem(state: DocumentState, block: Block, level: int) -> tuple[Lega
         return LegalityRule.LEVEL_SKIP, f"H{before} → H{level}"
     if after is not None and after > level + 1:
         return LegalityRule.LEVEL_SKIP, f"H{level} → H{after}"
-    signature = numbering_signature(block.text)
+    signature = numbering_signature(block.text) if numbering else None
     if signature is not None:
         # a document inside an embedded image numbers on its own (Q42, Q43): compare within the same image only
         container = {r.dst: r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
@@ -284,7 +298,8 @@ def _level_problem(state: DocumentState, block: Block, level: int) -> tuple[Lega
                     and container.get(other.id) == scope and numbering_signature(other.text) == signature \
                     and _same_section(titles, position, index, level, other.level, signature):
                 return (LegalityRule.NUMBERING_LEVEL_INCONSISTENT,
-                        f"pattern {signature!r} is H{other.level} at {other.id}")
+                        f"pattern {signature!r} is H{other.level} at {other.id} (if the source shows this title is "
+                        "an exception, override with evidence)")
     return None
 
 
@@ -333,23 +348,23 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
     if isinstance(change, SetRole):
         block = blocks[change.block]
         if block.kind in FURNITURE and block.status == BlockStatus.EXCLUDED:  # a body role: it is output again
-            _set_excluded(state, block, False, change.reason, actor, _grounds(change.evidence))
+            _set_excluded(state, block, False, change.reason, actor, _grounds(change))
         if change.level is None:
             block.level = None  # before the kind: a text block never holds a level, not even in between
         block.kind = BlockKind(change.kind)
         block.level = change.level
         block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice=change.kind, reason=change.reason,
-                                        evidence=_grounds(change.evidence), actor=actor))
+                                        evidence=_grounds(change), actor=actor))
         if change.level is not None:
             block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
-                                            reason=change.reason, evidence=_grounds(change.evidence), actor=actor))
+                                            reason=change.reason, evidence=_grounds(change), actor=actor))
     elif isinstance(change, (Exclude, Include)):
         block = blocks[change.block]
-        _set_excluded(state, block, isinstance(change, Exclude), change.reason, actor, _grounds(change.evidence))
+        _set_excluded(state, block, isinstance(change, Exclude), change.reason, actor, _grounds(change))
         if isinstance(change, Include) and block.kind in FURNITURE:  # page furniture comes back as text
             block.kind = BlockKind.TEXT
             block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice="text", reason=change.reason,
-                                            evidence=_grounds(change.evidence), actor=actor))
+                                            evidence=_grounds(change), actor=actor))
     elif isinstance(change, Move):
         block = blocks[change.block]
         sequence = [b for b in ordered(state) if b.id != block.id]
@@ -358,23 +373,23 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
         for order, item in enumerate(sequence):
             item.order = order
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="move", reason=change.reason,
-                                        evidence=_grounds(change.evidence), actor=actor,
+                                        evidence=_grounds(change), actor=actor,
                                         refs=[block.id] + ([change.after] if change.after else [])))
     elif isinstance(change, Join):
         if blocks[change.first].kind == BlockKind.TABLE:
             merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
-                         evidence=_grounds(change.evidence))
+                         evidence=_grounds(change))
         else:
             state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTINUES, change.first, change.second),
                                             kind=RelationKind.CONTINUES, src=change.first, dst=change.second))
             blocks[change.second].decisions.append(Decision(
-                stage=DecisionStage.STRUCTURE, choice="join", reason=change.reason, evidence=_grounds(change.evidence),
+                stage=DecisionStage.STRUCTURE, choice="join", reason=change.reason, evidence=_grounds(change),
                 actor=actor, refs=[change.first, change.second]))
     elif isinstance(change, Unjoin):
         gone = _joined(state, change.first, change.second)
         state.relations[:] = [r for r in state.relations if r is not gone]
         blocks[change.second].decisions.append(Decision(
-            stage=DecisionStage.STRUCTURE, choice="unjoin", reason=change.reason, evidence=_grounds(change.evidence),
+            stage=DecisionStage.STRUCTURE, choice="unjoin", reason=change.reason, evidence=_grounds(change),
             actor=actor, refs=[change.first, change.second]))
     elif isinstance(change, Split):
         _split(state, blocks[change.block], change.at_break, change.reason, actor)
@@ -382,12 +397,17 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
         block = blocks[change.block]
         block.status = BlockStatus.DEGRADED
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="pending", reason=change.reason,
-                                        evidence=_grounds(change.evidence), actor=actor))
+                                        evidence=_grounds(change), actor=actor))
 
 
-def _grounds(evidence) -> dict:
-    """A change's grounds as a Decision records them: named facts, or the evidence id it cites (Q85)."""
-    return {"evidence": evidence} if isinstance(evidence, str) else dict(evidence)
+def _grounds(change) -> dict:
+    """A change's grounds as a Decision records them: named facts, or the evidence id it cites (Q85), and whether it
+    breaks a document convention on that evidence (Q87)."""
+    evidence = change.evidence
+    grounds = {"evidence": evidence} if isinstance(evidence, str) else dict(evidence)
+    if getattr(change, "override", False):
+        grounds["override"] = True
+    return grounds
 
 
 def _joined(state: DocumentState, first: str, second: str):

@@ -77,6 +77,29 @@ def test_same_numbering_pattern_same_level():
     assert rules == [(1, "numbering_level_inconsistent")]
 
 
+def test_a_convention_is_broken_only_on_evidence():
+    from parserx.ir.evidence import Evidence
+
+    # 1.2 set one level above 1.1: the numbering rule refuses, unless the change overrides it on evidence
+    changes = [{"op": "set_role", "block": "p1", "role": "H2", "reason": "r"},
+               {"op": "set_role", "block": "p3", "role": "H1", "reason": "原件上 1.2 单独成章", "override": True}]
+    assert _rules(changes) == [(1, "override_without_evidence")]
+    state = _state()
+    state.evidence.append(Evidence(id="e-000000000001", how="image", page=1, image="a-1"))
+    changes[1]["evidence"] = "e-000000000001"
+    outcome = apply_changes(state, _changes(*changes), actor="agent")
+    assert outcome.rejected == [] and next(b for b in state.blocks if b.id == "p3").decisions[-1].evidence == \
+        {"evidence": "e-000000000001", "override": True}
+    changes[1]["role"] = "H4"  # no skipped level (H2 → H4), whatever the evidence: an output convention
+    assert [r.rule for r in check_changes(_state_with(state.evidence), _changes(*changes))] == ["level_skip"]
+
+
+def _state_with(evidence):
+    state = _state()
+    state.evidence = list(evidence)
+    return state
+
+
 def test_order_cycle():
     assert _rules([{"op": "move", "block": "p1", "after": "p2", "reason": "r"},
                    {"op": "move", "block": "p2", "after": "p1", "reason": "r"}]) == [(1, "order_cycle")]

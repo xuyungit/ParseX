@@ -102,7 +102,7 @@ def test_merge_legality():
 
     state = _continued(_rows(21, 30, header=False))
     assert rules(state, {"first": "t1", "second": "t2", "drop_rows": 1, "reason": "r"}) == ["rows_not_duplicate"]
-    assert rules(state, {"first": "t2", "second": "t1", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
+    assert rules(state, {"first": "t2", "second": "t1", "drop_rows": 0, "reason": "r"}) == ["not_adjacent"]  # experience
     assert rules(state, {"first": "t1", "second": "after", "drop_rows": 0, "reason": "r"}) == ["not_joinable"]
     # §11.5: a table with other columns never continues the one before it, whoever asks
     other_columns = _continued([["a", "b"], ["1", "2"]])
@@ -117,3 +117,18 @@ def test_a_table_over_three_pages_merges_into_the_first():
     assert [(c["first"], c["second"]) for c in changes] == [("t1", "t2"), ("t1", "t3")]
     assert apply_changes(state, CHANGE.validate_python(changes), actor="program:tables.merge").rejected == []
     assert next(b for b in state.blocks if b.id == "t1").cells.n_rows == 46
+
+
+def test_a_table_continued_after_a_page_between_is_joined_only_on_evidence():
+    from parserx.ir.evidence import Evidence
+
+    state = _state([_block("t1", 1, (50, 80, 550, 760), BlockKind.TABLE, rows=_rows(1, 20))],
+                   [_block("figure-page", 2, (50, 60, 550, 760), text="a full-page drawing between")],
+                   [_block("t3", 3, (50, 60, 550, 300), BlockKind.TABLE, rows=_rows(21, 25, header=False))])
+    join = {"op": "join", "first": "t1", "second": "t3", "reason": "原件第 3 页写着“续表”", "override": True}
+    assert [r.rule for r in check_changes(state, CHANGE.validate_python([{**join, "override": False}]))] == \
+        ["not_adjacent"]
+    assert [r.rule for r in check_changes(state, CHANGE.validate_python([join]))] == ["override_without_evidence"]
+    state.evidence.append(Evidence(id="e-000000000003", how="image", page=3, image="a-3"))
+    outcome = apply_changes(state, CHANGE.validate_python([{**join, "evidence": "e-000000000003"}]), actor="agent")
+    assert outcome.rejected == [] and next(b for b in state.blocks if b.id == "t1").cells.n_rows == 26

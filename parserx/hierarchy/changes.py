@@ -27,6 +27,7 @@ BLOCK = "块号"
 REASON = "理由"
 EVIDENCE = "证据编号（e-…，view_source 给出）"
 EVIDENCE_OPTIONAL = "证据编号（可省）"
+OVERRIDE = "凭证据突破一条文档经验：原件表明这里是例外时设为 true，必须带 evidence，在 reason 里写明为什么是例外"
 
 
 def agent_doc(text: str) -> ConfigDict:
@@ -44,6 +45,7 @@ class SetRole(IRModel):
     role: Role = Field(description="H1–H6：标题；text：正文；list：列表项；caption：图表题；footnote：脚注；other：其他")
     reason: str = Field(description=REASON)
     evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
+    override: bool = Field(False, description=OVERRIDE + "（同一部分里同一编号模式同级）")
 
     @property
     def kind(self) -> str:
@@ -79,6 +81,7 @@ class Join(IRModel):
     drop_rows: int = Field(0, ge=0, description="表格：去掉 second 开头逐字重复 first 表头的几行")
     reason: str = Field(description=REASON)
     evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
+    override: bool = Field(False, description=OVERRIDE + "（表格：续表在下一页，中间只有页眉页脚；列数仍须相同）")
 
 
 class Unjoin(IRModel):
@@ -157,7 +160,9 @@ class LegalityRule(StrEnum):
     ALREADY_JOINED = "already_joined"  # join: second continues first already
     NOT_JOINABLE = "not_joinable"  # join: two paragraphs or two tables, both in the output
     NOT_MERGE_CANDIDATE = "not_merge_candidate"  # join of tables: not a continuation of the same table
+    NOT_ADJACENT = "not_adjacent"  # join of tables: not on the next page, or more than page furniture between
     ROWS_NOT_DUPLICATE = "rows_not_duplicate"
+    OVERRIDE_WITHOUT_EVIDENCE = "override_without_evidence"  # an exception rests on evidence that exists
     REASON_REQUIRED = "reason_required"  # exclude: content leaves the output only with a reason
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
