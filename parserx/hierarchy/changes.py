@@ -27,7 +27,8 @@ BLOCK = "块号"
 REASON = "理由"
 EVIDENCE = "证据编号（e-…，view_source 给出）"
 EVIDENCE_OPTIONAL = "证据编号（可省）"
-OVERRIDE = "凭证据突破一条文档经验：原件表明这里是例外时设为 true，必须带 evidence，在 reason 里写明为什么是例外"
+OVERRIDE = ("凭证据突破一条文档经验：这项修改被这条经验拒绝、而原件表明这里是例外时才设为 true，必须带 evidence，"
+            "在 reason 里写明为什么是例外；其他修改不需要它")
 
 
 def agent_doc(text: str) -> ConfigDict:
