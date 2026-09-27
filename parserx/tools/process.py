@@ -39,6 +39,7 @@ from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
 from parserx.ir.state import AccountingSummary, DocumentState
 from parserx.runtimes.events import Step
+from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
 from parserx.tools import describe_figure, recognize, structure
 from parserx.tools.submit import checked as check_accounts
@@ -158,6 +159,11 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
 
     ctx.report(Step("process", "structure"))
+    if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):
+        with ctx.ws.txn("tool:process:frames") as state:
+            frames = split_frames(state)  # several tables in one frame, before continuations are looked for
+        if frames:
+            steps.append(StepSummary(step="split_frames", detail=f"{len(frames)} frames holding several tables"))
     state = ctx.ws.load()
     merges = propose_merges(state)
     changes: list[tuple[str, list[dict]]] = [(MERGE_ACTOR, merges)] if merges else []
