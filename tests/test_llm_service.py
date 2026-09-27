@@ -180,6 +180,25 @@ def test_describe_image_forwards_json_schema_to_chat(monkeypatch, tmp_path: Path
     assert response_format["json_schema"]["strict"] is True
 
 
+def test_a_model_without_json_schema_is_shown_the_schema_in_the_prompt(monkeypatch, tmp_path: Path):
+    # Q105: GLM and DeepSeek honour json_object only; told "answer in JSON" without the schema, GLM fitted none of
+    # 66 figure descriptions to it
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    schema = {"type": "object", "required": ["summary"], "properties": {"summary": {"type": "string"}}}
+
+    def text_of(call):
+        return " ".join(part["text"] for part in call["messages"][0]["content"] if part["type"] == "text")
+
+    service, client = _make_service(monkeypatch, api_style="chat", structured_output="json_object")
+    service.describe_image(image_path, "Describe image", structured_output_mode="json_schema", json_schema=schema)
+    call = client.chat.completions.calls[0]
+    assert call["response_format"] == {"type": "json_object"} and '"summary"' in text_of(call)
+    service, client = _make_service(monkeypatch, api_style="chat")  # json_schema honoured: the prompt as written
+    service.describe_image(image_path, "Describe image", structured_output_mode="json_schema", json_schema=schema)
+    assert text_of(client.chat.completions.calls[0]) == "Describe image"
+
+
 def test_describe_image_forwards_json_schema_to_responses(monkeypatch, tmp_path: Path):
     service, client = _make_service(monkeypatch, api_style="responses")
     image_path = tmp_path / "sample.png"

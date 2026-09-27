@@ -53,8 +53,8 @@ def service_identity(config: ServiceConfig) -> dict[str, Any]:
         "min_output_tokens": config.min_output_tokens,
         "extra_body": config.extra_body,
     }
-    if config.structured_output not in (None, "json_schema"):  # weaker than what the tasks ask
-        identity["structured_output"] = config.structured_output
+    if config.structured_output not in (None, "json_schema"):  # weaker than what the tasks ask: the schema is in
+        identity["structured_output"] = {"mode": config.structured_output, "schema_in_prompt": True}  # the prompt
     return identity
 
 

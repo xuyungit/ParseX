@@ -23,6 +23,7 @@ is built with ``max_retries=0``.  Every network send is reported through
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import mimetypes
 import re
@@ -161,8 +162,11 @@ class OpenAICompatibleService:
     ) -> str:
         """Image understanding with optional structured-output constraints."""
         image_data_url = _encode_image_data_url(image_path)
+        asked = prompt
         for mode in _structured_output_modes(structured_output_mode, has_schema=bool(json_schema),
                                              strongest=self._config.structured_output):
+            # a mode weaker than json_schema does not carry the schema: the model is shown it in the prompt (Q105)
+            prompt = asked if mode == "json_schema" or not json_schema else asked + _schema_note(json_schema)
             try:
                 if self._api_style != "chat":
                     try:
@@ -204,7 +208,7 @@ class OpenAICompatibleService:
 
         return self._describe_chat(
             image_data_url,
-            prompt,
+            asked + _schema_note(json_schema) if json_schema else asked,
             context,
             temperature,
             max_tokens,
@@ -509,6 +513,12 @@ def _is_not_found(exc: Exception) -> bool:
 
 
 _STRUCTURED = ("json_schema", "json_object", "off")
+
+
+def _schema_note(schema: dict[str, Any]) -> str:
+    """The schema, for a model whose structured output does not carry it (Q105)."""
+    return ("\n\n只回答一个 JSON 对象，严格符合下面的 JSON Schema（字段名、嵌套结构、取值范围都照此，不要加说明或代码围栏）：\n"
+            + json.dumps(schema, ensure_ascii=False))
 
 
 def _structured_output_modes(requested_mode: str, *, has_schema: bool, strongest: str | None = None) -> tuple[str, ...]:
