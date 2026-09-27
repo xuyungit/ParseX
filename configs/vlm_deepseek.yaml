@@ -1,0 +1,6 @@
+extends: regression.yaml
+
+# model comparison M3 (docs/v2_model_comparison_plan.md): the regression config with another service model
+services:
+  vlm:
+    use: deepseek-flash
