@@ -33,6 +33,8 @@
 - Q86：接口定型——请求模型是唯一契约（中文说明，命令行参数与工具参考由它生成）；一套词表（`set_role {role: H1…}`、`join`/`unjoin`）；信封精简；`read_draft` 的 `changes` 视图；自己的函数调用循环（`runtimes/loop.py`）。5 篇上循环 + gpt-6-sol 与 Codex 质量相当、用时少三成；gpt-6-luna 也能完成，标题较弱、费用低 20 倍。见 eval_reports/2026-09-27_q86_interface.md。
 - Q87、Q88（外部评审之后）：Agent 从校对员升为能重新解释局部的编辑（理解记录 `note`、凭证据的例外 `override`、区域重读替换与 `unadopt`、拆开合并的表）；自己的循环有了中立对话记录与适配器（`responses`、`chat`，缓存标记）、少而成批的清理、截止前请 Agent 交稿。自己看图质量相当、费用约 2.5 倍，默认仍经视觉模型；换模型验证用了 `.env` 里 `_C` 组的 qwen3.6-plus——那是几个月前的旧配置，用户要求以后不再使用它，需要换模型或服务商时先问用户。见 eval_reports/2026-09-27_q87_q88.md、docs/v2_agent_design.md。
 - 表格的分与合（T1–T7，Q89–Q92，docs/v2_tables_plan.md）：扫描表跨页只比左边、有线表恢复合并单元格、外框里的几张表拆开、三线表补回表头并移出表题、图中示意图的"表"改为文字；全语料表格 F1 0.866 → 0.914。Agent（Codex）会修看得见的表格问题，发现不了结构性的。见 eval_reports/2026-09-27_tables.md。改标注前先把原件加进 git。
+- DeepSeek（`.env` 的 `_D` 组，deepseek-flash）驱动自己的循环（d1）：9 篇上与 Codex 质量相当，按标价费用约四分之一，用时多三分之一；它发现了文字层的康熙部首码位（⽤→用，4 篇 180 字），应由程序通用修正。默认仍是 Codex（包月）。见 eval_reports/2026-09-27_deepseek.md。
+- 表格的待办信号：分解已写（docs/v2_table_signal_plan.md，G1–G5，Q93–Q95），等用户确认后再动代码。
 
 ## 先做四件事
 

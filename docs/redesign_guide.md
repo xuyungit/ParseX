@@ -44,6 +44,7 @@
 - [v2_toolkit_review.md](v2_toolkit_review.md)：四个工具（Q85）与接口定型（Q86）。
 - [v2_agent_design.md](v2_agent_design.md)：Agent 的角色（Q87）与自己的循环的上下文、模型适配（Q88）。
 - [v2_tables_plan.md](v2_tables_plan.md)：表格的分与合（T1–T7，Q89–Q92）。
+- [v2_table_signal_plan.md](v2_table_signal_plan.md)：表格的待办信号（G1–G5，Q93–Q95，待确认）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -901,6 +902,9 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q90 | paper01 标注里从折线图抽出的数据点"表"（原件没有表格） | ✅ 用户同意（2026-09-27）：从标注中删去，记入 annotation_changes.md |
 | Q91 | 恢复原生表格的合并单元格后，有跨格的表渲染成 HTML | ✅ 用户同意（2026-09-27）：接受（与扫描页一致，Markdown 没有跨格的写法） |
 | Q92 | 截图里的界面表格是否输出 | ⏸ 用户同意（2026-09-27）：本轮不动，作为输出约定单独讨论 |
+| Q93 | 外框拆出的几张表共用一片区域，其中本地读数看到、格子里没有的行归哪一张 | ⏳ 待定。建议：归到顺序最前的一张，说明里列出同一外框的其他几张；让拆出的表各有区域需要行的位置，以后再做。见 [v2_table_signal_plan.md](v2_table_signal_plan.md) |
+| Q94 | 内容都在、只有结构不对的表格问题（接缝处被分页切开的行、外框里的正文段落）是否做待办信号 | ⏳ 待定。建议：各只有 1 处，没有可靠的通用判据，暂不做，等第二篇文档出现同样的情况再定 |
+| Q95 | 表格区域里的未归属行用什么待办种类 | ⏳ 待定。建议：沿用 `text_unaccounted`，目标是表格块（含义相同，词汇表不变） |
 
 ## 15. 变更记录
 
@@ -1030,3 +1034,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-27 | v1.33 | **Q87、Q88 实施与测量**：理解记录、凭证据的例外、区域重读替换与拆开合并的表；自己的循环的适配器、缓存标记、少而成批的清理；看图默认不变；qwen3.6-plus 能用、标题较弱；L0 635 |
 | 2026-09-27 | v1.34 | **表格的分与合**：分解确认（[v2_tables_plan.md](v2_tables_plan.md)，T1–T7），Q89–Q92 |
 | 2026-09-27 | v1.35 | **表格的分与合 T1–T7 完成**：全语料表格 F1 0.866 → 0.914，表格数不符的文档 5 → 1；三线表丢失的表头找回；Agent（Codex）会用 join/unjoin/split 修正看得见的表格问题，发现不了结构性的；新冻结 run `2026-09-27_tables_fixed_full`；L0 645 |
+| 2026-09-27 | v1.36 | **DeepSeek 对比 Codex（d1）**：deepseek-flash 驱动自己的循环，9 篇上质量与 Codex 相当（标题 0.776 对 0.785，角色 0.831 对 0.826），按标价费用约四分之一，用时多三分之一；发现文字层的康熙部首码位（4 篇、180 字，应由程序修正）；默认仍是 Codex（[报告](../eval_reports/2026-09-27_deepseek.md)）。**表格的待办信号**分解（[v2_table_signal_plan.md](v2_table_signal_plan.md)，G1–G5），Q93–Q95 待定 |
