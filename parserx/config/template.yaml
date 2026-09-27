@@ -30,7 +30,9 @@ models:
     model: deepseek-flash
     api_style: chat          # also Responses; our loop hands its reasoning_content back on Chat (aada802)
     structured_output: json_object  # json_schema: "This response_format type is unavailable now" (2026-09-28)
-    # every effort none … max is accepted: not listed
+    # every effort none … max is accepted: not listed.  At low it sometimes reasons for ~5000 tokens: with a
+    # 2048-token budget the answer comes back empty (finish_reason length), so the floor is raised (2026-09-28)
+    min_output_tokens: 8192
   glm-5.3-flashx:
     endpoint: ${OPENAI_BASE_URL_G:https://open.bigmodel.cn/api/paas/v4/}
     api_key: ${OPENAI_API_KEY_G}
