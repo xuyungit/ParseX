@@ -65,7 +65,6 @@ class Failure(IRModel):
 class UnresolvedKind(StrEnum):
     PAGE_PENDING = "page_pending"
     BLOCK_FAILED = "block_failed"
-    TABLE_UNCERTAIN = "table_uncertain"
     TABLE_MERGE_CANDIDATE = "table_merge_candidate"
     TABLE_ARITHMETIC = "table_arithmetic"  # a product or total that holds in most rows fails in one (P2-7)
     TEXT_SUSPICIOUS = "text_suspicious"  # unreadable characters, or a script found nowhere else (P2-7)
@@ -74,7 +73,6 @@ class UnresolvedKind(StrEnum):
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it
     TITLE_CANDIDATE = "title_candidate"  # the layout detector sees a section title set apart from the body (D4)
-    EVIDENCE_CONFLICT = "evidence_conflict"
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"
     ASSET_MISSING = "asset_missing"

@@ -39,7 +39,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     # review item kinds (tools/envelope.py UnresolvedKind)
     "kind.page_pending": {"zh": "待识别的页", "en": "pages not read"},
     "kind.block_failed": {"zh": "识别失败的内容", "en": "failed blocks"},
-    "kind.table_uncertain": {"zh": "结构不确定的表格", "en": "uncertain tables"},
     "kind.table_merge_candidate": {"zh": "可能的跨页续表", "en": "possible table continuations"},
     "kind.table_arithmetic": {"zh": "表格算术不一致", "en": "table arithmetic"},
     "kind.text_suspicious": {"zh": "可疑字符", "en": "suspicious characters"},
@@ -48,7 +47,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "kind.formula_candidate": {"zh": "公式读数待定", "en": "formula readings to decide"},
     "kind.figure_without_content": {"zh": "没有描述也没有文字的图片", "en": "images without description or text"},
     "kind.title_candidate": {"zh": "标题候选", "en": "title candidates"},
-    "kind.evidence_conflict": {"zh": "证据冲突", "en": "conflicting evidence"},
     "kind.structure_pending": {"zh": "待定的标题层级", "en": "undecided title levels"},
     "kind.budget_skipped": {"zh": "因预算跳过", "en": "skipped for budget"},
     "kind.asset_missing": {"zh": "缺失的图片文件", "en": "missing image files"},
