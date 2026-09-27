@@ -1,18 +1,3 @@
-
-
-<table>
-    <tr>
-        <th>第 50 卷 第 4 期</th>
-        <th>西南交通大学学报</th>
-        <th>Vol. 50 No. 4</th>
-    </tr>
-<tr>
-        <td>2015 年 8 月</td>
-<td>JOURNAL OF SOUTHWEST JIAOTONG UNIVERSITY</td>
-<td>Aug. 2015</td>
-    </tr>
-</table>
-
 **文章编号**: 0258-2724(2015)04-0623-07　　**DOI**: 10.3969/j.issn.0258-2724.2015.04.008
 
 # 预制装配式板梁桥的模型修正方法
