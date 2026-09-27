@@ -32,6 +32,7 @@
 - Q85：工具包按第一性原理重新设计为四个工具；证据存入状态；旧工具删除，探索模式退役；结构操作按结果判定层级。质量与之前持平，工具调用少三分之一以上。见 eval_reports/2026-09-27_four_tools.md。
 - Q86：接口定型——请求模型是唯一契约（中文说明，命令行参数与工具参考由它生成）；一套词表（`set_role {role: H1…}`、`join`/`unjoin`）；信封精简；`read_draft` 的 `changes` 视图；自己的函数调用循环（`runtimes/loop.py`）。5 篇上循环 + gpt-6-sol 与 Codex 质量相当、用时少三成；gpt-6-luna 也能完成，标题较弱、费用低 20 倍。见 eval_reports/2026-09-27_q86_interface.md。
 - Q87、Q88（外部评审之后）：Agent 从校对员升为能重新解释局部的编辑（理解记录 `note`、凭证据的例外 `override`、区域重读替换与 `unadopt`、拆开合并的表）；自己的循环有了中立对话记录与适配器（`responses`、`chat`，缓存标记）、少而成批的清理、截止前请 Agent 交稿。自己看图质量相当、费用约 2.5 倍，默认仍经视觉模型；换模型验证用了 `.env` 里 `_C` 组的 qwen3.6-plus——那是几个月前的旧配置，用户要求以后不再使用它，需要换模型或服务商时先问用户。见 eval_reports/2026-09-27_q87_q88.md、docs/v2_agent_design.md。
+- 表格的分与合（T1–T7，Q89–Q92，docs/v2_tables_plan.md）：扫描表跨页只比左边、有线表恢复合并单元格、外框里的几张表拆开、三线表补回表头并移出表题、图中示意图的"表"改为文字；全语料表格 F1 0.866 → 0.914。Agent（Codex）会修看得见的表格问题，发现不了结构性的。见 eval_reports/2026-09-27_tables.md。改标注前先把原件加进 git。
 
 ## 先做四件事
 
@@ -43,11 +44,11 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 635 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 645 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
-   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-26_q80_fixed_full`
+   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-27_tables_fixed_full`
 
 ## 然后
 
@@ -60,7 +61,8 @@
 4. **扫描 PDF 上不可见的 OCR 文字层可作为独立读数**。
 5. **DOCX 页面层**（Q69）。
 6. **Agent 运行时**（Q62–Q64、Q88）：自己的循环已能用，可换模型，但按 API 计费——用户要求在找到更好的付费方案之前，Agent 一律用 Codex（包月），循环只做离线开发（2026-09-27）；还缺对 Agent 请求的响应缓存与回放（进 L1）、是否默认改用循环、便宜模型做哪些文档、按对象返回能力信息。
-9. **区域重读替换的真实验证**（Q87）：找一篇确有"表格被识成文字"之类问题的文档。
+9. **表格结构的待办信号**：把 Agent 引到可疑表格（表格区域里有本地读数看到、却不在任何单元格里的文字；列数远多于实际使用的表），区域重读替换才会被用上（T7：8 次运行一次也没用）。
+10. **截图里的界面表格是否输出**（Q92）。
 7. ~~依赖升级~~：已完成（openai 3.19；pymupdf 1.28，段落改由版面检测器分，Q80）。
 8. **跨栏续接**：段落在一栏底部没说完、接到下一栏顶部，目前只在跨页时续接（阶段五之后的段落分析发现 8 处）。
 
