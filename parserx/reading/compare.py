@@ -12,6 +12,8 @@ changed.
 - **Output, not seen on the page** (``unseen_segments``): a segment of a shown block — a table cell, a
   sentence — that the local reading does not see where the block sits (on every page the block spans) nor
   anywhere on those pages.
+- **Inside a table** (``within_tables``): unaccounted lines whose place is a shown table's region are what the table
+  lacks — a head row, a row, part of a cell — and are listed on the table rather than on the page.
 
 The readings are compared on letters and digits only (NFKC, full width folded, markup dropped): punctuation,
 spacing and LaTeX commands are not differences.  The two tolerances are measurement tolerances between two
@@ -24,6 +26,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import defaultdict
+from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
@@ -73,6 +76,39 @@ def unaccounted_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
             pages_of[normalize(line.text)].add(n)
     return {n: kept for n, lines in sorted(found.items())
             if (kept := [ln for ln in lines if len(pages_of[normalize(ln.text)]) < 2])}
+
+
+@dataclass
+class TableLines:
+    """Unaccounted lines inside a shown table's region: a head row, a row or part of a cell the table lacks."""
+
+    table: str
+    lines: list[ReadLine]
+    sharing: list[str]  # other shown tables whose region holds these lines: the parts of one frame (Q93)
+
+
+def within_tables(state: DocumentState, found: dict[int, list[ReadLine]]
+                  ) -> tuple[list[TableLines], dict[int, list[ReadLine]]]:
+    """Split unaccounted lines into those inside a shown table's region, by table (tables in reading order), and the
+    rest, by page.  Tables that share a region — the parts one frame was cut into — share their lines: the lines go
+    to the first of them, and the others are named."""
+    tables = [b for b in sorted(state.blocks, key=lambda b: b.order)
+              if b.kind == BlockKind.TABLE and b.status in _SHOWN]
+    places = [(t.id, a.page, a.bbox) for t in tables for a in t.anchors
+              if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
+    by_table: dict[str, TableLines] = {}
+    rest: dict[int, list[ReadLine]] = {}
+    for n, lines in found.items():
+        for line in lines:
+            holders = list(dict.fromkeys(t for t, page, box in places if page == n and _inside(_centre(line.bbox), box)))
+            if not holders:
+                rest.setdefault(n, []).append(line)
+                continue
+            entry = by_table.setdefault(holders[0], TableLines(holders[0], [], []))
+            entry.lines.append(line)
+            entry.sharing += [t for t in holders[1:] if t not in entry.sharing]
+    order = {t.id: i for i, t in enumerate(tables)}
+    return sorted(by_table.values(), key=lambda e: order[e.table]), rest
 
 
 def unseen_segments(state: DocumentState) -> dict[str, list[str]]:

@@ -125,6 +125,25 @@ def test_the_worklist_lists_both_directions():
     assert items[(UnresolvedKind.TEXT_NOT_SEEN, "b-1")] == ["扫描全能王 创建"]
 
 
+def test_lines_inside_a_table_are_listed_on_the_table():
+    dropped = _line("（2）采用橡胶与钢板硫化成一体。", (110, 260, 300, 275))
+    outside = _line("三、项目的核心技术与创新点", (110, 400, 300, 415))
+    items = {(u.kind, u.target): u for u in unresolved_items(_form([dropped, outside]))}
+    on_table = items[(UnresolvedKind.TEXT_UNACCOUNTED, "b-t")]
+    assert [q.doc_text for q in on_table.quotes] == [dropped.text] and "none of its cells" in on_table.detail
+    assert [q.doc_text for q in items[(UnresolvedKind.TEXT_UNACCOUNTED, "p1")].quotes] == [outside.text]
+
+
+def test_tables_cut_from_one_frame_list_a_line_once():
+    # Q93: the parts of one frame share its region; the line goes to the first, the item names the others
+    first = _block("b-t", 1, _TABLE_BOX, kind=BlockKind.TABLE, cells=[["设备名称", "数量"]])
+    second = _block("b-t-f1", 1, _TABLE_BOX, kind=BlockKind.TABLE, cells=[["合计", "3"]])
+    second.order = 1
+    reading = PageReading(n=1, engine="local", dpi=150, lines=[_line("与研究任务的相关性", (300, 110, 480, 125))])
+    items = [u for u in unresolved_items(_state([second, first], [reading])) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+    assert [u.target for u in items] == ["b-t"] and "b-t-f1" in items[0].detail
+
+
 def test_nothing_to_compare_without_a_reading():
     block = _block("b-1", 1, (100, 100, 500, 140), "正文")
     assert unaccounted_lines(_state([block], [])) == {} and unseen_segments(_state([block], [])) == {}

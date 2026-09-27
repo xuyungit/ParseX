@@ -19,7 +19,7 @@ from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
 from parserx.hierarchy.layout_titles import layout_titles
 from parserx.hierarchy.numbering_gaps import numbering_gaps
-from parserx.reading.compare import unaccounted_lines, unseen_segments
+from parserx.reading.compare import unaccounted_lines, unseen_segments, within_tables
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
@@ -171,16 +171,29 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                 and _chosen_engine(block) not in NATIVE_ENGINES:
             items += [Unresolved(target=block.id, kind=UnresolvedKind.TABLE_ARITHMETIC, detail=issue)
                       for issue in arithmetic_issues(block.cells)]
-    for n, lines in unaccounted_lines(state).items():  # the local page reading sees text no block has (Q56)
-        places = ", ".join("(" + ", ".join(f"{v:.0f}" for v in ln.bbox) + ")" for ln in lines[:_QUOTES])
+    in_tables, on_pages = within_tables(state, unaccounted_lines(state))
+    for n, lines in on_pages.items():  # the local page reading sees text no block has (Q56)
         items.append(Unresolved(
             target=f"p{n}", kind=UnresolvedKind.TEXT_UNACCOUNTED, quotes=_quotes([ln.text for ln in lines]),
-            detail=f"{len(lines)} line(s) seen on the page image are in no block, at {places} (page points); "
+            detail=f"{len(lines)} line(s) seen on the page image are in no block, at {_places(lines)} (page points); "
                    "the quotes are the local reading; look at the page"))
+    for found in in_tables:  # ... inside a table's region: what the table lacks
+        sharing = (f"; the region is shared with {', '.join(found.sharing)} (one frame cut into several tables), "
+                   "the lines may belong to any of them") if found.sharing else ""
+        items.append(Unresolved(
+            target=found.table, kind=UnresolvedKind.TEXT_UNACCOUNTED, quotes=_quotes([ln.text for ln in found.lines]),
+            detail=f"{len(found.lines)} line(s) seen on the page image inside this table's region are in none of its "
+                   f"cells, at {_places(found.lines)} (page points){sharing}; the quotes are the local reading. A head "
+                   "row, a row or part of a cell may be lost: look at the region, then re-read the table (view_source "
+                   "as table, a structure issue naming the rows) or the region (as text with page and bbox) and adopt "
+                   "the reading, or fill the cells with set_cells; if the local reading took a drawing or a symbol for "
+                   "text, close the item"))
+    tables = {b.id for b in state.blocks if b.kind == BlockKind.TABLE}
     for block_id, segments in unseen_segments(state).items():
+        what = "cell text(s) of this table" if block_id in tables else "segment(s) of this block"
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
-            detail=f"{len(segments)} segment(s) of this block are not seen on the page image where the block sits; "
+            detail=f"{len(segments)} {what} are not seen on the page image where the block sits; "
                    "compare with the image"))
     from parserx.tools.formulas import pending_candidates
 
@@ -238,6 +251,10 @@ def figures_without_content(state: DocumentState) -> list[str]:
 
 
 _QUOTES = 5  # quoted texts per item; the count says how many there are
+
+
+def _places(lines: list) -> str:
+    return ", ".join("(" + ", ".join(f"{v:.0f}" for v in ln.bbox) + ")" for ln in lines[:_QUOTES])
 
 
 def _quotes(texts: list[str]) -> list[DocText]:
