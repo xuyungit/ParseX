@@ -30,6 +30,9 @@ Supported in Phase 1:
   after the paragraph; comments are excluded (a reviewer's note, kept in the
   sidecar); Office Math as LaTeX, inline ``$…$`` or display ``$$…$$``.
 
+- radical code points ("使⽤", pasted from a PDF whose text layer stores them) as their equivalent unified
+  ideographs, as the PDF reader reads them (``content/text.unify_radicals``), listed in a Decision.
+
 Not supported yet (warning, ``failed`` ledger item, text kept on a failed
 block in the sidecar): linked images, charts and SmartArt (their text read
 from their own part: titles, series, categories and cached values; node text).
@@ -52,6 +55,7 @@ from PIL import Image
 from parserx.content import vector
 from parserx.content.extraction import Extraction
 from parserx.content.omml import omml_to_latex
+from parserx.content.text import radicals_decision, radicals_in, unify_radicals
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, DocxAnchor
 from parserx.ir.asset import Asset
@@ -588,7 +592,27 @@ class _Reader:
         self._flush_carry("/w:body")
         self._furniture()
         self._summaries()
+        self._unify_radicals()
         return self.ext
+
+    def _unify_radicals(self) -> None:
+        """Radical code points in what was read ("使⽤", text pasted from a PDF whose text layer stores them) as their
+        equivalent unified ideographs, as the PDF reader reads them; the block lists the replaced characters in a
+        Decision, before its source decision.  One code point for one: the ledger's counts do not change."""
+        for block in self.ext.blocks:
+            cells = block.cells.cells if block.cells is not None else []
+            unified = radicals_decision(radicals_in((block.text or "") + "".join(c.content for c in cells)), ACTOR)
+            if unified is None:
+                continue
+            block.text = unify_radicals(block.text)
+            for obs in block.observations:
+                if obs.text:
+                    obs.text = unify_radicals(obs.text)
+            grids = {id(g): g for g in (block.cells, *(o.cells for o in block.observations)) if g is not None}
+            for grid in grids.values():  # the block and its observation may share one grid
+                for cell in grid.cells:
+                    cell.content = unify_radicals(cell.content)
+            block.decisions = [unified, *block.decisions]
 
     def _container(self, node, path: str) -> None:
         counts: Counter[str] = Counter()

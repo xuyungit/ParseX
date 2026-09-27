@@ -13,7 +13,7 @@
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
 - **阶段零 ✅**（2026-09-23）：指标、硬检查、回归配置、响应缓存、L1 离线回放、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)；按指标 2.1 离线重算为 `.rescored-2.1.json`）。
 - **阶段一 ✅**（2026-09-24）：文档工作区、七个工具与 JSON CLI、程序约束（去向检查、合法性、接受门、预算）、内容获取（原生 PDF、扫描页引擎、DOCX 直接读 OOXML）、渲染与 sidecar、三份 Skill 草稿、版面检测与图片路由（影子）、固定序列运行时与 `pipeline: v1 | v2` 开关。v2 冻结 run `eval_runs/2026-09-24_p1_v2_toolkit`（提交 65041be），[验收报告](../eval_reports/2026-09-24_p1_toolkit_acceptance.md)；[工具形态试用](../eval_reports/2026-09-24_p1-7b_tool_trial.md)。决策 Q23–Q32 见 §14。**全量语料（27 篇）参考运行**暴露的三处差距（Q33：跨页续表、扫描页标题层级、多栏阅读顺序）已在阶段二之前处理，v2 冻结 run 以空缓存重新冻结（提交 e14752f）。处理后与 v1 比：char_f1 变差 11 篇、变好 9 篇（此前 15 / 7），平均 0.932（v1 0.893）；v2 仍不能在所有文档上替代 v1，剩余差距见验收报告"全量语料"一节。Q34（原生页页眉页脚识别、扫描页多栏区域顺序）也已在阶段二之前处理：与 v1 比 char_f1 变差 9 篇、变好 9 篇、持平 9 篇，平均 0.940（v1 0.893），剩余差距（扫描页识别差异、图片中的文字、无样式标题、界面元素、代码块）见验收报告。阶段二（Agent 探索）🟡：分解 [v2_phase2_plan.md](v2_phase2_plan.md) 已确认（Q35–Q39；Agent 运行时为 Codex，主力模型 gpt-6-sol）；P2-1 实验装置 ✅（[报告](../eval_reports/2026-09-24_p2-1_harness.md)），P2-2 任务说明 ✅，P2-3 对照运行 ✅，P2-4 第一轮 ✅（13 次运行全部有效，[报告](../eval_reports/2026-09-24_p2-4_round1_findings.md)），P2-5 工具包 v1.1 ✅（Agent 以 `process` 开始、只处理待办与定向抽查；推理强度 medium；默认经 `ask_image` 看图；输出包 Q42），P2-6 第二轮 ✅（[报告](../eval_reports/2026-09-24_p2-6_round2.md)：同样 13 篇耗时中位数 265 s → 155 s、Agent 标价 $17.3 → $3.32，文字与表格不变或更好，无样式标题变差——Q48），P2-7 ✅（固定流水线新增跨页段落续接、DOCX 无样式标题、表格算术一致性与可疑字符提示、单元格中的图片），P2-9 ✅（[探索报告](../eval_reports/2026-09-24_p2_agent_exploration.md)），P2-8 ✅（未见集与 §9.4 协议）——**阶段二 ✅**；**阶段三 ✅**（2026-09-25）：[对比报告](../eval_reports/2026-09-24_p3_runtime_comparison.md)、缺陷 D1–D6 修正、本地读数双向比对（Q56）、[重跑对比](../eval_reports/2026-09-25_p4_runtime_comparison.md)；**Q13：默认混合方案**（固定流水线 → 有待核对项交 Agent）；**阶段四 ✅**（2026-09-26）：`parserx parse` 默认走混合方案（控制台中英文进度、回退、中断续跑、`--json`），补齐标题、图片、DOCX、代码块、三线表、原生页公式等能力；全语料运行 B 混合方案 char_f1 0.947、表格 F1 0.875、heading_f1 0.756、角色 F1 0.868（v1 0.890 / 0.775 / 0.494 / 0.614），[退出报告](../eval_reports/2026-09-26_p4-7_full_run_b.md)；**阶段五 ✅**（2026-09-26，[分解](v2_phase5_plan.md)，Q72–Q78，[退出报告](../eval_reports/2026-09-26_p5-7_cleanup_exit.md)）：adapter:v1 由 v2 自有标题路径替代（"两种独立证据一致"），v1 全部删除（本地标签 `v1-final` 保留），依赖与代码一致，README 重写。最终测量（修订后的标注）：固定流水线 char_f1 0.950、表格 F1 0.866、heading_f1 0.699、角色 F1 0.805；混合方案 0.952 / 0.875 / 0.697 / 0.806（运行 B 的标题 0.774，Q78 接受并记录）。
-- **测试基线**：L0 645 通过，无已知失败（2026-09-27，表格的分与合之后），约 65 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
+- **测试基线**：L0 652 通过，无已知失败（2026-09-27，文字层的部首码位之后），约 65 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
 - **代码状态**：全部在 main，未推送远端。冻结 run、响应缓存与新报告只在本地（`eval_runs/`、`.parserx_cache/`、`eval_reports/`，不入 git）。
 
 ### 0.2 新会话启动清单
@@ -26,9 +26,9 @@
    - [标注修订记录](annotation_changes.md)。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都 OK 才继续。
 3. 运行测试，都应 PASS：
-   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（581 通过，无已知失败）；
+   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（652 通过，无已知失败）；
    - L1：`uv run python scripts/regression_test.py --core --repeat 2`；
-   - 冻结 run 回放：`--replay eval_runs/2026-09-26_q80_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-27_tables_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；表格的分与合之后重新冻结，2026-09-27）。
+   - 冻结 run 回放：`--replay eval_runs/2026-09-27_radicals_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-27_radicals_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在文字层的部首码位之后重新冻结，2026-09-27，Q97）。
 4. 为选定的主题写分解，请用户确认后再动代码。
 5. 每完成一项：跑 L0 与 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 全语料比较：固定流水线用 `scripts/heading_compare.py`（以全语料冻结 run 的缓存离线回放；段落拼接另用 `scripts/paragraph_segmentation.py`）；混合方案用 `scripts/agent_explore.py`（snapshot + parse）与 `scripts/phase4_compare.py`。v1 冻结 run 只作静态基线，不能回放。
@@ -45,6 +45,7 @@
 - [v2_agent_design.md](v2_agent_design.md)：Agent 的角色（Q87）与自己的循环的上下文、模型适配（Q88）。
 - [v2_tables_plan.md](v2_tables_plan.md)：表格的分与合（T1–T7，Q89–Q92）。
 - [v2_table_signal_plan.md](v2_table_signal_plan.md)：表格的待办信号（G1–G5，Q93–Q95，待确认）。
+- [v2_radicals_plan.md](v2_radicals_plan.md)：文字层的部首码位（R1–R5，Q96–Q99，已完成）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -358,6 +359,7 @@ Skill 说明目标、取证方法、输出要求和停止条件，不写"字号�
 - **多来源选择**：原生层、OCR、图片子文档、复核候选同时给出同一区域的内容时，由独立的选择步骤裁决：(1) 原生层质量判定通过 → 用原生；(2) 否则用扫描页引擎；(3) 复核候选只在通过接受门（修改位置有图像证据、数字与证据不冲突、结构合法）时才替换。未被选中的 Observation 保留并建立 `duplicate_of`；这是删除 v1 字符串去重逻辑的前提。
 - **原生层质量判定**：扫描底图上的旧 OCR 文本层（字符与像素位置不符；以不可见文字——PDF 文本渲染模式 3——为主要信号）、乱码字体（U+FFFD 或私用区比例高）、矢量文字（drawing 多而 text 少）各有判定入口，判定失败即视为无原生层。v1 的页面分类信号（图像覆盖率、乱码比例、矢量页判据）降级为这里的输入。
 - **区域重叠**：两个检测框重叠超过 50% 时先合并或按置信度取舍，再归属字符；同一字符不归属两个块。
+- **字符按页面所显示的读**（2026-09-27，Q96）：文字层（原生 PDF 与 DOCX）读出时，全角 ASCII 折成半角；康熙部首（U+2F00–）与 CJK 部首补充（U+2E80–）的码位换成 Unicode 规定的等价统一汉字（`EquivalentUnifiedIdeograph.txt` 原文件放在 `content/data/`，运行时不联网；康熙部首的结果与 NFKC 相同）。有的字体里部首与汉字共用一个字形，文字层就存了部首（"使⽤"），检索"使用"找不到。原生 PDF 在判断词间空格之前替换。每个有替换的块写一条 `content_source` Decision（`unified_ideographs`），列出原字符与次数。只处理这两个区，不做全文 NFKC；扫描引擎与 Agent 写的文字不处理。
 
 ### 6.4 扫描页引擎
 
@@ -905,6 +907,10 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q93 | 外框拆出的几张表共用一片区域，其中本地读数看到、格子里没有的行归哪一张 | ⏳ 待定。建议：归到顺序最前的一张，说明里列出同一外框的其他几张；让拆出的表各有区域需要行的位置，以后再做。见 [v2_table_signal_plan.md](v2_table_signal_plan.md) |
 | Q94 | 内容都在、只有结构不对的表格问题（接缝处被分页切开的行、外框里的正文段落）是否做待办信号 | ⏳ 待定。建议：各只有 1 处，没有可靠的通用判据，暂不做，等第二篇文档出现同样的情况再定 |
 | Q95 | 表格区域里的未归属行用什么待办种类 | ⏳ 待定。建议：沿用 `text_unaccounted`，目标是表格块（含义相同，词汇表不变） |
+| Q96 | 文字层的部首码位（⽤ 代替"用"）换成统一汉字，DOCX 也做吗 | ✅ 用户按建议决定（2026-09-27）：原生 PDF 与 DOCX 都做（约束是"正文用统一汉字"，与成因无关；从这类 PDF 复制进 Word 的文字带着同样的码位）。分解见 [v2_radicals_plan.md](v2_radicals_plan.md) |
+| Q97 | 替换改变了图片描述请求的上下文（缓存键），冻结 run 怎样重新冻结 | ✅ 用户按建议决定（2026-09-27）：全语料冻结 run 以旧冻结 run 的缓存为起点（只有键变了的请求是新请求）；验收冻结 run 按惯例以空缓存重新冻结；L1 缓存用 `--core --allow-calls` 补录 receipt 的 2 个描述响应 |
+| Q98 | 标注里从文字层继承的部首码位 | ✅ 用户按建议决定（2026-09-27）：text_pic02（151 个）、receipt（13 个）换成统一汉字，记入 annotation_changes.md，receipt 的原件先加进 git |
+| Q99 | `text_suspicious` 是否报部首 | ✅ 用户按建议决定（2026-09-27）：不加。读出时已替换，语料里不剩；剩下的只可能是没有等价字的 ⺀，或扫描引擎、Agent 写出的（从未见过） |
 
 ## 15. 变更记录
 
@@ -1035,3 +1041,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-27 | v1.34 | **表格的分与合**：分解确认（[v2_tables_plan.md](v2_tables_plan.md)，T1–T7），Q89–Q92 |
 | 2026-09-27 | v1.35 | **表格的分与合 T1–T7 完成**：全语料表格 F1 0.866 → 0.914，表格数不符的文档 5 → 1；三线表丢失的表头找回；Agent（Codex）会用 join/unjoin/split 修正看得见的表格问题，发现不了结构性的；新冻结 run `2026-09-27_tables_fixed_full`；L0 645 |
 | 2026-09-27 | v1.36 | **DeepSeek 对比 Codex（d1）**：deepseek-flash 驱动自己的循环，9 篇上质量与 Codex 相当（标题 0.776 对 0.785，角色 0.831 对 0.826），按标价费用约四分之一，用时多三分之一；发现文字层的康熙部首码位（4 篇、180 字，应由程序修正）；默认仍是 Codex（[报告](../eval_reports/2026-09-27_deepseek.md)）。**表格的待办信号**分解（[v2_table_signal_plan.md](v2_table_signal_plan.md)，G1–G5），Q93–Q95 待定 |
+| 2026-09-27 | v1.37 | **文字层的部首码位**（[分解](v2_radicals_plan.md)，Q96–Q99，[报告](../eval_reports/2026-09-27_radicals.md)）：原生 PDF 与 DOCX 读出时把康熙部首与 CJK 部首补充的码位换成 Unicode 规定的等价统一汉字（`EquivalentUnifiedIdeograph.txt` 原样放入仓库），在判断词间空格之前替换，每块写 `unified_ideographs` Decision 列出原字符（§6.3）；全语料输出中的部首 180 → 0，另修正 text_pic02 的两个多余空格与一处跨页续接；deepseek char_f1 0.918 → 0.923（⻓→长）；text_pic02、receipt 标注同样修订。图片描述的上下文变了，冻结 run 重新冻结：全语料 `2026-09-27_radicals_fixed_full`（旧缓存起步，新请求 VLM 8、扫描引擎 1），验收 `2026-09-27_radicals_v2_toolkit`（空缓存）；text_pic02 一张截图的新描述少列了可见文字，被转写成界面表格，char_f1 −0.012（Q92 一类，非本改动）。L0 652 |

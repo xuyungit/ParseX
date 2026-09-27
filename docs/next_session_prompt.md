@@ -34,6 +34,7 @@
 - Q87、Q88（外部评审之后）：Agent 从校对员升为能重新解释局部的编辑（理解记录 `note`、凭证据的例外 `override`、区域重读替换与 `unadopt`、拆开合并的表）；自己的循环有了中立对话记录与适配器（`responses`、`chat`，缓存标记）、少而成批的清理、截止前请 Agent 交稿。自己看图质量相当、费用约 2.5 倍，默认仍经视觉模型；换模型验证用了 `.env` 里 `_C` 组的 qwen3.6-plus——那是几个月前的旧配置，用户要求以后不再使用它，需要换模型或服务商时先问用户。见 eval_reports/2026-09-27_q87_q88.md、docs/v2_agent_design.md。
 - 表格的分与合（T1–T7，Q89–Q92，docs/v2_tables_plan.md）：扫描表跨页只比左边、有线表恢复合并单元格、外框里的几张表拆开、三线表补回表头并移出表题、图中示意图的"表"改为文字；全语料表格 F1 0.866 → 0.914。Agent（Codex）会修看得见的表格问题，发现不了结构性的。见 eval_reports/2026-09-27_tables.md。改标注前先把原件加进 git。
 - DeepSeek（`.env` 的 `_D` 组，deepseek-flash）驱动自己的循环（d1）：9 篇上与 Codex 质量相当，按标价费用约四分之一，用时多三分之一；它发现了文字层的康熙部首码位（⽤→用，4 篇 180 字），应由程序通用修正。默认仍是 Codex（包月）。见 eval_reports/2026-09-27_deepseek.md。
+- 文字层的部首码位（Q96–Q99，docs/v2_radicals_plan.md）：原生 PDF 与 DOCX 读出时把康熙部首与 CJK 部首补充的码位换成 Unicode 规定的等价统一汉字（对照表原样放在 `parserx/content/data/`），每块写 Decision 列出原字符；全语料输出中的部首 180 → 0。两个冻结 run 重新冻结（`2026-09-27_radicals_fixed_full`、`2026-09-27_radicals_v2_toolkit`）。见 eval_reports/2026-09-27_radicals.md。
 - 表格的待办信号：分解已写（docs/v2_table_signal_plan.md，G1–G5，Q93–Q95），等用户确认后再动代码。
 
 ## 先做四件事
@@ -46,11 +47,11 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 645 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 652 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
-   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
-   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-27_tables_fixed_full`
+   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-27_radicals_v2_toolkit`
+   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-27_radicals_fixed_full`
 
 ## 然后
 

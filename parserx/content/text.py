@@ -1,8 +1,15 @@
-"""Text helpers: joining visually wrapped lines into one paragraph (output contract, guide §4.5); full-width ASCII."""
+"""Text helpers: joining visually wrapped lines into one paragraph (output contract, guide §4.5); full-width ASCII;
+radical code points read as the ideographs they stand for."""
 
 from __future__ import annotations
 
 import unicodedata
+from collections import Counter
+from functools import cache
+from pathlib import Path
+
+from parserx.ir.decision import Decision
+from parserx.ir.enums import DecisionStage
 
 
 def _is_wide(ch: str) -> bool:
@@ -69,3 +76,53 @@ def normalize_fullwidth_ascii(text: str) -> str:
     is correct in CJK text.
     """
     return text.translate(_FULLWIDTH_TABLE)
+
+
+# ── Radical code points → unified ideographs ──────────────────────────────
+
+# Unicode's Equivalent_Unified_Ideograph property, the file as published (Unicode 18.0.0, sha256 c86c80f6…bf72).
+EQUIVALENTS = Path(__file__).parent / "data" / "EquivalentUnifiedIdeograph.txt"
+_RADICAL_BLOCKS = ((0x2E80, 0x2EFF), (0x2F00, 0x2FDF))  # CJK Radicals Supplement, Kangxi Radicals
+UNIFIED = "unified_ideographs"  # the Decision's choice
+
+
+@cache
+def _radicals() -> dict[int, str]:
+    table: dict[int, str] = {}
+    for line in EQUIVALENTS.read_text(encoding="utf-8").splitlines():
+        data = line.split("#", 1)[0].strip()
+        if not data:
+            continue
+        points, target = (field.strip() for field in data.split(";"))
+        first, _, last = points.partition("..")
+        for cp in range(int(first, 16), int(last or first, 16) + 1):
+            if any(lo <= cp <= hi for lo, hi in _RADICAL_BLOCKS):
+                table[cp] = chr(int(target, 16))
+    return table
+
+
+def unify_radicals(text: str) -> str:
+    """Radical code points (Kangxi Radicals, CJK Radicals Supplement) as the unified ideographs Unicode gives as their
+    equivalents — for Kangxi radicals the same as NFKC.  Some fonts draw a radical and an ideograph with one glyph,
+    and the text layer of a PDF made with them stores the radical: "使⽤" where the page shows "使用", so a search for
+    "使用" finds nothing.  One code point for one: positions do not move.  A radical without an equivalent (⺀)
+    stays, and nothing outside the two blocks changes (no NFKC)."""
+    return text.translate(_radicals())
+
+
+def radicals_in(text: str) -> Counter[str]:
+    """The characters of *text* that ``unify_radicals`` replaces, with their counts."""
+    table = _radicals()
+    return Counter(ch for ch in text if ord(ch) in table)
+
+
+def radicals_decision(found: Counter[str], actor: str) -> Decision | None:
+    """The record of a block's replaced radicals (the characters as the source stores them), or None."""
+    n = sum(found.values())
+    if not n:
+        return None
+    pairs = ", ".join(f"{ch}→{unify_radicals(ch)}" + (f" ×{k}" if k > 1 else "") for ch, k in found.most_common())
+    return Decision(stage=DecisionStage.CONTENT_SOURCE, choice=UNIFIED, actor=actor, evidence={"chars": n},
+                    reason=f"{n} character{'s' if n > 1 else ''} stored as radical code point{'s' if n > 1 else ''}, "
+                           f"output as the equivalent unified ideograph{'s' if n > 1 else ''} "
+                           f"(Unicode Equivalent_Unified_Ideograph): {pairs}")

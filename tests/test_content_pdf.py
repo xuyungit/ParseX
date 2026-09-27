@@ -586,3 +586,55 @@ def test_a_three_line_table_keeps_its_head_and_leaves_its_caption_out(tmp_path):
     rows = [[c.content for c in sorted((c for c in grid.cells if c.row == r), key=lambda c: c.col)] for r in range(grid.n_rows)]
     assert rows[0] == ["Case", "B1", "B2", "B3"] and rows[1][0] == "1+2" and len(rows) == 4
     assert not any(ln.text.startswith("Tab.1") for ln in inside)  # the caption stays text
+
+
+def _stored_as(doc, page, text: str, stored: dict[str, str]) -> None:
+    """Give the page's CJK font a ToUnicode map that stores some characters as other code points, as a font whose
+    radical and ideograph share one glyph does ("用" drawn, "⽤" in the text layer)."""
+    entries = "\n".join(f"<{ord(ch):04X}> <{ord(stored.get(ch, ch)):04X}>" for ch in sorted(set(text)))
+    cmap = ("/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /T def /CMapType 2 def\n"
+            f"1 begincodespacerange <0000> <FFFF> endcodespacerange\n{len(set(text))} beginbfchar\n{entries}\n"
+            "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end")
+    xref = doc.get_new_xref()
+    doc.update_object(xref, "<<>>")
+    doc.update_stream(xref, cmap.encode())
+    font = next(f[0] for f in page.get_fonts() if f[4] == "china-s")
+    doc.xref_set_key(font, "ToUnicode", f"{xref} 0 R")
+
+
+def test_radical_code_points_in_the_text_layer_are_read_as_the_ideographs(tmp_path):
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    xs, ys = [72, 200, 328], [100, 130, 160]
+    _ruled(page, xs, ys)
+    for r, row in enumerate([("名称", "金额"), ("甲", "十")]):
+        for c, text in enumerate(row):
+            page.insert_text((xs[c] + 5, ys[r] + 20), text, fontsize=11, fontname="china-s")
+    page.insert_text((72, 300), "使用长度与用途", fontsize=11, fontname="china-s")
+    _stored_as(doc, page, "名称金额甲十使用长度与用途", {"用": "⽤", "长": "⻓", "金": "⾦"})
+    path = tmp_path / "radicals.pdf"
+    doc.save(path)
+    assert "使⽤⻓度" in pymupdf.open(path)[0].get_text()  # the text layer stores radicals
+
+    ext = extract_pdf(path)
+    text = next(b for b in ext.blocks if b.kind == BlockKind.TEXT)
+    assert text.text == text.observations[0].text == "使用长度与用途"
+    unified, source = text.decisions
+    assert unified.choice == "unified_ideographs" and unified.evidence == {"chars": 3}
+    assert unified.reason.endswith("⽤→用 ×2, ⻓→长") and source.choice == "native"  # the source decision stays last
+    table = next(b for b in ext.blocks if b.kind == BlockKind.TABLE)
+    assert _cells(table) == [["名称", "金额"], ["甲", "十"]]
+    assert table.decisions[0].reason.endswith("⾦→金")
+    assert sum(e.chars for e in ext.ledger) == 13  # one code point for one
+
+
+def test_blocks_without_radicals_have_no_such_decision(pdf_path):
+    assert all(d.choice != "unified_ideographs" for b in extract_pdf(pdf_path).blocks for d in b.decisions)
+
+
+def test_a_radical_between_ideographs_is_no_word_gap():
+    from parserx.content.pdf_native import _reconstruct_line_from_chars
+
+    # a justified line spaces its glyphs apart; the radical is read as the ideograph first, so no space appears
+    span = {"size": 8.0, "chars": [{"c": c, "bbox": (x, 0, x + 8, 10)} for c, x in [("填", 0), ("⼊", 13), ("与", 26)]]}
+    assert _reconstruct_line_from_chars([span]) == "填入与"

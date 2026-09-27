@@ -313,3 +313,21 @@ def test_the_face_a_paragraph_is_set_in_is_style_evidence(tmp_path):
     assert styles["一、企业基本情况"].font == "黑体"
     assert styles["企业成立于二〇一〇年，主要从事桥梁支座的研发与生产。"].font == "仿宋_GB2312"  # the default
     assert styles["Bearing test report"].font == "Times New Roman"  # Latin text: the ASCII face
+
+
+def test_radical_code_points_are_read_as_the_ideographs(tmp_path):
+    doc = Document()
+    doc.add_paragraph("使⽤⻓度")  # pasted from a PDF whose text layer stores radicals
+    doc.add_table(rows=1, cols=2).cell(0, 0).text = "⾦额"
+    doc.add_paragraph("正文")
+    path = tmp_path / "radicals.docx"
+    doc.save(path)
+
+    ext = extract_docx(path)
+    paragraph, table, plain = ext.blocks
+    assert paragraph.text == paragraph.observations[0].text == "使用长度"
+    assert paragraph.decisions[0].reason.endswith("⽤→用, ⻓→长") and paragraph.decisions[-1].choice == "docx"
+    assert table.cells.slot(0, 0).content == table.observations[0].cells.slot(0, 0).content == "金额"
+    assert table.decisions[0].evidence == {"chars": 1}
+    assert [d.choice for d in plain.decisions] == ["docx"]
+    assert sum(e.chars for e in ext.ledger) == 8  # one code point for one

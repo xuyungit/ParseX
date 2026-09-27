@@ -6,6 +6,10 @@ One pass over PyMuPDF's ``rawdict`` per page:
 - text lines are grouped into paragraphs by the layout detector's text regions (``content/paragraphs.py``, Q80;
   geometry where no region is): TEXT blocks with a PdfAnchor, a native Observation and ``TextStyle`` evidence
   (dominant font size, bold).  The library's own blocks are not used: they change between versions;
+- characters are read as the page shows them: full-width ASCII folded, and radical code points a font's glyph
+  mapping put in the text layer ("使⽤") read as their equivalent unified ideographs ("使用",
+  ``content/text.unify_radicals``) before word spaces are decided; the block lists the replaced characters in a
+  ``content_source`` Decision (``unified_ideographs``);
 - ruled tables found by ``page.find_tables`` become TABLE blocks; the lines
   inside a table are accounted to it.  A ruled grid is a table only when it
   holds text and, given a layout detector (``layout``), the detector sees a
@@ -59,7 +63,7 @@ from parserx.ir.observation import Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
 from parserx.content.paragraphs import group_lines  # noqa: E402
 from parserx.layout import labels  # noqa: E402
-from parserx.content.text import normalize_fullwidth_ascii  # noqa: E402
+from parserx.content.text import normalize_fullwidth_ascii, radicals_decision, radicals_in, unify_radicals  # noqa: E402
 from parserx.tables.grid import Cell, TableGrid  # noqa: E402
 
 ENGINE = "native_pdf"
@@ -224,7 +228,7 @@ def _line_typography(spans: list[dict]) -> tuple[float, bool, str]:
     counts: dict[bool, Counter] = {True: Counter(), False: Counter()}
     for span in spans:
         for ch in span.get("chars", ()):
-            c = ch.get("c", "")
+            c = unify_radicals(ch.get("c", ""))  # a radical code point is the ideograph it draws: it votes
             if c and c.isalnum():
                 counts[_wide(c)][key(span)] += 1
     wide, narrow = sum(counts[True].values()), sum(counts[False].values())
@@ -336,7 +340,7 @@ def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[li
     across = [ln for ln in inside if len(_columns_of(ln, table)) >= ACROSS_COLUMNS]  # a sentence over the grid
     held = [ln for ln in inside if any(in_cells(ln)) and ln not in head_lines and ln not in across]
     drop = {key for ln in head_lines + across for key in ln.origins}  # so no cell takes a part of them
-    rows = [[normalize_fullwidth_ascii(c or "") for c in row] for row in _cell_texts(table, inside, drop) or []]
+    rows = [[_cell_text(c) for c in row] for row in _cell_texts(table, inside, drop) or []]
     head, used = _head_rows(head_lines, table)
     rows = [row for row in head + rows if any(c.strip() for c in row)]
     keep = [c for c in range(max((len(r) for r in rows), default=0)) if any(c < len(r) and r[c].strip() for r in rows)]
@@ -399,7 +403,7 @@ def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:
 
     def text(r: int, c: int) -> str:
         row = rows[r]
-        return join_wrapped(normalize_fullwidth_ascii(row[c] or "").split("\n")) if c < len(row) else ""
+        return join_wrapped(_cell_text(row[c]).split("\n")) if c < len(row) else ""
 
     flat = TableGrid(n_rows=len(rows), n_cols=n_cols,
                      cells=[Cell(row=r, col=c, content=text(r, c)) for r in range(len(rows)) for c in range(n_cols)])
@@ -459,6 +463,11 @@ def _spans(table, lines: list[_Line]) -> tuple[list[tuple[int, int, int, int]], 
             for band in range(len(bands.get(r, [None]))):
                 placed.append((first[r] + band, c, height if band == 0 else 1, colspan))
     return placed, origin
+
+
+def _cell_text(text: str | None) -> str:
+    """A cell's text as the characters it shows: full-width ASCII folded, radical code points unified (as lines)."""
+    return unify_radicals(normalize_fullwidth_ascii(text or ""))
 
 
 def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) -> list[list[str | None]]:
@@ -606,6 +615,9 @@ def _source_decision(verdict: NativeVerdict) -> Decision:
 def _block(block_id: str, order: int, n: int, region: _Region, decision: Decision) -> Block:
     anchors: list = [PdfAnchor(page=n, bbox=region.bbox, coord_space="page_pt")]
     observations: list[Observation] = []
+    # the characters the text layer stores as radicals (lines and cells were read as the ideographs, see _lines);
+    # listed before the page's source decision, which stays the last
+    unified = radicals_decision(radicals_in("".join(g[0] for ln in region.lines for g in ln.glyphs)), ACTOR)
     text = ""
     if region.asset is not None:
         asset = region.asset
@@ -624,7 +636,7 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
         chosen_observation=observations[0].id if observations else None, text=text,
-        cells=region.grid, decisions=[decision],
+        cells=region.grid, decisions=[unified, decision] if unified else [decision],
     )
 
 
@@ -670,6 +682,7 @@ def _is_cjk_or_fullwidth_punct(ch: str) -> bool:
         or 0xFF3B <= cp <= 0xFF40  # Fullwidth ［＼］＾＿｀
         or 0xFF5B <= cp <= 0xFF65  # Fullwidth ｛｜｝～ + halfwidth forms
         or 0xFE30 <= cp <= 0xFE4F  # CJK Compatibility Forms
+        or 0x2E80 <= cp <= 0x2FDF  # CJK Radicals Supplement, Kangxi Radicals (one without an equivalent: ⺀)
     )
 
 
@@ -715,7 +728,7 @@ def _reconstruct_line_from_chars(line_spans: list[dict]) -> str:
     for span in line_spans:
         font_size = span.get("size", 12.0)
         for ch_dict in span.get("chars", []):
-            c = ch_dict.get("c", "")
+            c = unify_radicals(ch_dict.get("c", ""))  # before the spacing test: "填⼊与" is "填入与", no spaces
             if not c:
                 continue
             bbox = ch_dict.get("bbox", (0, 0, 0, 0))
