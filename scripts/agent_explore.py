@@ -280,7 +280,10 @@ def _parse_one(args, doc: str) -> int:
     source = doc_dir / f"input{input_path.suffix.lower()}"
     shutil.copyfile(input_path, source)
     config = doc_config(load_raw_config(CONFIG), doc_dir)
-    config.setdefault("runtime", {}).setdefault("agent", {})["engine"] = args.engine  # Codex, or our own loop (Q86)
+    agent = config.setdefault("runtime", {}).setdefault("agent", {})
+    agent["engine"] = args.engine  # Codex, or our own loop (Q86)
+    if args.model:
+        agent["model"] = args.model
     (doc_dir / "parserx.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
     python = _toolkit(args) / "venv" / "bin" / "python"
     env = {**os.environ, **{k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}}
@@ -311,7 +314,8 @@ def _parse_one(args, doc: str) -> int:
     scores = None
     if expected is not None and outcome and not outcome.get("error"):
         scores = _scores(doc, expected, {"exported": True, "markdown": outcome["markdown"]})
-    record = {"doc": doc, "runtime_mode": args.runtime, "engine": args.engine, "no_agent": args.no_agent,
+    record = {"doc": doc, "runtime_mode": args.runtime, "engine": args.engine, "model": args.model,
+              "no_agent": args.no_agent,
               "exit_code": proc.returncode,
               "wall_s": wall, "outcome": outcome, "agent_usage": usage, "audit": audit, "integrity": integrity,
               "scores": scores, "snapshot": _snapshot(args)["commit"]}
@@ -348,6 +352,7 @@ def main() -> int:
     prs.add_argument("--runtime", choices=("hybrid", "fixed"), default="hybrid")
     prs.add_argument("--engine", choices=("codex", "loop"), default="codex",
                      help="the agent: Codex, or our own function-calling loop (Q86)")
+    prs.add_argument("--model", help="the agent's model (default: the config's, gpt-6-sol)")
     prs.add_argument("--no-agent", action="store_true", help="Codex not on PATH: the fallback")
     prs.add_argument("--lang", choices=("zh", "en"), default="zh")
     prs.add_argument("--tag", help="suffix of the run directory (several runs of one document)")
