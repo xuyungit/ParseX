@@ -9,7 +9,10 @@ reached through an adapter (``runtimes/models.py``): the OpenAI Responses API or
 The context (guide Q88): the task and the tools are a prefix that never changes, the conversation is only appended
 to, so the provider's cache carries every turn's history.  When the last turn's context passed ``clear_at_tokens``,
 or holds more than ``MAX_IMAGES`` images, the older tool results are replaced at once by one-line placeholders (the
-state is in the workspace: anything can be read again), and the agent is told so, with its notes (Q87).  With ``vision: agent`` the images
+state is in the workspace: anything can be read again), and the agent is told so, with its notes (Q87).  A clearing
+makes the cache start over from where it cut, so it is rare and thorough: all but the latest results go, images down
+to half the limit, and the next clearing waits until the context has grown by half the threshold again (s7: clearing a
+result or two every turn doubled the cost of an 87-page document).  With ``vision: agent`` the images
 of ``view_source``'s ``as: image`` looks go into the tool results; with ``vision: tool`` the agent asks the service
 VLM instead (``as: answer``).
 
@@ -83,6 +86,8 @@ class LoopAgent:
         last_message: str | None = None
         reason = detail = None
         context_tokens = 0
+        floor = 0  # the context just after the last clearing: the next one waits for it to grow
+        after_clearing = False
         told_to_submit = False
         budget = self.agent.budget_usd
         with open(log_dir / "trace.jsonl", "w", encoding="utf-8") as trace:
@@ -102,7 +107,9 @@ class LoopAgent:
                     history.append(Note(SUBMIT_NOW.format(why=why)))
                     told_to_submit = True
                     events.append("told to submit")
-                cleared = _clear(history, context_tokens, self.agent.clear_at_tokens)
+                clear_at = self.agent.clear_at_tokens
+                cleared = _clear(history, context_tokens, max(clear_at, floor + clear_at // 2))
+                after_clearing = after_clearing or bool(cleared)
                 if cleared:
                     history.append(Note(CLEARED.format(n=cleared, changes=_changes(ws_dir), notes=_notes(ws_dir))))
                     events.append(f"cleared {cleared}")
@@ -116,6 +123,8 @@ class LoopAgent:
                     break
                 _count(usage, answer)
                 context_tokens = answer.usage.input_tokens
+                if after_clearing:
+                    floor, after_clearing = context_tokens, False
                 reply = answer.reply
                 history.append(reply)
                 record: dict[str, Any] = {"step": step, "model_s": round(time.monotonic() - t0, 1),
@@ -185,13 +194,20 @@ class LoopAgent:
         return ToolResult(call, agent_json(envelope), images)  # an invalid request comes back as a failure
 
 
-def _clear(history: list, context_tokens: int, clear_at: int) -> int:
-    """Replace the older tool results by placeholders when the context grew past *clear_at* tokens or holds more
-    than MAX_IMAGES images; returns how many were cleared."""
+def _clear(history: list, context_tokens: int, threshold: int) -> int:
+    """Replace older tool results by placeholders: all but the latest KEEP_RESULTS when the context reached
+    *threshold* tokens; the oldest ones with images until at most half of MAX_IMAGES remain when there are more than
+    MAX_IMAGES.  Returns how many were cleared."""
     live = [e for e in history if isinstance(e, ToolResult) and e.cleared is None]
-    if context_tokens < clear_at and sum(len(e.images) for e in live) <= MAX_IMAGES:
-        return 0
-    older = live[:-KEEP_RESULTS]
+    older = live[:-KEEP_RESULTS] if context_tokens >= threshold else []
+    images = sum(len(e.images) for e in live if e not in older)
+    if images > MAX_IMAGES:
+        for entry in live[:-1]:
+            if images <= MAX_IMAGES // 2:
+                break
+            if entry not in older and entry.images:
+                older.append(entry)
+                images -= len(entry.images)
     for entry in older:
         entry.cleared = summary(entry)
     return len(older)

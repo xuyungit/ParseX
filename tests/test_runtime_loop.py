@@ -119,11 +119,44 @@ def test_a_cleared_context_gets_the_agents_notes_back(tmp_path):
 def test_older_tool_results_are_cleared_at_once_past_the_threshold():
     history = [ToolResult(ToolCall(f"c{i}", "read_draft", json.dumps({"view": "text", "page": i})), "x" * 100)
                for i in range(7)]
-    assert _clear(history, context_tokens=50_000, clear_at=100_000) == 0
-    assert _clear(history, context_tokens=120_000, clear_at=100_000) == 3  # the latest four stay
+    assert _clear(history, context_tokens=50_000, threshold=100_000) == 0
+    assert _clear(history, context_tokens=120_000, threshold=100_000) == 3  # the latest four stay
     assert history[0].cleared.startswith("[已清理：read_draft") and '"page": 0' in history[0].cleared
     assert history[3].cleared is None
-    assert _clear(history, context_tokens=120_000, clear_at=100_000) == 0  # nothing older left
+    assert _clear(history, context_tokens=120_000, threshold=100_000) == 0  # nothing older left
+
+
+def test_images_are_cleared_down_to_half_the_limit_the_oldest_first(tmp_path):
+    looks = [ToolResult(ToolCall(f"c{i}", "view_source", "{}"), "{}", [tmp_path / f"{i}.png", tmp_path / f"{i}b.png"])
+             for i in range(4)]  # 8 images: over the limit of 6
+    assert _clear(looks, context_tokens=0, threshold=100_000) == 3  # down to 2 images, the latest look's
+    assert [e.cleared is None for e in looks] == [False, False, False, True]
+
+
+def test_a_clearing_waits_for_the_context_to_grow_again(pdf, tmp_path):
+    class Growing:
+        """Each turn reads the draft again; the context grows by 30k tokens a turn and drops after a clearing."""
+
+        name = "growing"
+        contexts: list = []
+
+        def answer(self, system, tools, history, *, timeout):
+            live = sum(1 for e in history if isinstance(e, ToolResult) and e.cleared is None)
+            context = 10_000 + 30_000 * live
+            self.contexts.append(context)
+            if len(self.contexts) >= 12:
+                return Answer(Reply("完成。", []), Usage(context, 0, 10))
+            return Answer(Reply("", [ToolCall(f"c{len(history)}", "read_draft", "{}")]), Usage(context, 0, 10))
+
+    config = _config()
+    config.runtime.agent.clear_at_tokens = 100_000
+    agent = LoopAgent("growing", "medium", config=config, context_class=_context_class(),
+                      model_factory=lambda timeout: Growing())
+    workspace_init(pdf, tmp_path / "agent" / "ws", config=_config())
+    assert agent.run(tmp_path / "agent", deadline_s=600, log_dir=tmp_path / "log").ok
+    events = [e for line in (tmp_path / "log" / "trace.jsonl").read_text().splitlines()
+              for e in json.loads(line)["events"]]
+    assert 1 <= len(events) <= 3  # not every turn once past the threshold
 
 
 # ── the adapters ────────────────────────────────────────────────────────
