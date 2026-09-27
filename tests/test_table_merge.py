@@ -177,3 +177,20 @@ def test_a_scanned_table_continues_when_its_left_edge_aligns():
     assert not candidate((120, 60, 550, 400)).confirmed  # the left edge moved: another table
     native = merge_candidates(_continued(_rows(21, 30, header=False), second_bbox=(52, 60, 480, 400)))[0]
     assert not native.confirmed and native.evidence["edges"] == "both"  # a ruled table's box is the table
+
+
+def test_a_merged_cell_cut_by_the_page_break_is_one_again():
+    from parserx.tables.merge import merge_grids
+
+    first = TableGrid(n_rows=3, n_cols=2, cells=[Cell(row=0, col=0, content="组"), Cell(row=0, col=1, content="项"),
+                                                  Cell(row=1, col=0, rowspan=2, content="ZZ-01"),
+                                                  Cell(row=1, col=1, content="a"), Cell(row=2, col=1, content="b")])
+    second = TableGrid(n_rows=2, n_cols=2, cells=[Cell(row=0, col=0, rowspan=2, content=""),
+                                                   Cell(row=0, col=1, content="c"), Cell(row=1, col=1, content="d")])
+    grid = merge_grids(first, second, 0)
+    assert grid.slot(4, 0).content == "ZZ-01" and grid.slot(1, 0).rowspan == 4
+    lone = second.model_copy(update={"cells": [Cell(row=0, col=0, content="x"), *second.cells[1:]]})
+    assert merge_grids(first, lone, 0).slot(3, 0).content == "x"  # a cell of its own stays its own
+    repeated = TableGrid(n_rows=3, n_cols=2, cells=[Cell(row=0, col=0, content="组"), Cell(row=0, col=1, content="项"),
+                                                     *(c.model_copy(update={"row": c.row + 1}) for c in second.cells)])
+    assert merge_grids(first, repeated, 1).slot(4, 0).content == "ZZ-01"  # after the repeated header row

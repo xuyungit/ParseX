@@ -113,10 +113,19 @@ def repeats_header(first: TableGrid, second: TableGrid, rows: int) -> bool:
 
 
 def merge_grids(first: TableGrid, second: TableGrid, drop_rows: int) -> TableGrid:
+    """*second*'s rows after *first*'s.  A merged cell the page break cut in two — one reaching the bottom of
+    *first*, an empty merged cell of the same columns at the top of *second* — becomes one cell again (tables T2)."""
     shift = first.n_rows - drop_rows
     moved = [cell.model_copy(update={"row": cell.row + shift}) for cell in second.cells if cell.row >= drop_rows]
+    head = {(c.col, c.colspan): c for c in first.cells
+            if c.rowspan > 1 and c.row + c.rowspan == first.n_rows}
+    cut = {c.col: c for c in moved if c.row == first.n_rows and c.rowspan > 1 and not c.content.strip()
+           and (c.col, c.colspan) in head}
+    cells = [c.model_copy(update={"rowspan": c.rowspan + cut[c.col].rowspan}) if (c.col, c.colspan) in head
+             and c.col in cut and head[(c.col, c.colspan)] is c else c for c in first.cells]
+    moved = [c for c in moved if not (c.col in cut and cut[c.col] is c)]
     return TableGrid(n_rows=first.n_rows + second.n_rows - drop_rows, n_cols=first.n_cols,
-                     cells=[*first.cells, *moved], header_rows=first.header_rows)
+                     cells=[*cells, *moved], header_rows=first.header_rows)
 
 
 def merge_tables(state: DocumentState, first_id: str, second_id: str, drop_rows: int, *, actor: str, reason: str,

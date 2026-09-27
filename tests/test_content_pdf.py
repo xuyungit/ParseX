@@ -540,3 +540,26 @@ def test_a_lines_face_is_the_face_of_its_main_script(tmp_path):
     cjk_face, code_face = fonts["删除故障的逻辑卷"], fonts["停止"]
     assert cjk_face != code_face and "Mono" in code_face
     assert fonts["4."] == cjk_face  # the number and the spaces do not outvote the words
+
+
+def test_a_merged_cell_keeps_its_span(tmp_path):
+    # tables T2: a title row across the table, and a cell two rows high — PyMuPDF leaves the covered places empty
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    xs, ys = [72, 200, 328, 456], [100, 130, 160, 190, 220]
+    for y in ys:
+        page.draw_line((xs[1] if y == ys[3] else xs[0], y), (xs[-1], y))  # the left cell of rows 2–3 is one
+    for x in xs:
+        page.draw_line((x, ys[1] if x in xs[1:-1] else ys[0]), (x, ys[-1]))  # the title row is one cell
+    for text, (x, y) in (("设备费", (xs[0], ys[0])), ("名称", (xs[0], ys[1])), ("型号", (xs[1], ys[1])),
+                         ("金额", (xs[2], ys[1])), ("工作站", (xs[0], ys[2])), ("A1", (xs[1], ys[2])),
+                         ("10", (xs[2], ys[2])), ("A2", (xs[1], ys[3])), ("20", (xs[2], ys[3]))):
+        page.insert_text((x + 5, y + 20), text, fontsize=11, fontname="china-s")
+    doc.save(tmp_path / "merged.pdf")
+
+    grid = next(b for b in extract_pdf(tmp_path / "merged.pdf").blocks if b.kind == BlockKind.TABLE).cells
+    spans = {(c.row, c.col): (c.rowspan, c.colspan, c.content) for c in grid.cells if c.content}
+    assert spans[(0, 0)] == (1, 3, "设备费") and spans[(2, 0)] == (2, 1, "工作站")
+    assert [[c.content if c else None for c in row] for row in grid.slot_matrix()] == [
+        ["设备费"] * 3, ["名称", "型号", "金额"], ["工作站", "A1", "10"], ["工作站", "A2", "20"]]
+    assert grid.needs_html  # a span has no Markdown form (Q91)

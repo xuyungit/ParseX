@@ -335,12 +335,69 @@ def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[li
 def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:
     rows = _cell_texts(table, lines, {key for ln in across for key in ln.origins}) or []
     n_cols = max((len(r) for r in rows), default=0)
-    cells = [
-        Cell(row=r, col=c, content=join_wrapped(normalize_fullwidth_ascii(row[c] or "").split("\n"))
-             if c < len(row) else "")
-        for r, row in enumerate(rows) for c in range(n_cols)
-    ]
-    return TableGrid(n_rows=len(rows), n_cols=n_cols, cells=cells)
+
+    def text(r: int, c: int) -> str:
+        row = rows[r]
+        return join_wrapped(normalize_fullwidth_ascii(row[c] or "").split("\n")) if c < len(row) else ""
+
+    flat = TableGrid(n_rows=len(rows), n_cols=n_cols,
+                     cells=[Cell(row=r, col=c, content=text(r, c)) for r in range(len(rows)) for c in range(n_cols)])
+    spans = _spans(table, lines)
+    if spans is None or len(spans[1]) != len(rows):
+        return flat
+    placed, _ = spans
+    covered = {(r + i, c + j) for r, c, rs, cs in placed for i in range(rs) for j in range(cs)}
+    cells = [Cell(row=r, col=c, rowspan=rs, colspan=cs, content=text(r, c)) for r, c, rs, cs in placed]
+    cells += [Cell(row=r, col=c, content="") for r in range(len(rows)) for c in range(n_cols) if (r, c) not in covered]
+    try:
+        return TableGrid(n_rows=len(rows), n_cols=n_cols, cells=sorted(cells, key=lambda x: (x.row, x.col)))
+    except ValueError:  # the rectangles do not tile the grid: every position its own cell, as before
+        return flat
+
+
+SPAN_EPS = 1.0  # points: a cell reaches a column (or row) that starts this far inside its rectangle
+
+
+def _spans(table, lines: list[_Line]) -> tuple[list[tuple[int, int, int, int]], list[int]] | None:
+    """Merged cells (tables T2): (row, col, rowspan, colspan) of every cell PyMuPDF draws, in the rows ``_cell_texts``
+    gives, and the table row each of those rows comes from.  PyMuPDF leaves the positions a merged cell covers empty
+    (None) and gives the merged cell its whole rectangle: the cell spans the columns (rows) that start inside it.  A
+    row split into item rows (``_row_bands``) keeps its cells' column spans in every band; a cell spanning rows into
+    such a row does not span them (its text would have to be split too)."""
+    trows = table.rows
+    if not trows:
+        return None
+    n = max(len(row.cells) for row in trows)
+    starts: list[float | None] = [None] * n
+    for row in trows:
+        for c, cell in enumerate(row.cells):
+            if cell is not None and starts[c] is None:
+                starts[c] = cell[0]
+    bands = {r: b for r, row in enumerate(trows) if (b := _row_bands(row, lines))}
+    first, origin = [], []
+    for r in range(len(trows)):
+        first.append(len(origin))
+        origin += [r] * len(bands.get(r, [None]))
+    placed = []
+    for r, row in enumerate(trows):
+        for c, cell in enumerate(row.cells):
+            if cell is None:
+                continue
+            colspan = 1
+            while (c + colspan < len(row.cells) and row.cells[c + colspan] is None
+                   and (starts[c + colspan] is None or starts[c + colspan] < cell[2] - SPAN_EPS)):
+                colspan += 1
+            rowspan = 1
+            while (r + rowspan < len(trows) and trows[r + rowspan].bbox[1] < cell[3] - SPAN_EPS
+                   and all(k < len(trows[r + rowspan].cells) and trows[r + rowspan].cells[k] is None
+                           for k in range(c, c + colspan))):
+                rowspan += 1
+            if any(x in bands for x in range(r, r + rowspan)) and rowspan > 1:
+                rowspan = 1
+            height = first[r + rowspan - 1] + len(bands.get(r + rowspan - 1, [None])) - first[r] if rowspan > 1 else 1
+            for band in range(len(bands.get(r, [None]))):
+                placed.append((first[r] + band, c, height if band == 0 else 1, colspan))
+    return placed, origin
 
 
 def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) -> list[list[str | None]]:
