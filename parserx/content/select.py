@@ -22,6 +22,7 @@ check.  A text candidate may not change the numbers of the evidence at all.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -42,6 +43,17 @@ from parserx.workspace.queries import HIDDEN, block_unit
 ACTOR = "program:content.select"
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})
 _NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _numbers(text: str) -> list[str]:
+    """The numbers of *text* in one notation: k₁ is k1, m² is m2, a full-width １２ is 12 (NFKC, as the region
+    adoption of ``tools/edit.py`` compares them)."""
+    return _NUMBER_RE.findall(unicodedata.normalize("NFKC", text))
+
+
+def _plain(text: str) -> str:
+    """A cell's text for the content-kept check: one notation (NFKC), no whitespace."""
+    return "".join(unicodedata.normalize("NFKC", text).split())
 
 
 class GateCheck(IRModel):
@@ -205,23 +217,23 @@ def _filled_cells(current: TableGrid, grid: TableGrid, region: set[tuple[int, in
     rows, cols = [r for r, _ in region], [c for _, c in region]
     r1 = max(rows) + max(0, grid.n_rows - current.n_rows)
     c1 = max(cols) + max(0, grid.n_cols - current.n_cols)
-    known = {"".join(c.content.split()) for c in current.cells if c.content.strip()}
+    known = {_plain(c.content) for c in current.cells if c.content.strip()}
     return {(c.row, c.col) for c in grid.cells
             if min(rows) <= c.row <= r1 and min(cols) <= c.col <= c1
-            and c.content.strip() and "".join(c.content.split()) not in known}
+            and c.content.strip() and _plain(c.content) not in known}
 
 
 def _where_added(grid: TableGrid, added: Counter[str], skip: set[tuple[int, int]]) -> str:
     cells = sorted({(c.row, c.col) for c in grid.cells if (c.row, c.col) not in skip
-                    and any(n in added for n in _NUMBER_RE.findall(c.content))})
+                    and any(n in added for n in _numbers(c.content))})
     return (f" at candidate cells {cells[:12]}; numbers the reading missed may be filled only where a structure "
             "issue names the cells and the table had nothing (Q45)") if cells else ""
 
 
 def review_text(block: Block, candidate: Observation, *, actor: str) -> ReviewOutcome:
     evidence = [o for o in block.observations if o.task != TaskKind.REVIEW and o.text]
-    before = Counter(n for o in evidence for n in _NUMBER_RE.findall(o.text or ""))
-    after = Counter(_NUMBER_RE.findall(candidate.text or ""))
+    before = Counter(n for o in evidence for n in _numbers(o.text or ""))
+    after = Counter(_numbers(candidate.text or ""))
     consistent = not before or before == after
     gate = [
         _image_evidence(candidate),
@@ -245,7 +257,7 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
         after = _grid_numbers(candidate.cells, set())
         valid = candidate.cells.n_rows > 0 and candidate.cells.n_cols > 0
     else:
-        before, after = Counter(_NUMBER_RE.findall(block.text)), Counter(_NUMBER_RE.findall(candidate.text or ""))
+        before, after = Counter(_numbers(block.text)), Counter(_numbers(candidate.text or ""))
         valid = bool((candidate.text or "").strip())
     if not native:
         numbers = GateCheck(name="numeric_consistency", passed=True, detail="edits confined to the named spans")
@@ -255,7 +267,7 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
         numbers = GateCheck(name="numeric_consistency", passed=False,
                             detail=_number_diff(before, after, native=True) + "; no local reading of this place")
     else:
-        shown = Counter(_NUMBER_RE.findall(seen))
+        shown = Counter(_numbers(seen))
         backed = all(shown[k] >= after[k] for k in after - before) and all(shown[k] <= after[k] for k in before - after)
         numbers = GateCheck(name="numeric_consistency", passed=backed, detail=_number_diff(before, after, native=True) + (
             "; as the local reading of this place shows" if backed else
@@ -317,11 +329,11 @@ def _chosen(block: Block) -> Observation | None:
 
 
 def _grid_numbers(grid: TableGrid, skip: set[tuple[int, int]]) -> Counter[str]:
-    return Counter(n for c in grid.cells if (c.row, c.col) not in skip for n in _NUMBER_RE.findall(c.content))
+    return Counter(n for c in grid.cells if (c.row, c.col) not in skip for n in _numbers(c.content))
 
 
 def _cell_texts(grid: TableGrid, skip: set[tuple[int, int]]) -> Counter[str]:
-    return Counter("".join(c.content.split()) for c in grid.cells
+    return Counter(_plain(c.content) for c in grid.cells
                    if (c.row, c.col) not in skip and c.content.strip())
 
 
@@ -332,8 +344,8 @@ def _lost_cells(current: TableGrid, grid: TableGrid, skip: set[tuple[int, int]])
     missing = _cell_texts(current, skip) - _cell_texts(grid, set())
     if not missing:
         return missing
-    by_rows = "".join("".join(c.content.split()) for c in sorted(grid.cells, key=lambda c: (c.row, c.col)))
-    by_cols = "".join("".join(c.content.split()) for c in sorted(grid.cells, key=lambda c: (c.col, c.row)))
+    by_rows = "".join(_plain(c.content) for c in sorted(grid.cells, key=lambda c: (c.row, c.col)))
+    by_cols = "".join(_plain(c.content) for c in sorted(grid.cells, key=lambda c: (c.col, c.row)))
     wanted = _cell_texts(current, skip)
     return Counter({text: n for text, n in missing.items()
                     if max(by_rows.count(text), by_cols.count(text)) < wanted[text]})

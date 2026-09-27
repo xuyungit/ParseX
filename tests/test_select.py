@@ -173,6 +173,16 @@ def test_merging_cells_keeps_content_but_each_repeated_cell_must_survive():
     assert not review_table(block(), once, allowed_cells=set(), actor="t").adopted
 
 
+def test_numbers_and_cells_are_compared_in_one_notation():
+    # a head drawn as k with a subscript, read as two rows by the text layer, merged back by the reading: k₁ is k1
+    grid = _grid([["方法", "k", "k"], ["", "1", "2"], ["方法 A", "0.03", "-0.42"]])
+    block = Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
+                  observations=[_obs("o-base", "native_pdf", cells=grid)], chosen_observation="o-base")
+    merged = _candidate([["方法", "k₁", "k₂"], ["方法 A", "0.03", "-0.42"]])
+    outcome = review_table(block, merged, allowed_cells=set(), actor="t")
+    assert outcome.adopted, outcome.gate
+
+
 def test_a_missing_column_is_filled_only_where_a_structure_issue_named_it():
     # Q45: cells the OCR missed may come from the image alone — inside the region a structure issue names
     with_column = [["项目", "单价", "数值"], ["甲", "5", "3"], ["乙", "7", "20"]]
