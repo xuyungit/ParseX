@@ -258,7 +258,7 @@ def test_agent_actions_are_read_from_the_call_records():
         ("look", "p4", 4), ("look", "b-p004-0002", 4), ("set_title", "b-p004-0002", 4), ("rejected", None, None),
         ("close", "p1", 1), ("add", "p2", 2), ("rejected", "b-p003-0001", 3)]
     assert got[2].text == "技术领域" and got[2].level == 2 and got[4].detail == "封面信息，不是节标题"
-    joins = rec("apply_structure", {"changes": [{"op": "add_relation", "kind": "continues", "src": f"b-p001-000{i}",
+    joins = rec("apply_structure", {"changes": [{"op": "link", "kind": "continues", "src": f"b-p001-000{i}",
                                                  "dst": f"b-p001-000{i + 1}"} for i in range(5)]},
                 {"accepted": [0, 1, 2, 3, 4], "rejected": []})
     assert [(a.action, a.page, a.count) for a in actions(joins)] == [("join", 1, 5)]

@@ -54,6 +54,8 @@ def image_evidence_at(state: DocumentState, page: int, bbox, ref: str) -> GateCh
     for evidence in cited(state, ref):
         if page in _whole_pages(evidence):
             return _passed(f"{evidence.id} shows page {page}")
+        if evidence.bbox is not None and evidence.page == page and _overlap(evidence.bbox, bbox):
+            return _passed(f"{evidence.id} shows this place")
         block = blocks.get(evidence.block)
         if block is not None and any(isinstance(a, PdfAnchor) and a.page == page and _overlap(a.bbox, bbox)
                                      for a in block.anchors):
@@ -64,7 +66,8 @@ def image_evidence_at(state: DocumentState, page: int, bbox, ref: str) -> GateCh
 def _whole_pages(evidence: Evidence) -> set[int]:
     if evidence.seam is not None:  # the seam image shows both pages around the break
         return {evidence.seam, evidence.seam + 1}
-    return {evidence.page} if evidence.page is not None and evidence.block is None else set()
+    whole = evidence.page is not None and evidence.block is None and evidence.bbox is None
+    return {evidence.page} if whole else set()
 
 
 def _merged_parts(state: DocumentState, block_id: str) -> set[str]:

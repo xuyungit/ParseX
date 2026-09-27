@@ -26,16 +26,16 @@ from __future__ import annotations
 import re
 
 from parserx.hierarchy.changes import (
-    AddRelation,
+    Link,
     ApplyOutcome,
     Exclude,
     LegalityRule,
     MarkPending,
     MergeTables,
-    MoveAfter,
+    Move,
     Rejection,
-    RemoveRelation,
-    Restore,
+    Unlink,
+    Include,
     SetLevel,
     SetRole,
     Split,
@@ -125,8 +125,8 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
     for name in _block_refs(change):
         if name not in blocks:
             return LegalityRule.UNKNOWN_BLOCK, f"no block {name}"
-    if isinstance(change, RemoveRelation) and all(r.id != change.relation for r in state.relations):
-        return LegalityRule.UNKNOWN_BLOCK, f"no relation {change.relation}"
+    if isinstance(change, Unlink) and _relation(state, change) is None:
+        return LegalityRule.UNKNOWN_RELATION, f"no {change.kind} relation {change.src} → {change.dst}"
     if isinstance(change, SetRole):
         block = blocks[change.block]
         if block.kind in _CONTENT_KINDS:
@@ -147,7 +147,7 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
         if blocks[change.block].status in HIDDEN:
             return LegalityRule.NOT_VISIBLE, f"{change.block} is {blocks[change.block].status}"
         return None
-    if isinstance(change, Restore):
+    if isinstance(change, Include):
         block = blocks[change.block]
         if block.status != BlockStatus.EXCLUDED:
             return LegalityRule.NOT_EXCLUDED, f"{change.block} is {block.status}"
@@ -162,11 +162,11 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
         if change.level is not None:
             return _level_problem(state, block, change.level)
         return None
-    if isinstance(change, MoveAfter):
+    if isinstance(change, Move):
         if change.after == change.block or _moves_into_itself(state, change):
             return LegalityRule.ORDER_CYCLE, f"{change.block} cannot follow {change.after}"
         return None
-    if isinstance(change, AddRelation):
+    if isinstance(change, Link):
         if any((r.kind, r.src, r.dst) == (change.kind, change.src, change.dst) for r in state.relations):
             return LegalityRule.DUPLICATE_RELATION, f"{change.kind} {change.src} → {change.dst} exists"
     if isinstance(change, Split):
@@ -209,11 +209,11 @@ def _decided_by_agent(state: DocumentState, change: StructureChange, actor: str)
 
 
 def _block_refs(change: StructureChange) -> list[str]:
-    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Restore, Split)):
+    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Include, Split)):
         return [change.block]
-    if isinstance(change, MoveAfter):
+    if isinstance(change, Move):
         return [change.block] + ([change.after] if change.after else [])
-    if isinstance(change, AddRelation):
+    if isinstance(change, (Link, Unlink)):
         return [change.src, change.dst]
     if isinstance(change, MergeTables):
         return [change.first, change.second]
@@ -266,12 +266,12 @@ def _same_section(titles: list[Block], i: int, j: int, level_i: int, level_j: in
     return True
 
 
-def _moves_into_itself(state: DocumentState, change: MoveAfter) -> bool:
+def _moves_into_itself(state: DocumentState, change: Move) -> bool:
     """Following *after* would require *after* to follow the block already (a chain back to the block)."""
     seen: set[str] = set()
     target = change.after
     moved_after = {d.refs[0]: d.refs[1] for b in state.blocks for d in b.decisions
-                   if d.stage == DecisionStage.STRUCTURE and d.choice == "move_after" and len(d.refs) == 2}
+                   if d.stage == DecisionStage.STRUCTURE and d.choice == "move" and len(d.refs) == 2}
     while target is not None and target not in seen:
         if target == change.block:
             return True
@@ -291,44 +291,54 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
             block.level = None  # before the kind: a text block never holds a level, not even in between
         block.kind = BlockKind(change.kind)
         block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice=change.kind, reason=change.reason,
-                                        evidence=change.evidence, actor=actor))
+                                        evidence=_grounds(change.evidence), actor=actor))
         if change.level is not None:
             block.level = change.level
             block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
-                                            reason=change.reason, evidence=change.evidence, actor=actor))
-    elif isinstance(change, (Exclude, Restore)):
+                                            reason=change.reason, evidence=_grounds(change.evidence), actor=actor))
+    elif isinstance(change, (Exclude, Include)):
         _set_excluded(state, blocks[change.block], isinstance(change, Exclude), change.reason, actor,
-                      getattr(change, "evidence", {}))
+                      _grounds(change.evidence))
     elif isinstance(change, SetLevel):
         block = blocks[change.block]
         block.level = change.level
         block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
-                                        reason=change.reason, evidence=change.evidence, actor=actor))
-    elif isinstance(change, MoveAfter):
+                                        reason=change.reason, evidence=_grounds(change.evidence), actor=actor))
+    elif isinstance(change, Move):
         block = blocks[change.block]
         sequence = [b for b in ordered(state) if b.id != block.id]
         at = 0 if change.after is None else next(i for i, b in enumerate(sequence) if b.id == change.after) + 1
         sequence.insert(at, block)
         for order, item in enumerate(sequence):
             item.order = order
-        block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="move_after", reason=change.reason,
-                                        evidence={}, actor=actor, refs=[block.id] + ([change.after] if change.after
-                                                                                     else [])))
-    elif isinstance(change, AddRelation):
+        block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="move", reason=change.reason,
+                                        evidence=_grounds(change.evidence), actor=actor,
+                                        refs=[block.id] + ([change.after] if change.after else [])))
+    elif isinstance(change, Link):
         state.relations.append(Relation(id=ids.relation_id(change.kind, change.src, change.dst), kind=change.kind,
                                         src=change.src, dst=change.dst, confidence=change.confidence))
-    elif isinstance(change, RemoveRelation):
-        state.relations[:] = [r for r in state.relations if r.id != change.relation]
+    elif isinstance(change, Unlink):
+        gone = _relation(state, change)
+        state.relations[:] = [r for r in state.relations if r is not gone]
     elif isinstance(change, MergeTables):
         merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
-                     evidence=change.evidence)
+                     evidence=_grounds(change.evidence))
     elif isinstance(change, Split):
         _split(state, blocks[change.block], change.at_break, change.reason, actor)
     elif isinstance(change, MarkPending):
         block = blocks[change.block]
         block.status = BlockStatus.DEGRADED
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="pending", reason=change.reason,
-                                        evidence={}, actor=actor))
+                                        evidence=_grounds(change.evidence), actor=actor))
+
+
+def _grounds(evidence) -> dict:
+    """A change's grounds as a Decision records them: named facts, or the evidence id it cites (Q85)."""
+    return {"evidence": evidence} if isinstance(evidence, str) else dict(evidence)
+
+
+def _relation(state: DocumentState, change: Unlink):
+    return next((r for r in state.relations if (r.kind, r.src, r.dst) == (change.kind, change.src, change.dst)), None)
 
 
 def _split_parts(text: str | None, at_break: int) -> tuple[str, str] | None:

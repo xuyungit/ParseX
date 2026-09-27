@@ -13,7 +13,7 @@ import hashlib
 import json
 from typing import Literal
 
-from parserx.ir.base import IRModel
+from parserx.ir.base import BBox, IRModel
 from parserx.ir.semantic import FigureSemantic
 from parserx.tables.grid import TableGrid
 
@@ -24,16 +24,19 @@ class Evidence(IRModel):
     id: str  # "e-" + digest of how it was looked at and what was seen
     how: How
     block: str | None = None  # the block looked at (its crop or its image)
-    page: int | None = None  # the whole page
+    page: int | None = None  # the whole page, or the region bbox of it
+    bbox: BBox | None = None  # a region of the page, in page points
     seam: int | None = None  # page N's bottom half above page N + 1's top half
     rows: tuple[int, int] | None = None  # a band of a table's rows
     image: str | None = None  # the image looked at (asset id)
     question: str | None = None
     answer: str | None = None  # the VLM's answer; for a text reading, the text read
     cells: TableGrid | None = None  # a table reading
+    undetermined: list[tuple[int, int]] = []  # a table reading: cells the reader could not determine
     semantic: FigureSemantic | None = None  # a figure's description
     reading: str | None = None  # a text reading's engine response, stored in the workspace (path)
     reading_sha256: str | None = None
+    engine: str | None = None  # the reader of a text, table or description reading, with its version
     raw_ref: str | None = None  # the engine request's cache key
 
 

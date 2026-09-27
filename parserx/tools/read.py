@@ -126,13 +126,14 @@ def _image(ctx: ToolContext, state, req: ReadRequest, blocks_by_id) -> tuple[Ima
                     transform=transform), None
 
 
-def look(ctx: ToolContext, image: str, *, block: str | None = None, page: int | None = None,
+def look(ctx: ToolContext, image: str, *, block: str | None = None, page: int | None = None, bbox=None,
          seam: int | None = None, rows=None, question: str | None = None, answer: str | None = None) -> str:
     """Record a look at an image of the source (Q85); returns the evidence id."""
-    target = {"block": block, "page": page, "seam": seam, "rows": rows}
+    target = {"block": block, "page": page, "bbox": bbox, "seam": seam, "rows": rows}
     how = "image" if question is None else "answer"
     evidence = Evidence(id=evidence_id(how, {**target, "image": image, "question": question}, answer), how=how,
-                        block=block, page=page, seam=seam, rows=tuple(rows) if rows else None, image=image,
+                        block=block, page=page, bbox=tuple(bbox) if bbox else None, seam=seam,
+                        rows=tuple(rows) if rows else None, image=image,
                         question=question, answer=answer)
     with ctx.ws.txn("tool:evidence") as state:
         return evidence_store.record(state, evidence).id

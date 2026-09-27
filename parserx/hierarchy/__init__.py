@@ -1,16 +1,16 @@
 """Document structure (guide §6.8). Phase 1: structure changes and their legality checks."""
 
 from parserx.hierarchy.changes import (
-    AddRelation,
+    Link,
     ApplyOutcome,
     Exclude,
     LegalityRule,
     MarkPending,
     MergeTables,
-    MoveAfter,
+    Move,
     Rejection,
-    RemoveRelation,
-    Restore,
+    Unlink,
+    Include,
     SetLevel,
     SetRole,
     Split,
@@ -20,7 +20,7 @@ from parserx.hierarchy.changes import (
 from parserx.hierarchy.legality import apply_changes, check_changes, numbering_signature
 
 __all__ = [
-    "AddRelation", "ApplyOutcome", "Exclude", "LegalityRule", "MarkPending", "MergeTables", "MoveAfter", "Rejection", "RemoveRelation",
-    "Restore", "SetLevel", "SetRole", "Split", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
+    "Link", "ApplyOutcome", "Exclude", "LegalityRule", "MarkPending", "MergeTables", "Move", "Rejection", "Unlink",
+    "Include", "SetLevel", "SetRole", "Split", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
     "numbering_signature",
 ]

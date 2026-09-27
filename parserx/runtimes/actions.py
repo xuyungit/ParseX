@@ -49,7 +49,7 @@ def _look(block: str | None, page: int | None, seam: int | None, question: str |
 
 
 GROUP_MIN = 4  # this many same actions from one call are shown as one line with a count
-GROUPED = frozenset({"join", "set_role", "exclude", "restore", "move_after", "split"})  # titles, edits stay listed
+GROUPED = frozenset({"join", "set_role", "exclude", "include", "move", "split"})  # titles, edits stay listed
 
 
 def actions(record: dict, text_of: Lookup = lambda _: None) -> list[AgentAction]:
@@ -135,9 +135,9 @@ def _structure(change: dict, text_of: Lookup) -> AgentAction | None:
         return AgentAction("set_level", level=change.get("level"), **common)
     if op == "merge_tables":
         return AgentAction("merge", **common)
-    if op in ("split", "exclude", "restore", "move_after"):
+    if op in ("split", "exclude", "include", "move"):
         return AgentAction(op, **common)
-    if op == "add_relation" and change.get("kind") == "continues":
+    if op == "link" and change.get("kind") == "continues":
         return AgentAction("join", **common)
     return None
 

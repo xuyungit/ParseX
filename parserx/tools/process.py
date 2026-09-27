@@ -213,13 +213,13 @@ def _text_not_carried(ctx: ToolContext, block, asset) -> bool:
 
     from parserx.reading.compare import SOMEWHERE, normalize
     from parserx.reading.local import read_cached
-    from parserx.render.markdown import _semantic_block
+    from parserx.render.markdown import semantic_block
 
     try:
         lines = read_cached(ctx.reader(), (ctx.ws.root / asset.path).read_bytes(), ctx.cache)
     except Exception:  # noqa: BLE001 - an image the reader cannot decode (e.g. EMF) gives no evidence
         return False
-    carried = normalize(_semantic_block(block))
+    carried = normalize(semantic_block(block))
     return any(len(text := normalize(line)) >= 2 and (not carried or fuzz.partial_ratio(text, carried) < SOMEWHERE)
                for _, line, _ in lines)
 

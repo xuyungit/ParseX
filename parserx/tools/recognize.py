@@ -150,7 +150,6 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
     new_ids: list[str] = []
     before = {p.n: p.status for p in state.pages}
     with ctx.ws.txn("tool:recognize") as state:
-        sizes = {p.n: p.size_pt for p in state.pages}
         for outcome in outcomes:
             batch = outcome.task
             targets = [f"p{n}" for n in batch]
@@ -165,25 +164,10 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                                                        reason=outcome.error or outcome.status))
                 continue
             raw_ref, results = outcome.value
-            with pymupdf.open(source) as doc:
-                for n, result in zip(batch, results):
-                    page = result.raw["layoutParsingResults"][0]
-                    pruned = page.get("prunedResult") or {}
-                    # figures, and pictures inside tables or text, are cut from the page render
-                    has_figures = any(scan.labels.to_kind(scan.ENGINE, e.get("block_label", "")) == BlockKind.FIGURE
-                                      or scan.take_pictures(str(e.get("block_content") or ""))[1]
-                                      for e in pruned.get("parsing_res_list") or [])
-                    image = scan.render_page(doc, n, int(pruned.get("width") or 0)) if has_figures and \
-                        pruned.get("width") else None
-                    scan_result = scan.page_blocks(
-                        scan.PageScan(page=n, raw=page, raw_ref=raw_ref, engine_version=ocr.model),
-                        page_size=sizes[n], first_seq=_next_block_seq(state, n), first_item=_next_item(state, n),
-                        page_image=image)
-                    for path, data in scan_result.asset_bytes.items():
-                        write_once(ctx.ws.root / path, data)
-                    new_ids += integrate_scan_page(state, n, scan_result)
-                    selections.append(SelectionOutcome(target=f"p{n}", choice="scan_engine", adopted=True,
-                                                       reason="native layer failed its quality check"))
+            for n, result in zip(batch, results):
+                new_ids += integrate_page(ctx, state, n, result.raw["layoutParsingResults"][0], raw_ref, ocr.model)
+                selections.append(SelectionOutcome(target=f"p{n}", choice="scan_engine", adopted=True,
+                                                   reason="native layer failed its quality check"))
         new_blocks = [b for b in state.blocks if b.id in set(new_ids)]
         views = [observation_view(b, o, geometry=False) for b in new_blocks for o in b.observations]
         rows = [r for r in page_rows(state) if r.n in set(requested)]
@@ -240,8 +224,8 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
                 continue
             raw_ref, results = outcome.value
             for (block_id, asset), result in zip(outcome.task, results):
-                page = result.raw["layoutParsingResults"][0]
-                read = scan.image_blocks(scan.PageScan(page=0, raw=page, raw_ref=raw_ref, engine_version=ocr.model),
+                read = scan.image_blocks(scan.PageScan(page=0, raw=result.raw["layoutParsingResults"][0],
+                                                       raw_ref=raw_ref, engine_version=ocr.model),
                                          asset, figure=block_id)
                 new_ids += integrate_image(state, block_id, read)
                 selections.append(SelectionOutcome(target=block_id, choice="transcribed", adopted=True,
@@ -251,6 +235,32 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
     return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
                                   observations_total=len(views), pages=[], selections=selections),
                   failures=failures)
+
+
+def integrate_page(ctx: ToolContext, state, n: int, page: dict, raw_ref: str, engine_version: str) -> list[str]:
+    """Take the scan engine's reading of page *n* (one ``layoutParsingResults`` entry) into *state*: its blocks,
+    their images cut from the page render, and the selection step; returns the new block ids."""
+    pruned = page.get("prunedResult") or {}
+    # figures, and pictures inside tables or text, are cut from the page render
+    has_figures = any(scan.labels.to_kind(scan.ENGINE, e.get("block_label", "")) == BlockKind.FIGURE
+                      or scan.take_pictures(str(e.get("block_content") or ""))[1]
+                      for e in pruned.get("parsing_res_list") or [])
+    size = next(p.size_pt for p in state.pages if p.n == n)
+    with pymupdf.open(ctx.ws.source_path) as doc:
+        image = scan.render_page(doc, n, int(pruned.get("width") or 0)) if has_figures and pruned.get("width") else None
+    scan_result = scan.page_blocks(scan.PageScan(page=n, raw=page, raw_ref=raw_ref, engine_version=engine_version),
+                                   page_size=size, first_seq=_next_block_seq(state, n), first_item=_next_item(state, n),
+                                   page_image=image)
+    for path, data in scan_result.asset_bytes.items():
+        write_once(ctx.ws.root / path, data)
+    return integrate_scan_page(state, n, scan_result)
+
+
+def scan_engine_pages(state) -> set[int]:
+    """Pages a scan engine reading may replace: pending, failed or skipped, or read by the scan engine before (a
+    native layer that passed its quality check stays: its text is corrected, not replaced)."""
+    scanned = {block_unit(state, b) for b in state.blocks if any(o.engine == scan.ENGINE for o in b.observations)}
+    return {p.n for p in state.pages if p.status in _SCAN_ENGINE_PAGES or p.n in scanned}
 
 
 def _next_block_seq(state, n: int) -> int:

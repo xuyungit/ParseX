@@ -22,13 +22,17 @@ from parserx.tools import (
     close,
     correct,
     describe_figure,
+    draft,
+    edit,
     overview,
     process,
     read,
     recognize,
     review_table,
     skim,
+    source,
     structure,
+    submit,
 )
 from parserx.tools.context import ToolContext, invoke
 from parserx.tools.envelope import Envelope
@@ -42,7 +46,14 @@ class ToolSpec:
     run: Callable
 
 
+AGENT_TOOLS = ("read_draft", "view_source", "edit_draft", "submit_draft")  # what the agent is given (Q85)
+
 TOOLS: dict[str, ToolSpec] = {
+    "read_draft": ToolSpec(draft.ReadDraftRequest, draft.ReadDraftResult, draft.run),
+    "view_source": ToolSpec(source.ViewSourceRequest, source.ViewSourceResult, source.run),
+    "edit_draft": ToolSpec(edit.EditDraftRequest, edit.EditDraftResult, edit.run),
+    "submit_draft": ToolSpec(submit.SubmitDraftRequest, submit.SubmitDraftResult, submit.run),
+    "run_pipeline": ToolSpec(process.ProcessRequest, process.ProcessResult, process.run),
     "process": ToolSpec(process.ProcessRequest, process.ProcessResult, process.run),
     "overview": ToolSpec(overview.OverviewRequest, overview.OverviewResult, overview.run),
     "read": ToolSpec(read.ReadRequest, read.ReadResult, read.run),
@@ -70,10 +81,10 @@ def call_tool(name: str, ws_dir: Path | str, request: dict | BaseModel | None = 
 def tool_schema(name: str) -> dict[str, Any]:
     if name == "workspace_init":
         return {"request": {"type": "object", "properties": {"input": {"type": "string"}, "ws": {"type": "string"}}},
-                "envelope": Envelope[InitResult].model_json_schema()}
+                "envelope": Envelope[InitResult].model_json_schema(mode="serialization")}
     spec = TOOLS[name]
     return {"request": spec.request.model_json_schema(by_alias=True),
-            "envelope": Envelope[spec.result].model_json_schema()}
+            "envelope": Envelope[spec.result].model_json_schema(mode="serialization")}
 
 
-__all__ = ["TOOLS", "ToolContext", "call_tool", "tool_schema", "workspace_init"]
+__all__ = ["AGENT_TOOLS", "TOOLS", "ToolContext", "call_tool", "tool_schema", "workspace_init"]

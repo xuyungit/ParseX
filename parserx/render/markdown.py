@@ -160,7 +160,7 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str) -> str:
             return ""
         label = _label(block) if kind == BlockKind.FIGURE else "扫描图像"
         image = f"![{label}]({image_dir}/{image_file(asset)})"
-        semantic = _semantic_block(block)
+        semantic = semantic_block(block)
         return f"{image}\n\n{semantic}" if semantic else image
     text = join_wrapped(block.text.split("\n"))
     if not text:
@@ -210,8 +210,12 @@ def _label(block: Block) -> str:
     return "图片"
 
 
-def _semantic_block(block: Block) -> str:
-    semantic = block.semantic
+def semantic_block(block: Block) -> str:
+    return semantic_text(block.semantic)
+
+
+def semantic_text(semantic) -> str:
+    """A figure's description as the Markdown shows it (the "> [图片语义] …" block)."""
     if semantic is None:
         return ""
     lines: list[str]

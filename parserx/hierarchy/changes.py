@@ -17,7 +17,8 @@ from parserx.ir.enums import RelationKind
 
 # table / figure / formula / scan hold content in other forms; they never change role.
 StructuralKind = Literal["title", "text", "list", "caption", "footnote", "header", "footer", "page_number", "other"]
-Evidence = dict[str, float | int | str | bool]
+Grounds = dict[str, float | int | str | bool]  # what a change rests on: named facts, or an evidence id (Q85)
+EvidenceRef = Grounds | str
 
 
 class SetRole(IRModel):
@@ -26,7 +27,7 @@ class SetRole(IRModel):
     kind: StructuralKind
     level: int | None = Field(None, ge=1, le=6)  # with kind "title": its level in the same change (P2-5)
     reason: str
-    evidence: Evidence = {}
+    evidence: EvidenceRef = {}
 
 
 class SetLevel(IRModel):
@@ -34,27 +35,39 @@ class SetLevel(IRModel):
     block: str
     level: int | None = Field(ge=1, le=6)
     reason: str
-    evidence: Evidence = {}
+    evidence: EvidenceRef = {}
 
 
-class MoveAfter(IRModel):
-    op: Literal["move_after"]
+class Move(IRModel):
+    """Put a block right after another in reading order."""
+
+    op: Literal["move"]
     block: str
     after: str | None  # None: to the front of the document
     reason: str
+    evidence: EvidenceRef = {}
 
 
-class AddRelation(IRModel):
-    op: Literal["add_relation"]
+class Link(IRModel):
+    """Relate two blocks: ``continues`` (one paragraph or table broken in two), ``captions``, ``footnotes`` …"""
+
+    op: Literal["link"]
     kind: RelationKind
     src: str
     dst: str
+    reason: str = ""
+    evidence: EvidenceRef = {}
     confidence: float | None = None
 
 
-class RemoveRelation(IRModel):
-    op: Literal["remove_relation"]
-    relation: str
+class Unlink(IRModel):
+    """Remove the relation ``link`` made (named the same way)."""
+
+    op: Literal["unlink"]
+    kind: RelationKind
+    src: str
+    dst: str
+    reason: str = ""
 
 
 class MergeTables(IRModel):
@@ -65,13 +78,14 @@ class MergeTables(IRModel):
     second: str
     drop_rows: int = Field(0, ge=0)  # leading rows of ``second`` repeating the header of ``first``
     reason: str
-    evidence: Evidence = {}
+    evidence: EvidenceRef = {}
 
 
 class MarkPending(IRModel):
     op: Literal["mark_pending"]
     block: str
     reason: str
+    evidence: EvidenceRef = {}
 
 
 class Exclude(IRModel):
@@ -81,16 +95,17 @@ class Exclude(IRModel):
     op: Literal["exclude"]
     block: str
     reason: str
-    evidence: Evidence = {}
+    evidence: EvidenceRef = {}
 
 
-class Restore(IRModel):
+class Include(IRModel):
     """Undo an exclusion (page furniture, a decorative image, an earlier ``exclude``); text deleted by a revision
     stays deleted (Q26)."""
 
-    op: Literal["restore"]
+    op: Literal["include"]
     block: str
     reason: str
+    evidence: EvidenceRef = {}
 
 
 class Split(IRModel):
@@ -102,10 +117,11 @@ class Split(IRModel):
     block: str
     at_break: int = Field(1, ge=1)  # the n-th line break of the block's text
     reason: str
+    evidence: EvidenceRef = {}
 
 
 StructureChange = Annotated[
-    SetRole | SetLevel | MoveAfter | AddRelation | RemoveRelation | MarkPending | MergeTables | Exclude | Restore | Split,
+    SetRole | SetLevel | Move | Link | Unlink | MarkPending | MergeTables | Exclude | Include | Split,
     Field(discriminator="op"),
 ]
 
@@ -124,6 +140,7 @@ class LegalityRule(StrEnum):
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
+    UNKNOWN_RELATION = "unknown_relation"  # unlink: no such relation
     NO_LINE_BREAK = "no_line_break"  # split: the block has no such line break with text on both sides
     DECIDED_BY_AGENT = "decided_by_agent"  # a program proposal on a block whose structure the agent decided
 

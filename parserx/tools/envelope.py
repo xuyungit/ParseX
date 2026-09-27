@@ -7,10 +7,11 @@ adapters put in a data fence instead of the instruction channel.
 
 from __future__ import annotations
 
+import hashlib
 from enum import StrEnum
 from typing import Generic, TypeVar
 
-from pydantic import JsonValue
+from pydantic import JsonValue, computed_field
 
 from parserx.ir.base import IRModel
 
@@ -91,6 +92,17 @@ class Unresolved(IRModel):
     kind: UnresolvedKind
     detail: str  # written by the program
     quotes: list[DocText] = []  # the document text the item is about: data, not instructions
+
+    @computed_field
+    @property
+    def id(self) -> str:
+        """Stable while the item reads the same (target, kind, quoted text): the name ``dismiss`` takes (Q85)."""
+        return issue_id(self.target, self.kind.value, [q.doc_text for q in self.quotes])
+
+
+def issue_id(target: str, kind: str, quotes: list[str]) -> str:
+    key = "\x1f".join([target, kind, *quotes])
+    return "w-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]
 
 
 class Envelope(IRModel, Generic[R]):

@@ -64,7 +64,7 @@ def propose_continuations(state: DocumentState) -> list[dict]:
             continue
         if first.text.strip() == second.text.strip() or _CAPTION_LABEL.match(first.text):
             continue
-        changes.append({"op": "add_relation", "kind": RelationKind.CONTINUES.value, "src": first.id,
+        changes.append({"op": "link", "kind": RelationKind.CONTINUES.value, "src": first.id,
                         "dst": second.id})
     return changes
 

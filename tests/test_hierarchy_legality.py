@@ -84,13 +84,13 @@ def test_same_numbering_pattern_same_level():
 
 
 def test_order_cycle():
-    assert _rules([{"op": "move_after", "block": "p1", "after": "p2", "reason": "r"},
-                   {"op": "move_after", "block": "p2", "after": "p1", "reason": "r"}]) == [(1, "order_cycle")]
-    assert _rules([{"op": "move_after", "block": "p1", "after": "p1", "reason": "r"}]) == [(0, "order_cycle")]
+    assert _rules([{"op": "move", "block": "p1", "after": "p2", "reason": "r"},
+                   {"op": "move", "block": "p2", "after": "p1", "reason": "r"}]) == [(1, "order_cycle")]
+    assert _rules([{"op": "move", "block": "p1", "after": "p1", "reason": "r"}]) == [(0, "order_cycle")]
 
 
 def test_duplicate_relation():
-    assert _rules([{"op": "add_relation", "kind": "follows", "src": "p1", "dst": "p2"}]) == [
+    assert _rules([{"op": "link", "kind": "follows", "src": "p1", "dst": "p2"}]) == [
         (0, "duplicate_relation")]
 
 
@@ -114,10 +114,10 @@ def test_non_atomic_batch_applies_the_legal_part():
 
 def test_move_mark_pending_and_relations_apply():
     state = _state()
-    apply_changes(state, _changes({"op": "move_after", "block": "p3", "after": "h1", "reason": "r"},
+    apply_changes(state, _changes({"op": "move", "block": "p3", "after": "h1", "reason": "r"},
                                   {"op": "mark_pending", "block": "p2", "reason": "unclear role"},
-                                  {"op": "remove_relation", "relation": "r-follows-p1-p2"},
-                                  {"op": "add_relation", "kind": "follows", "src": "p3", "dst": "p1"}), actor="agent")
+                                  {"op": "unlink", "kind": "follows", "src": "p1", "dst": "p2"},
+                                  {"op": "link", "kind": "follows", "src": "p3", "dst": "p1"}), actor="agent")
     assert [b.id for b in sorted(state.blocks, key=lambda b: b.order)] == ["h1", "p3", "p1", "p2", "t"]
     p2 = next(b for b in state.blocks if b.id == "p2")
     assert p2.status == BlockStatus.DEGRADED and p2.text == "正文"
@@ -184,16 +184,16 @@ def test_restore_undoes_an_exclusion_but_not_a_deleted_revision():
 
     state = _ledgered_state()
     apply_changes(state, _changes({"op": "exclude", "block": "p2", "reason": "r"}), actor="agent")
-    outcome = apply_changes(state, _changes({"op": "restore", "block": "p2", "reason": "是正文"}), actor="agent")
+    outcome = apply_changes(state, _changes({"op": "include", "block": "p2", "reason": "是正文"}), actor="agent")
     p2 = next(b for b in state.blocks if b.id == "p2")
     assert outcome.accepted == [0] and p2.status == BlockStatus.OK
     assert next(e for e in state.ledger if e.block == "p2").disposition == "output"
-    assert check_changes(state, _changes({"op": "restore", "block": "p2", "reason": "r"}))[0].rule == "not_excluded"
+    assert check_changes(state, _changes({"op": "include", "block": "p2", "reason": "r"}))[0].rule == "not_excluded"
     p3 = next(b for b in state.blocks if b.id == "p3")
     p3.status = BlockStatus.EXCLUDED
     p3.decisions.append(Decision(stage="exclude", choice="revision_deleted", reason="deleted", evidence={},
                                  actor="program:content.docx"))
-    assert check_changes(state, _changes({"op": "restore", "block": "p3", "reason": "r"}))[0].rule == "not_restorable"
+    assert check_changes(state, _changes({"op": "include", "block": "p3", "reason": "r"}))[0].rule == "not_restorable"
 
 
 def test_a_title_with_a_level_can_become_text_again():
