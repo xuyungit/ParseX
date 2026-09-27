@@ -92,13 +92,14 @@ class CellEdit(IRModel):
 
 class ReplaceText(IRModel):
     model_config = agent_doc("改正文：把块中恰好出现一次的片段 find 换成原件上的写法 replace；找不到或不止一处会被拒绝，"
-                             "给更长的片段再试。原生文字层中的数字，只有页面的本地读数（程序自己读的，与你看原件无关）"
-                             "在该处显示为新值时才采用。")
+                             "给更长的片段再试。同一个错字在块内重复出现时用 all: true 一并替换。原生文字层中的数字，"
+                             "只有页面的本地读数（程序自己读的，与你看原件无关）在该处显示为新值时才采用。")
 
     op: Literal["replace_text"]
     block: str = Field(description=BLOCK)
     find: str = Field(description="块中恰好出现一次的片段")
     replace: str = Field(description="原件上的写法")
+    all: bool = Field(False, description="块内每一处 find 都换（同一个错字重复出现时）")
     reason: str = Field(description=REASON)
     evidence: str = Field(description=EVIDENCE)
 
@@ -315,10 +316,11 @@ def _replace_text(state: DocumentState, op: ReplaceText) -> str:
         raise _Refused("not_text", f"{op.block} is a {block.kind.value}: " + (
             "use set_cells" if block.kind == BlockKind.TABLE else "only text blocks have text to replace"))
     count = block.text.count(op.find) if op.find else 0
-    if count != 1:
+    if count == 0 or (count > 1 and not op.all):
         raise _Refused("find", f"'find' must occur exactly once in {op.block}'s text (found {count} times): "
-                               f"{op.find[:40]!r}; give a longer span")
-    return _correct(state, block, op, text=block.text.replace(op.find, op.replace, 1), grid=None)
+                               f"{op.find[:40]!r}; give a longer span" + (", or all: true for every one"
+                                                                           if count > 1 else ""))
+    return _correct(state, block, op, text=block.text.replace(op.find, op.replace), grid=None)
 
 
 def _set_cells(state: DocumentState, op: SetCells) -> str:

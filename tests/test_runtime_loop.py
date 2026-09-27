@@ -165,3 +165,22 @@ def test_references_are_written_out_for_apis_without_them():
     text = json.dumps(flat)
     assert "$ref" not in text and "$defs" not in text and "discriminator" not in text
     assert any(o["properties"]["op"].get("const") == "set_role" for o in flat["properties"]["ops"]["items"]["oneOf"])
+
+
+def test_the_chat_request_can_mark_cache_breakpoints(tmp_path):
+    class Client:
+        def __init__(self):
+            self.request = None
+            self.chat = type("C", (), {"completions": type("P", (), {"create": self.create})()})()
+
+        def create(self, **request):
+            self.request = request
+            message = type("M", (), {"content": "好", "tool_calls": None})()
+            return type("R", (), {"choices": [type("Ch", (), {"message": message})()], "usage": None})()
+
+    client = Client()
+    ChatModel(client, "m", cache_markers=True).answer("任务", [], _history(tmp_path), timeout=10)
+    messages = client.request["messages"]
+    assert messages[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}  # the fixed prefix
+    assert messages[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}  # the history so far
+    assert all("cache_control" not in str(m) for m in messages[1:-1])

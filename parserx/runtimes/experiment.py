@@ -84,6 +84,8 @@ def render_task(template: str, *, round_name: str | None, values: dict[str, Any]
 TASK = Path(__file__).parent / "agent_task.md"
 ADAPTERS = {"cli": Path(__file__).parent / "adapter_cli.md",  # how an agent calls the tools, per runtime (Q86)
             "call": Path(__file__).parent / "adapter_call.md"}
+IMAGE_HOW = {"cli": "结果给出图片文件的路径，打开这个文件亲自看；只拿到路径不等于看过图",  # as: image, per runtime
+             "call": "图片直接附在工具结果里"}
 
 
 def compose_task(adapter: str, *, input_name: str, minutes: int, vision: str = "tool") -> str:
@@ -96,6 +98,7 @@ def compose_task(adapter: str, *, input_name: str, minutes: int, vision: str = "
                                                         .rstrip() if adapter in ADAPTERS else "")
     return render_task(template, round_name=None, options={"product", f"vision_{vision}"},
                        values={"input_name": input_name, "budget_minutes": minutes, "tools": reference(),
+                               "image_how": IMAGE_HOW.get(adapter, ""),
                                "skills": "\n\n".join(skills[n].strip() for n in ("transcription", "figure", "structure"))})
 
 

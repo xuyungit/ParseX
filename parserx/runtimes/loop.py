@@ -165,7 +165,8 @@ class LoopAgent:
         client = OpenAI(api_key=key or "no-key", base_url=endpoint or None, max_retries=0, timeout=max(timeout, 1.0),
                         default_headers={"User-Agent": service.user_agent} if service.user_agent else None)
         if self.agent.api == "chat":
-            return ChatModel(client, self.model, extra_body=self.agent.extra_body)
+            return ChatModel(client, self.model, extra_body=self.agent.extra_body,
+                             cache_markers=self.agent.cache_markers)
         return ResponsesModel(client, self.model, self.effort)
 
     def _call(self, ws_dir: Path, call: ToolCall, vision: str) -> ToolResult:

@@ -151,6 +151,7 @@ class AgentConfig(BaseModel):
     endpoint: str = ""
     api_key: str = ""
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    cache_markers: bool = False  # chat: mark cache breakpoints (providers that cache only marked prompts, DashScope)
     budget_usd: float | None = None  # the loop: at it, the agent is asked to submit; at 1.2 times it, stopped
     clear_at_tokens: int = 100_000  # the loop: a context this long gets its older tool results cleared
     deadline_min: int = 30  # Q39: documents of up to large_pages pages

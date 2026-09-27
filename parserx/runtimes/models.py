@@ -129,8 +129,10 @@ class ResponsesModel:
 class ChatModel:
     api = "chat"
 
-    def __init__(self, client, model: str, effort: str | None = None, extra_body: dict | None = None):
+    def __init__(self, client, model: str, effort: str | None = None, extra_body: dict | None = None,
+                 cache_markers: bool = False):
         self.client, self.name, self.effort, self.extra_body = client, model, effort, extra_body or {}
+        self.cache_markers = cache_markers  # providers that cache only what is marked (DashScope: cache_control)
 
     def answer(self, system: str, tools: list[dict], history: list[Entry], *, timeout: float) -> Answer:
         request: dict[str, Any] = dict(
@@ -141,6 +143,9 @@ class ChatModel:
             request["reasoning_effort"] = self.effort
         if self.extra_body:
             request["extra_body"] = self.extra_body
+        if self.cache_markers:
+            _mark(request["messages"][0])  # the fixed prefix
+            _mark(request["messages"][-1])  # and the history so far: the next turn reads it from the cache
         response = self.client.chat.completions.create(**request)
         message = response.choices[0].message
         calls = [ToolCall(c.id, c.function.name, c.function.arguments or "{}") for c in message.tool_calls or []]
@@ -174,6 +179,14 @@ class ChatModel:
         if images:
             messages.append(_image_message(images))
         return messages
+
+
+def _mark(message: dict) -> None:
+    """A cache breakpoint on *message* (``cache_control``, Anthropic's form, taken by DashScope)."""
+    content = message.get("content")
+    if isinstance(content, str) or content is None:
+        message["content"] = [{"type": "text", "text": content or ""}]
+    message["content"][-1] = {**message["content"][-1], "cache_control": {"type": "ephemeral"}}
 
 
 def _image_message(images: list[Path]) -> dict:

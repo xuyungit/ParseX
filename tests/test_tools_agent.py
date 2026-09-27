@@ -139,6 +139,15 @@ def test_notes_are_written_revised_and_read_back(draft, context):
     assert len(Workspace.open(draft).load().notes) == 2  # the history stays, in the state and so in the sidecar
 
 
+def test_the_same_misreading_is_replaced_everywhere_in_a_block_when_asked(draft, context):
+    text = _block(draft, "扫描文字")
+    evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]
+    op = {"op": "replace_text", "block": text, "find": "N", "replace": "Z", "reason": "r", "evidence": evidence}
+    once = _ok("edit_draft", draft, {"ops": [op]}, context)["outcomes"][0]
+    assert not once["accepted"] and "all: true" in once["detail"]
+    assert _ok("edit_draft", draft, {"ops": [{**op, "all": True}]}, context)["outcomes"][0]["accepted"]
+
+
 def test_find_must_name_one_place(draft, context):
     text = _block(draft, "扫描文字")
     evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]

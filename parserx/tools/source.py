@@ -74,7 +74,7 @@ class Look(IRModel):
     rows: tuple[int, int] | None = Field(None, description="与表格的 block 一起：只看这几行 [首行, 末行]（从 0 起），更清楚；"
                                                            "只用于从一页 PDF 上读出的表格（跨页合并的、从图片里读出的看整块）")
     as_: Literal["image", "answer", "text", "table", "description"] = Field(
-        "image", alias="as", description="image：返回图片文件的路径，打开它亲自看；answer：视觉模型看图回答 question；"
+        "image", alias="as", description="image：原件的图，你自己看（怎样拿到图见调用方式）；answer：视觉模型看图回答 question；"
                                          "text：识别引擎读一页、页面上的一个区域（加 bbox）或一张图片，结果按块给出（文字、标题、表格）；"
                                          "table：视觉模型按 issues 重读一张表格；description：视觉模型描述一张图片")
     question: str | None = Field(None, description="answer：要问的问题，要具体，例如“第 2 行第 3 列的数值是多少”")
