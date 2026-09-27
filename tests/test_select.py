@@ -161,6 +161,17 @@ def test_a_split_that_drops_or_alters_text_is_rejected():
         assert not outcome.adopted and {g.name: g.passed for g in outcome.gate}["structure_valid"] is False
 
 
+def test_a_lost_cell_names_the_nearest_cell_of_the_reading():
+    # the page prints "A 方法" where the text layer has "方法 A": the refusal shows what the reading has instead
+    grid = _grid([["方法", "k"], ["方法 A", "0.03"], ["方法 A", "0.01"]])
+    block = Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
+                  observations=[_obs("o-base", "native_pdf", cells=grid)], chosen_observation="o-base")
+    outcome = review_table(block, _candidate([["方法", "k"], ["方法 A", "0.03"], ["A 方法", "0.01"]]),
+                           allowed_cells=set(), actor="t")
+    detail = {g.name: g.detail for g in outcome.gate}["structure_valid"]
+    assert not outcome.adopted and "'方法A'" in detail and "'A 方法' at r2c0" in detail
+
+
 def test_merging_cells_keeps_content_but_each_repeated_cell_must_survive():
     def block():
         grid = _grid([["名称", "说明"], ["甲", "第一"], ["", "项"], ["乙", "同上"], ["丙", "同上"]])

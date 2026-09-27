@@ -27,6 +27,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 
+from rapidfuzz import fuzz
+
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
@@ -201,7 +203,7 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
         lost = _lost_cells(current, grid, allowed_cells)
         gate.append(GateCheck(
             name="structure_valid", passed=grid.n_rows > 0 and grid.n_cols > 0 and not lost,
-            detail="all cell content kept" if not lost else f"cells lost: {sorted(lost.elements())[:10]}"))
+            detail="all cell content kept" if not lost else _lost_detail(lost, current, grid)))
     outcome = _decide(block, candidate, gate, actor)
     if outcome.adopted and filled:  # Q45: shown as image-only evidence in the sidecar
         block.decisions[-1].evidence["image_only_cells"] = ",".join(f"r{r}c{c}" for r, c in sorted(filled))
@@ -359,6 +361,20 @@ def _lost_cells(current: TableGrid, grid: TableGrid, skip: set[tuple[int, int]])
     wanted = _cell_texts(current, skip)
     return Counter({text: n for text, n in missing.items()
                     if max(by_rows.count(text), by_cols.count(text)) < wanted[text]})
+
+
+def _lost_detail(lost: Counter[str], current: TableGrid, grid: TableGrid) -> str:
+    """Each lost text with the nearest of the reading's cells the current table does not have: the reading may
+    write the same content differently (word order, notation), which the image decides."""
+    extra = _cell_texts(grid, set()) - _cell_texts(current, set())
+    cells = [(c, _plain(c.content)) for c in grid.cells if c.content.strip()]
+    cells = [x for x in cells if x[1] in extra] or cells
+    parts = []
+    for text in sorted(lost)[:10]:
+        near = max(cells, key=lambda x: fuzz.ratio(text, x[1]), default=None)
+        where = f" (nearest in the reading: '{near[0].content.strip()}' at r{near[0].row}c{near[0].col})" if near else ""
+        parts.append(f"'{text}'" + (f" ×{lost[text]}" if lost[text] > 1 else "") + where)
+    return "cells lost: " + "; ".join(parts)
 
 
 def _run(grid: TableGrid, by_column: bool) -> str:
