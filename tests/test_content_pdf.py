@@ -563,3 +563,26 @@ def test_a_merged_cell_keeps_its_span(tmp_path):
     assert [[c.content if c else None for c in row] for row in grid.slot_matrix()] == [
         ["设备费"] * 3, ["名称", "型号", "金额"], ["工作站", "A1", "10"], ["工作站", "A2", "20"]]
     assert grid.needs_html  # a span has no Markdown form (Q91)
+
+
+def test_a_three_line_table_keeps_its_head_and_leaves_its_caption_out(tmp_path):
+    # tables T4: the head, set taller than the body, stands above where the text alignment's first row starts;
+    # a caption the detector's region took in runs across the columns
+    from parserx.content.pdf_native import _lines, _unruled_table
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 96), "Tab.1 Errors of the correction factors in each load case", fontsize=9)
+    xs = [72, 180, 260, 340]
+    for x, text in zip(xs, ("Case", "B1", "B2", "B3")):
+        page.insert_text((x, 124), text, fontsize=16)
+    for r, row in enumerate((("1+2", "0.25", "1.08", "0.22"), ("2+3", "1.37", "9.17", "7.87"), ("3+1", "0.14", "0.29", "0.02"))):
+        for x, text in zip(xs, row):
+            page.insert_text((x, 146 + 14 * r), text, fontsize=9)
+    doc.save(tmp_path / "three.pdf")
+    page = pymupdf.open(tmp_path / "three.pdf")[0]
+    lines = _lines(page)
+    inside, grid, _ = _unruled_table(page, (60, 84, 420, 190), lines)
+    rows = [[c.content for c in sorted((c for c in grid.cells if c.row == r), key=lambda c: c.col)] for r in range(grid.n_rows)]
+    assert rows[0] == ["Case", "B1", "B2", "B3"] and rows[1][0] == "1+2" and len(rows) == 4
+    assert not any(ln.text.startswith("Tab.1") for ln in inside)  # the caption stays text

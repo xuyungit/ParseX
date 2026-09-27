@@ -311,7 +311,9 @@ def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[li
     """The table in a region the layout detector calls a table, from the alignment of its text (no ruled lines):
     (lines it holds, grid, bbox), or None unless the text aligns into two or more non-empty rows and columns — the
     detector and the alignment are two independent readings that must agree.  The region grows to every line whose
-    centre is in it, so no character is cut off; rows and columns without text are dropped."""
+    centre is in it, so no character is cut off; rows and columns without text are dropped.  A head set above the
+    alignment's first row becomes the table's first rows (``_head_rows``); a line running across three or more
+    columns (a caption the region took in) is not the table's and stays text (tables T4)."""
     inside = [ln for ln in free if _centre_in(ln.bbox, box)]
     if len(inside) < 2:
         return None
@@ -322,14 +324,73 @@ def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[li
         return None
     if not found:
         return None
-    rows = [[normalize_fullwidth_ascii(c or "") for c in row] for row in _cell_texts(found[0], inside, set()) or []]
-    rows = [row for row in rows if any(c.strip() for c in row)]
+    table = found[0]
+    boxes = [cell for row in table.rows for cell in row.cells if cell is not None]
+    top = table.rows[0].bbox[1] if table.rows else bbox[1]
+
+    def in_cells(ln: _Line) -> list[bool]:
+        return [any(_glyph_in(g, box) for box in boxes) for g in ln.glyphs if g[0].strip()]
+
+    # a line standing above the first row, even if part of it (a subscript) reaches into it, is a head line
+    head_lines = [ln for ln in inside if not all(in_cells(ln)) and (ln.bbox[1] + ln.bbox[3]) / 2 < top]
+    across = [ln for ln in inside if len(_columns_of(ln, table)) >= ACROSS_COLUMNS]  # a sentence over the grid
+    held = [ln for ln in inside if any(in_cells(ln)) and ln not in head_lines and ln not in across]
+    drop = {key for ln in head_lines + across for key in ln.origins}  # so no cell takes a part of them
+    rows = [[normalize_fullwidth_ascii(c or "") for c in row] for row in _cell_texts(table, inside, drop) or []]
+    head, used = _head_rows(head_lines, table)
+    rows = [row for row in head + rows if any(c.strip() for c in row)]
     keep = [c for c in range(max((len(r) for r in rows), default=0)) if any(c < len(r) and r[c].strip() for r in rows)]
     if len(rows) < 2 or len(keep) < 2:
         return None
     cells = [Cell(row=r, col=k, content=join_wrapped(row[c].split("\n")) if c < len(row) else "")
              for r, row in enumerate(rows) for k, c in enumerate(keep)]
-    return inside, TableGrid(n_rows=len(rows), n_cols=len(keep), cells=cells), _round(bbox)
+    return held + used, TableGrid(n_rows=len(rows), n_cols=len(keep), cells=cells), _round(bbox)
+
+
+ACROSS_COLUMNS = 3  # a line whose characters fall in this many columns runs across the table (tables T4)
+
+
+def _columns_of(ln: _Line, table) -> set[int]:
+    """The columns of *table* the line's characters fall in."""
+    return {c for g in ln.glyphs if g[0].strip() for row in table.rows for c, cell in enumerate(row.cells)
+            if cell is not None and _glyph_in(g, cell)}
+
+
+def _head_rows(missed: list[_Line], table) -> tuple[list[list[str]], list[_Line]]:
+    """Rows for the lines the text strategy left out above its first row, or only partly in it (tables T4: a head
+    set taller than the body — "工况 β1 … β10" — starts above where the strategy's first row does; "k" of "k1"
+    stands above it, the subscript in it), each line in the column it stands over; and the lines used.  A line over no column, or a row whose lines would share a column, is not the table's:
+    it stays text, so nothing is lost."""
+    if not table.rows or not missed:
+        return [], []
+    top = table.rows[0].bbox[1]
+    columns: dict[int, tuple[float, float]] = {}
+    for row in table.rows:
+        for c, cell in enumerate(row.cells):
+            if cell is not None:
+                x0, x1 = columns.get(c, (cell[0], cell[2]))
+                columns[c] = (min(x0, cell[0]), max(x1, cell[2]))
+    above = sorted((ln for ln in missed if (ln.bbox[1] + ln.bbox[3]) / 2 < top), key=lambda ln: ln.bbox[1])
+    groups: list[list[_Line]] = []
+    for ln in above:  # rows: a line whose centre is above the first-ending line of the row joins it
+        if groups and (ln.bbox[1] + ln.bbox[3]) / 2 < min(x.bbox[3] for x in groups[-1]):
+            groups[-1].append(ln)
+        else:
+            groups.append([ln])
+    width = max(columns) + 1 if columns else 0
+    rows, used = [], []
+    for group in groups:
+        row = [""] * width
+        for ln in sorted(group, key=lambda x: x.bbox[0]):
+            centre = (ln.bbox[0] + ln.bbox[2]) / 2
+            col = next((c for c, (x0, x1) in columns.items() if x0 <= centre < x1), None)
+            if col is None or row[col]:
+                break
+            row[col] = ln.text
+        else:
+            rows.append(row)
+            used += group
+    return rows, used
 
 
 def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:
