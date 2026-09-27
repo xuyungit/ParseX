@@ -15,7 +15,7 @@ from pathlib import Path
 from parserx.ir.base import IRModel
 from parserx.ir.enums import DocumentStatus
 from parserx.render import write_export
-from parserx.tools.check_export import _checked
+from parserx.accounting import CheckResult, check
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.views import unresolved_items
 
@@ -35,8 +35,19 @@ class SubmitDraftResult(IRModel):
     summary: str | None = None
 
 
+def checked(ctx: ToolContext) -> CheckResult:
+    """Run the accounting check and record the document's status and missing items when they changed."""
+    state = ctx.ws.load()
+    result = check(state, ctx.ws.root)
+    if state.status != result.document_status or state.missing != result.missing:
+        with ctx.ws.txn("tool:check") as state:
+            state.status = result.document_status
+            state.missing = result.missing
+    return result
+
+
 def run(ctx: ToolContext, req: SubmitDraftRequest) -> ToolOutput[SubmitDraftResult]:
-    result = _checked(ctx)
+    result = checked(ctx)
     state = ctx.ws.load()
     open_issues = dict(sorted(Counter(u.kind.value for u in unresolved_items(state)).items()))
     blockers = []

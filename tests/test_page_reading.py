@@ -162,7 +162,7 @@ def test_process_reads_every_page_and_lists_what_only_the_image_shows(tmp_path):
 
     config = _config()
     workspace_init(path, tmp_path / "ws", config=config)
-    envelope, _ = call_tool("process", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))
+    envelope, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))
     assert "reading" in [s.step for s in envelope.result.steps] and reader.calls == 2
     from parserx.workspace import Workspace
 
@@ -174,5 +174,5 @@ def test_process_reads_every_page_and_lists_what_only_the_image_shows(tmp_path):
     items = [u for u in envelope.unresolved if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
     assert [u.target for u in items] == ["p1"]
     assert [q.doc_text for q in items[0].quotes] == ["A printed line the text layer lacks"]
-    again, _ = call_tool("process", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))
+    again, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))
     assert reader.calls == 2  # read once

@@ -216,3 +216,78 @@ def test_the_agent_sees_only_its_four_tools():
     from parserx.tools import AGENT_TOOLS
 
     assert AGENT_TOOLS == ("read_draft", "view_source", "edit_draft", "submit_draft")
+
+
+# ── read_draft as a person skims: scroll, a page, a search, the outline ─
+
+BODY = ("SENTINEL-NATIVE body text of the section, long enough to be a paragraph of its own and to be shortened "
+        "when the reader only glances at it, as a person does when skimming.")
+
+
+@pytest.fixture
+def report(tmp_path):
+    import pymupdf
+
+    from parserx.tools import workspace_init
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    y = 80
+    for text, size, font in [("SENTINEL-NATIVE Annual Report", 18, "hebo"), ("1 Scope", 12, "hebo"),
+                             (BODY, 10, "helv"), ("1.1 Terms", 12, "hebo"), (BODY, 10, "helv")]:
+        page.insert_textbox(pymupdf.Rect(72, y, 523, y + 60), text, fontsize=size, fontname=font)
+        y += 70
+    page = doc.new_page(width=595, height=842)
+    page.insert_textbox(pymupdf.Rect(72, 80, 523, 140), "2 Methods", fontsize=12, fontname="hebo")
+    page.insert_textbox(pymupdf.Rect(72, 150, 523, 210), BODY, fontsize=10, fontname="helv")
+    doc.save(tmp_path / "report.pdf")
+    envelope, code = workspace_init(tmp_path / "report.pdf", tmp_path / "rws", config=_config())
+    assert code == 0 and envelope.ok
+    return tmp_path / "rws"
+
+
+def _texts(lines):
+    return [(line["text"] or {}).get("doc_text", "") for line in lines]
+
+
+def test_scroll_from_the_start_and_on_from_where_it_stopped(report, context):
+    first = _ok("read_draft", report, {"view": "text", "after": 3}, context)
+    assert len(first["lines"]) == 3 and first["total_blocks"] == 7
+    assert _texts(first["lines"])[:2] == ["SENTINEL-NATIVE Annual Report", "1 Scope"]
+    body = first["lines"][2]
+    assert body["text"]["doc_text"].endswith("…") and len(body["text"]["doc_text"]) < len(BODY)  # a glance
+    assert all(line["page"] == 1 and line["cls"] for line in first["lines"])
+    on = _ok("read_draft", report, {"view": "text", "start": first["after_id"], "after": 10}, context)
+    assert _texts(on["lines"])[0] == "1.1 Terms" and on["after_id"] is None  # the end of the document
+    back = _ok("read_draft", report, {"view": "text", "start": on["lines"][0]["id"], "before": 2, "after": 0}, context)
+    assert [line["id"] for line in back["lines"]] == [line["id"] for line in first["lines"][1:]]
+    full = _ok("read_draft", report, {"view": "text", "start": body["id"], "after": 1, "full": True}, context)
+    assert [" ".join(t.split()) for t in _texts(full["lines"])] == [BODY]  # the block's text, line breaks kept
+
+
+def test_a_page_and_a_phrase(report, context):
+    page2 = _ok("read_draft", report, {"view": "text", "page": 2}, context)
+    assert _texts(page2["lines"])[0] == "2 Methods"
+    found = _ok("read_draft", report, {"view": "text", "find": "1.1  terms"}, context)  # spacing and case ignored
+    assert _texts(found["lines"]) == ["1.1 Terms"]
+
+
+def test_the_outline_shows_the_documents_conventions(report, context):
+    outline = _ok("read_draft", report, {"view": "outline"}, context)
+    classes = {c["id"]: c for c in outline["classes"]}
+    heads = [line for line in outline["lines"] if _texts([line])[0] in ("1 Scope", "1.1 Terms", "2 Methods")]
+    assert len(heads) == 3  # every heading-like line of the document, with what follows it
+    assert all(line["next"] and "body text" in line["next"]["doc_text"] for line in heads)
+    scope = classes[heads[0]["cls"]]
+    assert scope["numbering"] == "N" and scope["count"] == 2 and scope["pages"] == "1–2"  # "1 Scope", "2 Methods"
+    body = next(c for c in outline["classes"] if c["count"] == 3)  # the body text: one class, never a title
+    assert body["roles"] == {"text": 3} and body["chars"] > 100 and body["examples"]
+    every = _ok("read_draft", report, {"view": "text", "cls": body["id"]}, context)
+    assert len(every["lines"]) == 3
+
+
+def test_one_way_of_reading_at_a_time(report, context):
+    env, code = _run("read_draft", report, {"view": "text", "page": 1, "find": "x"}, context)
+    assert code == 2 and not env.ok
+    env, code = _run("read_draft", report, {"view": "summary", "find": "x"}, context)
+    assert code == 2 and not env.ok

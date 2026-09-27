@@ -162,19 +162,50 @@ def _assert_contract(envelope, name):
     return data
 
 
-# ── A full session through every tool ───────────────────────────────────
+# ── Helpers for the agent's tools ───────────────────────────────────────
+
+
+def _look(ws, context, **look):
+    """One look at the source; returns its result (with the evidence id)."""
+    env, _ = _call("view_source", ws, {"looks": [look]}, context=context)
+    assert env.ok, env.failures
+    return env.result.results[0]
+
+
+def _evidence(ws, context, **look):
+    return _look(ws, context, **look).evidence
+
+
+def _edit(ws, context, *ops, atomic=False):
+    env, code = _call("edit_draft", ws, {"ops": list(ops), "atomic": atomic}, context=context)
+    assert env.ok and code == 0, env.failures
+    return env.result.outcomes
+
+
+def _issues(ws, context):
+    return _call("read_draft", ws, {"view": "issues"}, context=context)[0].result.issues
+
+
+def _accounts(ws):
+    from parserx.accounting import check
+
+    return check(Workspace.open(ws).load(), ws)
+
+
+# ── A full session through the agent's tools ────────────────────────────
 
 
 def test_session_through_every_tool(ws, tmp_path):
     context = _context()
-    env, _ = _call("overview", ws, context=context)
-    data = _assert_contract(env, "overview")
-    assert [p["status"] for p in data["result"]["pages"]] == ["done", "pending"]
-    assert data["result"]["unresolved"] == {"page_pending": 1}
+    env, _ = _call("read_draft", ws, context=context)
+    data = _assert_contract(env, "read_draft")
+    assert [p["status"] for p in data["result"]["summary"]["pages"]] == ["done", "pending"]
+    assert data["result"]["summary"]["issues"] == {"page_pending": 1}
 
-    env, _ = _call("read", ws, {"page": 1, "image": "page", "observations": True}, context=context)
-    data = _assert_contract(env, "read")
-    assert data["result"]["image"]["path"].endswith(".png") and data["result"]["evidence"].startswith("e-")
+    env, _ = _call("view_source", ws, {"looks": [{"page": 1, "as": "image"}]}, context=context)
+    data = _assert_contract(env, "view_source")
+    look = data["result"]["results"][0]
+    assert look["image"]["path"].endswith(".png") and look["evidence"].startswith("e-")
     assert data["ws_version"] == 2 and not data["diff"]  # the look is kept as evidence; the draft is unchanged
 
     env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
@@ -183,40 +214,30 @@ def test_session_through_every_tool(ws, tmp_path):
     assert data["cost"]["requests"] == {"ocr": 1} and data["diff"][0]["after"] == "done"
 
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
-    issues = [{"kind": "char", "cells": [[1, 1]], "note": "3 or 8?"}]
-    env, _ = _call("review_table", ws, {"block": table.id, "issues": issues}, context=context)
-    data = _assert_contract(env, "review_table")
-    assert data["result"]["adopted"] is True and data["result"]["cell_diff"][0]["after"] == {"doc_text": "8"}
-    env, code = _call("review_table", ws, {"block": table.id, "issues": issues}, context=context)
-    assert not env.ok and env.failures[0].code == "invalid_request" and "no new evidence" in env.failures[0].message
-
+    reading = _look(ws, context, block=table.id, **{"as": "table"},
+                    issues=[{"kind": "char", "cells": [[1, 1]], "note": "3 or 8?"}])
     figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
-    env, _ = _call("describe_figure", ws, {"block": figure.id}, context=context)
-    data = _assert_contract(env, "describe_figure")
-    assert data["result"]["type"] == "photo" and data["cost"]["requests"] == {"vlm": 1}
-    env, _ = _call("describe_figure", ws, {"block": figure.id}, context=context)
-    assert env.result.cached and env.cost.requests == {}
-
+    description = _look(ws, context, block=figure.id, **{"as": "description"})
     title = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TITLE)
-    env, _ = _call("apply_structure", ws, {"actor": "pipeline", "changes": [
+    env, _ = _call("edit_draft", ws, {"ops": [
+        {"op": "adopt", "block": table.id, "evidence": reading.evidence, "reason": "图上是 8"},
+        {"op": "adopt", "block": figure.id, "evidence": description.evidence, "reason": "描述"},
         {"op": "set_level", "block": title.id, "level": 1, "reason": "engine title"},
         {"op": "set_level", "block": table.id, "level": 2, "reason": "illegal"}]}, context=context)
-    data = _assert_contract(env, "apply_structure")
-    assert data["result"]["accepted"] == [0] and data["result"]["rejected"][0]["rule"] == "level_on_non_title"
+    data = _assert_contract(env, "edit_draft")
+    assert [o["accepted"] for o in data["result"]["outcomes"]] == [True, True, True, False]
+    assert data["result"]["outcomes"][3]["rule"] == "level_on_non_title"
 
-    env, _ = _call("check", ws, context=context)
-    data = _assert_contract(env, "check")
-    assert data["result"]["exportable"] and data["result"]["document_status"] == "complete"
-
-    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
-    data = _assert_contract(env, "export")
+    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, context=context)
+    data = _assert_contract(env, "submit_draft")
+    assert data["result"]["accepted"] and data["result"]["status"] == "complete"
     markdown = (tmp_path / "out" / "doc.md").read_text()
     assert "# SENTINEL-OCR 标题" in markdown and "> [图片语义] photo" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
 
     state = Workspace.open(ws).load()
     assert state.stats.requests == {"ocr": 1, "vlm": 2} and state.stats.cost_usd == pytest.approx(2 * (1000 * 0.10 + 100 * 0.50) / 1e6)
     calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
-    assert [c["tool"] for c in calls if c["type"] == "call"][:3] == ["workspace_init", "overview", "read"]
+    assert [c["tool"] for c in calls if c["type"] == "call"][:3] == ["workspace_init", "read_draft", "view_source"]
     assert verify_workspace(ws).ok  # every commit came from a tool call
 
 
@@ -224,36 +245,40 @@ def test_a_workspace_changed_outside_the_tools_is_refused(ws, tmp_path):
     raw = json.loads((ws / "state.json").read_text())
     raw["blocks"][0]["text"] = "SENTINEL-NATIVE 改写"
     (ws / "state.json").write_text(json.dumps(raw, ensure_ascii=False))
-    for name, request in (("check", {}), ("export", {"out": str(tmp_path / "out")}), ("overview", {})):
+    for name, request in (("submit_draft", {"out": str(tmp_path / "out")}), ("read_draft", {})):
         env, code = _call(name, ws, request)
         assert not env.ok and code == 0 and env.failures[0].code == "workspace_tampered", name
         assert not env.failures[0].retryable
     assert not (tmp_path / "out").exists()
 
 
-def test_requests_carry_no_text_for_structure_and_schemas_exist():
+def test_schemas_exist_and_structure_changes_carry_no_text():
+    from pydantic import TypeAdapter
+
+    from parserx.hierarchy import StructureChange
+
     for name in TOOLS:
         schema = tool_schema(name)
         assert schema["request"]["type"] == "object" and "properties" in schema["envelope"]
-    changes = tool_schema("apply_structure")["request"]["$defs"]
-    assert not any("text" in d.get("properties", {}) for d in changes.values())
+    changes = TypeAdapter(list[StructureChange]).json_schema()["$defs"]
+    assert changes and not any("text" in d.get("properties", {}) for d in changes.values())
 
 
 # ── Failure codes ───────────────────────────────────────────────────────
 
 
 def test_invalid_request_exits_two(ws):
-    env, code = _call("read", ws, {"page": 1, "block": "b-p001-0001"})
+    env, code = _call("read_draft", ws, {"view": "blocks"})
     assert code == 2 and not env.ok and env.failures[0].code == "invalid_request"
 
 
 def test_not_found(ws):
-    env, code = _call("read", ws, {"block": "b-nope"})
+    env, code = _call("read_draft", ws, {"view": "blocks", "blocks": ["b-nope"]})
     assert code == 0 and not env.ok and env.failures[0].code == "not_found"
 
 
 def test_version_conflict(ws):
-    env, _ = _call("overview", ws, expect_version=99)
+    env, _ = _call("read_draft", ws, expect_version=99)
     assert not env.ok and env.failures[0].code == "version_conflict" and env.failures[0].retryable
 
 
@@ -263,8 +288,9 @@ def test_budget_exhausted_skips_the_page_but_exports_partial(ws, tmp_path):
     assert env.ok and env.failures[0].code == "budget_exhausted"
     state = Workspace.open(ws).load()
     assert state.pages[1].status == PageStatus.SKIPPED
-    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, config=config)
-    assert env.ok and env.result.status == "partial" and env.result.missing
+    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, config=config)
+    assert env.ok and env.result.accepted and env.result.status == "partial"
+    assert Workspace.open(ws).load().missing
 
 
 @pytest.mark.parametrize("exc, code, retryable", [
@@ -277,21 +303,21 @@ def test_service_failures_mark_the_page(ws, exc, code, retryable):
     assert Workspace.open(ws).load().pages[1].status == PageStatus.FAILED
 
 
-def test_offline_cache_miss_leaves_the_page_pending_and_export_refused(ws, tmp_path):
+def test_offline_cache_miss_leaves_the_page_pending_and_submit_refused(ws, tmp_path):
     config = _config()
     config.cache = CacheConfig(mode="read_only", dir=str(tmp_path / "empty-cache"))
     env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, config=config)
     assert env.failures[0].code == "cache_miss_offline"
     assert Workspace.open(ws).load().pages[1].status == PageStatus.PENDING
-    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, config=config)
-    assert not env.ok and env.failures[0].code == "check_failed" and not (tmp_path / "out").exists()
+    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, config=config)
+    assert env.ok and not env.result.accepted and "pending pages [2]" in env.result.blockers[0]
+    assert not (tmp_path / "out").exists()
 
 
 def test_internal_error_exits_one(ws, monkeypatch):
-    spec = TOOLS["overview"]
-    monkeypatch.setitem(TOOLS, "overview", spec.__class__(spec.request, spec.result,
-                                                          lambda ctx, req: 1 / 0))
-    env, code = _call("overview", ws)
+    spec = TOOLS["read_draft"]
+    monkeypatch.setitem(TOOLS, "read_draft", spec.__class__(spec.request, spec.result, lambda ctx, req: 1 / 0))
+    env, code = _call("read_draft", ws)
     assert code == 1 and env.failures[0].code == "internal_error"
 
 
@@ -304,34 +330,55 @@ def test_native_pages_are_not_sent_to_the_scan_engine(ws):
 
 
 def test_cli_prints_only_the_envelope(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "overview", "--ws", str(ws), "--json"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "read_draft", "--ws", str(ws), "--json"])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     envelope = json.loads(capsys.readouterr().out)
-    assert exit_info.value.code == 0 and envelope["tool"] == "overview" and envelope["ok"]
+    assert exit_info.value.code == 0 and envelope["tool"] == "read_draft" and envelope["ok"]
 
 
 def test_cli_schema_and_invalid_request(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "schema", "read"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "schema", "view_source"])
     with pytest.raises(SystemExit):
         parserx.cli.main()
     assert "request" in json.loads(capsys.readouterr().out)
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "read", "--ws", str(ws), "--json"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "read_draft", "--ws", str(ws), "--view", "blocks", "--json"])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     assert exit_info.value.code == 2 and json.loads(capsys.readouterr().out)["failures"][0]["code"] == \
         "invalid_request"
 
 
-# ── Trial follow-ups (P1-7b) ────────────────────────────────────────────
+def test_cli_looks_at_the_source_with_options(ws, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "view_source", "--ws", str(ws), "--page", "1", "--as",
+                                      "image", "--json"])
+    with pytest.raises(SystemExit) as exit_info:
+        parserx.cli.main()
+    envelope = json.loads(capsys.readouterr().out)
+    assert exit_info.value.code == 0 and envelope["result"]["results"][0]["evidence"].startswith("e-")
 
 
-def test_read_shows_adopted_content_unless_asked(ws):
+def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "edit_draft", "--ws", str(ws), "--ops", "-", "--json"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    with pytest.raises(SystemExit) as exit_info:
+        parserx.cli.main()
+    failure = json.loads(capsys.readouterr().out)["failures"][0]
+    assert exit_info.value.code == 2 and "standard input is empty" in failure["message"]
+
+
+# ── Reading the draft ───────────────────────────────────────────────────
+
+
+def test_the_text_shows_what_the_output_shows(ws):
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"})
-    env, _ = _call("read", ws, {"page": 2})
-    assert all(b.status in ("ok", "degraded") and b.anchors is None for b in env.result.blocks)
-    env, _ = _call("read", ws, {"page": 2, "include_hidden": True, "geometry": True})
-    assert any(b.status == "merged" for b in env.result.blocks) and env.result.blocks[0].anchors
+    lines = _call("read_draft", ws, {"view": "text", "page": 2})[0].result.lines
+    state = Workspace.open(ws).load()
+    hidden = {b.id for b in state.blocks if b.status in ("merged", "excluded", "duplicate")}
+    assert lines and not {line.id for line in lines} & hidden
+    merged = next(iter(b for b in state.blocks if b.status == "merged")).id
+    detail = _call("read_draft", ws, {"view": "blocks", "blocks": [merged]})[0].result.blocks[0]
+    assert detail.status == "merged"  # named blocks show whatever their status
 
 
 def test_recognize_returns_views_only_when_asked(ws):
@@ -347,7 +394,7 @@ def test_answer_with_trailing_text_is_parsed():
     assert grid.slot(0, 0).content == "a" and problem is None
 
 
-def test_rejected_review_leaves_an_unresolved_item(ws):
+def test_a_rejected_table_reading_keeps_the_table(ws):
     class Rewriting(FakeVLM):
         def describe_image(self, *args, **kwargs):
             return json.dumps({"table_html": "<table><tr><td>项目</td></tr></table>", "undetermined": []})
@@ -361,18 +408,10 @@ def test_rejected_review_leaves_an_unresolved_item(ws):
 
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=Context)
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
-    env, _ = _call("review_table", ws, {"block": table.id, "issues": [{"kind": "structure", "note": "rows?"}]},
-                   context=Context)
-    assert env.ok and not env.result.adopted
-    assert env.unresolved[0].kind == "table_uncertain" and "structure_valid" in env.unresolved[0].detail
-
-
-def test_read_a_block_with_its_page_image(ws):
-    block = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TEXT)
-    env, code = _call("read", ws, {"block": block.id, "image": "page"})
-    assert env.ok and code == 0 and env.failures == []
-    by_page, _ = _call("read", ws, {"page": 1, "image": "page"})
-    assert env.result.image.asset == by_page.result.image.asset  # the page the block is on
+    reading = _look(ws, Context, block=table.id, issues=[{"kind": "structure", "note": "rows?"}], **{"as": "table"})
+    outcome = _edit(ws, Context, {"op": "adopt", "block": table.id, "evidence": reading.evidence, "reason": "r"})[0]
+    assert not outcome.accepted and "structure_valid" in outcome.detail
+    assert next(b for b in Workspace.open(ws).load().blocks if b.id == table.id).cells.n_rows == 2
 
 
 def test_a_named_figure_schema_is_enforced(ws):
@@ -380,15 +419,6 @@ def test_a_named_figure_schema_is_enforced(ws):
     figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
     _call("describe_figure", ws, {"block": figure.id, "schema": "diagram"}, context=context)
     assert context.fake_vlm.schemas[-1]["properties"]["type"]["enum"] == ["diagram"]
-
-
-def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "review_table", "--ws", str(ws), "--request", "-", "--json"])
-    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
-    with pytest.raises(SystemExit) as exit_info:
-        parserx.cli.main()
-    failure = json.loads(capsys.readouterr().out)["failures"][0]
-    assert exit_info.value.code == 2 and "standard input is empty" in failure["message"]
 
 
 # ── P2-5: batches and the standard processing ───────────────────────────
@@ -409,6 +439,8 @@ def test_describe_figures_in_one_batch(ws):
     assert all(b.semantic is not None for b in state.blocks if b.id in figures)
     env, _ = _call("describe_figure", ws, {"blocks": figures}, context=context)
     assert env.cost.requests == {} and all(i.cached for i in env.result.items)
+
+
 
 
 def test_batch_results_do_not_depend_on_completion_order(ws, monkeypatch):
@@ -469,26 +501,26 @@ def test_batch_inputs_do_not_depend_on_other_tasks(pdf, tmp_path, monkeypatch):
     assert len(together) >= 2 and together == alone
 
 
-def test_process_does_the_standard_steps_in_one_call(ws):
+
+def test_the_pipeline_does_the_standard_steps_in_one_call(ws):
     config = _config()
     config.runtime.layout_shadow = False  # the layout step has its own tests (fake detector)
     context = _context()
-    env, code = _call("process", ws, {}, config=config, context=context)
-    data = _assert_contract(env, "process")
+    env, code = _call("run_pipeline", ws, {}, config=config, context=context)
+    data = _assert_contract(env, "run_pipeline")
     result = data["result"]
     assert env.ok and code == 0 and data["cost"]["requests"] == {"ocr": 1, "vlm": 2}
     assert result["pages"] == {"done": 2} and result["figures"] == {"described": 2}
     assert result["check"]["exportable"] and result["check"]["document_status"] == "complete"
     assert [s["step"] for s in result["steps"]] == ["recognize", "reading", "describe_figure", "structure", "check"]
-    assert all(set(w) == {"target", "kind", "detail"} for w in result["worklist"])
     calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
-    assert [c["tool"] for c in calls if c["type"] == "call"] == ["workspace_init", "process"]
+    assert [c["tool"] for c in calls if c["type"] == "call"] == ["workspace_init", "run_pipeline"]
     assert verify_workspace(ws).ok
-    again, _ = _call("process", ws, {}, config=config, context=context)  # nothing left to do: no requests
+    again, _ = _call("run_pipeline", ws, {}, config=config, context=context)  # nothing left to do: no requests
     assert again.ok and again.cost.requests == {}
 
 
-def test_process_joins_a_paragraph_cut_by_the_page(tmp_path):
+def test_the_pipeline_joins_a_paragraph_cut_by_the_page(tmp_path):
     doc = pymupdf.open()
     for text in ("供货方应在合同签订后分两批交货，第一批", "不少于总量的百分之六十。"):
         doc.new_page(width=595, height=842).insert_text((72, 400), text, fontsize=11, fontname="china-s")
@@ -496,57 +528,53 @@ def test_process_joins_a_paragraph_cut_by_the_page(tmp_path):
     config = _config()
     config.runtime.layout_shadow = False
     workspace_init(tmp_path / "cut.pdf", tmp_path / "cut", config=config)
-    env, _ = _call("process", tmp_path / "cut", {}, config=config)
+    env, _ = _call("run_pipeline", tmp_path / "cut", {}, config=config)
     state = Workspace.open(tmp_path / "cut").load()
     assert [(r.kind.value, r.src, r.dst) for r in state.relations] == [("continues", "b-p001-0001", "b-p002-0001")]
     assert "1 paragraph continuations" in env.result.steps[-2].detail
     assert "第一批不少于" in render_markdown(state)
 
 
-# ── P2-5: the agent corrects what it read from the image (Q30) ──────────
+# ── Changing content: every change rests on evidence of its place ───────
 
 
-def _looked_at(ws, block_id, context):
-    env, _ = _call("read", ws, {"block": block_id, "image": "crop"}, context=context)
-    return env.result.image.asset
-
-
-def test_agent_corrects_ocr_text_it_has_seen(ws):
+def test_the_agent_corrects_ocr_text_it_has_seen(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
-    image = _looked_at(ws, block.id, context)
-    env, code = _call("correct", ws, {"block": block.id, "image": image, "reason": "图上是 8 件",
-                                      "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
-    data = _assert_contract(env, "correct")
-    assert env.ok and code == 0 and data["result"]["adopted"] is True and data["cost"]["requests"] == {}
+    evidence = _evidence(ws, context, block=block.id)
+    env, code = _call("edit_draft", ws, {"ops": [{"op": "replace_text", "block": block.id, "find": "3 件",
+                                                  "replace": "8 件", "reason": "图上是 8 件", "evidence": evidence}]},
+                      context=context)
+    data = _assert_contract(env, "edit_draft")
+    assert code == 0 and data["result"]["outcomes"][0]["accepted"] and data["cost"]["requests"] == {}
+    assert data["diff"][0]["after"] == {"doc_text": OCR_TEXT.replace("3 件", "8 件")}
     after = next(b for b in Workspace.open(ws).load().blocks if b.id == block.id)
     assert after.text == OCR_TEXT.replace("3 件", "8 件") and after.chosen_observation.endswith("agent-1")
     assert after.decisions[-1].actor == "agent" and len(after.observations) == 2  # the OCR reading stays
     assert verify_workspace(ws).ok
 
 
-def test_a_correction_needs_the_image_and_keeps_native_numbers(ws):
+def test_a_correction_needs_evidence_and_keeps_native_numbers(ws):
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
-    env, _ = _call("correct", ws, {"block": native.id, "image": "a-0000000000000000", "reason": "r",
-                                   "edits": [{"find": "采购", "replace": "采买"}]}, context=context)
-    assert env.ok and env.result.adopted is False and not env.result.gate[0].passed  # image never read
-    image = _looked_at(ws, native.id, context)
-    env, _ = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
-                                   "edits": [{"find": "100 万元", "replace": "900 万元"}]}, context=context)
-    assert env.result.adopted is False and [g.name for g in env.result.gate if not g.passed] == ["numeric_consistency"]
-    env, _ = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
-                                   "edits": [{"find": "采购", "replace": "采买"}]}, context=context)
-    assert env.result.adopted is True
-    assert any(u.kind == "evidence_conflict" for u in _call("check", ws, context=context)[0].unresolved) is False
-    env, code = _call("correct", ws, {"block": native.id, "image": image, "reason": "r",
-                                      "edits": [{"find": "不存在的字", "replace": "x"}]}, context=context)
-    assert not env.ok and code == 2 and env.failures[0].code == "invalid_request"
+
+    def replace(find, to, evidence):
+        return _edit(ws, context, {"op": "replace_text", "block": native.id, "find": find, "replace": to,
+                                   "reason": "r", "evidence": evidence})[0]
+
+    outcome = replace("采购", "采买", "e-000000000000")
+    assert not outcome.accepted and outcome.rule == "image_evidence"  # nothing was looked at
+    evidence = _evidence(ws, context, block=native.id)
+    outcome = replace("100 万元", "900 万元", evidence)
+    assert not outcome.accepted and outcome.rule == "numeric_consistency"
+    assert replace("采购", "采买", evidence).accepted
+    outcome = replace("不存在的字", "x", evidence)
+    assert not outcome.accepted and outcome.rule == "find" and "exactly once" in outcome.detail
 
 
 def _give_reading(ws, n, lines):
-    """A local reading of page *n* (what ``process`` stores; tests give it directly)."""
+    """A local reading of page *n* (what the pipeline stores; tests give it directly)."""
     from parserx.ir.state import PageReading, ReadLine
 
     with Workspace.open(ws).txn("test:reading") as state:
@@ -560,68 +588,67 @@ def test_the_agent_adds_text_the_page_shows_and_no_block_has(ws):
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
     _give_reading(ws, 1, [("SENTINEL-NATIVE 标题", (72, 72, 300, 95)), (NATIVE, native.anchors[0].bbox),
                           ("专家评审组名单", (72, 200, 200, 214))])
-    add = {"page": 1, "bbox": [72, 200, 200, 214], "text": "专家评审组名单"}
-    env, _ = _call("correct", ws, {"image": "a-0000000000000000", "reason": "r", "add": add}, context=context)
-    assert env.result.adopted is False  # no image of the place was read
-    page_image = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
-    env, code = _call("correct", ws, {"image": page_image, "reason": "图上有这一行，文字层没有", "add": add},
-                      context=context)
-    data = _assert_contract(env, "correct")
-    assert code == 0 and data["result"]["adopted"] is True, data["result"]["gate"]
+
+    def insert(text, bbox, evidence):
+        return _edit(ws, context, {"op": "insert_text", "page": 1, "bbox": bbox, "text": text,
+                                   "reason": "图上有这一行，文字层没有", "evidence": evidence})[0]
+
+    assert not insert("专家评审组名单", [72, 200, 200, 214], "e-000000000000").accepted  # no image of the place
+    page = _evidence(ws, context, page=1)
+    outcome = insert("专家评审组名单", [72, 200, 200, 214], page)
+    assert outcome.accepted and outcome.block
     state = Workspace.open(ws).load()
-    added = next(b for b in state.blocks if b.text == "专家评审组名单")
-    assert added.kind == BlockKind.TEXT and added.anchors[0].bbox == (72, 200, 200, 214)
+    added = next(b for b in state.blocks if b.id == outcome.block)
+    assert added.text == "专家评审组名单" and added.kind == BlockKind.TEXT and added.anchors[0].bbox == (72, 200, 200, 214)
     order = [b.id for b in sorted(state.blocks, key=lambda b: b.order)]
     assert order.index(native.id) < order.index(added.id)  # placed by its position on the page
     entry = next(e for e in state.ledger if e.block == added.id)
     assert entry.unit == "agent_text" and entry.disposition == "output"
-    checked = _call("check", ws, context=context)[0].result  # the reading was given outside a tool: check, not verify
-    assert checked.accounting.unassigned == 0 and checked.accounting.output == checked.accounting.discovered
-    for text, bbox in (("图上没有的一行", [72, 600, 200, 614]),  # the local reading does not show it
-                       (NATIVE, list(native.anchors[0].bbox))):  # a block already has it
-        env, _ = _call("correct", ws, {"image": page_image, "reason": "r",
-                                       "add": {"page": 1, "bbox": bbox, "text": text}}, context=context)
-        assert env.result.adopted is False
+    accounts = _accounts(ws).accounting  # the reading was given outside a tool: check, not verify
+    assert accounts.unassigned == 0 and accounts.output == accounts.discovered
+    assert not insert("图上没有的一行", [72, 600, 200, 614], page).accepted  # the local reading does not show it
+    assert not insert(NATIVE, list(native.anchors[0].bbox), page).accepted  # a block already has it
     assert sum(1 for b in Workspace.open(ws).load().blocks if b.text == NATIVE) == 1
 
 
 def test_native_numbers_change_only_as_the_local_reading_shows(ws):
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
-    image = _looked_at(ws, native.id, context)
-    edit = {"block": native.id, "image": image, "reason": "图上是 900", "edits": [{"find": "100 万元", "replace": "900 万元"}]}
+    evidence = _evidence(ws, context, block=native.id)
+    edit = {"op": "replace_text", "block": native.id, "find": "100 万元", "replace": "900 万元", "reason": "图上是 900",
+            "evidence": evidence}
     _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为100万元", native.anchors[0].bbox)])  # the page shows 100
-    assert _call("correct", ws, edit, context=context)[0].result.adopted is False
+    assert not _edit(ws, context, edit)[0].accepted
     _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为900万元", native.anchors[0].bbox)])  # the page shows 900
-    env, _ = _call("correct", ws, edit, context=context)
-    assert env.result.adopted is True
-    assert "local reading" in next(g.detail for g in env.result.gate if g.name == "numeric_consistency")
+    outcome = _edit(ws, context, edit)[0]
+    assert outcome.accepted and "local reading" in outcome.detail
 
 
+# ── The worklist: an issue the evidence shows needs no change is dismissed ──
 
-def test_an_item_checked_on_the_image_can_be_closed(ws):
+
+def test_an_issue_checked_on_the_source_can_be_dismissed(ws):
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
     _give_reading(ws, 1, [(NATIVE, native.anchors[0].bbox), ("扫描软件的标志", (400.0, 780.0, 520.0, 792.0))])
-    open_items = [u for u in _call("check", ws, context=context)[0].unresolved if u.kind == "text_unaccounted"]
-    assert [u.target for u in open_items] == ["p1"]
-    request = {"target": "p1", "kind": "text_unaccounted", "image": "a-0000000000000000",
-               "reason": "a logo the local reading took for text"}
-    env, _ = _call("close", ws, request, context=context)
-    assert env.ok and env.result.closed is False  # no image of the page was read
-    request["image"] = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
-    env, code = _call("close", ws, request, context=context)
-    data = _assert_contract(env, "close")
-    assert code == 0 and data["result"]["closed"] is True
-    assert not any(u.kind == "text_unaccounted" for u in _call("check", ws, context=context)[0].unresolved)
-    env, code = _call("close", ws, {"target": "p2", "kind": "page_pending", "image": request["image"],
-                                    "reason": "r"}, context=context)
-    assert not env.ok and code == 2  # a failure is resolved by processing, not closed
-    env, code = _call("close", ws, request, context=context)
-    assert not env.ok and env.failures[0].code == "not_found"  # nothing open any more
+    item = next(u for u in _issues(ws, context) if u.kind == "text_unaccounted")
+    assert item.target == "p1" and item.id.startswith("w-")
+    dismiss = {"op": "dismiss", "issue": item.id, "reason": "a logo the local reading took for text",
+               "evidence": "e-000000000000"}
+    outcome = _edit(ws, context, dismiss)[0]
+    assert not outcome.accepted and outcome.rule == "image_evidence"  # the page was not looked at
+    dismiss["evidence"] = _evidence(ws, context, page=1)
+    env, code = _call("edit_draft", ws, {"ops": [dismiss]}, context=context)
+    data = _assert_contract(env, "edit_draft")
+    assert code == 0 and data["result"]["outcomes"][0]["accepted"] and data["result"]["issues_closed"] == [item.id]
+    assert not any(u.kind == "text_unaccounted" for u in _issues(ws, context))
+    pending = next(u for u in _issues(ws, context) if u.kind == "page_pending")
+    outcome = _edit(ws, context, {**dismiss, "issue": pending.id})[0]
+    assert not outcome.accepted and outcome.rule == "not_dismissable"  # resolved by processing, not dismissed
+    outcome = _edit(ws, context, dismiss)[0]
+    assert not outcome.accepted and outcome.rule == "unknown_issue"  # nothing open any more
     _give_reading(ws, 1, [(NATIVE, native.anchors[0].bbox), ("另一行漏掉的正文内容", (72.0, 600.0, 300.0, 612.0))])
-    assert any(u.kind == "text_unaccounted" for u in _call("check", ws, context=context)[0].unresolved)  # new content
-
+    assert any(u.kind == "text_unaccounted" for u in _issues(ws, context))  # new content opens it again
 
 
 def test_text_covered_on_the_page_stays_and_the_summary_names_it(ws):
@@ -630,36 +657,53 @@ def test_text_covered_on_the_page_stays_and_the_summary_names_it(ws):
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
     _give_reading(ws, 1, [("给助手发送消息", (72, 700, 300, 712))])  # the page image does not show NATIVE
-    item = next(u for u in _call("check", ws, context=context)[0].unresolved
-                if u.kind == "text_not_seen" and u.target == native.id)
-    image = _call("read", ws, {"page": 1, "image": "page"}, context=context)[0].result.image.asset
-    request = {"target": item.target, "kind": "title_candidate", "image": image, "reason": "r", "occluded": True}
-    env, code = _call("close", ws, request, context=context)
-    assert not env.ok and code == 2  # only text the page does not show can be occluded
-    request.update(kind="text_not_seen", reason="被悬浮的输入框盖住")
-    env, _ = _call("close", ws, request, context=context)
-    assert env.ok and env.result.closed is True
-    env, _ = _call("export", ws, {"out": str(ws.parent / "out"), "name": "d"}, context=context)
-    assert env.ok, env.failures
+    item = next(u for u in _issues(ws, context) if u.kind == "text_not_seen" and u.target == native.id)
+    other = next(u for u in _issues(ws, context) if u.kind != "text_not_seen")
+    page = _evidence(ws, context, page=1)
+    outcome = _edit(ws, context, {"op": "dismiss", "issue": other.id, "reason": "r", "evidence": page,
+                                  "occluded": True})[0]
+    assert not outcome.accepted  # only text the page does not show can be occluded
+    assert _edit(ws, context, {"op": "dismiss", "issue": item.id, "reason": "被悬浮的输入框盖住", "evidence": page,
+                               "occluded": True})[0].accepted
+    env, _ = _call("submit_draft", ws, {"out": str(ws.parent / "out"), "name": "d"}, context=context)
+    assert env.ok and env.result.accepted, env.result
     assert NATIVE in (ws.parent / "out" / "d.md").read_text()
     summary = json.loads((ws.parent / "out" / "d.json").read_text())
     assert summary["review"]["occluded"] == [{"target": native.id, "page": 1, "quotes": [q.doc_text for q in item.quotes],
                                               "reason": "被悬浮的输入框盖住"}]
 
 
-def test_agent_corrects_table_cells(ws):
+# ── Tables ──────────────────────────────────────────────────────────────
+
+
+def test_the_agent_corrects_table_cells(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
-    image = _looked_at(ws, table.id, context)
-    env, _ = _call("correct", ws, {"block": table.id, "image": image, "reason": "图上是 8",
-                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
-    assert env.result.adopted is True
+    evidence = _evidence(ws, context, block=table.id)
+    cell = {"op": "set_cells", "block": table.id, "reason": "图上是 8", "evidence": evidence,
+            "cells": [{"row": 1, "col": 1, "content": "8"}]}
+    assert _edit(ws, context, cell)[0].accepted
     grid = next(b for b in Workspace.open(ws).load().blocks if b.id == table.id).cells
     assert grid.slot(1, 1).content == "8" and grid.slot(1, 0).content == "SENTINEL-OCR 甲"
-    env, code = _call("correct", ws, {"block": table.id, "image": image, "reason": "r",
-                                      "cells": [{"row": 9, "col": 0, "content": "x"}]}, context=context)
-    assert not env.ok and code == 2
+    outcome = _edit(ws, context, {**cell, "cells": [{"row": 9, "col": 0, "content": "x"}]})[0]
+    assert not outcome.accepted and outcome.rule == "cell"
+
+
+def test_an_empty_position_of_the_grid_may_be_filled(ws):
+    from parserx.tables.grid import TableGrid
+
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    workspace = Workspace.open(ws)
+    with workspace.txn("test:missing cell") as state:  # (1, 1) was not recognized
+        table = next(b for b in state.blocks if b.kind == BlockKind.TABLE)
+        table.cells = TableGrid(n_rows=2, n_cols=2, cells=[c for c in table.cells.cells if (c.row, c.col) != (1, 1)])
+    evidence = _evidence(ws, context, block=table.id)
+    assert _edit(ws, context, {"op": "set_cells", "block": table.id, "reason": "图上是 12", "evidence": evidence,
+                               "cells": [{"row": 1, "col": 1, "content": "12"}]})[0].accepted
+    grid = next(b for b in Workspace.open(ws).load().blocks if b.id == table.id).cells
+    assert grid.slot(1, 1).content == "12" and grid.slot(1, 0).content == "SENTINEL-OCR 甲"
 
 
 def test_a_table_continued_across_pages_is_corrected_as_one(ws):
@@ -679,83 +723,82 @@ def test_a_table_continued_across_pages_is_corrected_as_one(ws):
         second.status = BlockStatus.MERGED
         state.blocks.append(first)
         state.relations.append(Relation(id="r-continues-t", kind="continues", src="t-first", dst=second.id))
-    page2, _ = _call("ask_image", ws, {"page": 2, "question": "续表第 1 行的数值？"}, context=context)
-    env, code = _call("correct", ws, {"block": second.id, "image": page2.result.image, "reason": "图上是 8",
-                                      "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
-    assert not env.ok and code == 2 and "t-first" in env.failures[0].message
-    env, _ = _call("correct", ws, {"block": "t-first", "image": page2.result.image, "reason": "图上是 8",
-                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
-    assert env.result.adopted is True  # page 2 is one of the table's pages
-    part, _ = _call("ask_image", ws, {"block": second.id, "question": "续表第 1 行的数值？"}, context=context)
-    env, _ = _call("correct", ws, {"block": "t-first", "image": part.result.image, "reason": "图上是 9",
-                                   "cells": [{"row": 1, "col": 1, "content": "9"}]}, context=context)
-    assert env.result.adopted is True  # the crop of a part merged into the table is evidence for the table
+    page2 = _evidence(ws, context, page=2, question="续表第 1 行的数值？", **{"as": "answer"})
+
+    def cells(block, evidence, value):
+        return _edit(ws, context, {"op": "set_cells", "block": block, "reason": f"图上是 {value}", "evidence": evidence,
+                                   "cells": [{"row": 1, "col": 1, "content": value}]})[0]
+
+    outcome = cells(second.id, page2, "8")
+    assert not outcome.accepted and outcome.rule == "merged" and "t-first" in outcome.detail
+    assert cells("t-first", page2, "8").accepted  # page 2 is one of the table's pages
+    part = _evidence(ws, context, block=second.id, question="续表第 1 行的数值？", **{"as": "answer"})
+    assert cells("t-first", part, "9").accepted  # the crop of a part merged into the table is evidence for the table
 
 
-def test_ask_about_the_seam_between_two_pages(ws):
+def test_look_at_the_seam_between_two_pages(ws):
     # a table or sentence continued on the next page: the bottom of one page and the top of the next in one image
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    env, _ = _call("ask_image", ws, {"seam": 1, "question": "续表的表头是否重复？"}, context=context)
-    assert env.ok and env.result.answers[0].seam == 1 and env.result.image is not None
-    seam = Path(next(p for p in (ws / "renders").iterdir() if p.stem == env.result.image))
-    from PIL import Image as _Image
-    with _Image.open(seam) as image:
+    look = _look(ws, context, seam=1)
+    assert look.seam == 1
+    with Image.open(look.image.path) as image:
         assert image.height > image.width  # two half pages, stacked
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)  # on page 2
-    env, _ = _call("correct", ws, {"block": table.id, "image": env.result.image, "reason": "图上是 8",
-                                   "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
-    assert env.result.adopted is True  # the seam image shows both pages
-    env, code = _call("ask_image", ws, {"seam": 2, "question": "?"}, context=context)
-    assert not env.ok and code == 2  # there is no page 3
+    assert _edit(ws, context, {"op": "set_cells", "block": table.id, "reason": "图上是 8", "evidence": look.evidence,
+                               "cells": [{"row": 1, "col": 1, "content": "8"}]})[0].accepted  # it shows both pages
+    env, _ = _call("view_source", ws, {"looks": [{"seam": 2, "as": "answer", "question": "?"}]}, context=context)
+    assert env.ok and env.result.results[0].evidence is None and env.failures[0].code == "invalid_request"  # no page 3
 
 
-def test_a_correction_may_fill_an_empty_position_of_the_grid():
-    from parserx.tables.grid import Cell, TableGrid
-    from parserx.tools.correct import CellEdit, _edited_grid
+def test_look_at_some_rows_of_a_table_in_a_sharper_strip(ws):
+    # a whole-table crop of a long table leaves its digits too small for the VLM (round 4, real_doc03_pdf):
+    # looking at rows crops the band of those rows (with a row of margin) at a higher resolution
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    whole = _look(ws, context, block=table.id)
+    strip = _look(ws, context, block=table.id, rows=[1, 1])
+    assert strip.image.asset != whole.image.asset and strip.image.width >= 1.9 * whole.image.width  # 300 dpi vs 150
+    assert _edit(ws, context, {"op": "set_cells", "block": table.id, "reason": "图上是 8", "evidence": strip.evidence,
+                               "cells": [{"row": 1, "col": 1, "content": "8"}]})[0].accepted
+    env, _ = _call("view_source", ws, {"looks": [{"block": table.id, "rows": [5, 9]}]}, context=context)
+    assert env.result.results[0].evidence is None and env.failures  # the table has 2 rows
 
-    grid = TableGrid(n_rows=2, n_cols=2, cells=[Cell(row=0, col=0, content="项目"), Cell(row=0, col=1, content="数值"),
-                                                 Cell(row=1, col=0, content="甲")])  # (1, 1) was not recognized
-    filled = _edited_grid(grid, [CellEdit(row=1, col=1, content="12")], "b")
-    assert filled.slot(1, 1).content == "12" and filled.slot(1, 0).content == "甲"
+
+# ── The VLM answers questions about the source ─────────────────────────
 
 
-# ── P2-5: the agent asks the service VLM about an image (vision through a tool) ──
-
-
-def test_ask_image_answers_from_the_block_image(ws):
+def test_an_answer_is_evidence_for_a_correction(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
-    env, code = _call("ask_image", ws, {"block": block.id, "question": "这一行的数字是几？"}, context=context)
-    data = _assert_contract(env, "ask_image")
-    assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 1}
-    assert data["result"]["answer"]["doc_text"].startswith("SENTINEL-VLM") and data["result"]["image"]
+    env, code = _call("view_source", ws, {"looks": [{"block": block.id, "as": "answer",
+                                                     "question": "这一行的数字是几？"}]}, context=context)
+    data = _assert_contract(env, "view_source")
+    answer = data["result"]["results"][0]
+    assert code == 0 and data["cost"]["requests"] == {"vlm": 1} and answer["answer"]["doc_text"].startswith("SENTINEL-VLM")
     assert context.fake_vlm.calls[-1] == "parserx_ask_image"
-    # the VLM's reading is image evidence for a correction: the agent never looked itself
-    env, _ = _call("correct", ws, {"block": block.id, "image": data["result"]["image"], "reason": "VLM 读图为 8 件",
-                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
-    assert env.result.adopted is True
-    env, code = _call("ask_image", ws, {"page": 1, "question": "页面上有几张表？"}, context=context)
-    assert env.ok and env.result.image
+    # the VLM's reading is evidence for a correction: the agent never looked itself
+    assert _edit(ws, context, {"op": "replace_text", "block": block.id, "find": "3 件", "replace": "8 件",
+                               "reason": "VLM 读图为 8 件", "evidence": answer["evidence"]})[0].accepted
 
 
-def test_ask_image_takes_several_questions_in_one_call(ws):
+def test_several_looks_in_one_call(ws):
     context = _context()
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
-    questions = [{"block": block.id, "question": "数字是几？"}, {"page": 1, "question": "有几张表？"},
-                 {"block": "b-missing", "question": "？"}]
-    env, code = _call("ask_image", ws, {"questions": questions}, context=context)
-    data = _assert_contract(env, "ask_image")
+    looks = [{"block": block.id, "as": "answer", "question": "数字是几？"},
+             {"page": 1, "as": "answer", "question": "有几张表？"},
+             {"block": "b-missing", "as": "answer", "question": "？"},
+             {"page": 1}]
+    env, code = _call("view_source", ws, {"looks": looks}, context=context)
+    data = _assert_contract(env, "view_source")
     assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 2}
-    answers = data["result"]["answers"]
-    assert [a["block"] for a in answers] == [block.id, None] and [a["page"] for a in answers] == [None, 1]
-    assert all(a["answer"]["doc_text"].startswith("SENTINEL-VLM") and a["image"] for a in answers)
+    results = data["result"]["results"]
+    assert [r["block"] for r in results] == [block.id, None, "b-missing", None] and results[1]["page"] == 1
+    assert [bool(r["evidence"]) for r in results] == [True, True, False, True] and results[3]["image"]
     assert [f["targets"] for f in data["failures"]] == [["b-missing"]] and data["failures"][0]["code"] == "not_found"
-    env, _ = _call("correct", ws, {"block": block.id, "image": answers[0]["image"], "reason": "r",
-                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
-    assert env.result.adopted is True
 
 
 # ── Q42: text and tables inside embedded images become content after the image ──
@@ -774,10 +817,10 @@ def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
     assert children and order[at + 1:at + 1 + len(children)] == children  # right after the image
     assert figure.id not in [b.id for b in state.blocks if b.status != "ok"]  # the image stays shown (Q42)
     assert verify_workspace(ws).ok
-    env, _ = _call("check", ws, context=context)
-    assert env.result.accounting.unassigned == 0 and env.result.mismatched == []
+    accounts = _accounts(ws)
+    assert accounts.accounting.unassigned == 0 and accounts.mismatched == []
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
+    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, context=context)
     markdown = (tmp_path / "out" / "doc.md").read_text()
     image_line = next(line for line in markdown.splitlines() if line.startswith("![") and figure.anchors[-1].asset in line)
     after = markdown[markdown.index(image_line):]
@@ -786,7 +829,7 @@ def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
     assert again.cost.requests == {} and again.failures and "already" in again.failures[0].message
 
 
-def test_process_transcribes_scan_and_mixed_images_and_does_not_describe_scans(ws):
+def test_the_pipeline_transcribes_scan_and_mixed_images_and_does_not_describe_scans(ws):
     from parserx.ir.enums import ImageRoute
     from parserx.ir.state import ImageRecord
 
@@ -798,7 +841,7 @@ def test_process_transcribes_scan_and_mixed_images_and_does_not_describe_scans(w
     asset = figure.anchors[-1].asset
     with workspace.txn("test:route") as state:  # as the layout step would have routed it
         state.images = [ImageRecord(id=asset, route=ImageRoute.SCAN, shown=True, t=0.8, f=0.0, regions=3)]
-    env, _ = _call("process", ws, {}, config=config, context=context)
+    env, _ = _call("run_pipeline", ws, {}, config=config, context=context)
     assert env.ok and "transcribe_images" in [s.step for s in env.result.steps]
     state = Workspace.open(ws).load()
     assert any(r.kind == "contains" and r.src == figure.id for r in state.relations)
@@ -823,9 +866,9 @@ def test_an_image_with_nothing_to_read_is_not_read_again(ws):
     with workspace.txn("test:route") as state:
         state.images = [ImageRecord(id=figure.anchors[-1].asset, route=ImageRoute.MIXED, shown=True, t=0.3, f=0.2,
                                     regions=2)]
-    first, _ = _call("process", ws, {}, config=config, context=context)
+    first, _ = _call("run_pipeline", ws, {}, config=config, context=context)
     assert "transcribe_images" in [s.step for s in first.result.steps]
-    again, _ = _call("process", ws, {}, config=config, context=context)
+    again, _ = _call("run_pipeline", ws, {}, config=config, context=context)
     assert "transcribe_images" not in [s.step for s in again.result.steps] and again.cost.requests == {}
     assert again.result.check.exportable
     env, _ = _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
@@ -834,7 +877,7 @@ def test_an_image_with_nothing_to_read_is_not_read_again(ws):
 
 def test_text_read_inside_an_image_can_be_looked_at_and_corrected(ws):
     # a block read inside an embedded image is anchored in the image's pixels: its crop comes from the image, and a
-    # reading of the whole image (the figure) is evidence for it, as a whole page is for a block on the page
+    # look at the whole image (the figure) is evidence for it, as a whole page is for a block on the page
     from parserx.ir.enums import ImageRoute
     from parserx.ir.state import ImageRecord
 
@@ -846,17 +889,15 @@ def test_text_read_inside_an_image_can_be_looked_at_and_corrected(ws):
     with workspace.txn("test:route") as state:
         state.images = [ImageRecord(id=figure.anchors[-1].asset, route=ImageRoute.SCAN, shown=True, t=0.8, f=0.0,
                                     regions=3)]
-    _call("process", ws, {}, config=config, context=context)
+    _call("run_pipeline", ws, {}, config=config, context=context)
     state = Workspace.open(ws).load()
     inside = next(b for b in state.blocks if b.id.startswith(figure.id + "-") and b.text == OCR_TEXT)
-    env, _ = _call("read", ws, {"block": inside.id, "image": "crop"}, context=context)
-    assert env.ok and Path(env.result.image.path).is_file() and env.result.image.height < 100  # a line of the 128×100 image
-    env, _ = _call("ask_image", ws, {"block": inside.id, "question": "这一行写的是什么？"}, context=context)
-    assert env.ok and env.result.image is not None
-    whole, _ = _call("ask_image", ws, {"block": figure.id, "question": "图中的件数是多少？"}, context=context)
-    env, _ = _call("correct", ws, {"block": inside.id, "image": whole.result.image, "reason": "图上是 8 件",
-                                   "edits": [{"find": "3 件", "replace": "8 件"}]}, context=context)
-    assert env.ok and "8 件" in next(b for b in Workspace.open(ws).load().blocks if b.id == inside.id).text
+    crop = _look(ws, context, block=inside.id)
+    assert Path(crop.image.path).is_file() and crop.image.height < 100  # a line of the 128×100 image
+    whole = _evidence(ws, context, block=figure.id, question="图中的件数是多少？", **{"as": "answer"})
+    assert _edit(ws, context, {"op": "replace_text", "block": inside.id, "find": "3 件", "replace": "8 件",
+                               "reason": "图上是 8 件", "evidence": whole})[0].accepted
+    assert "8 件" in next(b for b in Workspace.open(ws).load().blocks if b.id == inside.id).text
 
 
 def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
@@ -873,14 +914,14 @@ def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     figure = next(b for b in Workspace.open(tmp_path / "wsd").load().blocks if b.kind == BlockKind.FIGURE)
     env, _ = _call("recognize", tmp_path / "wsd", {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
     assert env.ok and env.cost.requests == {"ocr": 1}
-    env, _ = _call("export", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
+    env, _ = _call("submit_draft", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
     markdown = (tmp_path / "outd" / "scan.md").read_text()
     assert markdown.index("正文在图片之前") < markdown.index("<!-- 以下转录自上图 -->") < \
         markdown.index("SENTINEL-OCR 扫描文字") < markdown.index("正文在图片之后")
 
 
 def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
-    # the recognize tool renders the page for a picture the engine left inside a cell (not only for figures)
+    # the recognize step renders the page for a picture the engine left inside a cell (not only for figures)
     def page():
         cell = '<img src="imgs/img_in_image_box_100_300_300_400.jpg" alt="Image" /> 跨中'
         return {"prunedResult": {"width": 1000, "height": 1400, "parsing_res_list": [
@@ -889,55 +930,53 @@ def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
 
     context = _context(page=page)
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    env, _ = _call("export", ws, {"out": str(ws.parent / "outp")}, context=context)
+    env, _ = _call("submit_draft", ws, {"out": str(ws.parent / "outp")}, context=context)
     md = Path(env.result.markdown).read_text()
     assert "img_in_image_box" not in md and "〔图1〕" in md
     assert md.index("〔图1〕") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.rindex("](images/")
 
 
-def test_ask_about_some_rows_of_a_table_sees_a_sharper_strip(ws):
-    # a whole-table crop of a long table leaves its digits too small for the VLM (round 4, real_doc03_pdf):
-    # asking about rows crops the band of those rows (with a row of margin) at a higher resolution
-    from PIL import Image as _Image
-
-    context = _context()
-    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
-    whole, _ = _call("read", ws, {"block": table.id, "image": "crop"}, context=context)
-    env, _ = _call("ask_image", ws, {"block": table.id, "rows": [1, 1], "question": "第 1 行的数值？"}, context=context)
-    assert env.ok and env.result.image != whole.result.image
-    strip = next(p for p in (ws / "renders").iterdir() if p.stem == env.result.image)
-    with _Image.open(strip) as image:
-        assert image.width >= 1.9 * whole.result.image.width  # 300 dpi against read's 150
-    env2, _ = _call("correct", ws, {"block": table.id, "image": env.result.image, "reason": "图上是 8",
-                                    "cells": [{"row": 1, "col": 1, "content": "8"}]}, context=context)
-    assert env2.result.adopted is True  # the strip is an image of this block
-    bad, code = _call("ask_image", ws, {"block": table.id, "rows": [5, 9], "question": "?"}, context=context)
-    assert not bad.ok and code == 2  # the table has 2 rows
+# ── Structure through edit_draft ────────────────────────────────────────
 
 
-def test_structure_changes_return_the_items_they_open(ws):
+def test_structure_changes_return_the_issues_they_open(ws):
     # a title without a level is open work: the call that made it says so (the agent sees what its change opened)
     block = next(b for b in json.loads((ws / "state.json").read_text())["blocks"] if b["kind"] == "text")["id"]
-    env, _ = _call("apply_structure", ws, {"changes": [{"op": "set_role", "block": block, "kind": "title",
-                                                        "reason": "test"}]})
-    data = _assert_contract(env, "apply_structure")
-    assert [(u["target"], u["kind"]) for u in data["unresolved"]] == [(block, "structure_pending")]
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "set_role", "block": block, "kind": "title", "reason": "test"}]})
+    data = _assert_contract(env, "edit_draft")
+    assert [(u["target"], u["kind"]) for u in data["result"]["issues_opened"]] == [(block, "structure_pending")]
 
 
-def test_split_through_the_tool_reports_the_new_block(tmp_path):
-    # the diff of apply_structure knows blocks created by the call (a split's second part)
+def test_split_reports_the_new_block(tmp_path):
     doc = pymupdf.open()
     doc.new_page().insert_text((72, 90), "3 Results\nThe measured values follow.", fontsize=11)
     doc.save(tmp_path / "two.pdf")
     ws = tmp_path / "ws"
     workspace_init(tmp_path / "two.pdf", ws, config=_config())
     block = next(b for b in json.loads((ws / "state.json").read_text())["blocks"] if "\n" in (b["text"] or ""))
-    env, _ = _call("apply_structure", ws, {"changes": [{"op": "split", "block": block["id"], "at_break": 1,
-                                                        "reason": "title joined to the next line"}]})
-    data = _assert_contract(env, "apply_structure")
-    assert env.ok and data["result"]["accepted"] == [0]
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "split", "block": block["id"], "at_break": 1,
+                                               "reason": "title joined to the next line"}]})
+    data = _assert_contract(env, "edit_draft")
+    assert data["result"]["outcomes"][0]["accepted"] and data["result"]["outcomes"][0]["block"] == block["id"] + "-s1"
     assert any(c["target"] == block["id"] + "-s1" for c in data["diff"])
+
+
+def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):
+    # `parserx parse --no-ocr`: scanned pages stay unrecognised, listed as missing; the run does not fail
+    config = _config()
+    config.builders.ocr.engine = "none"
+    config.runtime.layout_shadow = False
+
+    class NoScanEngine(_context()):
+        def _new_ocr(self):
+            return ToolContext._new_ocr(self)  # the real factory: refuses an engine that is not configured
+
+    env, code = _call("run_pipeline", ws, {}, config=config, context=NoScanEngine)
+    assert code == 0
+    result = _assert_contract(env, "run_pipeline")["result"]
+    assert result["pages"] == {"done": 1, "failed": 1} and result["check"]["exportable"]
+    assert result["check"]["document_status"] == "partial"
+    assert any("scan engine not configured" in f.message for f in env.failures)
 
 
 def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_not_carry(tmp_path):
@@ -970,20 +1009,3 @@ def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_no
     assert _text_not_carried(ctx(["ipmi_address", "Kg key for IPMIv2 authentication."]), described, asset)
     assert not _text_not_carried(ctx(["|", "·"]), described, asset)  # no letters or digits: no evidence
 
-
-def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):
-    # `parserx parse --no-ocr`: scanned pages stay unrecognised, listed as missing; the run does not fail
-    config = _config()
-    config.builders.ocr.engine = "none"
-    config.runtime.layout_shadow = False
-
-    class NoScanEngine(_context()):
-        def _new_ocr(self):
-            return ToolContext._new_ocr(self)  # the real factory: refuses an engine that is not configured
-
-    env, code = _call("process", ws, {}, config=config, context=NoScanEngine)
-    assert code == 0
-    result = _assert_contract(env, "process")["result"]
-    assert result["pages"] == {"done": 1, "failed": 1} and result["check"]["exportable"]
-    assert result["check"]["document_status"] == "partial"
-    assert any("scan engine not configured" in f.message for f in env.failures)

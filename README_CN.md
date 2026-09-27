@@ -157,7 +157,7 @@ parserx/
 ├── tables/      # TableGrid、GFM/HTML、跨页合并、算术核对
 ├── hierarchy/   # 标题与层级、结构修改的合法性
 ├── accounting/  # 去向检查
-├── tools/       # 工具包及其 JSON CLI（process、read、recognize、review_table、describe_figure 等）
+├── tools/       # 工具包及其 JSON CLI：Agent 的四个工具 read_draft、view_source、edit_draft、submit_draft，以及做出初稿的 run_pipeline
 ├── runtimes/    # 固定流水线、混合方案、Codex 适配
 ├── console/     # parse 命令的进度与结果（中文 / 英文）
 ├── render/      # Markdown、sidecar、摘要

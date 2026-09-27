@@ -1,14 +1,14 @@
-"""``px``: what an agent in an experiment directory may run (plan §2.2–§2.3).
+"""``px``: what the agent in its working directory may run (plan §2.2–§2.3, Q85).
 
-    ./px workspace init <input> --ws ws --json
-    ./px tool <name> --ws ws [options] --json      (the seven tools; ./px tool schema <name>)
+    ./px tool <name> --ws ws [options] --json      (read_draft, view_source, edit_draft, submit_draft)
+    ./px tool schema <name>
     ./px python <script.py | -c code | ->          (the snapshot's Python, for read-only analysis)
 
 The experiment's config is fixed (``--config`` is refused); service keys are
 loaded from an env file outside the experiment directory and exist only in the
 tool process — ``px python`` runs without them.  Every other ParserX command
-(``parse``, ``eval`` …) is refused: results come from the workspace through
-``export``.
+(``parse``, ``eval``, ``workspace init``, ``run_pipeline`` …) is refused: the
+program has made the first draft before the agent starts.
 
 The launcher script calls ``python -m parserx.runtimes.px --env-file F --config C -- <args>``.
 """
@@ -22,10 +22,9 @@ import signal
 import sys
 from pathlib import Path
 
-from parserx.tools.cli import TOOL_NAMES
+from parserx.tools.cli import AGENT_TOOLS
 
-USAGE = """px — the ParserX document tools of this experiment
-  ./px workspace init <input> --ws ws --json
+USAGE = """px — the ParserX document tools
   ./px tool <name> --ws ws [options] --json     name: {tools}
   ./px tool schema <name>                       request and envelope JSON Schemas
   ./px tool <name> --help
@@ -45,9 +44,7 @@ def px_argv(args: list[str], config: Path) -> list[str]:
         raise PxRefused("the configuration is fixed for this experiment; drop --config")
     if len(args) >= 2 and args[0] == "tool" and args[1] == "schema":
         return list(args)
-    if len(args) >= 2 and args[0] == "tool" and args[1] in TOOL_NAMES:
-        return [*args, "--config", str(config)]
-    if len(args) >= 2 and args[0] == "workspace" and args[1] == "init":
+    if len(args) >= 2 and args[0] == "tool" and args[1] in AGENT_TOOLS:
         return [*args, "--config", str(config)]
     raise PxRefused(f"not available here: {' '.join(args[:2]) or '(nothing)'}")
 
@@ -74,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     ns = parser.parse_args(argv)
     args = ns.rest[1:] if ns.rest[:1] == ["--"] else ns.rest
-    usage = USAGE.format(tools=" ".join(TOOL_NAMES))
+    usage = USAGE.format(tools=" ".join(AGENT_TOOLS))
     if not args or args[0] in ("-h", "--help", "help"):
         print(usage)
         return 0

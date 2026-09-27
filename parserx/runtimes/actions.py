@@ -2,8 +2,8 @@
 
 Every tool call appends a structured record to ``calls.jsonl`` when it ends (request, envelope, result).  The
 hybrid runtime follows that file while the agent works: ``actions`` turns one record into the user's terms (look,
-edit, add, set a title, close …) for the console, ``AgentTally`` counts them for the document summary.  Reading,
-checking and exporting are not actions: they change nothing.
+edit, add, set a title, close …) for the console, ``AgentTally`` counts them for the document summary.  Reading the
+draft and submitting it are not actions: they change nothing.
 """
 
 from __future__ import annotations
@@ -78,49 +78,40 @@ def _actions(record: dict, text_of: Lookup) -> list[AgentAction]:
         return []
     tool, req = record.get("tool"), record.get("request") or {}
     result = record.get("result") or {}
-    ok = (record.get("envelope") or {}).get("ok", False)
-    if tool == "ask_image":
-        questions = req.get("questions") or [req]
-        return [_look(q.get("block"), q.get("page"), q.get("seam"), q.get("question"), text_of) for q in questions]
-    if tool == "read" and req.get("image") in ("page", "crop"):
-        return [_look(req.get("block"), req.get("page"), None, None, text_of)]
-    if not ok:
+    if tool == "view_source":
+        return [_look(one.get("block"), one.get("page"), one.get("seam"), one.get("question"), text_of)
+                for one in req.get("looks") or []]
+    if tool != "edit_draft" or not (record.get("envelope") or {}).get("ok", False):
         return []
-    if tool == "correct":
-        add = req.get("add")
-        if not result.get("adopted"):
-            target = req.get("block") or (f"p{add['page']}" if add else None)
-            return [AgentAction("rejected", target=target, page=_page_of(target), detail="correct")]
-        if add:
-            return [AgentAction("add", target=f"p{add['page']}", page=add["page"], text=_short(add.get("text")))]
-        edits = req.get("edits") or []
-        cells = req.get("cells") or []
-        after = edits[0].get("replace") if edits else cells[0].get("content") if cells else None
-        return [AgentAction("edit", target=req.get("block"), page=_page_of(req.get("block")), text=_short(after))]
-    if tool == "close":
-        if not result.get("closed"):
-            return []
-        return [AgentAction("close", target=req.get("target"), page=_page_of(req.get("target")),
-                            detail=_short(req.get("reason")))]
-    if tool == "review_table":
-        name = "table_fix" if result.get("adopted") else "rejected"
-        return [AgentAction(name, target=req.get("block"), page=_page_of(req.get("block")),
-                            detail=None if result.get("adopted") else "review_table")]
-    if tool == "apply_structure":
-        changes = req.get("changes") or []
-        out = [_structure(changes[i], text_of) for i in result.get("accepted", []) if i < len(changes)]
-        rejected = len(result.get("rejected", []))
-        if rejected:
-            out.append(AgentAction("rejected", detail=f"apply_structure×{rejected}"))
-        return [a for a in out if a is not None]
-    if tool == "recognize":
-        pages = req.get("pages") or []
-        return [AgentAction("recognize", target=",".join(f"p{p}" for p in pages) or None,
-                            page=pages[0] if pages else None)]
-    if tool == "describe_figure":
-        blocks = req.get("blocks") or ([req["block"]] if req.get("block") else [])
-        return [AgentAction("describe", target=b, page=_page_of(b)) for b in blocks]
-    return []
+    ops = req.get("ops") or []
+    out: list[AgentAction | None] = []
+    refused = 0
+    for outcome in result.get("outcomes") or []:
+        op = ops[outcome["index"]] if outcome.get("index", -1) < len(ops) else {}
+        if not outcome.get("accepted"):
+            refused += 1
+            continue
+        out.append(_edit(op, outcome, text_of))
+    if refused:
+        out.append(AgentAction("rejected", detail=f"edit_draft×{refused}"))
+    return [a for a in out if a is not None]
+
+
+def _edit(op: dict, outcome: dict, text_of: Lookup) -> AgentAction | None:
+    kind = op.get("op")
+    block = op.get("block")
+    if kind in ("replace_text", "set_cells"):
+        after = op.get("replace") if kind == "replace_text" else (op.get("cells") or [{}])[0].get("content")
+        return AgentAction("edit", target=block, page=_page_of(block), text=_short(after))
+    if kind == "insert_text":
+        return AgentAction("add", target=f"p{op.get('page')}", page=op.get("page"), text=_short(op.get("text")))
+    if kind == "adopt":
+        target = block or f"p{op.get('page')}"
+        return AgentAction("table_fix" if block else "recognize", target=target, page=_page_of(target))
+    if kind == "dismiss":
+        target = outcome.get("target")
+        return AgentAction("close", target=target, page=_page_of(target), detail=_short(op.get("reason")))
+    return _structure(op, text_of)
 
 
 def _structure(change: dict, text_of: Lookup) -> AgentAction | None:
@@ -153,20 +144,19 @@ class AgentTally:
         if record.get("type") != "call":
             return
         self.tool_calls += 1
-        if not (record.get("envelope") or {}).get("ok"):
+        if record.get("tool") != "edit_draft" or not (record.get("envelope") or {}).get("ok"):
             return
-        tool, req, result = record.get("tool"), record.get("request") or {}, record.get("result") or {}
-        if tool == "correct" and result.get("adopted"):
-            if req.get("add"):
+        ops = (record.get("request") or {}).get("ops") or []
+        for outcome in (record.get("result") or {}).get("outcomes") or []:
+            if not outcome.get("accepted"):
+                continue
+            kind = ops[outcome["index"]].get("op") if outcome.get("index", -1) < len(ops) else None
+            if kind == "insert_text":
                 self.added += 1
+            elif kind == "dismiss":
+                self.closed += 1
             else:
                 self.changes += 1
-        elif tool == "review_table" and result.get("adopted"):
-            self.changes += 1
-        elif tool == "apply_structure":
-            self.changes += len(result.get("accepted", []))
-        elif tool == "close" and result.get("closed"):
-            self.closed += 1
 
 
 class CallFollower:

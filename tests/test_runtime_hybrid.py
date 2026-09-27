@@ -47,12 +47,20 @@ class FakeAgent:
 
 
 def _rerecognize(ws):
-    """The agent retries the failed scan with a working engine: the document becomes complete."""
-    envelope, _ = call_tool("recognize", ws, {"pages": [2], "engine": "paddleocr", "force": True},
-                            config=_config(), context_factory=_context_class())
+    """The agent reads the failed scan with a working engine and adopts the reading: the document becomes complete."""
+    envelope, _ = call_tool("view_source", ws, {"looks": [{"page": 2, "as": "text"}]}, config=_config(),
+                            context_factory=_context_class())
     assert envelope.ok and not envelope.failures
-    envelope, _ = call_tool("process", ws, {}, config=_config(), context_factory=_context_class())  # titles
-    assert envelope.ok
+    evidence = envelope.result.results[0].evidence
+    envelope, _ = call_tool("edit_draft", ws, {"ops": [{"op": "adopt", "page": 2, "evidence": evidence,
+                                                        "reason": "扫描页"}]},
+                            config=_config(), context_factory=_context_class())
+    assert envelope.ok and envelope.result.outcomes[0].accepted, envelope.result
+    titles = [u.target for u in envelope.result.issues_opened if u.kind == "structure_pending"]  # a new title's level
+    envelope, _ = call_tool("edit_draft", ws, {"ops": [{"op": "set_level", "block": b, "level": 2, "reason": "节标题"}
+                                                       for b in titles]},
+                            config=_config(), context_factory=_context_class())
+    assert envelope.ok and all(o.accepted for o in envelope.result.outcomes)
 
 
 def _parse(pdf, tmp_path, agent=None, *, mode="hybrid", ocr_down=True, events=None):
@@ -85,12 +93,12 @@ def test_open_items_go_to_the_agent_whose_result_is_exported(pdf, tmp_path):
     assert len(agent.runs) == 1 and outcome.runtime == "hybrid:agent" and outcome.status == "complete"
     run = agent.runs[0]
     assert run["files"] == ["AGENTS.md", "parserx.yaml", "px", "skills", "ws"] and run["deadline_s"] == 30 * 60
-    assert "{{" not in run["task"] and "不要再运行 `workspace init`" in run["task"] and "实验" not in run["task"]
+    assert "{{" not in run["task"] and "read_draft" in run["task"] and "实验" not in run["task"]
     assert "SENTINEL-OCR" in (tmp_path / "out" / "doc.md").read_text(encoding="utf-8")
     processing = _summary(tmp_path)["processing"]
     assert processing["runtime"] == "hybrid:agent" and processing["runtime_note"] is None
     record = processing["agent"]
-    assert record["model"] == "fake-model" and record["tool_calls"] == 2 and record["usd_at_list_price"] == 0.2
+    assert record["model"] == "fake-model" and record["tool_calls"] == 3 and record["usd_at_list_price"] == 0.2
     assert record["review_open_before"] > 0 and record["review_open_after"] == 0
     assert any(isinstance(e, AgentAction) and e.action == "recognize" and e.page == 2 for e in events)
     assert not (tmp_path / "out" / WORK_DIR).exists()
@@ -169,21 +177,21 @@ def test_interrupted_tool_call_still_claims_its_changes(pdf, tmp_path, monkeypat
     from parserx.tools import workspace_init
 
     workspace_init(pdf, ws, config=_config())
-    real = structure.run
+    from parserx.tools import edit
 
-    def run_then_interrupt(ctx, req):
-        real(ctx, req)
-        raise KeyboardInterrupt
+    real, calls = edit.unresolved_items, []
 
-    monkeypatch.setattr(structure, "run", run_then_interrupt)
-    from parserx.tools import TOOLS, ToolSpec
+    def interrupt_after_the_commit(state):  # the call's second look at the issues: its change is committed
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real(state)
 
-    monkeypatch.setitem(TOOLS, "apply_structure", ToolSpec(structure.ApplyStructureRequest,
-                                                          structure.ApplyStructureResult, run_then_interrupt))
+    monkeypatch.setattr(edit, "unresolved_items", interrupt_after_the_commit)
     block = json.loads((ws / "state.json").read_text())["blocks"][0]["id"]
     with pytest.raises(KeyboardInterrupt):
-        call_tool("apply_structure", ws, {"changes": [{"op": "set_role", "block": block, "kind": "title",
-                                                       "level": 1, "reason": "test"}]},
+        call_tool("edit_draft", ws, {"ops": [{"op": "set_role", "block": block, "kind": "title", "level": 1,
+                                              "reason": "test"}]},
                   config=_config(), context_factory=_context_class())
     assert verify_workspace(ws).ok
     last = json.loads((ws / "calls.jsonl").read_text().splitlines()[-1])
@@ -223,7 +231,7 @@ def test_px_of_the_agent_directory_runs_the_tools(pdf, tmp_path):
     from parserx.tools import workspace_init
 
     workspace_init(pdf, agent_dir / "ws", config=config)
-    proc = subprocess.run(["./px", "tool", "overview", "--ws", "ws", "--json"], cwd=agent_dir, capture_output=True,
+    proc = subprocess.run(["./px", "tool", "read_draft", "--ws", "ws", "--json"], cwd=agent_dir, capture_output=True,
                           text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["ok"]
@@ -240,38 +248,39 @@ def test_agent_actions_are_read_from_the_call_records():
 
     texts = {"b-p004-0002": "技术领域"}
     records = [
-        rec("ask_image", {"questions": [{"page": 4, "question": "是标题吗？"}, {"block": "b-p004-0002", "question": "?"}]},
-            {}),
-        rec("apply_structure", {"changes": [{"op": "set_role", "block": "b-p004-0002", "kind": "title", "level": 2},
-                                            {"op": "set_level", "block": "b-p005-0001", "level": 3}]},
-            {"accepted": [0], "rejected": [{"index": 1}]}),
-        rec("close", {"target": "p1", "kind": "title_candidate", "reason": "封面信息，不是节标题"}, {"closed": True}),
-        rec("correct", {"image": "a", "reason": "r", "add": {"page": 2, "text": "授权公告日 2020-01-01"}},
-            {"adopted": True}),
-        rec("correct", {"block": "b-p003-0001", "image": "a", "reason": "r", "edits": [{"find": "3", "replace": "8"}]},
-            {"adopted": False}),
-        rec("overview", {}, {}),
+        rec("view_source", {"looks": [{"page": 4, "as": "answer", "question": "是标题吗？"},
+                                      {"block": "b-p004-0002", "as": "answer", "question": "?"}]}, {}),
+        rec("edit_draft", {"ops": [{"op": "set_role", "block": "b-p004-0002", "kind": "title", "level": 2},
+                                   {"op": "set_level", "block": "b-p005-0001", "level": 3}]},
+            {"outcomes": [{"index": 0, "accepted": True}, {"index": 1, "accepted": False}]}),
+        rec("edit_draft", {"ops": [{"op": "dismiss", "issue": "w-1", "reason": "封面信息，不是节标题"},
+                                   {"op": "insert_text", "page": 2, "text": "授权公告日 2020-01-01"},
+                                   {"op": "replace_text", "block": "b-p003-0001", "find": "3", "replace": "8"}]},
+            {"outcomes": [{"index": 0, "accepted": True, "target": "p1"}, {"index": 1, "accepted": True},
+                          {"index": 2, "accepted": False}]}),
+        rec("read_draft", {}, {}),
         {"type": "txn", "version": 3},
     ]
     got = [a for r in records for a in actions(r, texts.get)]
     assert [(a.action, a.target, a.page) for a in got] == [
         ("look", "p4", 4), ("look", "b-p004-0002", 4), ("set_title", "b-p004-0002", 4), ("rejected", None, None),
-        ("close", "p1", 1), ("add", "p2", 2), ("rejected", "b-p003-0001", 3)]
+        ("close", "p1", 1), ("add", "p2", 2), ("rejected", None, None)]
     assert got[2].text == "技术领域" and got[2].level == 2 and got[4].detail == "封面信息，不是节标题"
-    joins = rec("apply_structure", {"changes": [{"op": "link", "kind": "continues", "src": f"b-p001-000{i}",
-                                                 "dst": f"b-p001-000{i + 1}"} for i in range(5)]},
-                {"accepted": [0, 1, 2, 3, 4], "rejected": []})
+    joins = rec("edit_draft", {"ops": [{"op": "link", "kind": "continues", "src": f"b-p001-000{i}",
+                                        "dst": f"b-p001-000{i + 1}"} for i in range(5)]},
+                {"outcomes": [{"index": i, "accepted": True} for i in range(5)]})
     assert [(a.action, a.page, a.count) for a in actions(joins)] == [("join", 1, 5)]
-    titles = rec("apply_structure", {"changes": [{"op": "set_role", "block": f"b-p00{i}-0001", "kind": "title",
-                                                  "level": 1} for i in range(1, 6)]},
-                 {"accepted": [0, 1, 2, 3, 4], "rejected": []})
+    titles = rec("edit_draft", {"ops": [{"op": "set_role", "block": f"b-p00{i}-0001", "kind": "title", "level": 1}
+                                        for i in range(1, 6)]},
+                 {"outcomes": [{"index": i, "accepted": True} for i in range(5)]})
     assert [a.action for a in actions(titles)] == ["set_title"] * 5  # each title is worth its own line
-    docx = actions(rec("ask_image", {"block": "b-d00093", "question": "?"}, {}), {"b-d00093": "5.2支座加工："}.get)
+    docx = actions(rec("view_source", {"looks": [{"block": "b-d00093", "as": "answer", "question": "?"}]}, {}),
+                   {"b-d00093": "5.2支座加工："}.get)
     assert (docx[0].page, docx[0].text) == (None, "5.2支座加工：")
     tally = AgentTally()
     for r in records:
         tally.add(r)
-    assert (tally.tool_calls, tally.changes, tally.added, tally.closed) == (6, 1, 1, 1)
+    assert (tally.tool_calls, tally.changes, tally.added, tally.closed) == (4, 1, 1, 1)
 
 
 def test_codex_availability_is_decided_by_return_codes(tmp_path):

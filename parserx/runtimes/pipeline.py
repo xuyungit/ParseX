@@ -66,7 +66,7 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
     def call(tool: str, request: dict | None = None) -> Envelope:
         envelope, code = call_tool(tool, ws_dir, request or {}, config=config, context_factory=session)
         envelopes.append(envelope)
-        if code == 1 or (not envelope.ok and tool == "process"):
+        if code == 1 or (not envelope.ok and tool == "run_pipeline"):
             raise RuntimeFailure(f"{tool}: {envelope.failures[0].message}")
         return envelope
 
@@ -74,10 +74,11 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
     envelopes.append(envelope)
     if not envelope.ok:
         raise RuntimeFailure(f"workspace init: {envelope.failures[0].message}")
-    call("process")  # the standard steps (tools/process.py), the same the agent's first tool runs
-    envelope = call("export", {"out": str(out_dir), "name": name or Workspace.open(ws_dir).load().id})
-    if not envelope.ok:
-        raise RuntimeFailure(f"export: {envelope.failures[0].message}")
+    call("run_pipeline")  # the first draft (tools/process.py): what the agent starts from in the hybrid runtime
+    envelope = call("submit_draft", {"out": str(out_dir), "name": name or Workspace.open(ws_dir).load().id})
+    if not envelope.ok or not envelope.result.accepted:
+        why = envelope.failures[0].message if not envelope.ok else "; ".join(envelope.result.blockers)
+        raise RuntimeFailure(f"submit: {why}")
     md_path, sidecar_path = Path(envelope.result.markdown), Path(envelope.result.sidecar)
     return RunOutcome(markdown=md_path.read_text(encoding="utf-8"), sidecar_json=sidecar_path.read_text(encoding="utf-8"),
                       markdown_path=md_path, sidecar_path=sidecar_path, status=envelope.result.status.value,

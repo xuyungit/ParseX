@@ -40,7 +40,8 @@ from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, 
 from parserx.ir.state import AccountingSummary, DocumentState
 from parserx.runtimes.events import Step
 from parserx.tables.merge import propose_merges
-from parserx.tools import check_export, describe_figure, recognize, structure
+from parserx.tools import describe_figure, recognize, structure
+from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.layout_shadow import layout_todo
@@ -176,7 +177,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                                              if continuations else "")))
 
     ctx.report(Step("process", "check"))
-    checked = check_export._checked(ctx)
+    checked = check_accounts(ctx)
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
     state = ctx.ws.load()
     return output(_summary(state, steps, checked), failures=failures, unresolved=unresolved_items(state))

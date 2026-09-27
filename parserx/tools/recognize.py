@@ -20,7 +20,7 @@ from parserx.content import scan
 from parserx.content.select import integrate_image, integrate_scan_page, mark_scan_failed, transcribed
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, PageStatus, RelationKind
+from parserx.ir.enums import BlockKind, PageStatus
 from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.envelope import Change, Failure, FailureCode, ToolFailure

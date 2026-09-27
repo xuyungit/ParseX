@@ -142,6 +142,7 @@ class OpOutcome(IRModel):
     rule: str | None = None  # what refused it
     detail: str | None = None
     block: str | None = None  # a block the operation made (insert_text, split)
+    target: str | None = None  # dismiss: what the issue was about (a block, or a page "p3")
 
 
 class EditDraftResult(IRModel):
@@ -187,18 +188,18 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
 
 
 def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Issues") -> OpOutcome:
-    made = None
+    made, detail, target = None, None, None
     try:
         if isinstance(op, ReplaceText):
-            _replace_text(state, op)
+            detail = _replace_text(state, op)
         elif isinstance(op, SetCells):
-            _set_cells(state, op)
+            detail = _set_cells(state, op)
         elif isinstance(op, InsertText):
-            made = _insert_text(state, op)
+            made, detail = _insert_text(state, op)
         elif isinstance(op, Adopt):
-            _adopt(ctx, state, op)
+            detail = _adopt(ctx, state, op)
         elif isinstance(op, Dismiss):
-            _dismiss(state, op, issues)
+            target = _dismiss(state, op, issues)
         else:
             known = {b.id for b in state.blocks}
             outcome = apply_changes(state, [op], actor=ACTOR)
@@ -212,7 +213,7 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
         return OpOutcome(index=index, op=op.op, accepted=False, rule=exc.failure.code.value,
                          detail=exc.failure.message)
     issues.changed()
-    return OpOutcome(index=index, op=op.op, accepted=True, block=made)
+    return OpOutcome(index=index, op=op.op, accepted=True, block=made, detail=detail, target=target)
 
 
 # ── content ─────────────────────────────────────────────────────────────
@@ -228,7 +229,7 @@ def _block(state: DocumentState, block_id: str) -> Block:
     return block
 
 
-def _replace_text(state: DocumentState, op: ReplaceText) -> None:
+def _replace_text(state: DocumentState, op: ReplaceText) -> str:
     block = _block(state, op.block)
     if block.kind not in _TEXT_KINDS:
         raise _Refused("not_text", f"{op.block} is a {block.kind.value}: " + (
@@ -237,10 +238,10 @@ def _replace_text(state: DocumentState, op: ReplaceText) -> None:
     if count != 1:
         raise _Refused("find", f"'find' must occur exactly once in {op.block}'s text (found {count} times): "
                                f"{op.find[:40]!r}; give a longer span")
-    _correct(state, block, op, text=block.text.replace(op.find, op.replace, 1), grid=None)
+    return _correct(state, block, op, text=block.text.replace(op.find, op.replace, 1), grid=None)
 
 
-def _set_cells(state: DocumentState, op: SetCells) -> None:
+def _set_cells(state: DocumentState, op: SetCells) -> str:
     block = _block(state, op.block)
     if block.kind != BlockKind.TABLE or block.cells is None:
         raise _Refused("not_table", f"{op.block} is a {block.kind.value}, not a table")
@@ -256,10 +257,10 @@ def _set_cells(state: DocumentState, op: SetCells) -> None:
             cells[(slot.row, slot.col)] = slot.model_copy(update={"content": edit.content})
     edited = TableGrid(n_rows=grid.n_rows, n_cols=grid.n_cols, header_rows=grid.header_rows,
                        cells=sorted(cells.values(), key=lambda c: (c.row, c.col)))
-    _correct(state, block, op, text=None, grid=edited)
+    return _correct(state, block, op, text=None, grid=edited)
 
 
-def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: TableGrid | None) -> None:
+def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: TableGrid | None) -> str:
     """The agent's own reading of spans or cells becomes a candidate; the gate adopts it or not (content/select.py)."""
     image = image_evidence(state, block, op.evidence)
     n = sum(1 for o in block.observations if o.task == TaskKind.CORRECT) + 1
@@ -271,21 +272,25 @@ def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: 
     outcome = correct_gate(block, candidate, image=image, actor=ACTOR, seen=text_near(state, block))
     block.decisions[-1].evidence["evidence"] = op.evidence
     block.decisions[-1].reason += f"; {op.reason}"
-    if not outcome.adopted:
-        failed = next(g for g in outcome.gate if not g.passed)
-        raise _Refused(failed.name, failed.detail)
+    return _gated(outcome.gate)
 
 
-def _insert_text(state: DocumentState, op: InsertText) -> str:
+def _gated(gate) -> str:
+    """The checks' details; refused with the first failed check's name when any failed."""
+    failed = [g for g in gate if not g.passed]
+    if failed:
+        raise _Refused(failed[0].name, "; ".join(f"{g.name}: {g.detail}" for g in failed))
+    return "; ".join(f"{g.name}: {g.detail}" for g in gate)
+
+
+def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
     if state.format != "pdf" or op.page not in {p.n for p in state.pages}:
         raise _Refused("page", f"no PDF page {op.page}")
     if op.after is not None and op.after not in {b.id for b in state.blocks}:
         raise _Refused("unknown_block", f"no block {op.after}")
     gate = add_gate(op.text, image=image_evidence_at(state, op.page, op.bbox, op.evidence),
                     seen=text_at(state, op.page, op.bbox), holders=holders_of(state, op.page, op.bbox, op.text))
-    failed = next((g for g in gate if not g.passed), None)
-    if failed is not None:
-        raise _Refused(failed.name, failed.detail)
+    detail = _gated(gate)
     block_id = ids.block_id_pdf(op.page, _next_block_seq(state, op.page))
     anchor = PdfAnchor(page=op.page, bbox=op.bbox, coord_space="page_pt")
     observation = Observation(id=ids.observation_id(block_id, "agent", 1), engine="agent", engine_version=ACTOR,
@@ -305,7 +310,7 @@ def _insert_text(state: DocumentState, op: InsertText) -> str:
     state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(op.page, _next_item(state, op.page)), unit="agent_text",
                                     source=anchor, chars=len("".join(op.text.split())), disposition="output",
                                     block=block_id))
-    return block_id
+    return block_id, detail
 
 
 def _place(state: DocumentState, sequence: list, page: int, bbox) -> int:
@@ -323,7 +328,7 @@ def _place(state: DocumentState, sequence: list, page: int, bbox) -> int:
 # ── adopting a reading ──────────────────────────────────────────────────
 
 
-def _adopt(ctx: ToolContext, state: DocumentState, op: Adopt) -> None:
+def _adopt(ctx: ToolContext, state: DocumentState, op: Adopt) -> str | None:
     evidence = next((e for e in state.evidence if e.id == op.evidence), None)
     if evidence is None:
         raise _Refused("evidence", f"no evidence {op.evidence} (view_source gives it)")
@@ -335,7 +340,7 @@ def _adopt(ctx: ToolContext, state: DocumentState, op: Adopt) -> None:
         raise _Refused("evidence_target", f"{op.evidence} is a reading of {target}, not of "
                                           f"{op.block or f'page {op.page}'}")
     if evidence.how == "table":
-        _adopt_table(state, op, evidence)
+        return _adopt_table(state, op, evidence)
     elif evidence.how == "description":
         block = _block(state, op.block)
         anchor = next((a for a in block.anchors if isinstance(a, AssetAnchor) and a.asset == evidence.image), None)
@@ -349,7 +354,7 @@ def _adopt(ctx: ToolContext, state: DocumentState, op: Adopt) -> None:
         _adopt_text(ctx, state, op, evidence)
 
 
-def _adopt_table(state: DocumentState, op: Adopt, evidence) -> None:
+def _adopt_table(state: DocumentState, op: Adopt, evidence) -> str:
     block = _block(state, op.block)
     if block.kind != BlockKind.TABLE or block.cells is None:
         raise _Refused("not_table", f"{op.block} is a {block.kind.value}, not a table")
@@ -368,9 +373,7 @@ def _adopt_table(state: DocumentState, op: Adopt, evidence) -> None:
     outcome = table_gate(block, candidate, allowed_cells=allowed, fill_region=region, actor=ACTOR)
     block.decisions[-1].evidence["evidence"] = op.evidence
     block.decisions[-1].reason += f"; {op.reason}"
-    if not outcome.adopted:
-        failed = next(g for g in outcome.gate if not g.passed)
-        raise _Refused(failed.name, failed.detail)
+    return _gated(outcome.gate)
 
 
 def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> None:
@@ -412,7 +415,7 @@ class _Issues:
         return self._items.get(issue)
 
 
-def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> None:
+def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> str:
     item = issues.get(op.issue)
     if item is None:
         raise _Refused("unknown_issue", f"no open issue {op.issue} (read_draft view=issues)")
@@ -431,6 +434,7 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> None:
         raise _Refused(seen.name, seen.detail)
     state.closed.append(ClosedItem(target=item.target, kind=item.kind.value, quotes=[q.doc_text for q in item.quotes],
                                    reason=op.reason, actor=ACTOR, image=op.evidence, occluded=op.occluded))
+    return item.target
 
 
 # ── what changed ────────────────────────────────────────────────────────

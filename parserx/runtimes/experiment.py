@@ -1,45 +1,32 @@
-"""Agent experiments (guide §7.2–§7.3; plan P2-1, §2.2–§2.5): one isolated directory per document and run.
+"""What the agent-run harness (scripts/agent_explore.py) needs inside a round's snapshot (guide §7.3).
 
-Layout of ``<exp_root>/<round>/<doc>/`` while the agent runs — nothing else:
+- the agent's task and skills as this installation ships them (``render_task``, ``shipped_skills``);
+- a round's config for one run directory: its own response cache, empty at the start (``doc_config``);
+- the post-run check of an agent's workspace: integrity, accounts, tool usage (``verify_run``).
 
-    input.<ext>     the document
-    px              calls this round's tool snapshot (no service keys in the directory)
-    parserx.yaml    self-contained config: no repository paths; the response cache lives here, empty at start
-    AGENTS.md       the task (P2-2)
-    skills/         the three skills, as shipped in the snapshot
-    ws/  out/       workspace and export, created by the tools
+    python -m parserx.runtimes.experiment verify --doc-dir DIR   → JSON on stdout (DIR holds ws/)
+    python -m parserx.runtimes.experiment skills | template
 
-After the run the harness adds ``run/`` (events, last message, record).
-``verify_run`` is the post-run check.  It runs inside the round's snapshot, so
-the export is compared with that snapshot's own rendering.
-
-    python -m parserx.runtimes.experiment verify --doc-dir DIR   → JSON on stdout
-
-The control (plan P2-3) is the fixed-sequence runtime on the same snapshot,
-input and config, in a directory of the same layout (``run_control``).
+The agent always starts from the pipeline's draft, in the product's runtime (``parserx parse``, Q85); the
+exploration mode in which the agent built the workspace and exported itself (Phase 2) is retired.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
-import os
 import re
 import sys
-import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import yaml
 
 from parserx.accounting import check
 from parserx.ir.base import IRModel
 from parserx.ir.enums import DocumentStatus
 from parserx.ir.state import AccountingSummary
-from parserx.render.markdown import render_markdown
 from parserx.workspace import IntegrityReport, Workspace, verify_workspace
 from parserx.workspace.store import read_records
 
@@ -47,11 +34,11 @@ SKILL_FILES = ("transcription.md", "figure.md", "structure.md")
 _ENV_REF = re.compile(r"\$\{([^}:]+)(?::[^}]*)?\}")
 
 
-# ── Preparing a directory ────────────────────────────────────────────────
+# ── A run's config and task ───────────────────────────────────────────────
 
 
 def secret_names(raw: dict[str, Any]) -> list[str]:
-    """Environment variables a raw config refers to (``${VAR}``): px supplies them when a tool runs."""
+    """Environment variables a raw config refers to (``${VAR}``): supplied when a tool runs, never written down."""
     return sorted(set(_ENV_REF.findall(json.dumps(raw))))
 
 
@@ -61,27 +48,6 @@ def doc_config(raw: dict[str, Any], doc_dir: Path) -> dict[str, Any]:
     config.pop("extends", None)
     config["cache"] = {"mode": "read_write", "dir": str(Path(doc_dir) / ".parserx_cache")}
     return config
-
-
-def prepare_doc_dir(doc_dir: Path, *, input_path: Path, config: dict[str, Any], px_text: str, agents_md: str,
-                    skills: dict[str, str]) -> dict[str, str]:
-    """Create the directory; returns the SHA-256 of every file written (relative path → digest)."""
-    doc_dir = Path(doc_dir)
-    if doc_dir.exists():
-        raise FileExistsError(f"{doc_dir} exists; every run gets a fresh directory")
-    (doc_dir / "skills").mkdir(parents=True)
-    files = {
-        f"input{Path(input_path).suffix.lower()}": Path(input_path).read_bytes(),
-        "parserx.yaml": ("# Experiment config (generated; secrets are supplied by px when a tool runs)\n"
-                         + yaml.safe_dump(config, allow_unicode=True, sort_keys=False)).encode("utf-8"),
-        "px": px_text.encode("utf-8"),
-        "AGENTS.md": agents_md.encode("utf-8"),
-        **{f"skills/{name}.md": text.encode("utf-8") for name, text in sorted(skills.items())},
-    }
-    for rel, data in files.items():
-        (doc_dir / rel).write_bytes(data)
-    (doc_dir / "px").chmod(0o755)
-    return {rel: hashlib.sha256(data).hexdigest() for rel, data in sorted(files.items())}
 
 
 _BLOCK = re.compile(r"\{\{#(\w+)\}\}(.*?)\{\{/\1\}\}", re.S)
@@ -115,39 +81,7 @@ def render_task(template: str, *, round_name: str | None, values: dict[str, Any]
     return _VALUE.sub(value, text)
 
 
-def listing_problems(doc_dir: Path) -> list[str]:
-    """Before a run: the directory holds exactly the listed files (plan §2.2)."""
-    doc_dir = Path(doc_dir)
-    expected = {"AGENTS.md", "parserx.yaml", "px", "skills"}
-    problems = []
-    inputs = [p.name for p in doc_dir.glob("input.*")]
-    if len(inputs) != 1:
-        problems.append(f"expected one input file, found {inputs}")
-    for entry in sorted(doc_dir.iterdir()):
-        if entry.name not in expected and entry.name not in inputs:
-            problems.append(f"unexpected entry: {entry.name}")
-    skills = sorted(p.name for p in (doc_dir / "skills").iterdir()) if (doc_dir / "skills").is_dir() else []
-    if skills != sorted(SKILL_FILES):
-        problems.append(f"skills/ holds {skills}")
-    return problems
-
-
-def config_problems(text: str, *, forbidden: list[Path], secret_values: list[str]) -> list[str]:
-    """A config must not name forbidden paths (the repository) nor carry resolved secrets."""
-    problems = [f"names {root}" for root in forbidden if str(root) in text]
-    problems += ["carries a secret value" for value in secret_values if value and value in text]
-    return problems
-
-
 # ── After a run ──────────────────────────────────────────────────────────
-
-
-class ExportCheck(IRModel):
-    exported: bool  # a successful export wrote into out/
-    markdown: str | None = None  # the last such export
-    current: bool = False  # its Markdown equals the rendering of the final workspace state
-    extra_files: list[str] = []  # files in out/ that no export wrote
-    problems: list[str] = []
 
 
 class ToolUsage(IRModel):
@@ -172,7 +106,6 @@ class CheckSummary(IRModel):
 
 class Verification(IRModel):
     integrity: IntegrityReport
-    export: ExportCheck
     check: CheckSummary | None
     tools: ToolUsage | None
 
@@ -184,8 +117,7 @@ def verify_run(doc_dir: Path) -> Verification:
     ws_root = doc_dir / "ws"
     if not (ws_root / "state.json").is_file():
         empty = IntegrityReport(ok=False, problems=["no workspace"], transactions=0, calls=0)
-        return Verification(integrity=empty, export=ExportCheck(exported=False, problems=["no workspace"]),
-                            check=None, tools=None)
+        return Verification(integrity=empty, check=None, tools=None)
     integrity = verify_workspace(ws_root)
     state = Workspace.open(ws_root).load()
     records = read_records(ws_root / "calls.jsonl")
@@ -204,52 +136,7 @@ def verify_run(doc_dir: Path) -> Verification:
         tokens={k: v.model_dump() for k, v in stats.tokens.items()}, cost_usd=stats.cost_usd,
         wall_time_s=stats.wall_time_s,
     )
-    export = _export_check(doc_dir, calls, state, integrity.ok)
-    return Verification(integrity=integrity, export=export, check=summary, tools=tools)
-
-
-def _export_check(doc_dir: Path, calls: list[dict], state, integrity_ok: bool) -> ExportCheck:
-    out_dir = (doc_dir / "out").resolve()
-    written: list[Path] = []
-    last: dict | None = None
-    for call in calls:
-        envelope = call.get("envelope") or {}
-        result = call.get("result") or {}
-        if call.get("tool") != "export" or not envelope.get("ok") or not result:
-            continue
-        md, sidecar = Path(result["markdown"]), Path(result["sidecar"])
-        written += [md.resolve(), sidecar.resolve()] + ([Path(result["summary"]).resolve()] if result.get("summary")
-                                                        else [])
-        if md.resolve().parent == out_dir:
-            last = result
-    problems: list[str] = []
-    if not integrity_ok:
-        problems.append("the workspace was changed outside the tools; its export does not count")
-    if last is None:
-        problems.append("no successful export into out/")
-        return ExportCheck(exported=False, problems=problems, extra_files=_extra(out_dir, written))
-    md_path = Path(last["markdown"])
-    if not md_path.is_file():
-        problems.append(f"{md_path.name} no longer exists")
-        return ExportCheck(exported=False, markdown=str(md_path), problems=problems,
-                           extra_files=_extra(out_dir, written))
-    current = md_path.read_text(encoding="utf-8") == render_markdown(state)
-    if not current:
-        problems.append("the exported Markdown differs from the final workspace state (changed after export)")
-    return ExportCheck(exported=integrity_ok, markdown=str(md_path), current=current, problems=problems,
-                       extra_files=_extra(out_dir, written))
-
-
-def _extra(out_dir: Path, written: list[Path]) -> list[str]:
-    """Files in out/ that no export wrote (exported images live in out/images/)."""
-    if not out_dir.is_dir():
-        return []
-    known = set(written)
-    extra = []
-    for path in sorted(out_dir.rglob("*")):
-        if path.is_file() and path.resolve() not in known and path.parent.name != "images":
-            extra.append(str(path.relative_to(out_dir)))
-    return extra
+    return Verification(integrity=integrity, check=summary, tools=tools)
 
 
 def shipped_skills() -> dict[str, str]:
@@ -259,41 +146,16 @@ def shipped_skills() -> dict[str, str]:
     return {name: load_skill(name).text for name in SKILLS}
 
 
-def run_control(doc_dir: Path) -> dict[str, Any]:
-    """The fixed-sequence runtime on an experiment directory's input and config (plan P2-3)."""
-    from parserx.config.schema import load_config
-    from parserx.runtimes.pipeline import RuntimeFailure, run
-
-    doc_dir = Path(doc_dir)
-    source = next(doc_dir.glob("input.*"))
-    config = load_config(doc_dir / "parserx.yaml")
-    started = time.monotonic()
-    try:
-        outcome = run(source, doc_dir / "ws", doc_dir / "out", config)
-        status, error = outcome.status, None
-    except RuntimeFailure as exc:
-        status, error = None, str(exc)
-    return {"status": status, "error": error, "wall_s": round(time.monotonic() - started, 1)}
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m parserx.runtimes.experiment")
     sub = parser.add_subparsers(dest="command", required=True)
-    verify = sub.add_parser("verify", help="Post-run check of one experiment directory (JSON on stdout)")
+    verify = sub.add_parser("verify", help="Post-run check of an agent's directory (JSON on stdout)")
     verify.add_argument("--doc-dir", type=Path, required=True)
     sub.add_parser("skills", help="The skills shipped in this installation (JSON on stdout)")
     sub.add_parser("template", help="The task template shipped in this installation (text on stdout)")
-    control = sub.add_parser("control", help="Fixed-sequence runtime on an experiment directory (JSON on stdout)")
-    control.add_argument("--doc-dir", type=Path, required=True)
-    control.add_argument("--env-file", type=Path, required=True, help="service settings (kept outside the directory)")
     args = parser.parse_args(argv)
     if args.command == "verify":
         print(verify_run(args.doc_dir).model_dump_json())
-    elif args.command == "control":
-        from dotenv import dotenv_values
-
-        os.environ.update({k: v for k, v in dotenv_values(args.env_file).items() if v is not None})
-        print(json.dumps(run_control(args.doc_dir)))
     elif args.command == "template":
         sys.stdout.write((Path(__file__).parent / "agent_task.md").read_text(encoding="utf-8"))
     else:

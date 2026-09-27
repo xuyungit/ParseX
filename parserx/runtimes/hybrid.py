@@ -138,7 +138,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     reporter(StageStart("process"))
     t = time.monotonic()
     context = _Session(reporter, context_class)
-    envelope, code = call_tool("process", ws_dir, {}, config=config, context_factory=context)
+    envelope, code = call_tool("run_pipeline", ws_dir, {}, config=config, context_factory=context)
     if code == 1 or not envelope.ok:
         raise ParseFailure("process_failed", envelope.failures[0].message if envelope.failures else "process failed")
     if envelope.failures:
@@ -389,10 +389,12 @@ def _write_run(work: Path, key: dict, stage: str) -> None:
 
 
 def _export(ws_dir: Path, out: Path, name: str, config: ParserXConfig, context=None) -> None:
-    envelope, _ = call_tool("export", ws_dir, {"out": str(out), "name": name}, config=config,
+    envelope, _ = call_tool("submit_draft", ws_dir, {"out": str(out), "name": name}, config=config,
                             context_factory=context or ToolContext)
-    if not envelope.ok:
-        raise ParseFailure("export_failed", envelope.failures[0].message if envelope.failures else "export failed")
+    if not envelope.ok or not envelope.result.accepted:
+        why = (envelope.failures[0].message if envelope.failures else "submit failed") if not envelope.ok \
+            else "; ".join(envelope.result.blockers)
+        raise ParseFailure("export_failed", why)
 
 
 def _summary(package: Path, name: str) -> DocumentSummary:

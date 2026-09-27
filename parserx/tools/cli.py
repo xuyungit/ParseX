@@ -20,8 +20,8 @@ from typing import Any
 
 from parserx.config.schema import load_config
 
-TOOL_NAMES = ("process", "overview", "skim", "read", "ask_image", "recognize", "review_table", "correct", "close",
-              "describe_figure", "apply_structure", "check", "export")
+AGENT_TOOLS = ("read_draft", "view_source", "edit_draft", "submit_draft")  # what the agent is given (Q85)
+TOOL_NAMES = (*AGENT_TOOLS, "run_pipeline")  # run_pipeline makes the first draft; the program runs it
 
 
 def add_parsers(sub) -> None:
@@ -49,93 +49,45 @@ def _common(p) -> None:
     p.add_argument("--json", action="store_true", help="JSON output (always on)")
 
 
-def _read_opts(p):
+def _read_draft_opts(p):
+    p.add_argument("--view", choices=("summary", "issues", "text", "outline", "blocks"), default="summary")
+    p.add_argument("--kinds", help="issues: comma-separated kinds")
+    p.add_argument("--page", type=int, help="issues or text: one page")
+    p.add_argument("--from", dest="start", help="text: read from this block id (default: the beginning)")
+    p.add_argument("--after", type=int, default=40, help="text: this block and the ones after it")
+    p.add_argument("--before", type=int, default=0, help="text: blocks before --from")
+    p.add_argument("--find", help="text: blocks containing this phrase (spacing and case ignored)")
+    p.add_argument("--pattern", help="text: blocks matching this regular expression")
+    p.add_argument("--cls", help="text: every block of this style class (ids from the outline)")
+    p.add_argument("--full", action="store_true", help="text: whole paragraphs instead of their start")
+    p.add_argument("--blocks", help="blocks: comma-separated block ids")
+    p.add_argument("--sources", action="store_true", help="blocks: each engine's reading of them")
+
+
+def _view_source_opts(p):
+    p.add_argument("--block")
     p.add_argument("--page", type=int)
-    p.add_argument("--block")
-    p.add_argument("--image", choices=("none", "page", "crop"), default="none")
-    p.add_argument("--context", type=int, default=0)
-    p.add_argument("--dpi", type=int)
-    p.add_argument("--pad-pt", type=float)
-    p.add_argument("--observations", action="store_true")
-    p.add_argument("--include-hidden", action="store_true", help="also superseded / excluded blocks")
-    p.add_argument("--geometry", action="store_true", help="include anchors and coordinates")
+    p.add_argument("--seam", type=int, help="page N's bottom half above page N+1's top half")
+    p.add_argument("--bbox", type=float, nargs=4, metavar=("X0", "Y0", "X1", "Y1"), help="with --page: a region")
+    p.add_argument("--rows", type=int, nargs=2, metavar=("FIRST", "LAST"), help="with a table --block: these rows")
+    p.add_argument("--as", dest="as_", choices=("image", "answer", "text", "table", "description"), default="image")
+    p.add_argument("--question", help="as answer: what to ask")
+    p.add_argument("--looks", help="JSON file (or -) with a list of looks: several in one call")
 
 
-def _skim_opts(p):
-    p.add_argument("--outline", action="store_true", help="style classes and heading-like lines")
-    p.add_argument("--page", type=int)
-    p.add_argument("--find", help="blocks containing this phrase (spacing and case ignored)")
-    p.add_argument("--cls", help="every block of this style class (ids from --outline)")
-    p.add_argument("--from", dest="start", help="scroll from this block id (default: the beginning)")
-    p.add_argument("--after", type=int, default=40, help="scroll: this block and the ones after it")
-    p.add_argument("--before", type=int, default=0, help="scroll: blocks before --from")
-    p.add_argument("--full", action="store_true", help="whole paragraphs instead of their start")
+def _edit_draft_opts(p):
+    p.add_argument("--ops", help="JSON file (or -) with the list of operations")
+    p.add_argument("--atomic", action="store_true", help="any refused operation: none applied")
 
 
-def _recognize_opts(p):
-    p.add_argument("--pages", help="e.g. 1,3-5")
-    p.add_argument("--blocks", help="comma-separated block ids")
-    p.add_argument("--regions", help="JSON file with a list of RegionRef")
-    p.add_argument("--engine", choices=("paddleocr", "vlm", "native", "layout"), required=False)
-    p.add_argument("--force", action="store_true")
-    p.add_argument("--observations", action="store_true", help="include the new observations (text) in the result")
-
-
-def _review_opts(p):
-    p.add_argument("--block")
-    p.add_argument("--issues", help="JSON file (or -) with a list of TableIssue")
-    p.add_argument("--context", choices=("table", "table+caption", "page"), default="table")
-
-
-def _ask_opts(p):
-    p.add_argument("--block", help="ask about this block's image (its crop)")
-    p.add_argument("--page", type=int, help="ask about the whole page image")
-    p.add_argument("--seam", type=int, help="ask about page N's bottom half above page N+1's top half (PDF)")
-    p.add_argument("--rows", type=int, nargs=2, metavar=("FIRST", "LAST"),
-                   help="with --block of a table: a sharper strip of just these rows (from 0)")
-    p.add_argument("--question")
-    p.add_argument("--questions", help="JSON file (or -) with a list of {block | page | seam, question}: "
-                                       "several at once")
-
-
-def _close_opts(p):
-    p.add_argument("--target", help="the item's block id or page (p3)")
-    p.add_argument("--kind", help="the item's kind (e.g. text_unaccounted, title_candidate)")
-    p.add_argument("--image", help="the asset id of the image the item was checked on")
-    p.add_argument("--reason")
-    p.add_argument("--actor", default="agent")
-
-
-def _correct_opts(p):
-    p.add_argument("--block")
-    p.add_argument("--image", help="the asset id that read --image returned for this block or its page")
-    p.add_argument("--reason")
-    p.add_argument("--edits", help="JSON file (or -) with a list of {find, replace} (text blocks)")
-    p.add_argument("--cells", help="JSON file (or -) with a list of {row, col, content} (tables)")
-    p.add_argument("--actor", default="agent")
-
-
-def _describe_opts(p):
-    p.add_argument("--block")
-    p.add_argument("--blocks", help="comma-separated block ids: several figures in one call")
-    p.add_argument("--schema", choices=("auto", "chart", "diagram", "photo", "seal", "other"), default="auto")
-
-
-def _structure_opts(p):
-    p.add_argument("--changes", help="JSON file (or -) with a list of structure changes")
-    p.add_argument("--atomic", action="store_true")
-    p.add_argument("--actor", default="agent")
-
-
-def _export_opts(p):
-    p.add_argument("--out", type=Path)
+def _submit_draft_opts(p):
+    p.add_argument("--out", type=Path, help="export to this directory when accepted")
     p.add_argument("--name")
 
 
 _TOOL_OPTIONS = {
-    "process": lambda p: None, "overview": lambda p: None, "skim": _skim_opts, "read": _read_opts, "recognize": _recognize_opts, "review_table": _review_opts,
-    "describe_figure": _describe_opts, "correct": _correct_opts, "close": _close_opts, "ask_image": _ask_opts, "apply_structure": _structure_opts, "check": lambda p: None,
-    "export": _export_opts,
+    "read_draft": _read_draft_opts, "view_source": _view_source_opts, "edit_draft": _edit_draft_opts,
+    "submit_draft": _submit_draft_opts, "run_pipeline": lambda p: None,
 }
 
 
@@ -160,42 +112,21 @@ def _pages(spec: str) -> list[int]:
 def _request(name: str, args) -> dict[str, Any]:
     if args.request:
         return _load_json(args.request)
-    if name == "read":
-        return {k: v for k, v in dict(page=args.page, block=args.block, image=args.image, context=args.context,
-                                      dpi=args.dpi, pad_pt=args.pad_pt, observations=args.observations,
-                                      include_hidden=args.include_hidden, geometry=args.geometry).items()
-                if v is not None}
-    if name == "skim":
-        return {k: v for k, v in dict(outline=args.outline, page=args.page, find=args.find, cls=args.cls, start=args.start,
-                                      after=args.after, before=args.before, full=args.full).items() if v is not None}
-    if name == "recognize":
-        return {"pages": _pages(args.pages) if args.pages else [],
-                "blocks": args.blocks.split(",") if args.blocks else [],
-                "regions": _load_json(args.regions) if args.regions else [],
-                "engine": args.engine, "force": args.force, "observations": args.observations}
-    if name == "review_table":
-        return {"block": args.block, "issues": _load_json(args.issues) if args.issues else [],
-                "context": args.context}
-    if name == "ask_image":
-        if args.questions:
-            return {"questions": _load_json(args.questions)}
-        return {k: v for k, v in dict(block=args.block, page=args.page, seam=args.seam, rows=args.rows,
-                                      question=args.question).items() if v is not None}
-    if name == "correct":
-        return {"block": args.block, "image": args.image, "reason": args.reason, "actor": args.actor,
-                "edits": _load_json(args.edits) if args.edits else [],
-                "cells": _load_json(args.cells) if args.cells else []}
-    if name == "close":
-        return {"target": args.target, "kind": args.kind, "image": args.image, "reason": args.reason,
-                "actor": args.actor}
-    if name == "describe_figure":
-        if args.blocks:
-            return {"blocks": args.blocks.split(","), "schema": args.schema}
-        return {"block": args.block, "schema": args.schema}
-    if name == "apply_structure":
-        return {"changes": _load_json(args.changes) if args.changes else [], "atomic": args.atomic,
-                "actor": args.actor}
-    if name == "export":
+    if name == "read_draft":
+        request = dict(view=args.view, kinds=args.kinds.split(",") if args.kinds else None, page=args.page,
+                       start=args.start, after=args.after, before=args.before, find=args.find, pattern=args.pattern,
+                       cls=args.cls, full=args.full, blocks=args.blocks.split(",") if args.blocks else None,
+                       sources=args.sources)
+        return {k: v for k, v in request.items() if v is not None}
+    if name == "view_source":
+        if args.looks:
+            return {"looks": _load_json(args.looks)}
+        one = dict(block=args.block, page=args.page, seam=args.seam, bbox=args.bbox, rows=args.rows,
+                   question=args.question)
+        return {"looks": [{"as": args.as_, **{k: v for k, v in one.items() if v is not None}}]}
+    if name == "edit_draft":
+        return {"ops": _load_json(args.ops) if args.ops else [], "atomic": args.atomic}
+    if name == "submit_draft":
         return {"out": str(args.out) if args.out else None, "name": args.name}
     return {}
 

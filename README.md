@@ -150,7 +150,7 @@ parserx/
 ├── tables/      # TableGrid, GFM/HTML, cross-page merge, arithmetic checks
 ├── hierarchy/   # titles and levels, legality of structure changes
 ├── accounting/  # the accounting check
-├── tools/       # the toolkit and its JSON CLI (process, read, recognize, review_table, describe_figure, …)
+├── tools/       # the toolkit and its JSON CLI: the agent's four tools read_draft, view_source, edit_draft, submit_draft, and run_pipeline, which makes the first draft
 ├── runtimes/    # fixed pipeline, hybrid, Codex adapter
 ├── console/     # the parse command's progress and summary (zh / en)
 ├── render/      # Markdown, sidecar, summary
