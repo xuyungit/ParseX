@@ -150,7 +150,9 @@ class ChatModel:
         message = response.choices[0].message
         calls = [ToolCall(c.id, c.function.name, c.function.arguments or "{}") for c in message.tool_calls or []]
         usage = response.usage
-        return Answer(Reply(message.content or "", calls), Usage(
+        reasoning = (getattr(message, "model_extra", None) or {}).get("reasoning_content")  # DeepSeek: back to it only
+        return Answer(Reply(message.content or "", calls, (self.api, [{"reasoning_content": reasoning}]) if reasoning
+                            else None), Usage(
             input_tokens=usage.prompt_tokens if usage else 0,
             cached_input_tokens=_get(usage, "prompt_tokens_details", "cached_tokens"),
             output_tokens=usage.completion_tokens if usage else 0,
@@ -167,6 +169,8 @@ class ChatModel:
                 messages.append({"role": "user", "content": entry.text})
             elif isinstance(entry, Reply):
                 message: dict[str, Any] = {"role": "assistant", "content": entry.text or None}
+                if entry.raw is not None and entry.raw[0] == self.api:
+                    message.update(entry.raw[1][0])  # the provider's own fields, to the same API only
                 if entry.calls:
                     message["tool_calls"] = [{"id": c.id, "type": "function",
                                               "function": {"name": c.name, "arguments": c.arguments}}

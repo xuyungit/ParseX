@@ -217,3 +217,11 @@ def test_the_chat_request_can_mark_cache_breakpoints(tmp_path):
     assert messages[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}  # the fixed prefix
     assert messages[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}  # the history so far
     assert all("cache_control" not in str(m) for m in messages[1:-1])
+
+
+def test_a_chat_providers_own_reasoning_goes_back_to_it_only(tmp_path):
+    call = ToolCall("c1", "read_draft", "{}")
+    history = [Note("开始"), Reply("", [call], raw=("chat", [{"reasoning_content": "先看待办"}])),
+               ToolResult(call, '{"ok": true}')]
+    assert ChatModel(None, "m").messages("任务", history)[2]["reasoning_content"] == "先看待办"
+    assert "reasoning_content" not in json.dumps(ResponsesModel(None, "m", None).input("任务", history))
