@@ -1,4 +1,4 @@
-# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后；Q79–Q85 之后更新，2026-09-27）
+# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后；Q79–Q86 之后更新，2026-09-27）
 
 复制下面整段作为新会话的第一条消息。
 
@@ -6,9 +6,9 @@
 
 你在 /Users/xuyun/Projects/ParserX 工作。这是一个把 PDF / DOCX（含扫描件与图片）转成适合大模型使用的 Markdown 的工具。设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
 
-**当前**：v2 重建的阶段零至五全部完成。只剩一条流水线：工作区 + 工具包 + 程序约束。Agent 的工具是四个：`read_draft`、`view_source`、`edit_draft`、`submit_draft`（Q85，指导 §5.1、docs/v2_toolkit_review.md）；`run_pipeline` 做出初稿，不给 Agent。
+**当前**：v2 重建的阶段零至五全部完成。只剩一条流水线：工作区 + 工具包 + 程序约束。Agent 的工具是四个：`read_draft`、`view_source`、`edit_draft`、`submit_draft`（Q85，指导 §5.1、docs/v2_toolkit_review.md）；`run_pipeline` 做出初稿、`export` 写出输出包，都不给 Agent。工具的契约是请求模型（Q86）：命令行参数、任务说明里的工具参考、函数定义都由它生成。
 
-- `parserx parse` 默认走混合方案：先跑固定流水线，有待核对项时交给 Codex Agent；
+- `parserx parse` 默认走混合方案：先跑固定流水线，有待核对项时交给 Agent（默认 Codex；`runtime.agent.engine: loop` 用自己的函数调用循环，Q86）；
 - `--runtime fixed` 只用固定流水线；
 - v1 已删除，本地标签 `v1-final` 保留。
 
@@ -30,18 +30,19 @@
   交 Agent 的 10 篇有大纲文档，角色 F1 0.680–0.690（此前 0.664），heading_f1 持平。见 eval_reports/2026-09-26_skim_reading_method.md。
 - Q82：指标 2.3（标题层级允许整篇统一差一级）；Q83：不加编号同级信号；real_doc01、patent01 标注修订。
 - Q85：工具包按第一性原理重新设计为四个工具；证据存入状态；旧工具删除，探索模式退役；结构操作按结果判定层级。质量与之前持平，工具调用少三分之一以上。见 eval_reports/2026-09-27_four_tools.md。
+- Q86：接口定型——请求模型是唯一契约（中文说明，命令行参数与工具参考由它生成）；一套词表（`set_role {role: H1…}`、`join`/`unjoin`）；信封精简；`read_draft` 的 `changes` 视图；自己的函数调用循环（`runtimes/loop.py`）。5 篇上循环 + gpt-6-sol 与 Codex 质量相当、用时少三成；gpt-6-luna 也能完成，标题较弱、费用低 20 倍。见 eval_reports/2026-09-27_q86_interface.md。
 
 ## 先做四件事
 
 任一不通过先处理，不要绕过：
 
 1. 阅读：
-   - 指导 §0、§2、§3、§5、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78、Q81、Q85；
+   - 指导 §0、§2、§3、§5、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78、Q81、Q85、Q86；
    - 阶段五退出报告全文；
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 615 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 617 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
@@ -57,7 +58,7 @@
 3. **公式待核对项多时逐项交 Agent，成本高**：paper_chn02 本次 $1.56。
 4. **扫描 PDF 上不可见的 OCR 文字层可作为独立读数**。
 5. **DOCX 页面层**（Q69）。
-6. **第三方 Agent 框架**（Q62–Q64）。
+6. **Agent 运行时**（Q62–Q64）：自己的循环已能用（Q86）；还缺对 Agent 请求的响应缓存与回放（进 L1）、是否默认改用循环、便宜模型做哪些文档。
 7. ~~依赖升级~~：已完成（openai 3.19；pymupdf 1.28，段落改由版面检测器分，Q80）。
 8. **跨栏续接**：段落在一栏底部没说完、接到下一栏顶部，目前只在跨页时续接（阶段五之后的段落分析发现 8 处）。
 
