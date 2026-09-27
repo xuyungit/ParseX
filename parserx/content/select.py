@@ -210,17 +210,28 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
 
 def _filled_cells(current: TableGrid, grid: TableGrid, region: set[tuple[int, int]]) -> set[tuple[int, int]]:
     """Candidate cells in the named region (widened by the rows and columns the candidate adds) whose text the
-    current reading does not have anywhere: what the reading missed.  Their numbers are new; every number of the
-    current reading must still be there, so a changed number is never a fill."""
+    current reading does not have anywhere — not as a cell, nor as a few consecutive cells joined (a head split
+    into a row of k and a row of 1, merged back as k₁): what the reading missed.  Their numbers are
+    new; every number of the current reading must still be there, so a changed number is never a fill."""
     if not region:
         return set()
     rows, cols = [r for r, _ in region], [c for _, c in region]
     r1 = max(rows) + max(0, grid.n_rows - current.n_rows)
     c1 = max(cols) + max(0, grid.n_cols - current.n_cols)
-    known = {_plain(c.content) for c in current.cells if c.content.strip()}
+    known = {_plain(c.content) for c in current.cells if c.content.strip()} | _merges(current)
     return {(c.row, c.col) for c in grid.cells
-            if min(rows) <= c.row <= r1 and min(cols) <= c.col <= c1
-            and c.content.strip() and _plain(c.content) not in known}
+            if min(rows) <= c.row <= r1 and min(cols) <= c.col <= c1 and (text := _plain(c.content))
+            and text not in known}
+
+
+def _merges(grid: TableGrid, most: int = 4) -> set[str]:
+    """Texts of 2 to *most* consecutive non-empty cells joined, row by row and column by column: cells a reading
+    may merge into one."""
+    out: set[str] = set()
+    for key in ((lambda c: (c.row, c.col)), (lambda c: (c.col, c.row))):
+        texts = [x for c in sorted(grid.cells, key=key) if (x := _plain(c.content))]
+        out |= {"".join(texts[i:i + n]) for n in range(2, most + 1) for i in range(len(texts) - n + 1)}
+    return out
 
 
 def _where_added(grid: TableGrid, added: Counter[str], skip: set[tuple[int, int]]) -> str:
@@ -344,11 +355,16 @@ def _lost_cells(current: TableGrid, grid: TableGrid, skip: set[tuple[int, int]])
     missing = _cell_texts(current, skip) - _cell_texts(grid, set())
     if not missing:
         return missing
-    by_rows = "".join(_plain(c.content) for c in sorted(grid.cells, key=lambda c: (c.row, c.col)))
-    by_cols = "".join(_plain(c.content) for c in sorted(grid.cells, key=lambda c: (c.col, c.row)))
+    by_rows, by_cols = _run(grid, False), _run(grid, True)
     wanted = _cell_texts(current, skip)
     return Counter({text: n for text, n in missing.items()
                     if max(by_rows.count(text), by_cols.count(text)) < wanted[text]})
+
+
+def _run(grid: TableGrid, by_column: bool) -> str:
+    """The grid's text read on cell after cell, row by row or column by column (one notation, no whitespace)."""
+    key = (lambda c: (c.col, c.row)) if by_column else (lambda c: (c.row, c.col))
+    return "".join(_plain(c.content) for c in sorted(grid.cells, key=key))
 
 
 def _number_diff(before: Counter[str], after: Counter[str], native: bool) -> str:

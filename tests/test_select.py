@@ -176,11 +176,14 @@ def test_merging_cells_keeps_content_but_each_repeated_cell_must_survive():
 def test_numbers_and_cells_are_compared_in_one_notation():
     # a head drawn as k with a subscript, read as two rows by the text layer, merged back by the reading: k₁ is k1
     grid = _grid([["方法", "k", "k"], ["", "1", "2"], ["方法 A", "0.03", "-0.42"]])
-    block = Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
-                  observations=[_obs("o-base", "native_pdf", cells=grid)], chosen_observation="o-base")
     merged = _candidate([["方法", "k₁", "k₂"], ["方法 A", "0.03", "-0.42"]])
-    outcome = review_table(block, merged, allowed_cells=set(), actor="t")
-    assert outcome.adopted, outcome.gate
+    for engine in ("native_pdf", "paddleocr"):
+        block = Block(id="b-t", kind=BlockKind.TABLE, order=0, anchors=[_pdf(1)], cells=grid,
+                      observations=[_obs("o-base", engine, cells=grid)], chosen_observation="o-base")
+        # the structure issue names the head: merged cells are content the table has, not fills from the image
+        outcome = review_table(block, merged, allowed_cells=set(), fill_region={(0, 1), (0, 2), (1, 1), (1, 2)},
+                               actor="t")
+        assert outcome.adopted, (engine, outcome.gate)
 
 
 def test_a_missing_column_is_filled_only_where_a_structure_issue_named_it():
@@ -191,6 +194,9 @@ def test_a_missing_column_is_filled_only_where_a_structure_issue_named_it():
                            actor="t")
     assert outcome.adopted and block.cells.n_cols == 3
     assert block.decisions[-1].evidence["image_only_cells"] == "r1c1,r2c1"  # marked in the sidecar
+    block = _table_block()  # a fill is new text even when it reads inside a number the table has ("2" in "20")
+    assert review_table(block, _candidate([["项目", "单价", "数值"], ["甲", "2", "3"], ["乙", "7", "20"]]),
+                        allowed_cells=set(), fill_region={(1, 1), (2, 1)}, actor="t").adopted
     block = _table_block()
     outcome = review_table(block, _candidate(with_column), allowed_cells=set(), actor="t")
     detail = {g.name: g.detail for g in outcome.gate}["numeric_consistency"]
