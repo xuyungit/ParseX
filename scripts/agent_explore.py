@@ -2,7 +2,7 @@
 """Agent runs outside the repository (guide §7.3): a frozen tool snapshot per round, the product command on it.
 
     uv run python scripts/agent_explore.py snapshot --round s2 --rules r2
-    uv run python scripts/agent_explore.py parse    --round s2 --doc a,b [--runtime hybrid] [--no-agent] [--tag a]
+    uv run python scripts/agent_explore.py parse    --round s2 --doc a,b [--runtime hybrid] [--engine loop] [--no-agent] [--tag a]
 
 - ``snapshot``: the round's tool snapshot outside the repository — a wheel
   built from ``git archive`` of the (clean) HEAD, installed with the locked
@@ -279,8 +279,9 @@ def _parse_one(args, doc: str) -> int:
     doc_dir.mkdir(parents=True)
     source = doc_dir / f"input{input_path.suffix.lower()}"
     shutil.copyfile(input_path, source)
-    (doc_dir / "parserx.yaml").write_text(
-        yaml.safe_dump(doc_config(load_raw_config(CONFIG), doc_dir), allow_unicode=True, sort_keys=False))
+    config = doc_config(load_raw_config(CONFIG), doc_dir)
+    config.setdefault("runtime", {}).setdefault("agent", {})["engine"] = args.engine  # Codex, or our own loop (Q86)
+    (doc_dir / "parserx.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
     python = _toolkit(args) / "venv" / "bin" / "python"
     env = {**os.environ, **{k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}}
     if args.no_agent:
@@ -310,7 +311,8 @@ def _parse_one(args, doc: str) -> int:
     scores = None
     if expected is not None and outcome and not outcome.get("error"):
         scores = _scores(doc, expected, {"exported": True, "markdown": outcome["markdown"]})
-    record = {"doc": doc, "runtime_mode": args.runtime, "no_agent": args.no_agent, "exit_code": proc.returncode,
+    record = {"doc": doc, "runtime_mode": args.runtime, "engine": args.engine, "no_agent": args.no_agent,
+              "exit_code": proc.returncode,
               "wall_s": wall, "outcome": outcome, "agent_usage": usage, "audit": audit, "integrity": integrity,
               "scores": scores, "snapshot": _snapshot(args)["commit"]}
     (doc_dir / "record.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
@@ -344,6 +346,8 @@ def main() -> int:
     prs.add_argument("--doc", action="append", required=True, help="document name(s), comma-separated")
     prs.add_argument("--input", type=Path)
     prs.add_argument("--runtime", choices=("hybrid", "fixed"), default="hybrid")
+    prs.add_argument("--engine", choices=("codex", "loop"), default="codex",
+                     help="the agent: Codex, or our own function-calling loop (Q86)")
     prs.add_argument("--no-agent", action="store_true", help="Codex not on PATH: the fallback")
     prs.add_argument("--lang", choices=("zh", "en"), default="zh")
     prs.add_argument("--tag", help="suffix of the run directory (several runs of one document)")

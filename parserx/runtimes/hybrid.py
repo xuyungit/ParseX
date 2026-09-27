@@ -43,7 +43,7 @@ from parserx.ir.state import Missing
 from parserx.render.export import IMAGE_DIR
 from parserx.render.summary import AgentRecord, DocumentSummary
 from parserx.runtimes.actions import AgentTally, CallFollower, actions
-from parserx.runtimes.agent import AgentOutcome, AgentRuntime, CodexAgent, agent_env
+from parserx.runtimes.agent import AgentRuntime, CodexAgent, agent_env
 from parserx.runtimes.events import (
     DocEnd,
     DocStart,
@@ -160,7 +160,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     elif before.review.open == 0 and before.status == DocumentStatus.COMPLETE:
         note = "no_review_items"
     else:
-        agent = agent or codex_agent(config)
+        agent = agent or make_agent(config, context_class)
         runtime, note, detail, record, keep_work = _agent_stage(agent, agent_dir, ws_dir, work, out_dir, name,
                                                                 config, before, source, reporter, context_class)
     if note in ("mode_fixed", "no_review_items"):
@@ -206,7 +206,8 @@ def _agent_stage(agent: AgentRuntime, agent_dir: Path, ws_dir: Path, work: Path,
     keys_dir = Path(tempfile.mkdtemp(prefix="parserx-keys-"))
     tally = AgentTally()
     try:
-        prepare_agent_dir(agent_dir, config, keys_dir / "services.env", input_name=source.name, minutes=minutes)
+        if agent.adapter == "cli":
+            prepare_agent_dir(agent_dir, config, keys_dir / "services.env", input_name=source.name, minutes=minutes)
         if isinstance(agent, CodexAgent):
             agent.forbidden = {**agent.forbidden, "service keys": keys_dir}
 
@@ -249,6 +250,17 @@ def _agent_stage(agent: AgentRuntime, agent_dir: Path, ws_dir: Path, work: Path,
     reporter(StageEnd("agent", seconds, detail={"changes": record.changes, "added": record.added,
                                                 "closed": record.closed, "open": after}))
     return "hybrid:agent", None, None, record, False
+
+
+def make_agent(config: ParserXConfig, context_class: type[ToolContext] = ToolContext) -> AgentRuntime:
+    """The agent the config names (``runtime.agent.engine``): Codex, or our own loop."""
+    cfg = config.runtime.agent
+    if cfg.engine == "loop":
+        from parserx.runtimes.loop import LoopAgent
+
+        return LoopAgent(cfg.model, cfg.effort, config=config, price=config.scheduling.prices.get(cfg.model),
+                         context_class=context_class)
+    return codex_agent(config)
 
 
 def codex_agent(config: ParserXConfig) -> CodexAgent:

@@ -28,7 +28,7 @@ def _context_class(ocr_behaviour=None):
 
 
 class FakeAgent:
-    engine, model, effort = "fake", "fake-model", "medium"
+    engine, model, effort, adapter = "fake", "fake-model", "medium", "cli"
 
     def __init__(self, act=None, usable=(True, None), outcome=None):
         self.act, self.usable, self.outcome = act, usable, outcome

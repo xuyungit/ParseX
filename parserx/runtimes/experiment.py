@@ -82,7 +82,8 @@ def render_task(template: str, *, round_name: str | None, values: dict[str, Any]
 
 
 TASK = Path(__file__).parent / "agent_task.md"
-ADAPTERS = {"cli": Path(__file__).parent / "adapter_cli.md"}  # how an agent calls the tools, per runtime (Q86)
+ADAPTERS = {"cli": Path(__file__).parent / "adapter_cli.md",  # how an agent calls the tools, per runtime (Q86)
+            "call": Path(__file__).parent / "adapter_call.md"}
 
 
 def compose_task(adapter: str, *, input_name: str, minutes: int, vision: str = "tool") -> str:

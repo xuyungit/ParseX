@@ -1,9 +1,10 @@
-"""The main agent of the hybrid runtime (plan P4-1, Q13, Q57): one interface, Codex behind it for now.
+"""The main agent of the hybrid runtime (plan P4-1, Q13, Q57): one interface; Codex, or our own loop (Q86).
 
-An ``AgentRuntime`` works in a prepared directory (the workspace, ``px``, the task ``AGENTS.md``, the skills; see
-``hybrid.prepare_agent_dir``) until it ends or its deadline passes.  It changes the workspace only through the
-tools; the hybrid runtime checks that afterwards (``verify_workspace``) and decides what is used.  Other agent
-frameworks (Q62–Q64) plug in behind the same two methods.
+An ``AgentRuntime`` works on the document's workspace until it ends or its deadline passes, and changes it only
+through the tools; the hybrid runtime checks that afterwards (``verify_workspace``) and decides what is used.  How it
+calls the tools is its ``adapter``: ``cli`` — Codex in a prepared directory (the workspace, ``px``, the task
+``AGENTS.md``, the skills; ``hybrid.prepare_agent_dir``); ``call`` — function calls in this process
+(``runtimes/loop.py``).  Other agent frameworks (Q62–Q64) plug in behind the same interface.
 
 Codex: the command line of the experiments (``codex.exec_command``: model and effort explicit, isolated from the
 user's Codex setup, the ``workspace-write`` sandbox with network for the tools' services, image viewing only
@@ -45,6 +46,7 @@ class AgentRuntime(Protocol):
     engine: str
     model: str
     effort: str
+    adapter: str  # how it calls the tools: "cli" (a prepared directory with ./px) or "call" (in-process)
 
     def available(self) -> tuple[bool, str | None]:
         """(usable, why not: a notice code) — cheap, no model request."""
@@ -64,7 +66,7 @@ def agent_env(environ: dict[str, str], secret_names: Iterable[str], secret_value
 
 
 class CodexAgent:
-    engine = "codex"
+    engine, adapter = "codex", "cli"
 
     def __init__(self, model: str, effort: str, *, env: dict[str, str], price=None, forbidden: dict[str, Path] | None = None,
                  executable: str = "codex"):

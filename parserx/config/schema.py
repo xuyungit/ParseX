@@ -141,7 +141,7 @@ class RoutingConfig(BaseModel):
 class AgentConfig(BaseModel):
     """The main agent of the hybrid runtime (Q13, Q40, Q57): chosen apart from the service models."""
 
-    engine: Literal["codex"] = "codex"
+    engine: Literal["codex", "loop"] = "codex"  # loop: our own function-calling loop (runtimes/loop.py, Q86)
     model: str = "gpt-6-sol"
     effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
     deadline_min: int = 30  # Q39: documents of up to large_pages pages
