@@ -75,7 +75,7 @@ def run(input_path: Path | str, ws_dir: Path | str, out_dir: Path | str, config:
     if not envelope.ok:
         raise RuntimeFailure(f"workspace init: {envelope.failures[0].message}")
     call("run_pipeline")  # the first draft (tools/process.py): what the agent starts from in the hybrid runtime
-    envelope = call("submit_draft", {"out": str(out_dir), "name": name or Workspace.open(ws_dir).load().id})
+    envelope = call("export", {"out": str(out_dir), "name": name or Workspace.open(ws_dir).load().id})
     if not envelope.ok or not envelope.result.accepted:
         why = envelope.failures[0].message if not envelope.ok else "; ".join(envelope.result.blockers)
         raise RuntimeFailure(f"submit: {why}")

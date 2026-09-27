@@ -81,6 +81,23 @@ def render_task(template: str, *, round_name: str | None, values: dict[str, Any]
     return _VALUE.sub(value, text)
 
 
+TASK = Path(__file__).parent / "agent_task.md"
+ADAPTERS = {"cli": Path(__file__).parent / "adapter_cli.md"}  # how an agent calls the tools, per runtime (Q86)
+
+
+def compose_task(adapter: str, *, input_name: str, minutes: int, vision: str = "tool") -> str:
+    """The agent's task: the task and method (``agent_task.md``, whatever the agent), how this runtime calls the
+    tools (*adapter*), the tool reference made from the request models, and the skills."""
+    from parserx.tools.reference import reference
+
+    skills = shipped_skills()
+    template = TASK.read_text(encoding="utf-8").replace("{{adapter}}", ADAPTERS[adapter].read_text(encoding="utf-8")
+                                                        .rstrip() if adapter in ADAPTERS else "")
+    return render_task(template, round_name=None, options={"product", f"vision_{vision}"},
+                       values={"input_name": input_name, "budget_minutes": minutes, "tools": reference(),
+                               "skills": "\n\n".join(skills[n].strip() for n in ("transcription", "figure", "structure"))})
+
+
 # ── After a run ──────────────────────────────────────────────────────────
 
 

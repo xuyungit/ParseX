@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from parserx.ir.base import IRModel
 
@@ -21,13 +21,29 @@ Role = Literal["H1", "H2", "H3", "H4", "H5", "H6", "text", "list", "caption", "f
 Grounds = dict[str, float | int | str | bool]  # what a change rests on: named facts, or an evidence id (Q85)
 EvidenceRef = Grounds | str
 
+# What the agent reads about a change (Q86: the schema is the contract; its words are the task's language).  The
+# fields every operation shares are described once, in the tool's description; the rest here.
+BLOCK = "块号"
+REASON = "理由"
+EVIDENCE = "证据编号（e-…，view_source 给出）"
+EVIDENCE_OPTIONAL = "证据编号（可省）"
+
+
+def agent_doc(text: str) -> ConfigDict:
+    """A model config whose JSON Schema description is *text*: what an agent reads (the docstring is for code)."""
+    return ConfigDict(json_schema_extra={"description": text})
+
 
 class SetRole(IRModel):
+    model_config = agent_doc("设块的角色，与 read_draft 显示的角色相同。H1–H6 是标题及其层级：层级不能跳（H1 之后不能直接 H3），"
+                             "同一部分里同一编号模式同级；一次调用中连续的结构操作按结果判定，整组编号可以一起调层级。"
+                             "表格、图片、公式、扫描图不能改角色。被程序当作页眉页脚隐去的块，设了角色就重新输出。")
+
     op: Literal["set_role"]
-    block: str
-    role: Role
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    role: Role = Field(description="H1–H6：标题；text：正文；list：列表项；caption：图表题；footnote：脚注；other：其他")
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
     @property
     def kind(self) -> str:
@@ -41,60 +57,74 @@ class SetRole(IRModel):
 class Move(IRModel):
     """Put a block right after another in reading order."""
 
+    model_config = agent_doc("调整阅读顺序：把块移到 after 之后。")
+
     op: Literal["move"]
-    block: str
-    after: str | None  # None: to the front of the document
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    after: str | None = Field(description="它之前的块；null 表示移到最前")
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class Join(IRModel):
     """``second`` continues ``first`` (guide §6.9): two paragraphs broken by a page or a column are output as one;
     two tables become one, ``second``'s rows appended to ``first`` (a table continued on the next page)."""
 
+    model_config = agent_doc("续接：second 接着 first。两段文字（被分页或分栏拆开的一段）在输出中合成一段，块的原文不变；"
+                             "两张表（下一页的续表）合成一张。")
+
     op: Literal["join"]
-    first: str
-    second: str
-    drop_rows: int = Field(0, ge=0)  # tables: leading rows of ``second`` repeating the header of ``first``
-    reason: str
-    evidence: EvidenceRef = {}
+    first: str = Field(description="前一块")
+    second: str = Field(description="后一块")
+    drop_rows: int = Field(0, ge=0, description="表格：去掉 second 开头逐字重复 first 表头的几行")
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class Unjoin(IRModel):
     """Undo the joining of two paragraphs; joined tables are one table and stay so."""
 
+    model_config = agent_doc("撤销两段文字的续接（合成的表不能拆开）。")
+
     op: Literal["unjoin"]
-    first: str
-    second: str
-    reason: str
-    evidence: EvidenceRef = {}
+    first: str = Field(description="前一块")
+    second: str = Field(description="后一块")
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class MarkPending(IRModel):
+    model_config = agent_doc("拿不准这一块是不是标题：保留正文，结构待定（留下一项待办，写进最终报告）。")
+
     op: Literal["mark_pending"]
-    block: str
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class Exclude(IRModel):
     """Leave a block out of the output (an icon read as a character, interface text …); its text stays in the
     sidecar, the ledger counts it as excluded and the Decision says why (guide §2.3, Q27; P2-5)."""
 
+    model_config = agent_doc("不输出这一块（界面文字、图标被识成的字符、扫描软件字样、装饰图等），必须写明理由；文字留在 sidecar。")
+
     op: Literal["exclude"]
-    block: str
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class Include(IRModel):
     """Undo an exclusion (page furniture, a decorative image, an earlier ``exclude``): page furniture comes back as
     text; text deleted by a revision stays deleted (Q26)."""
 
+    model_config = agent_doc("恢复不输出的块（程序判为页眉页脚、装饰图的，或 exclude 的）；页眉页脚类恢复后是 text。"
+                             "修订中删除的文字不能恢复。")
+
     op: Literal["include"]
-    block: str
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 class Split(IRModel):
@@ -102,15 +132,18 @@ class Split(IRModel):
     the text after the break becomes a new text block right after it.  No text field — the break is named by its
     number, so the content is only divided, never rewritten (2026-09-25)."""
 
+    model_config = agent_doc("在块内第 at_break 个换行处拆成两块（例如标题和下一条被软换行连在一块里）；只拆开，不改文字。"
+                             "结果的 block 是拆出的新块。")
+
     op: Literal["split"]
-    block: str
-    at_break: int = Field(1, ge=1)  # the n-th line break of the block's text
-    reason: str
-    evidence: EvidenceRef = {}
+    block: str = Field(description=BLOCK)
+    at_break: int = Field(1, ge=1, description="第几个换行（从 1 起）")
+    reason: str = Field(description=REASON)
+    evidence: EvidenceRef = Field({}, description=EVIDENCE_OPTIONAL)
 
 
 StructureChange = Annotated[
-    SetRole | Move | Join | Unjoin | MarkPending | Exclude | Include | Split,
+    SetRole | Move | Join | Unjoin | Split | Exclude | Include | MarkPending,
     Field(discriminator="op"),
 ]
 

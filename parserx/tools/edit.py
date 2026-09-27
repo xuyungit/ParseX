@@ -29,7 +29,20 @@ from parserx.content.select import add_gate, integrate_image, transcribed
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
-from parserx.hierarchy.changes import Exclude, Include, Join, MarkPending, Move, SetRole, Split, Unjoin
+from parserx.hierarchy.changes import (
+    BLOCK,
+    EVIDENCE,
+    REASON,
+    Exclude,
+    Include,
+    Join,
+    MarkPending,
+    Move,
+    SetRole,
+    Split,
+    Unjoin,
+    agent_doc,
+)
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import BBox, IRModel
@@ -43,7 +56,7 @@ from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.describe_figure import Described
 from parserx.tools.describe_figure import apply as apply_description
-from parserx.tools.envelope import Change, ToolFailure, Unresolved, UnresolvedKind
+from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.evidence import image_evidence, image_evidence_at
 from parserx.tools.recognize import _next_block_seq, _next_item, integrate_page, scan_engine_pages
 from parserx.tools.views import unresolved_items
@@ -57,45 +70,65 @@ _NOT_DISMISSED = frozenset({UnresolvedKind.PAGE_PENDING, UnresolvedKind.BLOCK_FA
                             UnresolvedKind.ASSET_MISSING})
 
 
+DESCRIPTION = ("改初稿：初稿只能这样改。ops 是一组操作，按顺序在一个事务里执行，每条单独被接受或拒绝："
+               "结果 outcomes 里每条有 accepted，被拒绝的给出规则名 rule 与原因 detail，据此修正后再提交。"
+               "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt）和 dismiss 必须引用证据 "
+               "evidence——view_source 给出的编号，证据要看得到被改之处（这一块、它所在的页或区域、或跨页接缝）。"
+               "结构操作从不改文字。块号形如 b-p003-0012（第 3 页第 12 块）；表格的行、列从 0 起。"
+               "结果的 issues_opened / issues_closed 是这次修改新开和关掉的待办。")
+
+
 class CellEdit(IRModel):
-    row: int
-    col: int
-    content: str
+    row: int = Field(description="行（从 0 起）")
+    col: int = Field(description="列（从 0 起）")
+    content: str = Field(description="原件上的写法")
 
 
 class ReplaceText(IRModel):
+    model_config = agent_doc("改正文：把块中恰好出现一次的片段 find 换成原件上的写法 replace；找不到或不止一处会被拒绝，"
+                             "给更长的片段再试。原生文字层中的数字，只有页面的本地读数（程序自己读的，与你看原件无关）"
+                             "在该处显示为新值时才采用。")
+
     op: Literal["replace_text"]
-    block: str
-    find: str  # must occur exactly once in the block's current text
-    replace: str  # what the source shows
-    reason: str
-    evidence: str
+    block: str = Field(description=BLOCK)
+    find: str = Field(description="块中恰好出现一次的片段")
+    replace: str = Field(description="原件上的写法")
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description=EVIDENCE)
 
 
 class InsertText(IRModel):
+    model_config = agent_doc("补入原件上有、初稿里没有的文字（待办 text_unaccounted）：程序只在证据看得到该处、"
+                             "且本地读数在该处也有这段文字时才补入。结果的 block 是新块。")
+
     op: Literal["insert_text"]
-    page: int
-    bbox: BBox  # page points: where the page shows the text
-    text: str
-    after: str | None = None  # the block it follows in reading order; default: by its place on the page
-    reason: str
-    evidence: str
+    page: int = Field(description="页")
+    bbox: BBox = Field(description="文字在页面上的位置 [x0, y0, x1, y1]（页面点；用待办项给出的位置）")
+    text: str = Field(description="原件上的文字")
+    after: str | None = Field(None, description="排在哪一块之后；不给则按位置排进阅读顺序")
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description=EVIDENCE)
 
 
 class SetCells(IRModel):
+    model_config = agent_doc("改表格的单元格；网格内的空位也可以补填。")
+
     op: Literal["set_cells"]
-    block: str
-    cells: list[CellEdit] = Field(min_length=1)  # an empty place inside the grid may be filled (Q45)
-    reason: str
-    evidence: str
+    block: str = Field(description=BLOCK)
+    cells: list[CellEdit] = Field(min_length=1, description="[{row, col, content}, …]")  # empty places too (Q45)
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description=EVIDENCE)
 
 
 class Adopt(IRModel):
+    model_config = agent_doc("采用 view_source 读出的内容，采用的正是当时读到的：重读的表格（as=table）、图片描述（description）、"
+                             "图片里的文字或一页的识别结果（text）。给出被读的 block 或 page 之一。")
+
     op: Literal["adopt"]
-    block: str | None = None  # a table read again, a figure's description or text
-    page: int | None = None  # a page's text
-    evidence: str
-    reason: str
+    block: str | None = Field(None, description="被读的块：表格、图片")
+    page: int | None = Field(None, description="被读的页：尚未识别或识别失败的页")
+    evidence: str = Field(description="读数的证据编号")
+    reason: str = Field(description=REASON)
 
     @model_validator(mode="after")
     def _one_target(self) -> "Adopt":
@@ -105,23 +138,26 @@ class Adopt(IRModel):
 
 
 class Dismiss(IRModel):
+    model_config = agent_doc("关闭一项待办：看过证据、确认不需要改。只有提示类待办能关闭，待识别页、失败块等要处理；"
+                             "关闭后该处内容若变化，待办会重新出现。")
+
     op: Literal["dismiss"]
-    issue: str  # the issue's id (read_draft view=issues)
-    reason: str
-    evidence: str  # what showed that nothing needs to change
-    occluded: bool = False  # text_not_seen: the text is there, drawn under another element (Q71)
+    issue: str = Field(description="待办编号（w-…，read_draft 的 issues 视图）")
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description="看过的证据")
+    occluded: bool = Field(False, description="text_not_seen：文字确实在，只是被别的元素盖住（保留原文）")  # Q71
 
 
 EditOp = Annotated[
-    ReplaceText | InsertText | SetCells | Adopt | Dismiss | SetRole | Move | Join | Unjoin | Split | Exclude | Include
-    | MarkPending,
+    ReplaceText | SetCells | InsertText | Adopt | SetRole | Move | Join | Unjoin | Split | Exclude | Include
+    | MarkPending | Dismiss,
     Field(discriminator="op"),
 ]
 
 
 class EditDraftRequest(IRModel):
-    ops: list[EditOp] = Field(min_length=1)
-    atomic: bool = False  # any refusal → nothing applied
+    ops: list[EditOp] = Field(min_length=1, description="操作列表，按顺序执行")
+    atomic: bool = Field(False, description="任一条被拒绝则全部不生效")
 
 
 class OpOutcome(IRModel):
@@ -153,10 +189,8 @@ class _Rollback(Exception):
 def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     open_before = {u.id: u for u in unresolved_items(ctx.ws.load())}
     outcomes: list[OpOutcome] = []
-    diff: list[Change] = []
     try:
         with ctx.ws.txn("tool:edit_draft:agent") as state:
-            before = _snapshot(state)
             issues = _Issues(state)
             batch: list[tuple[int, object]] = []  # consecutive structure changes: judged by the outline they produce
             for index, op in enumerate(req.ops):
@@ -170,7 +204,6 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
             accepted = [o.accepted for o in outcomes]
             if not any(accepted) or (req.atomic and not all(accepted)):
                 raise _Rollback
-            diff = _diff(before, state)
     except _Rollback:
         if req.atomic:
             outcomes = [o.model_copy(update={"accepted": False, "rule": "atomic",
@@ -180,7 +213,7 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     open_after = {u.id: u for u in unresolved_items(ctx.ws.load())}
     return output(EditDraftResult(outcomes=outcomes,
                                   issues_opened=[u for k, u in open_after.items() if k not in open_before],
-                                  issues_closed=[k for k in open_before if k not in open_after]), diff=diff)
+                                  issues_closed=[k for k in open_before if k not in open_after]))
 
 
 def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Issues") -> OpOutcome:
@@ -449,35 +482,3 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> str:
     state.closed.append(ClosedItem(target=item.target, kind=item.kind.value, quotes=[q.doc_text for q in item.quotes],
                                    reason=op.reason, actor=ACTOR, image=op.evidence, occluded=op.occluded))
     return item.target
-
-
-# ── what changed ────────────────────────────────────────────────────────
-
-
-def _snapshot(state: DocumentState) -> dict[str, dict]:
-    return {b.id: _fields(b) for b in state.blocks}
-
-
-def _fields(block: Block) -> dict:
-    return {"kind": block.kind.value, "level": block.level, "order": block.order, "status": block.status.value,
-            "text": block.text, "rows": block.cells.n_rows if block.cells is not None else None,
-            "cells": block.cells.model_dump_json() if block.cells is not None else None,
-            "semantic": block.semantic.type if block.semantic is not None else None}
-
-
-def _diff(before: dict[str, dict], state: DocumentState) -> list[Change]:
-    changes = []
-    for block in state.blocks:
-        old, new = before.get(block.id, {}), _fields(block)
-        for field, value in new.items():
-            if old.get(field) == value or (not old and value is None):
-                continue
-            if field == "text":  # document text travels only as DocText (guide §3.3)
-                changes.append(Change(target=block.id, field="text",
-                                      before={"doc_text": old.get("text")} if old.get("text") else None,
-                                      after={"doc_text": value} if value else None))
-            elif field == "cells":
-                changes.append(Change(target=block.id, field="cells", before=None, after="changed"))
-            else:
-                changes.append(Change(target=block.id, field=field, before=old.get(field), after=value))
-    return changes

@@ -1,6 +1,6 @@
-"""``process``: the standard processing in one call (plan P2-5, guide §7 — the agent stays in charge).
+"""``run_pipeline``: the standard processing in one call — the first draft (plan P2-5, Q85).
 
-The fixed sequence of the pipeline runtime, as a tool the agent calls first:
+The fixed sequence of the pipeline runtime; the program runs it before the agent (it is not the agent's tool):
 
 1. ``recognize`` (paddleocr) — pages whose native layer failed;
 2. ``recognize`` (layout) — shadow detection of pages, routing of figures;
@@ -13,12 +13,12 @@ The fixed sequence of the pipeline runtime, as a tool the agent calls first:
 5. titles through ``apply_structure``: DOCX styles and outline levels, then titles by agreeing evidence on native
    text (``hierarchy.typography_titles``) and the scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
    other source is sent again once both are in place);
-6. paragraphs cut by a page break (``content.continuation``, PDF): ``continues`` between the two parts;
+6. paragraphs cut by a page break (``content.continuation``, PDF): the two parts joined;
 7. ``check``.
 
 It returns a compact summary and the worklist — what is left for judgment (unresolved items: pending pages, failed
-blocks, uncertain tables, merge candidates, pending structure …) — so the agent need not read every page to find
-the problems.  Steps already done are skipped: calling it again costs nothing.  One call, one call record: the
+blocks, uncertain tables, merge candidates, pending structure …).  Steps already done are skipped: calling it again
+costs nothing.  One call, one call record: the
 steps run on this call's context, so the requests are counted once.
 """
 
@@ -180,7 +180,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     checked = check_accounts(ctx)
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
     state = ctx.ws.load()
-    return output(_summary(state, steps, checked), failures=failures, unresolved=unresolved_items(state))
+    return output(_summary(state, steps, checked), failures=failures)
 
 
 def _image_asset(state: DocumentState, block) -> str | None:

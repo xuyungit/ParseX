@@ -33,7 +33,7 @@ from parserx.scheduling import (
 from parserx.runtimes.events import Waiting
 from parserx.services.llm import create_vlm_service
 from parserx.services.ocr import PaddleOCRService
-from parserx.tools.envelope import BudgetLeft, Change, Cost, Envelope, Failure, FailureCode, ToolFailure, Unresolved
+from parserx.tools.envelope import BudgetLeft, Cost, Envelope, Failure, FailureCode, ToolFailure
 from parserx.workspace import VersionConflict, Workspace, WorkspaceLocked, WorkspaceTampered
 
 log = logging.getLogger(__name__)
@@ -45,12 +45,10 @@ _KEEP = object()
 class ToolOutput(Generic[R]):
     result: R
     failures: list[Failure]
-    diff: list[Change]
-    unresolved: list[Unresolved]
 
 
-def output(result: R, *, failures=None, diff=None, unresolved=None) -> ToolOutput[R]:
-    return ToolOutput(result, list(failures or []), list(diff or []), list(unresolved or []))
+def output(result: R, *, failures=None) -> ToolOutput[R]:
+    return ToolOutput(result, list(failures or []))
 
 
 class ToolContext:
@@ -232,7 +230,6 @@ def invoke(
     envelope = Envelope(
         tool=name, doc=state.id, ws_version=ws.load().version, ok=not fatal,
         result=out.result if out is not None else None, cost=ctx.cost(wall, before), failures=failures,
-        diff=out.diff if out is not None else [], unresolved=out.unresolved if out is not None else [],
     )
     # The context's workspace committed this call's transactions (a runtime may share one context across calls).
     ctx.ws.log_call({"tool": name, "request": req.model_dump(mode="json", by_alias=True),

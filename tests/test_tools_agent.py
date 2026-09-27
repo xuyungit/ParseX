@@ -208,7 +208,8 @@ def test_submit_refuses_an_unfinished_draft_and_exports_a_finished_one(ws, conte
     refused = _ok("submit_draft", ws, {}, context)
     assert not refused["accepted"] and any("pending" in b for b in refused["blockers"])
     call_tool("run_pipeline", ws, {}, config=_config(), context_factory=context)
-    done = _ok("submit_draft", ws, {"out": str(tmp_path / "out")}, context)
+    assert _ok("submit_draft", ws, {}, context)["accepted"]
+    done = _ok("export", ws, {"out": str(tmp_path / "out")}, context)  # the program's step, after the agent
     assert done["accepted"] and done["markdown"].endswith(".md") and (tmp_path / "out").is_dir()
 
 
@@ -258,7 +259,7 @@ def test_scroll_from_the_start_and_on_from_where_it_stopped(report, context):
     assert body["text"]["doc_text"].endswith("…") and len(body["text"]["doc_text"]) < len(BODY)  # a glance
     assert all(line["page"] == 1 and line["cls"] for line in first["lines"])
     on = _ok("read_draft", report, {"view": "text", "start": first["after_id"], "after": 10}, context)
-    assert _texts(on["lines"])[0] == "1.1 Terms" and on["after_id"] is None  # the end of the document
+    assert _texts(on["lines"])[0] == "1.1 Terms" and "after_id" not in on  # the end of the document
     back = _ok("read_draft", report, {"view": "text", "start": on["lines"][0]["id"], "before": 2, "after": 0}, context)
     assert [line["id"] for line in back["lines"]] == [line["id"] for line in first["lines"][1:]]
     full = _ok("read_draft", report, {"view": "text", "start": body["id"], "after": 1, "full": True}, context)

@@ -59,7 +59,6 @@ from parserx.tools import ToolContext, call_tool, workspace_init
 from parserx.workspace import Workspace, verify_workspace
 
 WORK_DIR = ".parserx-work"
-TEMPLATE = Path(__file__).parent / "agent_task.md"
 _RUN_FILE = "run.json"
 
 
@@ -273,7 +272,7 @@ def prepare_agent_dir(agent_dir: Path, config: ParserXConfig, keys_file: Path, *
                       minutes: int) -> None:
     """``px``, ``parserx.yaml``, ``AGENTS.md`` and ``skills/`` next to the workspace (written afresh each run);
     the service keys go to *keys_file* (mode 0600, outside the directory)."""
-    from parserx.runtimes.experiment import SKILL_FILES, render_task, shipped_skills
+    from parserx.runtimes.experiment import SKILL_FILES, compose_task, shipped_skills
 
     text, secrets = agent_config(config, agent_dir)
     keys_file.parent.mkdir(parents=True, exist_ok=True)
@@ -290,10 +289,7 @@ def prepare_agent_dir(agent_dir: Path, config: ParserXConfig, keys_file: Path, *
     (agent_dir / "skills").mkdir(exist_ok=True)
     for file in SKILL_FILES:
         (agent_dir / "skills" / file).write_text(skills[file.removesuffix(".md")], encoding="utf-8")
-    task = render_task(TEMPLATE.read_text(encoding="utf-8"), round_name=None, options={"product", "vision_tool"},
-                       values={"input_name": input_name, "budget_minutes": minutes,
-                               "skills": "\n\n".join(skills[n].strip() for n in ("transcription", "figure",
-                                                                                 "structure"))})
+    task = compose_task("cli", input_name=input_name, minutes=minutes, vision="tool")
     (agent_dir / "AGENTS.md").write_text(task, encoding="utf-8")
 
 
@@ -389,7 +385,7 @@ def _write_run(work: Path, key: dict, stage: str) -> None:
 
 
 def _export(ws_dir: Path, out: Path, name: str, config: ParserXConfig, context=None) -> None:
-    envelope, _ = call_tool("submit_draft", ws_dir, {"out": str(out), "name": name}, config=config,
+    envelope, _ = call_tool("export", ws_dir, {"out": str(out), "name": name}, config=config,
                             context_factory=context or ToolContext)
     if not envelope.ok or not envelope.result.accepted:
         why = (envelope.failures[0].message if envelope.failures else "submit failed") if not envelope.ok \

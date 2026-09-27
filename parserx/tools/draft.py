@@ -24,7 +24,7 @@ from collections import Counter
 from statistics import median
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from parserx.hierarchy.legality import numbering_signature
 from parserx.hierarchy.typography_titles import body_typography, native_style, title_evidence
@@ -45,19 +45,32 @@ FOLLOWING = 100  # characters of the text after a heading-like line (outline)
 EXAMPLES = 3
 
 
+DESCRIPTION = ("读初稿：程序做出的解析结果（文字、表格、图片、标题结构）。不改初稿，不花钱。每次看一个视图（view）。"
+               "行与块的角色 role：H1–H6（标题）、title（层级未定的标题）、text、list、caption、footnote、other，"
+               "或 table、figure、formula、scan（内容块，角色不可改）；与 edit_draft 的 set_role 用同一套词。")
+
+
 class ReadDraftRequest(IRModel):
-    view: Literal["summary", "issues", "text", "outline", "blocks"] = "summary"
-    kinds: list[UnresolvedKind] = []  # issues: only these kinds
-    page: int | None = None  # issues or text: one page
-    start: str | None = None  # text: a block id to read from
-    after: int = 40  # text: this block and the ones after it
-    before: int = 0  # text: blocks before the start
-    find: str | None = None  # text: blocks containing this phrase
-    pattern: str | None = None  # text: blocks matching this regular expression
-    cls: str | None = None  # text: every block of this style class (ids from the outline)
-    full: bool = False  # text: whole paragraphs instead of their start
-    blocks: list[str] = []  # blocks: which
-    sources: bool = False  # blocks: each engine's reading of them
+    view: Literal["summary", "issues", "text", "outline", "blocks"] = Field(
+        "summary", description="summary：文档、各页状态、块与待办的计数、已花费用；"
+                               "issues：待办清单，每项有编号 w-…（dismiss 用它）、类别、位置、说明、相关原文；"
+                               "text：按阅读顺序的行（块号、角色、页、排版类别 cls、文字）；"
+                               "outline：排版类别表（字体字号粗细与编号样式相同的块归为一类，附当前角色分布与例子）"
+                               "与所有像标题的行（附后文开头），Word 文档附样式与编号；"
+                               "blocks：指定块的细节（表格的每个单元格、状态）")
+    kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
+    page: int | None = Field(None, description="issues、text：只看这一页")
+    start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
+                                                "start 接着往后、往前翻")
+    after: int = Field(40, description="text：从 start 起读多少块（含 start）")
+    before: int = Field(0, description="text：start 之前再读多少块")
+    find: str | None = Field(None, description="text：查找含这段文字的块（不计空格、全半角、大小写），也搜表格的行"
+                                               "（结果带 row）和图片描述")
+    pattern: str | None = Field(None, description="text：按正则表达式查找，范围同 find")
+    cls: str | None = Field(None, description="text：一个排版类别的全部块（类别编号见 outline）")
+    full: bool = Field(False, description="text：显示整段（默认段落只显示开头，以“…”结尾）")
+    blocks: list[str] = Field([], description="blocks：块号列表")
+    sources: bool = Field(False, description="blocks：附各识别来源的读数")
 
     @model_validator(mode="after")
     def _fits_the_view(self) -> "ReadDraftRequest":

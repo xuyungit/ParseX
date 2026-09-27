@@ -171,7 +171,7 @@ def test_process_reads_every_page_and_lists_what_only_the_image_shows(tmp_path):
     assert state.readings[0].lines[1].bbox == (72.0, 288.0, 336.0, 302.4)  # pixels at 150 dpi → points
     x0, y0, x1, y1 = state.readings[1].lines[0].bbox  # the turned page: back in unrotated page space
     assert x1 - x0 == pytest.approx(24.0) and y1 - y0 == pytest.approx(14.4)
-    items = [u for u in envelope.unresolved if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+    items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
     assert [u.target for u in items] == ["p1"]
     assert [q.doc_text for q in items[0].quotes] == ["A printed line the text layer lacks"]
     again, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))

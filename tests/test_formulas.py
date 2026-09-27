@@ -65,7 +65,7 @@ def _run(tmp_path, entries, editor_answer=None):
     workspace_init(path, tmp_path / "ws", config=config)
     envelope, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=Context)
     assert envelope.ok, envelope.failures
-    call_tool("submit_draft", tmp_path / "ws", {"out": str(tmp_path / "out"), "name": "f"}, config=config,
+    call_tool("export", tmp_path / "ws", {"out": str(tmp_path / "out"), "name": "f"}, config=config,
               context_factory=Context)
     return Workspace.open(tmp_path / "ws").load(), (tmp_path / "out" / "f.md").read_text(), Editor.calls
 

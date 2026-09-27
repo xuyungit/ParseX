@@ -1,22 +1,32 @@
-"""JSON CLI (guide §5.3, interfaces §5.1).
+"""JSON CLI (guide §5.3, Q86).
 
     parserx workspace init <input> --ws DIR [--config C] --json
-    parserx tool <name> --ws DIR [tool options | --request FILE|-] [--expect-version N] [--config C] --json
+    parserx tool <name> --ws DIR [--<field> VALUE … | --request FILE|-] [--expect-version N] [--config C] --json
     parserx tool schema <name>
 
-stdout carries exactly one JSON document (the envelope, or the schema); logs
-go to stderr.  Exit code 0: an envelope was returned (see ``ok`` and
-``failures``); 2: the request was invalid (an envelope with
+A tool's options are its request's fields, named as in the JSON request — the request model is the contract (Q86):
+a number or a word as it is, a list of words comma-separated, a pair or a box as that many numbers, a flag for
+true, a list of objects as JSON (a file, or ``-`` for standard input).  A request made of one kind of object
+(``view_source``'s looks) also takes that object's fields as options, for one of them.  ``--request`` gives the
+whole request as JSON.
+
+stdout carries exactly one JSON document (the envelope, or the schema); logs go to stderr.  Exit code 0: an
+envelope was returned (see ``ok`` and ``failures``); 2: the request was invalid (an envelope with
 ``invalid_request`` is still printed); 1: internal error.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
+import types
+import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
 
 from parserx.config.schema import load_config
 
@@ -25,6 +35,8 @@ TOOL_NAMES = (*AGENT_TOOLS, "run_pipeline")  # run_pipeline makes the first draf
 
 
 def add_parsers(sub) -> None:
+    from parserx.tools import TOOLS
+
     ws_cmd = sub.add_parser("workspace", help="Document workspace (v2 toolkit)")
     ws_sub = ws_cmd.add_subparsers(dest="ws_command", required=True)
     init = ws_sub.add_parser("init", help="Extract a document into a new workspace")
@@ -36,11 +48,13 @@ def add_parsers(sub) -> None:
     schema = tool_sub.add_parser("schema", help="JSON Schema of a tool's request and envelope")
     schema.add_argument("name", choices=(*TOOL_NAMES, "workspace_init"))
     for name in TOOL_NAMES:
-        p = tool_sub.add_parser(name)
+        spec = TOOLS[name]
+        p = tool_sub.add_parser(name, help=spec.description or None, description=spec.description or None)
         _common(p)
-        p.add_argument("--request", help="Full request as JSON (file path or - for stdin); overrides options")
-        p.add_argument("--expect-version", type=int, help="Refuse with version_conflict if the workspace moved on")
-        _TOOL_OPTIONS[name](p)
+        p.add_argument("--request", help="the whole request as JSON (a file, or - for standard input)")
+        p.add_argument("--expect-version", type=int, help="refuse with version_conflict if the workspace moved on")
+        for field, option in options(spec.request):
+            _add(p, field, option)
 
 
 def _common(p) -> None:
@@ -49,46 +63,101 @@ def _common(p) -> None:
     p.add_argument("--json", action="store_true", help="JSON output (always on)")
 
 
-def _read_draft_opts(p):
-    p.add_argument("--view", choices=("summary", "issues", "text", "outline", "blocks"), default="summary")
-    p.add_argument("--kinds", help="issues: comma-separated kinds")
-    p.add_argument("--page", type=int, help="issues or text: one page")
-    p.add_argument("--from", dest="start", help="text: read from this block id (default: the beginning)")
-    p.add_argument("--after", type=int, default=40, help="text: this block and the ones after it")
-    p.add_argument("--before", type=int, default=0, help="text: blocks before --from")
-    p.add_argument("--find", help="text: blocks containing this phrase (spacing and case ignored)")
-    p.add_argument("--pattern", help="text: blocks matching this regular expression")
-    p.add_argument("--cls", help="text: every block of this style class (ids from the outline)")
-    p.add_argument("--full", action="store_true", help="text: whole paragraphs instead of their start")
-    p.add_argument("--blocks", help="blocks: comma-separated block ids")
-    p.add_argument("--sources", action="store_true", help="blocks: each engine's reading of them")
+# ── options from the request model ──────────────────────────────────────
 
 
-def _view_source_opts(p):
-    p.add_argument("--block")
-    p.add_argument("--page", type=int)
-    p.add_argument("--seam", type=int, help="page N's bottom half above page N+1's top half")
-    p.add_argument("--bbox", type=float, nargs=4, metavar=("X0", "Y0", "X1", "Y1"), help="with --page: a region")
-    p.add_argument("--rows", type=int, nargs=2, metavar=("FIRST", "LAST"), help="with a table --block: these rows")
-    p.add_argument("--as", dest="as_", choices=("image", "answer", "text", "table", "description"), default="image")
-    p.add_argument("--question", help="as answer: what to ask")
-    p.add_argument("--looks", help="JSON file (or -) with a list of looks: several in one call")
+class Option(typing.NamedTuple):
+    name: str  # as in the JSON request
+    shape: Literal["value", "words", "numbers", "flag", "json"]
+    type: Any  # the value's Python type (value, numbers)
+    count: int  # numbers: how many
+    item: bool  # a field of the one object a request's list is made of
+    help: str | None
 
 
-def _edit_draft_opts(p):
-    p.add_argument("--ops", help="JSON file (or -) with the list of operations")
-    p.add_argument("--atomic", action="store_true", help="any refused operation: none applied")
+def options(model: type[BaseModel], *, item: bool = False) -> list[tuple[str, Option]]:
+    """(dest, option) per field of *model*; a list of one kind of object also offers that object's fields."""
+    out = []
+    for field_name, field in model.model_fields.items():
+        name = field.alias or field_name
+        annotation = _bare(field.annotation)
+        origin, args = typing.get_origin(annotation), typing.get_args(annotation)
+        if annotation is bool:
+            option = Option(name, "flag", bool, 0, item, field.description)
+        elif origin is tuple:
+            option = Option(name, "numbers", _bare(args[0]), len(args), item, field.description)
+        elif origin is list and _scalar(_bare(args[0])):
+            option = Option(name, "words", _bare(args[0]), 0, item, field.description)
+        elif origin is list or _is_model(annotation):
+            option = Option(name, "json", None, 0, item, field.description)
+            one = _bare(args[0]) if origin is list else None
+            if not item and _is_model(one):
+                out += options(one, item=True)
+        else:
+            option = Option(name, "value", annotation, 0, item, field.description)
+        out.append((field_name, option))
+    return out
 
 
-def _submit_draft_opts(p):
-    p.add_argument("--out", type=Path, help="export to this directory when accepted")
-    p.add_argument("--name")
+def _bare(annotation):
+    """X from X | None (and from Annotated[X, …])."""
+    if typing.get_origin(annotation) is typing.Annotated:
+        annotation = typing.get_args(annotation)[0]
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return _bare(args[0])
+    return annotation
 
 
-_TOOL_OPTIONS = {
-    "read_draft": _read_draft_opts, "view_source": _view_source_opts, "edit_draft": _edit_draft_opts,
-    "submit_draft": _submit_draft_opts, "run_pipeline": lambda p: None,
-}
+def _is_model(annotation) -> bool:
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
+def _scalar(annotation) -> bool:
+    return annotation in (str, int, float) or typing.get_origin(annotation) is Literal or (
+        isinstance(annotation, type) and issubclass(annotation, str))
+
+
+def _add(p, dest: str, option: Option) -> None:
+    flag, dest, meta = "--" + option.name, ("item." if option.item else "") + dest, option.name.upper()
+    if option.shape == "flag":
+        p.add_argument(flag, dest=dest, action="store_true", default=None, help=option.help)
+    elif option.shape == "numbers":
+        p.add_argument(flag, dest=dest, type=option.type, nargs=option.count, metavar=meta, help=option.help)
+    elif option.shape == "value" and typing.get_origin(option.type) is Literal:
+        p.add_argument(flag, dest=dest, choices=typing.get_args(option.type), help=option.help)
+    elif option.shape == "value":
+        p.add_argument(flag, dest=dest, type=option.type if option.type in (int, float) else str, metavar=meta,
+                       help=option.help)
+    else:  # words, json
+        p.add_argument(flag, dest=dest, metavar=meta, help=option.help)
+
+
+def _request(name: str, args) -> dict[str, Any]:
+    from parserx.tools import TOOLS
+
+    if args.request:
+        return _load_json(args.request)
+    request: dict[str, Any] = {}
+    item: dict[str, Any] = {}
+    listed = None
+    for dest, option in options(TOOLS[name].request):
+        value = getattr(args, ("item." if option.item else "") + dest, None)
+        if option.shape == "json" and not option.item:
+            listed = option.name
+        if value is None:
+            continue
+        if option.shape == "words":
+            value = [v.strip() for v in value.split(",") if v.strip()]
+        elif option.shape == "json":
+            value = _load_json(value)
+        (item if option.item else request)[option.name] = value
+    if item:
+        if listed in request:
+            raise ValueError(f"give --{listed} or the options of one item, not both")
+        request[listed] = [item]
+    return request
 
 
 def _load_json(value: str) -> Any:
@@ -98,43 +167,10 @@ def _load_json(value: str) -> Any:
     return json.loads(text)
 
 
-def _pages(spec: str) -> list[int]:
-    pages: list[int] = []
-    for part in spec.split(","):
-        if "-" in part:
-            a, b = part.split("-", 1)
-            pages.extend(range(int(a), int(b) + 1))
-        elif part.strip():
-            pages.append(int(part))
-    return pages
-
-
-def _request(name: str, args) -> dict[str, Any]:
-    if args.request:
-        return _load_json(args.request)
-    if name == "read_draft":
-        request = dict(view=args.view, kinds=args.kinds.split(",") if args.kinds else None, page=args.page,
-                       start=args.start, after=args.after, before=args.before, find=args.find, pattern=args.pattern,
-                       cls=args.cls, full=args.full, blocks=args.blocks.split(",") if args.blocks else None,
-                       sources=args.sources)
-        return {k: v for k, v in request.items() if v is not None}
-    if name == "view_source":
-        if args.looks:
-            return {"looks": _load_json(args.looks)}
-        one = dict(block=args.block, page=args.page, seam=args.seam, bbox=args.bbox, rows=args.rows,
-                   question=args.question)
-        return {"looks": [{"as": args.as_, **{k: v for k, v in one.items() if v is not None}}]}
-    if name == "edit_draft":
-        return {"ops": _load_json(args.ops) if args.ops else [], "atomic": args.atomic}
-    if name == "submit_draft":
-        return {"out": str(args.out) if args.out else None, "name": args.name}
-    return {}
-
-
-def main(args) -> int:
+def main(args: argparse.Namespace) -> int:
     # stdout is reserved for the JSON document; everything else goes to stderr.
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s: %(message)s", force=True)
-    from parserx.tools import call_tool, tool_schema, workspace_init
+    from parserx.tools import agent_json, call_tool, tool_schema, workspace_init
 
     if args.command == "tool" and args.tool_name == "schema":
         print(json.dumps(tool_schema(args.name), ensure_ascii=False))
@@ -150,9 +186,9 @@ def main(args) -> int:
 
             envelope = Envelope(tool=args.tool_name, doc="", ws_version=0, ok=False, failures=[
                 Failure(code=FailureCode.INVALID_REQUEST, message=f"request not readable: {exc}", retryable=False)])
-            print(envelope.model_dump_json())
+            print(agent_json(envelope))
             return 2
         envelope, code = call_tool(args.tool_name, args.ws, request, config=config,
                                    expect_version=args.expect_version)
-    print(envelope.model_dump_json(by_alias=True))
+    print(agent_json(envelope))
     return code

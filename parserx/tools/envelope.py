@@ -11,7 +11,7 @@ import hashlib
 from enum import StrEnum
 from typing import Generic, TypeVar
 
-from pydantic import JsonValue, computed_field
+from pydantic import computed_field
 
 from parserx.ir.base import IRModel
 
@@ -62,13 +62,6 @@ class Failure(IRModel):
     targets: list[str] = []  # pages ("p3") or blocks affected
 
 
-class Change(IRModel):
-    target: str
-    field: str
-    before: JsonValue
-    after: JsonValue
-
-
 class UnresolvedKind(StrEnum):
     PAGE_PENDING = "page_pending"
     BLOCK_FAILED = "block_failed"
@@ -113,8 +106,6 @@ class Envelope(IRModel, Generic[R]):
     result: R | None = None
     cost: Cost = Cost()
     failures: list[Failure] = []
-    diff: list[Change] = []
-    unresolved: list[Unresolved] = []
 
 
 class ToolFailure(Exception):

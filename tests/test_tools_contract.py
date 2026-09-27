@@ -15,7 +15,7 @@ from parserx.config.schema import CacheConfig, OCRBuilderConfig, ParserXConfig, 
 from parserx.ir.enums import BlockKind, PageStatus
 from parserx.render import render_markdown
 from parserx.services.ocr import PaddleOCRService
-from parserx.tools import TOOLS, ToolContext, call_tool, tool_schema, workspace_init
+from parserx.tools import TOOLS, ToolContext, agent_json, call_tool, tool_schema, workspace_init
 from parserx.workspace import Workspace, verify_workspace
 
 NATIVE = "SENTINEL-NATIVE 采购金额为 100 万元"
@@ -155,7 +155,7 @@ def _strings_outside_doc_text(value, inside=False):
 
 
 def _assert_contract(envelope, name):
-    data = json.loads(envelope.model_dump_json(by_alias=True))
+    data = json.loads(agent_json(envelope))  # what the agent reads
     Draft202012Validator(tool_schema(name)["envelope"]).validate(data)
     leaked = [s for s in _strings_outside_doc_text(data) if any(x in s for x in SENTINELS)]
     assert leaked == [], f"document text outside DocText in {name}: {leaked[:3]}"
@@ -206,12 +206,12 @@ def test_session_through_every_tool(ws, tmp_path):
     data = _assert_contract(env, "view_source")
     look = data["result"]["results"][0]
     assert look["image"]["path"].endswith(".png") and look["evidence"].startswith("e-")
-    assert data["ws_version"] == 2 and not data["diff"]  # the look is kept as evidence; the draft is unchanged
+    assert data["ws_version"] == 2  # the look is kept as evidence; the draft is unchanged
 
     env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     data = _assert_contract(env, "recognize")
     assert env.ok and data["result"]["selections"][0]["choice"] == "scan_engine"
-    assert data["cost"]["requests"] == {"ocr": 1} and data["diff"][0]["after"] == "done"
+    assert data["cost"]["requests"] == {"ocr": 1} and Workspace.open(ws).load().pages[1].status == "done"
 
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
     reading = _look(ws, context, block=table.id, **{"as": "table"},
@@ -228,9 +228,11 @@ def test_session_through_every_tool(ws, tmp_path):
     assert [o["accepted"] for o in data["result"]["outcomes"]] == [True, True, True, False]
     assert data["result"]["outcomes"][3]["rule"] == "kind_not_structural"
 
-    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, context=context)
+    env, _ = _call("submit_draft", ws, context=context)
     data = _assert_contract(env, "submit_draft")
     assert data["result"]["accepted"] and data["result"]["status"] == "complete"
+    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
+    assert _assert_contract(env, "export")["result"]["accepted"]
     markdown = (tmp_path / "out" / "doc.md").read_text()
     assert "# SENTINEL-OCR 标题" in markdown and "> [图片语义] photo" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
 
@@ -245,7 +247,7 @@ def test_a_workspace_changed_outside_the_tools_is_refused(ws, tmp_path):
     raw = json.loads((ws / "state.json").read_text())
     raw["blocks"][0]["text"] = "SENTINEL-NATIVE 改写"
     (ws / "state.json").write_text(json.dumps(raw, ensure_ascii=False))
-    for name, request in (("submit_draft", {"out": str(tmp_path / "out")}), ("read_draft", {})):
+    for name, request in (("submit_draft", {}), ("export", {"out": str(tmp_path / "out")}), ("read_draft", {})):
         env, code = _call(name, ws, request)
         assert not env.ok and code == 0 and env.failures[0].code == "workspace_tampered", name
         assert not env.failures[0].retryable
@@ -288,7 +290,7 @@ def test_budget_exhausted_skips_the_page_but_exports_partial(ws, tmp_path):
     assert env.ok and env.failures[0].code == "budget_exhausted"
     state = Workspace.open(ws).load()
     assert state.pages[1].status == PageStatus.SKIPPED
-    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, config=config)
+    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, config=config)
     assert env.ok and env.result.accepted and env.result.status == "partial"
     assert Workspace.open(ws).load().missing
 
@@ -309,7 +311,7 @@ def test_offline_cache_miss_leaves_the_page_pending_and_submit_refused(ws, tmp_p
     env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, config=config)
     assert env.failures[0].code == "cache_miss_offline"
     assert Workspace.open(ws).load().pages[1].status == PageStatus.PENDING
-    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, config=config)
+    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, config=config)
     assert env.ok and not env.result.accepted and "pending pages [2]" in env.result.blockers[0]
     assert not (tmp_path / "out").exists()
 
@@ -356,6 +358,22 @@ def test_cli_looks_at_the_source_with_options(ws, monkeypatch, capsys):
         parserx.cli.main()
     envelope = json.loads(capsys.readouterr().out)
     assert exit_info.value.code == 0 and envelope["result"]["results"][0]["evidence"].startswith("e-")
+
+
+def test_cli_options_are_the_request_fields():
+    from parserx.tools.cli import _request
+
+    def request(*argv):
+        args = parserx.cli.build_parser().parse_args(["tool", *argv, "--ws", "ws"])
+        return _request(args.tool_name, args)
+
+    assert request("read_draft", "--view", "text", "--start", "b-p001-0002", "--after", "5", "--full") == \
+        {"view": "text", "start": "b-p001-0002", "after": 5, "full": True}
+    assert request("read_draft", "--view", "issues", "--kinds", "page_pending,title_candidate") == \
+        {"view": "issues", "kinds": ["page_pending", "title_candidate"]}
+    assert request("view_source", "--page", "2", "--bbox", "1", "2", "3", "4", "--as", "answer", "--question", "q") == \
+        {"looks": [{"page": 2, "bbox": [1.0, 2.0, 3.0, 4.0], "as": "answer", "question": "q"}]}  # one look
+    assert request("submit_draft") == {}
 
 
 def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
@@ -548,7 +566,6 @@ def test_the_agent_corrects_ocr_text_it_has_seen(ws):
                       context=context)
     data = _assert_contract(env, "edit_draft")
     assert code == 0 and data["result"]["outcomes"][0]["accepted"] and data["cost"]["requests"] == {}
-    assert data["diff"][0]["after"] == {"doc_text": OCR_TEXT.replace("3 件", "8 件")}
     after = next(b for b in Workspace.open(ws).load().blocks if b.id == block.id)
     assert after.text == OCR_TEXT.replace("3 件", "8 件") and after.chosen_observation.endswith("agent-1")
     assert after.decisions[-1].actor == "agent" and len(after.observations) == 2  # the OCR reading stays
@@ -665,7 +682,7 @@ def test_text_covered_on_the_page_stays_and_the_summary_names_it(ws):
     assert not outcome.accepted  # only text the page does not show can be occluded
     assert _edit(ws, context, {"op": "dismiss", "issue": item.id, "reason": "被悬浮的输入框盖住", "evidence": page,
                                "occluded": True})[0].accepted
-    env, _ = _call("submit_draft", ws, {"out": str(ws.parent / "out"), "name": "d"}, context=context)
+    env, _ = _call("export", ws, {"out": str(ws.parent / "out"), "name": "d"}, context=context)
     assert env.ok and env.result.accepted, env.result
     assert NATIVE in (ws.parent / "out" / "d.md").read_text()
     summary = json.loads((ws.parent / "out" / "d.json").read_text())
@@ -796,8 +813,8 @@ def test_several_looks_in_one_call(ws):
     data = _assert_contract(env, "view_source")
     assert env.ok and code == 0 and data["cost"]["requests"] == {"vlm": 2}
     results = data["result"]["results"]
-    assert [r["block"] for r in results] == [block.id, None, "b-missing", None] and results[1]["page"] == 1
-    assert [bool(r["evidence"]) for r in results] == [True, True, False, True] and results[3]["image"]
+    assert [r.get("block") for r in results] == [block.id, None, "b-missing", None] and results[1]["page"] == 1
+    assert [bool(r.get("evidence")) for r in results] == [True, True, False, True] and results[3]["image"]
     assert [f["targets"] for f in data["failures"]] == [["b-missing"]] and data["failures"][0]["code"] == "not_found"
 
 
@@ -820,7 +837,7 @@ def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
     accounts = _accounts(ws)
     assert accounts.accounting.unassigned == 0 and accounts.mismatched == []
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, context=context)
+    env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
     markdown = (tmp_path / "out" / "doc.md").read_text()
     image_line = next(line for line in markdown.splitlines() if line.startswith("![") and figure.anchors[-1].asset in line)
     after = markdown[markdown.index(image_line):]
@@ -914,7 +931,7 @@ def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     figure = next(b for b in Workspace.open(tmp_path / "wsd").load().blocks if b.kind == BlockKind.FIGURE)
     env, _ = _call("recognize", tmp_path / "wsd", {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
     assert env.ok and env.cost.requests == {"ocr": 1}
-    env, _ = _call("submit_draft", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
+    env, _ = _call("export", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
     markdown = (tmp_path / "outd" / "scan.md").read_text()
     assert markdown.index("正文在图片之前") < markdown.index("<!-- 以下转录自上图 -->") < \
         markdown.index("SENTINEL-OCR 扫描文字") < markdown.index("正文在图片之后")
@@ -930,7 +947,7 @@ def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
 
     context = _context(page=page)
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
-    env, _ = _call("submit_draft", ws, {"out": str(ws.parent / "outp")}, context=context)
+    env, _ = _call("export", ws, {"out": str(ws.parent / "outp")}, context=context)
     md = Path(env.result.markdown).read_text()
     assert "img_in_image_box" not in md and "〔图1〕" in md
     assert md.index("〔图1〕") < md.index("<!-- 以下是上方〔图 n〕处的图片 -->") < md.rindex("](images/")
@@ -958,7 +975,7 @@ def test_split_reports_the_new_block(tmp_path):
                                                "reason": "title joined to the next line"}]})
     data = _assert_contract(env, "edit_draft")
     assert data["result"]["outcomes"][0]["accepted"] and data["result"]["outcomes"][0]["block"] == block["id"] + "-s1"
-    assert any(c["target"] == block["id"] + "-s1" for c in data["diff"])
+    assert any(b.id == block["id"] + "-s1" for b in Workspace.open(ws).load().blocks)
 
 
 def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):

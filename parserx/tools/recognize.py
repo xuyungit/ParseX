@@ -23,9 +23,9 @@ from parserx.ir.base import IRModel
 from parserx.ir.enums import BlockKind, PageStatus
 from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
-from parserx.tools.envelope import Change, Failure, FailureCode, ToolFailure
+from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import write_once
-from parserx.tools.views import ObservationView, observation_view, unresolved_items
+from parserx.tools.views import ObservationView, observation_view
 from parserx.workspace.queries import block_unit
 from parserx.workspace.views import PageRow, page_rows
 
@@ -148,7 +148,6 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
     outcomes = run_ordered(batches, fetch, max_workers=2)
     selections: list[SelectionOutcome] = []
     new_ids: list[str] = []
-    before = {p.n: p.status for p in state.pages}
     with ctx.ws.txn("tool:recognize") as state:
         for outcome in outcomes:
             batch = outcome.task
@@ -171,12 +170,9 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
         new_blocks = [b for b in state.blocks if b.id in set(new_ids)]
         views = [observation_view(b, o, geometry=False) for b in new_blocks for o in b.observations]
         rows = [r for r in page_rows(state) if r.n in set(requested)]
-        diff = [Change(target=f"p{p.n}", field="status", before=before[p.n].value, after=p.status.value)
-                for p in state.pages if p.status != before[p.n]]
-        unresolved = [u for u in unresolved_items(state) if u.target in {f"p{n}" for n in requested}]
     return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
                                   observations_total=len(views), pages=rows, selections=selections),
-                  failures=failures, diff=diff, unresolved=unresolved)
+                  failures=failures)
 
 
 _SCAN_ENGINE_MEDIA = frozenset({"image/png", "image/jpeg"})

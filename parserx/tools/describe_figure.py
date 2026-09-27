@@ -27,7 +27,7 @@ from parserx.prompts import load_prompt
 from parserx.render.markdown import semantic_block
 from parserx.scheduling import run_ordered
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
-from parserx.tools.envelope import Change, DocText, Failure, FailureCode, ToolFailure
+from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
 from parserx.tools.vlm_tasks import describe_schema, parse_describe
 from parserx.workspace.queries import neighbors
 
@@ -177,7 +177,6 @@ def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigu
     described, failures, prompt_hash = perceive(ctx, [t for t in targets if t not in items], req.schema_)
     if single and failures and not described:
         raise ToolFailure(failures[0].code, failures[0].message, targets=failures[0].targets)
-    diff: list[Change] = []
     if described:
         with ctx.ws.txn("tool:describe_figure") as state:
             state.prompt_hashes[PROMPT] = prompt_hash
@@ -186,7 +185,6 @@ def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigu
                     block = next(b for b in state.blocks if b.id == item.block)
                     items[item.block] = DescribeItem(block=item.block, type=block.semantic.type,
                                                      semantic=DocText(doc_text=semantic_block(block)))
-                    diff.append(Change(target=item.block, field="semantic", before=None, after=block.semantic.type))
                 else:
                     failures.append(Failure(code=FailureCode.SERVICE_ERROR, message=item.error, retryable=False,
                                             targets=[item.block]))
@@ -194,4 +192,4 @@ def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigu
     first = ordered_items[0] if single and ordered_items else None
     return output(DescribeFigureResult(type=first.type if first else None, semantic=first.semantic if first else None,
                                        cached=first.cached if first else False, items=ordered_items),
-                  failures=failures, diff=diff)
+                  failures=failures)

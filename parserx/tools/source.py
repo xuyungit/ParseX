@@ -48,22 +48,34 @@ TABLE_PROMPT = "review_table"
 _SCAN_MEDIA = frozenset({"image/png", "image/jpeg"})
 
 
+DESCRIPTION = ("看原件：原文档的页面和图片。不改初稿。每次看（looks 的一项）指明位置（block、page 或 seam 之一）和看法 as，"
+               "得到一个证据编号 evidence（e-…），改初稿时引用它。看原件有时间和费用成本：只在需要判断的地方看，"
+               "不要逐页看；几处要看就放进一次调用的 looks，内部并发。text、table、description 读出的内容要用 "
+               "edit_draft 的 adopt 采用才进入初稿。")
+
+
 class TableIssue(IRModel):
-    kind: Literal["char", "structure"]
-    cells: list[tuple[int, int]] | None = None
-    note: str
+    kind: Literal["char", "structure"] = Field(description="char：字符是否认对（可改数字）；structure：行列、合并单元格、"
+                                                           "漏掉的格子（范围内原结果没有的内容可以只凭图像补回）")
+    cells: list[tuple[int, int]] | None = Field(None, description="涉及的单元格 [[行, 列], …]（从 0 起）；"
+                                                                  "漏了一整列就列出这一列涉及的所有行")
+    note: str = Field(description="要核查什么")
 
 
 class Look(IRModel):
-    block: str | None = None
-    page: int | None = None
-    seam: int | None = None
-    bbox: BBox | None = None  # with page: a region of it, in page points
-    rows: tuple[int, int] | None = None  # with a table block: a band of its rows (first, last; from 0)
-    as_: Literal["image", "answer", "text", "table", "description"] = Field("image", alias="as")
-    question: str | None = None  # answer
-    issues: list[TableIssue] = []  # table: what to check (char / structure)
-    context: Literal["table", "table+caption", "page"] = "table"  # table: how much the VLM sees
+    block: str | None = Field(None, description="位置：一个块（它的裁剪图；图片块是图片本身）")
+    page: int | None = Field(None, description="位置：一整页")
+    seam: int | None = Field(None, description="位置：第 seam 页下半与下一页上半拼在一起（跨页的表格或句子）")
+    bbox: BBox | None = Field(None, description="与 page 一起：只看页面上的这个区域 [x0, y0, x1, y1]（页面点）")
+    rows: tuple[int, int] | None = Field(None, description="与表格的 block 一起：只看这几行 [首行, 末行]（从 0 起），更清楚")
+    as_: Literal["image", "answer", "text", "table", "description"] = Field(
+        "image", alias="as", description="image：返回图片文件的路径，打开它亲自看；answer：视觉模型看图回答 question；"
+                                         "text：识别引擎读一页（尚未识别或识别失败的页）或一张图片里的文字；"
+                                         "table：视觉模型按 issues 重读一张表格；description：视觉模型描述一张图片")
+    question: str | None = Field(None, description="answer：要问的问题，要具体，例如“第 2 行第 3 列的数值是多少”")
+    issues: list[TableIssue] = Field([], description="table：要核查的问题；范围外新增或改动的数字会被拒绝")
+    context: Literal["table", "table+caption", "page"] = Field(
+        "table", description="table：视觉模型看到多少——table 只看表格，table+caption 附表题，page 整页")
 
     model_config = {**IRModel.model_config, "populate_by_name": True}
 
@@ -87,7 +99,7 @@ class Look(IRModel):
 
 
 class ViewSourceRequest(IRModel):
-    looks: list[Look] = Field(min_length=1)
+    looks: list[Look] = Field(min_length=1, description="要看的地方，结果按同样的顺序返回")
 
 
 class LookResult(IRModel):

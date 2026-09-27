@@ -93,20 +93,24 @@ def test_task_template_renders_every_value_and_the_chosen_blocks():
         render_task(template, round_name=None, values={"input_name": "input.pdf"})
 
 
-def test_the_shipped_task_names_the_four_tools_and_only_them():
-    from importlib.resources import files
+def test_the_shipped_task_is_the_task_the_cli_adapter_and_the_generated_reference():
+    from parserx.runtimes.experiment import compose_task
 
-    template = (files("parserx.runtimes") / "agent_task.md").read_text(encoding="utf-8")
-    values = {"input_name": "input.pdf", "budget_minutes": 30, "skills": "SKILL-TEXT"}
-    tool = render_task(template, round_name=None, values=values, options={"vision_tool"})
-    agent = render_task(template, round_name=None, values=values, options={"vision_agent"})
+    tool = compose_task("cli", input_name="input.pdf", minutes=30, vision="tool")
+    agent = compose_task("cli", input_name="input.pdf", minutes=30, vision="agent")
     for text in (tool, agent):
-        assert "{{" not in text and "input.pdf" in text and "30 分钟" in text and "SKILL-TEXT" in text
+        assert "{{" not in text and "input.pdf" in text and "30 分钟" in text and "./px tool" in text
         for name in ("read_draft", "view_source", "edit_draft", "submit_draft", "doc_text", "evidence"):
             assert name in text
+        for op in ("replace_text", "set_cells", "insert_text", "adopt", "set_role", "move", "join", "unjoin", "split",
+                   "exclude", "include", "mark_pending", "dismiss"):  # every operation, from the schema
+            assert f"**`{op}`**" in text, op
         for old in ("./px tool process", "overview", "ask_image", "apply_structure", "review_table", "describe_figure",
-                    "workspace init", "`correct`", "`close`", "`skim`", "set_level", "merge_tables", '"link"'):
+                    "workspace init", "`correct`", "`close`", "`skim`", "set_level", "merge_tables", '"link"',
+                    "--from", "--out"):
             assert old not in text, old
     # the two ways of seeing images differ only where the source is looked at
-    assert "`image`：返回图片文件的路径" in agent and "`answer`：视觉模型" not in agent
-    assert "`answer`：视觉模型" in tool and "`image`：返回图片文件的路径" not in tool
+    assert "打开这个文件亲自看" in agent and "不要用 `as: image`" not in agent
+    assert "不要用 `as: image`" in tool and "打开这个文件亲自看" not in tool
+    # without the command line, the task says nothing of it
+    assert "./px" not in compose_task("call", input_name="input.pdf", minutes=30)

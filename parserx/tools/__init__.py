@@ -1,12 +1,14 @@
-"""The document toolkit (guide §5, Q85): four tools over the workspace, one envelope, a JSON CLI.
+"""The document toolkit (guide §5, Q85, Q86): four tools over the workspace, one envelope, a JSON CLI.
 
 The agent reads the draft (``read_draft``), looks at the source (``view_source``), changes the draft
-(``edit_draft``) and hands it in (``submit_draft``).  ``run_pipeline`` makes the first draft — the program runs it
-before the agent starts; it is not the agent's tool.  The pipeline's own steps (``recognize`` pages with the scan
-engine, ``describe_figure``) are callable in-process for the pipeline and its tests.
+(``edit_draft``) and hands it in (``submit_draft``).  ``run_pipeline`` makes the first draft and ``export`` writes the
+output package — the program runs them, before and after the agent; they are not the agent's tools.  The pipeline's
+own steps (``recognize`` pages with the scan engine, ``describe_figure``) are callable in-process too.
 
-``call_tool(name, ws_dir, request, config=…)`` runs one in-process; ``parserx tool <name> …`` is the same call from
-a shell.  ``tool_schema(name)`` gives the request and envelope JSON Schemas for runtime adapters.
+The request models are the contract (Q86): their descriptions are what an agent reads, and the command line
+(``tools/cli.py``), the task's tool reference (``tools/reference.py``) and a function-calling runtime's tool
+definitions are all made from them.  ``call_tool(name, ws_dir, request, config=…)`` runs one in-process;
+``parserx tool <name> …`` is the same call from a shell; ``tool_schema(name)`` gives the JSON Schemas.
 """
 
 from __future__ import annotations
@@ -30,18 +32,20 @@ class ToolSpec:
     request: type[BaseModel]
     result: type[BaseModel]
     run: Callable
+    description: str = ""  # what the agent reads about the tool (the agent's tools only)
 
 
 TOOLS: dict[str, ToolSpec] = {
-    "read_draft": ToolSpec(draft.ReadDraftRequest, draft.ReadDraftResult, draft.run),
-    "view_source": ToolSpec(source.ViewSourceRequest, source.ViewSourceResult, source.run),
-    "edit_draft": ToolSpec(edit.EditDraftRequest, edit.EditDraftResult, edit.run),
-    "submit_draft": ToolSpec(submit.SubmitDraftRequest, submit.SubmitDraftResult, submit.run),
+    "read_draft": ToolSpec(draft.ReadDraftRequest, draft.ReadDraftResult, draft.run, draft.DESCRIPTION),
+    "view_source": ToolSpec(source.ViewSourceRequest, source.ViewSourceResult, source.run, source.DESCRIPTION),
+    "edit_draft": ToolSpec(edit.EditDraftRequest, edit.EditDraftResult, edit.run, edit.DESCRIPTION),
+    "submit_draft": ToolSpec(submit.SubmitDraftRequest, submit.SubmitDraftResult, submit.run, submit.DESCRIPTION),
     "run_pipeline": ToolSpec(process.ProcessRequest, process.ProcessResult, process.run),
 }
 
-# Steps of the pipeline, run in-process (not on the command line, not the agent's).
+# The program's steps, run in-process (not on the command line, not the agent's).
 STEPS: dict[str, ToolSpec] = {
+    "export": ToolSpec(submit.ExportRequest, submit.ExportResult, submit.export),
     "recognize": ToolSpec(recognize.RecognizeRequest, recognize.RecognizeResult, recognize.run),
     "describe_figure": ToolSpec(describe_figure.DescribeFigureRequest, describe_figure.DescribeFigureResult,
                                 describe_figure.run),
@@ -60,8 +64,31 @@ def tool_schema(name: str) -> dict[str, Any]:
         return {"request": {"type": "object", "properties": {"input": {"type": "string"}, "ws": {"type": "string"}}},
                 "envelope": Envelope[InitResult].model_json_schema(mode="serialization")}
     spec = TOOLS.get(name) or STEPS[name]
-    return {"request": spec.request.model_json_schema(by_alias=True),
-            "envelope": Envelope[spec.result].model_json_schema(mode="serialization")}
+    return {"description": spec.description, "request": spec.request.model_json_schema(by_alias=True),
+            "envelope": _absent_when_null(Envelope[spec.result].model_json_schema(mode="serialization"))}
 
 
-__all__ = ["AGENT_TOOLS", "STEPS", "TOOLS", "ToolContext", "call_tool", "tool_schema", "workspace_init"]
+def agent_json(envelope: Envelope) -> str:
+    """An envelope as the agent reads it: fields without a value (null) are left out."""
+    return envelope.model_dump_json(by_alias=True, exclude_none=True)
+
+
+def _absent_when_null(schema: Any) -> Any:
+    """The envelope schema as ``agent_json`` writes it: a field that may be null may be absent (absent means null)."""
+    if isinstance(schema, dict):
+        properties = schema.get("properties")
+        if isinstance(properties, dict) and "required" in schema:
+            schema["required"] = [k for k in schema["required"] if not _nullable(properties.get(k, {}))]
+        for value in schema.values():
+            _absent_when_null(value)
+    elif isinstance(schema, list):
+        for value in schema:
+            _absent_when_null(value)
+    return schema
+
+
+def _nullable(prop: dict) -> bool:
+    return prop.get("type") == "null" or any(o.get("type") == "null" for o in prop.get("anyOf", []))
+
+
+__all__ = ["AGENT_TOOLS", "STEPS", "TOOLS", "ToolContext", "agent_json", "call_tool", "tool_schema", "workspace_init"]

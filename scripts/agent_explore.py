@@ -61,6 +61,7 @@ DEFAULT_EXP_ROOT = Path.home() / "parserx-exp" / "phase2"
 CONFIG = REPO_ROOT / "configs" / "regression_v2.yaml"  # the fixed-sequence v2 config; tools read the same sections
 ENV_FILE = REPO_ROOT / ".env"
 TEMPLATE = REPO_ROOT / "parserx" / "runtimes" / "agent_task.md"
+ADAPTER = REPO_ROOT / "parserx" / "runtimes" / "adapter_cli.md"
 GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public", REPO_ROOT / "ground_truth_unseen")
 EXPLORE_SET = REPO_ROOT / "configs" / "phase2_explore.yaml"
 INPUT_ORDER = (".pdf", ".docx", ".doc")  # as the evaluation runner picks them
@@ -166,6 +167,7 @@ def cmd_snapshot(args) -> int:
         "service_env": secret_names(load_raw_config(CONFIG)),  # supplied by px-run from the repository .env
         "skills": {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in skills.items()},
         "template_sha256": _sha256(TEMPLATE),
+        "adapter_sha256": _sha256(ADAPTER),  # the tool reference comes from the code (commit, wheel)
     }
     (toolkit / "snapshot.json").write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps(snapshot, indent=2, ensure_ascii=False))

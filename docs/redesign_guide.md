@@ -40,7 +40,7 @@
 - [iteration_history.md](iteration_history.md)、[iteration_backlog.md](iteration_backlog.md)：v1 的 33 次迭代记录，已冻结。
 - [evaluation.md](evaluation.md)：指标定义，按 §9.2 修复。
 - [v2_phase0_plan.md](v2_phase0_plan.md)：阶段零剩余任务分解（改动文件、测试、验收、顺序）。
-- [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名；字段级定义以该文件为准，§4、§5 是概要。
+- [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名（历史）；工具的字段级定义现在以代码中的请求模型为准（`parserx tool schema <name>`，Q86），§4、§5 是概要。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -274,10 +274,12 @@ Sidecar（与 Markdown 同名 `.blocks.json`）：
 |---|---|---|---|---|
 | `read_draft` | 读初稿：`summary`、`issues`（待办，每项有稳定编号）、`text`（翻看、一页、查找、正则、一个排版类别）、`outline`（排版类别与像标题的行）、`blocks`（块的细节） | 不改 | 无 | `tools/draft.py` |
 | `view_source` | 看原件：`image`（取图）、`answer`（视觉模型作答）、`text`（识别引擎读一页或一张图）、`table`（视觉模型重读表格）、`description`（描述图片）；每次得到一个证据编号 | 不改（证据存入状态） | 读图的方式有 | `tools/source.py` |
-| `edit_draft` | 改初稿：内容（`replace_text`、`insert_text`、`set_cells`、`adopt`）、结构（`set_role`、`set_level`、`move`、`link`/`unlink`、`merge_tables`、`split`、`exclude`/`include`、`mark_pending`）、待办（`dismiss`）；一个事务，逐条采用或拒绝 | 唯一入口 | 无 | `tools/edit.py` |
-| `submit_draft` | 交稿：账目平衡即接受（给出输出目录时导出），否则说明阻碍 | 不改 | 无 | `tools/submit.py` |
+| `edit_draft` | 改初稿：内容（`replace_text`、`insert_text`、`set_cells`、`adopt`）、结构（`set_role`、`move`、`join`/`unjoin`、`split`、`exclude`/`include`、`mark_pending`）、待办（`dismiss`）；一个事务，逐条采用或拒绝 | 唯一入口 | 无 | `tools/edit.py` |
+| `submit_draft` | 交稿：账目平衡即接受，否则说明阻碍；没有参数 | 不改 | 无 | `tools/submit.py` |
 
-- **流水线不是 Agent 的工具**：`run_pipeline`（`tools/process.py`）做出初稿，程序在 Agent 开始前运行它；它的识别与描述步骤（`recognize`、`describe_figure`）只在进程内调用。
+- **流水线与导出不是 Agent 的工具**：`run_pipeline`（`tools/process.py`）做出初稿，程序在 Agent 开始前运行它；`export`（`tools/submit.py`）在 Agent 之后（或固定模式下流水线之后）写出输出包，先做与交稿相同的核对；识别与描述步骤（`recognize`、`describe_figure`）只在进程内调用。
+- **契约只在一处**（Q86）：请求模型（pydantic）及其中文说明。命令行参数（`tools/cli.py`，字段名即参数名）、任务说明里的工具参考（`tools/reference.py`）、函数调用的工具定义都由它生成。
+- **一套词表**（Q86）：`read_draft` 显示的角色（`H1`–`H6`、`text`、`list`、`caption`、`footnote`、`other`；`table` 等内容块只读）就是 `set_role` 设的角色。页眉、页脚、页码、水印是程序"不输出"的标签，不是可设的角色：`exclude` / `include` 管输出与否，恢复的页眉类块成为 `text`。`join` 把被分页拆开的两段合为一段、两张表合为一张。
 - **证据**（`ir/evidence.py`）：每次看原件留下一条证据（看了哪里、问了什么、看到什么），存在状态里（摘要保护，随 sidecar 输出）。改内容的操作必须引用能看到被改之处的证据；`adopt` 采用的正是当时读到的内容。
 - **修改的形状统一**：每条操作写明对象、`reason`，改内容的写 `evidence`；程序逐条检查（证据、原生数字、表格接受门、合法性、`decided_by_agent`），拒绝时给出规则名。文字修改是"在块内找到恰好一处片段再替换"，不是 diff 或整段替换。
 - **角色与决定权**：程序不是另一个决策者，而是四样东西——流水线（做初稿，其规则是提议）、工具（照做，不判断）、把关（正确性约束，可以拒绝，不判断含义）、信号（待办，只指路）。含义上的判断（是不是标题、字对不对）归 Agent；正确性归把关。
@@ -285,14 +287,14 @@ Sidecar（与 Markdown 同名 `.blocks.json`）：
 
 ### 5.2 返回信封与批量语义
 
-- 每个工具返回统一信封：`result`、`cost`（请求数、token、费用、耗时）、`failures`（列表；原因、可否重试、涉及目标）、`diff`（初稿的改动）、`unresolved`。运行时据此决定是否继续。
+- 每个工具返回统一信封：`tool`、`doc`、`ws_version`、`ok`、`result`、`cost`（请求数、token、费用、耗时、剩余预算）、`failures`（列表；原因、可否重试、涉及目标）。给 Agent 的 JSON 省去值为 null 的字段（`agent_json`；信封的 schema 也这样标）。Q86 删去了 `diff`（与编辑结果重复）与 `unresolved`（四个工具中永远为空；待办由 `read_draft` 取得）。
 - 普通批量识别在工具内部执行（分批、并发、重试、校验页数）；运行时一次要求"识别这组扫描页"，完成后集中处理异常，不逐页发起几十轮思考。
 - 工具返回中的文档文字标记为数据（§3.3 注入隔离）：统一包在 `{"doc_text": …}` 中。
 - 主 Agent 与工具内部的 OCR/VLM 调用分别计数（`stats.requests.agent` 与其余），CLI 的最终用量不涵盖工具内部的服务调用。
 
 ### 5.3 接口形态
 
-先做成返回 JSON 的命令行工具（`parserx tool <name> --json …`），复用现有 Python 代码；MCP 服务作为第二层适配，只包装同一组函数。运行时适配层只负责启动、事件收集和工具调用格式转换。
+同一组函数（`call_tool`）有两种调用方式：返回 JSON 的命令行（`parserx tool <name> --json …`，Codex 经 `./px` 使用），以及进程内的函数调用（自己的 Agent 循环直接用 `tool_schema` 与 `call_tool`，Q86）。运行时适配层只负责启动、事件收集和调用格式转换；任务说明分两层：`runtimes/agent_task.md`（任务、方法、规则，与 Agent 无关）加适配层说明（`runtimes/adapter_cli.md`：`./px` 的用法与目录规则）。
 
 ### 5.4 Skill
 
