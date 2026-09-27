@@ -151,3 +151,29 @@ def test_joined_tables_are_separated_again_the_last_first():
     assert blocks["t1"].cells == before["t1"] and blocks["t3"].cells == before["t3"]
     assert blocks["t2"].cells.slot(5, 1).content == "edited"  # the edit stays with its row
     assert all(b.status == BlockStatus.OK for b in blocks.values()) and render_markdown(state).count("| --- | --- | --- |") == 3
+
+
+def _read_by_the_scan_engine(block):
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation
+
+    obs = Observation(id=f"o-{block.id}", engine="paddleocr", engine_version="1", task=TaskKind.RECOGNIZE,
+                      anchor=block.anchors[0], cells=block.cells, status=ObservationStatus.OK)
+    block.observations, block.chosen_observation = [obs], obs.id
+    return block
+
+
+def test_a_scanned_table_continues_when_its_left_edge_aligns():
+    # the scan engine's table box is as wide as its content: the right edge moves with the text (ocr01)
+    def candidate(second_bbox):
+        state = _continued(_rows(21, 30, header=False), second_bbox=second_bbox)
+        for block in state.blocks:
+            if block.kind == BlockKind.TABLE:
+                _read_by_the_scan_engine(block)
+        return merge_candidates(state)[0]
+
+    narrower = candidate((52, 60, 480, 400))  # right edge 70 pt in: more than 5% of the page
+    assert narrower.confirmed and narrower.evidence["edges"] == "left"
+    assert not candidate((120, 60, 550, 400)).confirmed  # the left edge moved: another table
+    native = merge_candidates(_continued(_rows(21, 30, header=False), second_bbox=(52, 60, 480, 400)))[0]
+    assert not native.confirmed and native.evidence["edges"] == "both"  # a ruled table's box is the table

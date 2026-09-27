@@ -35,7 +35,8 @@ from parserx.layout.labels import FURNITURE
 from parserx.tables.grid import Cell, TableGrid
 from parserx.workspace.queries import HIDDEN, ordered
 
-MAX_X_OFFSET = 0.05  # confirmed: both table edges within this share of the page width
+MAX_X_OFFSET = 0.05  # confirmed: the table edges within this share of the page width
+SCAN_ENGINE = "paddleocr"  # its table boxes are as wide as their content: only the left edge is the table's
 
 Evidence = dict[str, float | int | str | bool]
 
@@ -74,10 +75,11 @@ def merge_candidate(state: DocumentState, first: Block, second: Block) -> MergeC
     header = first.cells.header_rows or 1
     repeated = second.cells.n_rows > header and repeats_header(first.cells, second.cells, header)
     own_header = second.cells.header_rows > 0 and not repeated
-    offset = _x_offset(state, first, second, first_page, second_page)
+    left_only = _scanned(first) or _scanned(second)
+    offset = _x_offset(state, first, second, first_page, second_page, left_only=left_only)
     evidence: Evidence = {
         "columns": first.cells.n_cols, "first_page": first_page, "second_page": second_page,
-        "x_offset": -1.0 if offset is None else round(offset, 3),
+        "x_offset": -1.0 if offset is None else round(offset, 3), "edges": "left" if left_only else "both",
         "header_repeated": repeated, "second_has_own_header": own_header,
     }
     confirmed = offset is not None and offset <= MAX_X_OFFSET and not own_header
@@ -242,12 +244,21 @@ def _adjacent(state: DocumentState, first: Block, second: Block) -> bool:
     return i < j and all(_is_furniture(b) for b in sequence[i + 1:j])
 
 
-def _x_offset(state: DocumentState, first: Block, second: Block, first_page: int, second_page: int) -> float | None:
+def _x_offset(state: DocumentState, first: Block, second: Block, first_page: int, second_page: int, *,
+              left_only: bool = False) -> float | None:
+    """How far apart the two tables' edges are, as a share of the page width: the left edge only for a table the
+    scan engine read (its box is as wide as its content, so the right edge moves with the text: ocr01)."""
     a, b = _box_on(first, first_page), _box_on(second, second_page)
     sa, sb = _page_size(state, first_page), _page_size(state, second_page)
     if a is None or b is None or not sa or not sb or not sa[0] or not sb[0]:
         return None
-    return max(abs(a[0] / sa[0] - b[0] / sb[0]), abs(a[2] / sa[0] - b[2] / sb[0]))
+    left = abs(a[0] / sa[0] - b[0] / sb[0])
+    return left if left_only else max(left, abs(a[2] / sa[0] - b[2] / sb[0]))
+
+
+def _scanned(block: Block) -> bool:
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    return chosen is not None and chosen.engine == SCAN_ENGINE
 
 
 def _norm(cell: Cell | None) -> str:
