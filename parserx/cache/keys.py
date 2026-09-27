@@ -42,8 +42,8 @@ def endpoint_identity(url: str) -> str:
 
 def service_identity(config: ServiceConfig) -> dict[str, Any]:
     """The parts of an LLM/VLM service config that shape its responses: the effort as sent (Q100: the nearest the
-    model accepts), and the strongest structured output only where the model's entry limits it, so the keys of
-    configurations without one stay as they were."""
+    model accepts), and the strongest structured output only where the model's entry limits it below what the
+    tasks ask, so the keys of configurations that do not limit it stay as they were."""
     identity = {
         "endpoint": endpoint_identity(config.endpoint),
         "model": config.model,
@@ -53,7 +53,7 @@ def service_identity(config: ServiceConfig) -> dict[str, Any]:
         "min_output_tokens": config.min_output_tokens,
         "extra_body": config.extra_body,
     }
-    if config.structured_output is not None:
+    if config.structured_output not in (None, "json_schema"):  # weaker than what the tasks ask
         identity["structured_output"] = config.structured_output
     return identity
 

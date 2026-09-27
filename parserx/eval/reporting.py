@@ -7,7 +7,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from parserx.config.schema import ConfigLoadResult, ParserXConfig, ServiceConfig
+from parserx.config.schema import ConfigLoadResult, ParserXConfig, ServiceConfig, effort_for
 
 
 ReportMetadata = list[tuple[str, str]]
@@ -99,11 +99,20 @@ _NAMES = (("services", "vlm"), ("runtime", "agent"))
 
 
 def config_fingerprint(config: ParserXConfig) -> str:
-    """Short hash of ``redacted_config`` minus ``_NOT_PROCESSING``: what the processing actually used."""
+    """Short hash of ``redacted_config`` minus ``_NOT_PROCESSING``: what the processing actually used.  What a
+    model accepts (Q100) counts as what it makes of the settings: each reasoning effort as it is sent, the
+    structured output it starts at; a list the model accepts that changes nothing sent changes nothing here."""
     material = redacted_config(config)
     material.pop("models", None)
     for section, key in _NAMES:
         material.get(section, {}).get(key, {}).pop("use", None)
+    vlm, tools, agent = material["services"]["vlm"], material["tools"], material["runtime"]["agent"]
+    accepted = vlm.pop("efforts", None)
+    vlm["reasoning_effort"] = effort_for(vlm["reasoning_effort"], accepted)
+    for name in [k for k in tools if k.endswith("_reasoning_effort")]:
+        tools[name] = effort_for(tools[name], accepted)
+    vlm["structured_output"] = vlm.get("structured_output") or "json_schema"
+    agent["effort"] = effort_for(agent["effort"], agent.pop("efforts", None), higher=True)
     for section, keys in _NOT_PROCESSING.items():
         for key in keys:
             material.get(section, {}).pop(key, None)

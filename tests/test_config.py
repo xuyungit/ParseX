@@ -296,3 +296,15 @@ def test_an_effort_is_sent_as_the_nearest_the_model_accepts():
     assert effort_for("xhigh", glm) == "high"  # between high and max: a tie, the lower
     assert effort_for("none", None) == "none" and effort_for(None, glm) is None  # not listed / nothing asked
     assert effort_for("medium", []) is None  # a model that takes no effort
+
+
+def test_what_a_model_accepts_counts_as_what_is_sent():
+    # listing efforts that change no effort sent leaves the fingerprint; one that changes a sent effort does not
+    from parserx.config.schema import apply_overrides
+    from parserx.eval.reporting import config_fingerprint
+
+    base = apply_overrides(ParserXConfig(), ["services.vlm.reasoning_effort=none"])
+    listed = apply_overrides(base, ["services.vlm.efforts=[none, low, medium]", "services.vlm.structured_output=json_schema"])
+    limited = apply_overrides(base, ["services.vlm.efforts=[low, high]"])  # none is sent as low
+    assert config_fingerprint(listed) == config_fingerprint(base)
+    assert config_fingerprint(limited) != config_fingerprint(base)

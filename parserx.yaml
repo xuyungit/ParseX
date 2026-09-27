@@ -19,21 +19,25 @@ models:
     api_key: ${OPENAI_API_KEY_B}
     model: gpt-6-luna
     # a reasoning model: it rejects temperature, so it is never sent (auto-detection would waste one rejected
-    # request per concurrent worker before the service learns); it accepts every effort the tasks ask
-    # (none / low / medium, guide §10.3)
+    # request per concurrent worker before the service learns)
     send_temperature: false
     min_output_tokens: 1024
+    efforts: [none, low, medium, high, xhigh, max]  # minimal is rejected (probed 2026-09-28)
+    structured_output: json_schema
   deepseek-flash:
     endpoint: ${OPENAI_BASE_URL_D:https://api.deepseek.com}
     api_key: ${OPENAI_API_KEY_D}
     model: deepseek-flash
-    api_style: chat
+    api_style: chat          # also Responses; our loop hands its reasoning_content back on Chat (aada802)
+    structured_output: json_object  # json_schema: "This response_format type is unavailable now" (2026-09-28)
+    # every effort none … max is accepted: not listed
   glm-5.3-flashx:
     endpoint: ${OPENAI_BASE_URL_G:https://open.bigmodel.cn/api/paas/v4/}
     api_key: ${OPENAI_API_KEY_G}
     model: glm-5.3-flashx
     api_style: chat          # no Responses API (404)
-    efforts: [low, high, max]  # always thinks; none / minimal / medium are rejected (2026-09-27)
+    efforts: [low, high, max]  # always thinks; none / minimal / medium / xhigh are rejected (2026-09-28)
+    structured_output: json_object  # json_schema is accepted but not honoured: fenced JSON (2026-09-28)
 
 services:
   vlm:

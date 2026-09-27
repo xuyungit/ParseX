@@ -190,3 +190,24 @@ services:
 - **密钥**：仍从 `.env` 引用（决定二以后做）。
 - **`parserx.yaml`**：写入三个条目，另补 GLM 的价格（Q102）。
 - **gpt-6-luna 的条目**：不列 `efforts` 和 `structured_output`。它接受任务发出的所有取值，所以请求、缓存键和配置指纹都与原来相同。
+
+### 6.1 探测结果（`scripts/check_services.py --model`，2026-09-28）
+
+| | gpt-6-luna（官方） | deepseek-flash | glm-5.3-flashx |
+|---|---|---|---|
+| 列在端点的模型里 | 是 | 是 | 是 |
+| 文字、图片 | 可以 | 可以 | 可以 |
+| temperature | 拒绝 | 接受 | 接受 |
+| 思考强度 | none、low、medium、high、xhigh、max（只拒 minimal） | 七个都接受 | low、high、max |
+| json_schema | 遵守 | 拒绝（"unavailable now"） | **接受但不遵守**：返回带 \`\`\`json 围栏的文字，不报错 |
+| json_object | 遵守 | 遵守 | 遵守 |
+| 返回 `reasoning_content` | 否（Responses 的推理是加密项） | 是 | 是 |
+
+- **条目已按此写好**，三个都通过核对。
+- **luna 的强度**：§10.3 原来写 luna 只接受 none、low、medium，已经过时。
+- **GLM 的 json_schema**：它接受却不遵守，也不报错，服务的退级机制等不到报错，只能在条目里写明。
+
+**配置指纹因此改为按实际发送来算**：
+- 思考强度记换算后的取值，不记条目列出的范围；结构化输出没写时按 json_schema 记。
+- 所以给 luna 补写条目，不改变任何请求，指纹也不变。
+- 缓存键同理：只有条目把结构化输出限到 json_schema 以下时，才把它记进去。

@@ -79,8 +79,8 @@ def test_identity_has_the_effort_as_sent():
     base = ServiceConfig(endpoint="https://api.example.com/v1", model="m", reasoning_effort="none")
     limited = base.model_copy(update={"efforts": ["low", "high"]})
     assert service_identity(limited)["reasoning_effort"] == "low"
-    assert "structured_output" not in service_identity(base)
-    assert service_identity(base) != service_identity(base.model_copy(update={"structured_output": "off"}))
+    assert service_identity(base) == service_identity(base.model_copy(update={"structured_output": "json_schema"}))
+    assert service_identity(base) != service_identity(base.model_copy(update={"structured_output": "json_object"}))
 
 
 def test_read_only_miss_raises_and_is_recorded(tmp_path):
