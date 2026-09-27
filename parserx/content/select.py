@@ -77,7 +77,7 @@ def integrate_scan_page(state: DocumentState, n: int, result) -> list[str]:
             continue
         block.status = BlockStatus.DUPLICATE
         dispositions[block.id] = "duplicate"
-        target = _best_overlap(block, visible_new)
+        target = best_overlap(block, visible_new)
         refs = [target.id] if target else []
         if target is not None:
             state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, block.id, target.id),
@@ -345,7 +345,7 @@ def _number_diff(before: Counter[str], after: Counter[str], native: bool) -> str
     return f"numbers removed {sorted((before - after).elements())[:10]}, added {sorted((after - before).elements())[:10]}"
 
 
-def _best_overlap(block: Block, candidates: list[Block]) -> Block | None:
+def best_overlap(block: Block, candidates: list[Block]) -> Block | None:
     box = block.anchors[0].bbox if isinstance(block.anchors[0], PdfAnchor) else None
     best, best_area = None, 0.0
     for other in candidates:

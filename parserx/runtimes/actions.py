@@ -108,6 +108,8 @@ def _edit(op: dict, outcome: dict, text_of: Lookup) -> AgentAction | None:
     if kind == "adopt":
         target = block or f"p{op.get('page')}"
         return AgentAction("table_fix" if block else "recognize", target=target, page=_page_of(target))
+    if kind == "unadopt":
+        return AgentAction("unadopt", detail=_short(op.get("reason")))
     if kind == "dismiss":
         target = outcome.get("target")
         return AgentAction("close", target=target, page=_page_of(target), detail=_short(op.get("reason")))

@@ -217,7 +217,7 @@ def test_a_description_is_adopted(draft, context):
 def test_a_page_the_draft_lacks_is_read_and_adopted(ws, context):
     # before the pipeline: page 2 is a scan with nothing read yet
     look = _ok("view_source", ws, {"looks": [{"page": 2, "as": "text"}]}, context)["results"][0]
-    assert "SENTINEL-OCR 扫描文字" in look["text"]["doc_text"]
+    assert any("SENTINEL-OCR 扫描文字" in (b.get("text") or {}).get("doc_text", "") for b in look["reading"])
     assert _ok("read_draft", ws, {}, context)["summary"]["pages"][1]["status"] == "pending"
     outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 2, "evidence": look["evidence"],
                                               "reason": "扫描页"}]}, context)["outcomes"][0]
@@ -355,3 +355,52 @@ def test_a_look_at_a_region_is_evidence_for_the_blocks_in_it(draft, context):
     edit = {"op": "replace_text", "block": block.id, "find": "采购", "replace": "采买", "reason": "r"}
     assert not _ok("edit_draft", draft, {"ops": [{**edit, "evidence": elsewhere}]}, context)["outcomes"][0]["accepted"]
     assert _ok("edit_draft", draft, {"ops": [{**edit, "evidence": around}]}, context)["outcomes"][0]["accepted"]
+
+
+# ── a region read again: the draft's blocks replaced, content conserved, reversible (Q87) ──
+
+
+def _rows_as_text(tmp_path):
+    """A native page whose table has no ruling: the draft has lines of text where the page shows a table."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for i, row in enumerate(("项目 数值", "甲 3", "乙 8")):
+        page.insert_text((72, 100 + 40 * i), row, fontsize=12, fontname="china-s")
+    doc.save(tmp_path / "rows.pdf")
+    from parserx.tools import workspace_init
+
+    workspace_init(tmp_path / "rows.pdf", tmp_path / "rws", config=_config())
+    return tmp_path / "rws"
+
+
+def _table_reading(value):
+    html = f"<table><tr><td>项目</td><td>数值</td></tr><tr><td>甲</td><td>3</td></tr><tr><td>乙</td><td>{value}</td></tr></table>"
+    return lambda: {"prunedResult": {"width": 600, "height": 200, "parsing_res_list": [
+        {"block_label": "table", "block_content": html, "block_bbox": [10, 10, 590, 190], "block_order": 1}]}}
+
+
+def test_a_region_read_again_replaces_its_blocks_and_can_be_undone(tmp_path):
+    ws = _rows_as_text(tmp_path)
+    before = _markdown(ws)
+    region = {"page": 1, "bbox": [60, 80, 300, 190], "as": "text"}
+    look = _ok("view_source", ws, {"looks": [region]}, _context(page=_table_reading(8)))["results"][0]
+    assert look["reading"][0]["kind"] == "table"
+    outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 1, "evidence": look["evidence"],
+                                              "reason": "原件是一张表"}]}, _context())["outcomes"][0]
+    assert outcome["accepted"], outcome
+    assert "| 甲 | 3 |" in _markdown(ws) and "甲 3" not in _markdown(ws)
+    assert _ok("submit_draft", ws, {}, _context())["accepted"]  # the accounts balance
+    undo = _ok("edit_draft", ws, {"ops": [{"op": "unadopt", "evidence": look["evidence"], "reason": "撤回"}]},
+               _context())["outcomes"][0]
+    assert undo["accepted"] and _markdown(ws) == before and _ok("submit_draft", ws, {}, _context())["accepted"]
+
+
+def test_a_region_reading_must_keep_the_native_numbers(tmp_path):
+    ws = _rows_as_text(tmp_path)
+    region = {"page": 1, "bbox": [60, 80, 300, 190], "as": "text"}
+    look = _ok("view_source", ws, {"looks": [region]}, _context(page=_table_reading(6)))["results"][0]  # 8 → 6
+    outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 1, "evidence": look["evidence"],
+                                              "reason": "r"}]}, _context())["outcomes"][0]
+    assert not outcome["accepted"] and outcome["rule"] == "native_numbers" and "8" in outcome["detail"]

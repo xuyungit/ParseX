@@ -6,7 +6,8 @@ one that changes content cites the evidence it rests on (``evidence``, from ``vi
 
 - content: ``replace_text`` (a span that occurs exactly once in the block), ``insert_text`` (text a page shows where
   no block has it), ``set_cells`` (table cells), ``adopt`` (a reading of the source as it was read: a page's or a
-  figure's text, a table read again, a figure's description);
+  figure's text, a table read again, a figure's description, a region of a page whose blocks it replaces — Q87),
+  ``unadopt`` (a region's blocks back);
 - structure: ``set_role``, ``move``, ``join`` / ``unjoin``, ``split``, ``exclude`` / ``include``, ``mark_pending`` —
   never the text;
 - the worklist: ``dismiss`` an issue the evidence shows needs no change;
@@ -21,12 +22,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
+from collections import Counter
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
 from parserx.content import scan
-from parserx.content.select import add_gate, integrate_image, transcribed
+from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, transcribed
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
@@ -51,6 +55,7 @@ from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
+from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
 from parserx.reading.compare import holders_of, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
@@ -61,7 +66,7 @@ from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.evidence import image_evidence, image_evidence_at
 from parserx.tools.recognize import _next_block_seq, _next_item, integrate_page, scan_engine_pages
 from parserx.tools.views import unresolved_items
-from parserx.workspace.queries import block_unit, current_notes, ordered
+from parserx.workspace.queries import HIDDEN, block_unit, current_notes, ordered
 
 ACTOR = "agent"
 _TEXT_KINDS = frozenset({BlockKind.TEXT, BlockKind.TITLE, BlockKind.LIST, BlockKind.CAPTION, BlockKind.FOOTNOTE,
@@ -123,11 +128,14 @@ class SetCells(IRModel):
 
 class Adopt(IRModel):
     model_config = agent_doc("采用 view_source 读出的内容，采用的正是当时读到的：重读的表格（as=table）、图片描述（description）、"
-                             "图片里的文字或一页的识别结果（text）。给出被读的 block 或 page 之一。")
+                             "图片里的文字或一页的识别结果（text）。给出被读的 block 或 page 之一。"
+                             "页面区域的读数（as=text 加 bbox）替换区域里的块，用于初稿把块分错的地方（表格被拆成文字、"
+                             "标题和正文连成一块等）：程序检查内容守恒（旧块的文字在读数里找得到、原生文字层的数字不变），"
+                             "区域里的图片不动，旧块保留，可用 unadopt 撤回。")
 
     op: Literal["adopt"]
     block: str | None = Field(None, description="被读的块：表格、图片")
-    page: int | None = Field(None, description="被读的页：尚未识别或识别失败的页")
+    page: int | None = Field(None, description="被读的页：尚未识别或识别失败的页；或区域读数所在的页")
     evidence: str = Field(description="读数的证据编号")
     reason: str = Field(description=REASON)
 
@@ -136,6 +144,14 @@ class Adopt(IRModel):
         if (self.block is None) == (self.page is None):
             raise ValueError("adopt: give the block or the page the reading is of")
         return self
+
+
+class Unadopt(IRModel):
+    model_config = agent_doc("撤回一次区域采用：被替换的块恢复，读数的块不再输出。")
+
+    op: Literal["unadopt"]
+    evidence: str = Field(description="当时采用的读数的证据编号")
+    reason: str = Field(description=REASON)
 
 
 class Dismiss(IRModel):
@@ -162,8 +178,8 @@ class WriteNote(IRModel):
 
 
 EditOp = Annotated[
-    ReplaceText | SetCells | InsertText | Adopt | SetRole | Move | Join | Unjoin | Split | Exclude | Include
-    | MarkPending | Dismiss | WriteNote,
+    ReplaceText | SetCells | InsertText | Adopt | Unadopt | SetRole | Move | Join | Unjoin | Split | Exclude
+    | Include | MarkPending | Dismiss | WriteNote,
     Field(discriminator="op"),
 ]
 
@@ -240,6 +256,8 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             made, detail = _insert_text(state, op)
         elif isinstance(op, Adopt):
             detail = _adopt(ctx, state, op)
+        elif isinstance(op, Unadopt):
+            detail = _unadopt(state, op)
         elif isinstance(op, Dismiss):
             target = _dismiss(state, op, issues)
         elif isinstance(op, WriteNote):
@@ -413,7 +431,7 @@ def _adopt(ctx: ToolContext, state: DocumentState, op: Adopt) -> str | None:
         block.decisions.append(Decision(stage=DecisionStage.REVIEW_ACCEPT, choice="described", actor=ACTOR,
                                         reason=op.reason, evidence={"evidence": op.evidence}))
     else:
-        _adopt_text(ctx, state, op, evidence)
+        return _adopt_text(ctx, state, op, evidence)
 
 
 def _adopt_table(state: DocumentState, op: Adopt, evidence) -> str:
@@ -438,12 +456,14 @@ def _adopt_table(state: DocumentState, op: Adopt, evidence) -> str:
     return _gated(outcome.gate)
 
 
-def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> None:
+def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> str | None:
     path = ctx.ws.root / (evidence.reading or "")
     data = path.read_bytes() if evidence.reading and path.is_file() else b""
     if hashlib.sha256(data).hexdigest() != evidence.reading_sha256:
         raise _Refused("evidence", f"the reading of {op.evidence} is missing or was changed")
     page = json.loads(data)
+    if op.page is not None and evidence.bbox is not None:
+        return _adopt_region(state, op, evidence, page)
     if op.page is not None:
         if op.page not in scan_engine_pages(state):
             raise _Refused("native_page", f"page {op.page}'s native text layer passed its check: correct its text "
@@ -457,6 +477,137 @@ def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> 
     read = scan.image_blocks(scan.PageScan(page=0, raw=page, raw_ref=evidence.raw_ref or "",
                                            engine_version=evidence.engine or scan.ENGINE), asset, figure=block.id)
     integrate_image(state, block.id, read)
+
+
+# ── a region read again (Q87) ───────────────────────────────────────────
+
+RECALL = 0.9  # of the replaced blocks' characters, found again in the reading
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) -> str:
+    """Replace the blocks in a region of a page by the scan engine's reading of that region: the reading's
+    structure (paragraphs, titles, tables) takes the place of the draft's.  The content must be conserved — the
+    replaced blocks' characters found again, a native text layer's numbers unchanged — and the replaced blocks stay,
+    as duplicates of the new ones, so ``unadopt`` can bring them back.  Figures in the region are left as they are."""
+    crop = next((a for a in state.assets if a.id == evidence.image), None)
+    if crop is None or not isinstance(crop.source, PdfAnchor):
+        raise _Refused("evidence", f"the image of {op.evidence} is gone")
+    region = crop.source.bbox
+    n = op.page
+    old = [b for b in ordered(state) if b.status not in HIDDEN and block_unit(state, b) == n
+           and b.kind not in (BlockKind.FIGURE, BlockKind.SCAN) and _inside(b, n, region)]
+    size = (region[2] - region[0], region[3] - region[1])
+    read = scan.page_blocks(scan.PageScan(page=n, raw=page_json, raw_ref=evidence.raw_ref or "",
+                                          engine_version=evidence.engine or scan.ENGINE),
+                            page_size=size, origin=(region[0], region[1]), first_seq=_next_block_seq(state, n),
+                            first_item=_next_item(state, n))
+    new = [b for b in read.blocks if b.kind not in (BlockKind.FIGURE, BlockKind.SCAN)]
+    kept = {b.id for b in new}
+    shown = [b for b in new if b.status not in HIDDEN]
+    before, after = "".join(_content(b) for b in old), "".join(_content(b) for b in shown)
+    native = [b for b in old if (c := _chosen_of(b)) is not None and c.engine in NATIVE_ENGINES]
+    lost = _missing_numbers("".join(_content(b) for b in native), after)
+    if lost:
+        raise _Refused("native_numbers", f"the reading does not keep the native text layer's numbers {lost[:8]}: "
+                                         "the reading misread them; keep the draft here")
+    recall = _recall(before, after)
+    if old and recall < RECALL:
+        raise _Refused("content_lost", f"the reading has {recall:.0%} of the {len(before)} characters of "
+                                       f"{', '.join(b.id for b in old)} (needs {RECALL:.0%}): read a region that "
+                                       "covers them, or keep the draft")
+    for block in old:
+        block.status = BlockStatus.DUPLICATE
+        target = best_overlap(block, shown)
+        if target is not None:
+            state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, block.id, target.id),
+                                            kind=RelationKind.DUPLICATE_OF, src=block.id, dst=target.id))
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="superseded_by_reading",
+                                        actor=ACTOR, reason=op.reason, evidence={"evidence": op.evidence},
+                                        refs=[b.id for b in shown[:20]]))
+    replaced = {b.id for b in old}
+    for entry in state.ledger:
+        if entry.block in replaced and entry.disposition in ("output", "merged"):
+            entry.disposition = "duplicate"
+    for block in new:
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="region_reading", actor=ACTOR,
+                                        reason=op.reason, evidence={"evidence": op.evidence},
+                                        refs=[b.id for b in old[:20]]))
+    sequence = ordered(state)
+    at = sequence.index(old[0]) if old else _place(state, sequence, n, region)
+    sequence[at:at] = new
+    for order, item in enumerate(sequence):
+        item.order = order
+    state.blocks.extend(new)
+    state.ledger.extend(e for e in read.ledger if e.block in kept)
+    return (f"{len(old)} blocks replaced by {len(shown)} ({', '.join(b.kind.value for b in shown)}); "
+            f"characters kept {recall:.0%}")
+
+
+def _unadopt(state: DocumentState, op: Unadopt) -> str:
+    """Undo a region's adoption: the replaced blocks come back, the reading's blocks become their duplicates."""
+    made = [b for b in state.blocks if b.status not in HIDDEN and any(
+        d.choice == "region_reading" and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
+    replaced = [b for b in state.blocks if b.status == BlockStatus.DUPLICATE and any(
+        d.choice == "superseded_by_reading" and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
+    if not made and not replaced:
+        raise _Refused("not_adopted", f"no region adopted from {op.evidence} is in the draft")
+    back = {b.id for b in replaced}
+    state.relations[:] = [r for r in state.relations
+                          if not (r.kind == RelationKind.DUPLICATE_OF and r.src in back)]
+    for block in replaced:
+        block.status = BlockStatus.OK
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="restored", actor=ACTOR,
+                                        reason=op.reason, evidence={"evidence": op.evidence}))
+    gone = {b.id for b in made}
+    for block in made:
+        block.status = BlockStatus.DUPLICATE
+        target = best_overlap(block, replaced)
+        if target is not None:
+            state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, block.id, target.id),
+                                            kind=RelationKind.DUPLICATE_OF, src=block.id, dst=target.id))
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="unadopted", actor=ACTOR,
+                                        reason=op.reason, evidence={"evidence": op.evidence}))
+    for entry in state.ledger:
+        if entry.block in back and entry.disposition == "duplicate":
+            entry.disposition = "output"
+        elif entry.block in gone and entry.disposition == "output":
+            entry.disposition = "duplicate"
+    return f"{len(replaced)} blocks back, {len(made)} from the reading set aside"
+
+
+def _inside(block: Block, n: int, region: BBox) -> bool:
+    """The block's box on page *n* has its centre in *region*."""
+    for anchor in block.anchors:
+        if isinstance(anchor, PdfAnchor) and anchor.page == n and anchor.coord_space == "page_pt":
+            x, y = (anchor.bbox[0] + anchor.bbox[2]) / 2, (anchor.bbox[1] + anchor.bbox[3]) / 2
+            return region[0] <= x <= region[2] and region[1] <= y <= region[3]
+    return False
+
+
+def _content(block: Block) -> str:
+    text = block.text or ""
+    if block.cells is not None:
+        text += "".join(c.content for c in block.cells.cells)
+    return "".join(text.split())
+
+
+def _chosen_of(block: Block):
+    return next((o for o in block.observations if o.id == block.chosen_observation), None)
+
+
+def _recall(before: str, after: str) -> float:
+    if not before:
+        return 1.0
+    have = Counter(unicodedata.normalize("NFKC", after))
+    need = Counter(unicodedata.normalize("NFKC", before))
+    return sum(min(c, have[ch]) for ch, c in need.items()) / sum(need.values())
+
+
+def _missing_numbers(before: str, after: str) -> list[str]:
+    have = Counter(_NUMBER.findall(unicodedata.normalize("NFKC", after)))
+    missing = Counter(_NUMBER.findall(unicodedata.normalize("NFKC", before))) - have
+    return sorted(missing.elements())
 
 
 # ── the understanding ───────────────────────────────────────────────────

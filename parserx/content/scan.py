@@ -136,8 +136,10 @@ def page_blocks(
     first_seq: int,
     first_item: int,
     page_image: tuple[bytes, int, int, float] | None = None,
+    origin: tuple[float, float] = (0.0, 0.0),
 ) -> PageScanResult:
-    """Blocks for one scanned page; ids continue from *first_seq* / *first_item* on that page."""
+    """Blocks for one scanned page; ids continue from *first_seq* / *first_item* on that page.  A reading of a
+    region of the page (Q87) gives the region's size as *page_size* and its top left corner as *origin*."""
     pruned = scan.raw.get("prunedResult") or {}
     width, height = int(pruned.get("width") or 0), int(pruned.get("height") or 0)
     entries = pruned.get("parsing_res_list") or []
@@ -146,7 +148,8 @@ def page_blocks(
         return out
     sx = page_size[0] / width if width else 1.0
     sy = page_size[1] / height if height else 1.0
-    transform = (sx, 0.0, 0.0, sy, 0.0, 0.0)
+    ox, oy = origin
+    transform = (sx, 0.0, 0.0, sy, ox, oy)
     render: Asset | None = None
     if page_image is not None and any(labels.to_kind(ENGINE, e.get("block_label", "")) in _FIGURE_KINDS
                                       or _PICTURE.search(str(e.get("block_content") or "")) for e in entries):
@@ -155,7 +158,7 @@ def page_blocks(
                                             source=PdfAnchor(page=scan.page, bbox=(0, 0, *page_size),
                                                              coord_space="page_pt")), data)
 
-    boxes = [_bbox(e) for e in entries]
+    boxes = [entry_bbox(e) for e in entries]
     order = scan_order(boxes, [e.get("block_order") for e in entries])
     for offset, index in enumerate(order):
         entry, box = entries[index], boxes[index]
@@ -164,7 +167,8 @@ def page_blocks(
             out.warnings.append(f"page {scan.page}: unknown {ENGINE} label {label!r} kept as other")
         kind = labels.to_kind(ENGINE, label)
         block_id = ids.block_id_pdf(scan.page, first_seq + offset)
-        page_box = (round(box[0] * sx, 2), round(box[1] * sy, 2), round(box[2] * sx, 2), round(box[3] * sy, 2))
+        page_box = (round(ox + box[0] * sx, 2), round(oy + box[1] * sy, 2), round(ox + box[2] * sx, 2),
+                    round(oy + box[3] * sy, 2))
         pixel_anchor = PdfAnchor(page=scan.page, bbox=box, coord_space="image_px", image_size=(width, height),
                                  transform=transform)
         content, pictures = take_pictures(str(entry.get("block_content") or ""))
@@ -265,7 +269,7 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
     out = PageScanResult()
     sx = asset.width / width if width else 1.0
     sy = asset.height / height if height else 1.0
-    boxes = [_bbox(e) for e in entries]
+    boxes = [entry_bbox(e) for e in entries]
     for offset, index in enumerate(scan_order(boxes, [e.get("block_order") for e in entries]), 1):
         entry, box = entries[index], boxes[index]
         label = str(entry.get("block_label", ""))
@@ -345,7 +349,7 @@ def _crop(out: PageScanResult, render: Asset, render_png: bytes, box: BBox, page
     return _add(out, asset, data)
 
 
-def _bbox(entry: dict) -> BBox:
+def entry_bbox(entry: dict) -> BBox:
     box = entry.get("block_bbox")
     if isinstance(box, (list, tuple)) and len(box) == 4:
         return tuple(float(v) for v in box)  # type: ignore[return-value]

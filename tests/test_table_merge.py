@@ -132,3 +132,22 @@ def test_a_table_continued_after_a_page_between_is_joined_only_on_evidence():
     state.evidence.append(Evidence(id="e-000000000003", how="image", page=3, image="a-3"))
     outcome = apply_changes(state, CHANGE.validate_python([{**join, "evidence": "e-000000000003"}]), actor="agent")
     assert outcome.rejected == [] and next(b for b in state.blocks if b.id == "t1").cells.n_rows == 26
+
+
+def test_joined_tables_are_separated_again_the_last_first():
+    state = _state([_block("t1", 1, (50, 80, 550, 760), BlockKind.TABLE, rows=_rows(1, 20))],
+                   [_block("t2", 2, (50, 60, 550, 760), BlockKind.TABLE, rows=_rows(21, 40))],
+                   [_block("t3", 3, (50, 60, 550, 300), BlockKind.TABLE, rows=_rows(41, 45))])
+    before = {b.id: b.cells for b in state.blocks}
+    assert apply_changes(state, CHANGE.validate_python(propose_merges(state)), actor="program:tables.merge").rejected == []
+    t1 = next(b for b in state.blocks if b.id == "t1")
+    t1.cells = t1.cells.model_copy(update={"cells": [c.model_copy(update={"content": "edited"})
+                                                     if (c.row, c.col) == (25, 1) else c for c in t1.cells.cells]})
+    unjoin = [{"op": "unjoin", "first": "t1", "second": s, "reason": "两张独立的表"} for s in ("t2", "t3")]
+    assert [r.rule for r in check_changes(state, CHANGE.validate_python(unjoin[:1]))] == ["tables_merged"]  # t3 first
+    outcome = apply_changes(state, CHANGE.validate_python(unjoin[::-1]), actor="agent")
+    assert outcome.rejected == [] and check(state).mismatched == [] and check(state).unassigned == []
+    blocks = {b.id: b for b in state.blocks}
+    assert blocks["t1"].cells == before["t1"] and blocks["t3"].cells == before["t3"]
+    assert blocks["t2"].cells.slot(5, 1).content == "edited"  # the edit stays with its row
+    assert all(b.status == BlockStatus.OK for b in blocks.values()) and render_markdown(state).count("| --- | --- | --- |") == 3

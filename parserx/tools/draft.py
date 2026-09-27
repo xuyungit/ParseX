@@ -305,6 +305,8 @@ def _change(op: dict, outcome: dict) -> DraftChange:
         target, text = outcome.get("block") or f"p{op['page']}", op["text"]
     elif kind == "adopt":
         target = block or f"p{op['page']}"
+    elif kind == "unadopt":
+        what = f"undid the adoption of {op['evidence']}"
     elif kind == "set_role":
         what = op["role"]
     elif kind == "move":

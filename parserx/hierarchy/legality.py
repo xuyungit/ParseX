@@ -50,7 +50,7 @@ from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationS
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState
 from parserx.layout.labels import FURNITURE
-from parserx.tables.merge import merge_candidate, merge_tables, repeats_header
+from parserx.tables.merge import merge_candidate, merge_tables, repeats_header, split_problem, split_tables
 from parserx.workspace.queries import HIDDEN, JOINABLE, ordered
 
 _CONTENT_KINDS = frozenset({BlockKind.TABLE, BlockKind.FIGURE, BlockKind.FORMULA, BlockKind.SCAN})
@@ -199,10 +199,11 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
     if isinstance(change, Join):
         return _join_problem(state, blocks[change.first], blocks[change.second], change.drop_rows, change.override)
     if isinstance(change, Unjoin):
-        if blocks[change.second].status == BlockStatus.MERGED:
-            return LegalityRule.TABLES_MERGED, f"{change.second} is merged into {change.first}: joined tables stay one"
         if _joined(state, change.first, change.second) is None:
             return LegalityRule.NOT_JOINED, f"{change.second} does not continue {change.first}"
+        if blocks[change.second].status == BlockStatus.MERGED:
+            problem = split_problem(state, blocks[change.first], blocks[change.second])
+            return None if problem is None else (LegalityRule.TABLES_MERGED, problem)
         return None
     if isinstance(change, Split):
         block = blocks[change.block]
@@ -385,6 +386,9 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
             blocks[change.second].decisions.append(Decision(
                 stage=DecisionStage.STRUCTURE, choice="join", reason=change.reason, evidence=_grounds(change),
                 actor=actor, refs=[change.first, change.second]))
+    elif isinstance(change, Unjoin) and blocks[change.second].status == BlockStatus.MERGED:
+        split_tables(state, change.first, change.second, actor=actor, reason=change.reason,
+                     evidence=_grounds(change))
     elif isinstance(change, Unjoin):
         gone = _joined(state, change.first, change.second)
         state.relations[:] = [r for r in state.relations if r is not gone]

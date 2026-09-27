@@ -85,9 +85,10 @@ class Join(IRModel):
 
 
 class Unjoin(IRModel):
-    """Undo the joining of two paragraphs; joined tables are one table and stay so."""
+    """Undo a join: two paragraphs output apart again; two joined tables separated, each with its rows."""
 
-    model_config = agent_doc("撤销两段文字的续接（合成的表不能拆开）。")
+    model_config = agent_doc("撤销续接：两段文字重新分开；合成的表拆回两张，各自的行（含合并后改过的单元格）回到各自的表。"
+                             "一张表接了几张时从最后接上的开始拆。")
 
     op: Literal["unjoin"]
     first: str = Field(description="前一块")
@@ -168,7 +169,7 @@ class LegalityRule(StrEnum):
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
     NOT_JOINED = "not_joined"  # unjoin: second does not continue first
-    TABLES_MERGED = "tables_merged"  # unjoin: joined tables are one table
+    TABLES_MERGED = "tables_merged"  # unjoin: joined tables that cannot be separated again
     NO_LINE_BREAK = "no_line_break"  # split: the block has no such line break with text on both sides
     DECIDED_BY_AGENT = "decided_by_agent"  # a program proposal on a block whose structure the agent decided
 

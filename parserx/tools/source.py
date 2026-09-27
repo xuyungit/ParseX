@@ -39,6 +39,7 @@ from parserx.tools.context import ToolContext, ToolOutput, output, service_failu
 from parserx.tools.describe_figure import perceive as describe
 from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import image_crop, page_render, region_crop, seam_image, write_once
+from parserx.tables.grid import TableGrid
 from parserx.tools.views import ImageRef, TableView, table_view
 from parserx.tools.vlm_tasks import REVIEW_SCHEMA, parse_review
 from parserx.workspace.queries import block_unit
@@ -68,12 +69,13 @@ class Look(IRModel):
     block: str | None = Field(None, description="位置：一个块（它的裁剪图；图片块是图片本身）")
     page: int | None = Field(None, description="位置：一整页")
     seam: int | None = Field(None, description="位置：第 seam 页下半与下一页上半拼在一起（跨页的表格或句子）")
-    bbox: BBox | None = Field(None, description="与 page 一起：只看页面上的这个区域 [x0, y0, x1, y1]（页面点）")
+    bbox: BBox | None = Field(None, description="与 page 一起：只看页面上的这个区域 [x0, y0, x1, y1]（页面点）；"
+                                                "as text 时识别引擎只读这个区域")
     rows: tuple[int, int] | None = Field(None, description="与表格的 block 一起：只看这几行 [首行, 末行]（从 0 起），更清楚；"
                                                            "只用于从一页 PDF 上读出的表格（跨页合并的、从图片里读出的看整块）")
     as_: Literal["image", "answer", "text", "table", "description"] = Field(
         "image", alias="as", description="image：返回图片文件的路径，打开它亲自看；answer：视觉模型看图回答 question；"
-                                         "text：识别引擎读一页（尚未识别或识别失败的页）或一张图片里的文字；"
+                                         "text：识别引擎读一页、页面上的一个区域（加 bbox）或一张图片，结果按块给出（文字、标题、表格）；"
                                          "table：视觉模型按 issues 重读一张表格；description：视觉模型描述一张图片")
     question: str | None = Field(None, description="answer：要问的问题，要具体，例如“第 2 行第 3 列的数值是多少”")
     issues: list[TableIssue] = Field([], description="table：要核查的问题；范围外新增或改动的数字会被拒绝")
@@ -96,13 +98,19 @@ class Look(IRModel):
             raise ValueError("as table: give the table block and the issues to check")
         if self.as_ == "description" and self.block is None:
             raise ValueError("as description: give the figure block")
-        if self.as_ == "text" and (self.seam is not None or self.bbox is not None or self.rows is not None):
-            raise ValueError("as text: give a page, or a figure block")
+        if self.as_ == "text" and (self.seam is not None or self.rows is not None):
+            raise ValueError("as text: give a page (with bbox for a region of it), or a figure block")
         return self
 
 
 class ViewSourceRequest(IRModel):
     looks: list[Look] = Field(min_length=1, description="要看的地方，结果按同样的顺序返回")
+
+
+class ReadBlock(IRModel):
+    kind: str  # the engine's block, as a draft role: text, H? (a title, level open), table, figure …
+    text: DocText | None = None
+    table: TableView | None = None
 
 
 class LookResult(IRModel):
@@ -113,7 +121,7 @@ class LookResult(IRModel):
     evidence: str | None  # cite it in edit_draft; None when the look failed (see failures)
     image: ImageRef | None = None
     answer: DocText | None = None
-    text: DocText | None = None
+    reading: list[ReadBlock] | None = None  # text: what the scan engine read, block by block
     table: TableView | None = None
     undetermined: list[tuple[int, int]] = []  # table: cells the reader could not determine
     description: DocText | None = None
@@ -357,7 +365,19 @@ def _text(ctx: ToolContext, one: Look) -> LookResult:
     (its digest in the evidence) so that ``adopt`` takes exactly this reading."""
     state = ctx.ws.load()
     ocr = ctx.ocr()
-    if one.page is not None:
+    crops = []
+    if one.page is not None and one.bbox is not None:  # a region: its crop, read like an image (Q87)
+        page = next((p for p in state.pages if p.n == one.page), None)
+        if state.format != "pdf" or page is None:
+            raise ToolFailure(FailureCode.INVALID_REQUEST, f"no PDF page {one.page}")
+        crop, png, _t, render, render_png = region_crop(ctx.ws.source_path, page.n, one.bbox,
+                                                        ctx.config.tools.read_dpi, 0.0, page.size_pt)
+        write_once(ctx.ws.root / crop.path, png)
+        write_once(ctx.ws.root / render.path, render_png)
+        crops = [render, crop]
+        data = scan.image_batch_pdf([(png, crop.width, crop.height)])
+        image = crop.id
+    elif one.page is not None:
         if state.format != "pdf" or all(p.n != one.page for p in state.pages):
             raise ToolFailure(FailureCode.INVALID_REQUEST, f"no PDF page {one.page}")
         with pymupdf.open(ctx.ws.source_path) as doc:
@@ -384,15 +404,39 @@ def _text(ctx: ToolContext, one: Look) -> LookResult:
     digest = hashlib.sha256(raw).hexdigest()
     reading = f"evidence/{digest[:16]}.json"
     write_once(ctx.ws.root / reading, raw)
-    text = "\n".join(str(e.get("block_content") or "").strip()
-                     for e in (page.get("prunedResult") or {}).get("parsing_res_list") or []
-                     if str(e.get("block_content") or "").strip())
-    evidence = Evidence(id=evidence_id("text", {"block": one.block, "page": one.page}, digest), how="text",
-                        block=one.block, page=one.page, image=image, answer=text, reading=reading,
+    blocks = read_blocks(page)
+    text = "\n".join(b.text.doc_text for b in blocks if b.text is not None)
+    target = {"block": one.block, "page": one.page, **({"bbox": list(one.bbox)} if one.bbox else {})}
+    evidence = Evidence(id=evidence_id("text", target, digest), how="text", block=one.block, page=one.page,
+                        bbox=tuple(one.bbox) if one.bbox else None, image=image, answer=text, reading=reading,
                         reading_sha256=digest, engine=ocr.model, raw_ref=ocr.request_key(data, "application/pdf"))
     with ctx.ws.txn("tool:view_source") as state:
+        known = {a.id for a in state.assets}
+        state.assets.extend(a for a in crops if a.id not in known)
         kept = evidence_store.record(state, evidence)
-    return _result(one, evidence=kept.id, text=DocText(doc_text=text))
+    return _result(one, evidence=kept.id, reading=blocks)
+
+
+def read_blocks(page: dict) -> list[ReadBlock]:
+    """The scan engine's reading of a page or an image, block by block in its order, as the draft would show it."""
+    out = []
+    entries = (page.get("prunedResult") or {}).get("parsing_res_list") or []
+    boxes = [scan.entry_bbox(e) for e in entries]
+    for index in scan.scan_order(boxes, [e.get("block_order") for e in entries]):
+        entry = entries[index]
+        kind = scan.labels.to_kind(scan.ENGINE, str(entry.get("block_label", "")))
+        content = scan.engine_text(scan.take_pictures(str(entry.get("block_content") or ""))[0],
+                                   line_break="<br>" if kind == BlockKind.TABLE else "\n")
+        if kind == BlockKind.TABLE:
+            try:
+                out.append(ReadBlock(kind="table", table=table_view(TableGrid.from_html(content))))
+                continue
+            except ValueError:
+                pass
+        role = "title" if kind == BlockKind.TITLE else kind.value
+        if content.strip() or kind in (BlockKind.FIGURE, BlockKind.SCAN):
+            out.append(ReadBlock(kind=role, text=DocText(doc_text=content.strip()) if content.strip() else None))
+    return out
 
 
 def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None,

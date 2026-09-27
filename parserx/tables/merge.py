@@ -122,18 +122,79 @@ def merge_tables(state: DocumentState, first_id: str, second_id: str, drop_rows:
     """Append *second*'s rows to *first* (legality is checked by the caller)."""
     blocks = {b.id: b for b in state.blocks}
     first, second = blocks[first_id], blocks[second_id]
+    moved = [e for e in state.ledger if e.block == second.id and e.disposition == "output"]
+    rows_before = first.cells.n_rows
     first.cells = merge_grids(first.cells, second.cells, drop_rows)
     first.anchors = [*first.anchors, *second.anchors]
     second.status = BlockStatus.MERGED
+    # what separating them again needs (unjoin, Q87): where the seam is, which ledger items moved
     first.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="merge_table", reason=reason,
-                                    evidence={**evidence, "drop_rows": drop_rows}, actor=actor, refs=[second.id]))
+                                    evidence={**evidence, "drop_rows": drop_rows, "rows_before": rows_before,
+                                              "moved_items": ",".join(e.item for e in moved)},
+                                    actor=actor, refs=[second.id]))
     second.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="merged_into", reason=reason,
                                      evidence={}, actor=actor, refs=[first.id]))
     state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTINUES, first.id, second.id),
                                     kind=RelationKind.CONTINUES, src=first.id, dst=second.id))
+    for entry in moved:
+        entry.disposition, entry.block = "merged", first.id
+
+
+def split_problem(state: DocumentState, first: Block, second: Block) -> str | None:
+    """Why the table *second* merged into *first* cannot be separated again, or None."""
+    merges = _joined(state, first)
+    if not merges or merges[-1].refs != [second.id]:
+        return f"{second.id} is not the last table joined to {first.id}: unjoin the later ones first"
+    seam = _seam(first, second, merges[-1])
+    if first.cells is None or second.cells is None or first.cells.n_rows != seam + second.cells.n_rows - int(
+            merges[-1].evidence.get("drop_rows", 0)):
+        return f"{first.id} was changed since the join (its rows): it stays one table"
+    if any(c.row < seam < c.row + c.rowspan for c in first.cells.cells):
+        return f"a cell of {first.id} spans the seam at row {seam}"
+    return None
+
+
+def split_tables(state: DocumentState, first_id: str, second_id: str, *, actor: str, reason: str,
+                 evidence: Evidence) -> None:
+    """Undo ``merge_tables``: *first* keeps its rows up to the seam, *second* gets the rest back (with the header rows
+    the join dropped) — edits made to the joined table stay with the rows they were made on."""
+    blocks = {b.id: b for b in state.blocks}
+    first, second = blocks[first_id], blocks[second_id]
+    merge = _joined(state, first)[-1]
+    seam, drop = _seam(first, second, merge), int(merge.evidence.get("drop_rows", 0))
+    grid = first.cells
+    head = [c for c in second.cells.cells if c.row < drop]
+    tail = [c.model_copy(update={"row": c.row - seam + drop}) for c in grid.cells if c.row >= seam]
+    second.cells = TableGrid(n_rows=grid.n_rows - seam + drop, n_cols=grid.n_cols, cells=[*head, *tail],
+                             header_rows=second.cells.header_rows)
+    first.cells = TableGrid(n_rows=seam, n_cols=grid.n_cols, cells=[c for c in grid.cells if c.row < seam],
+                            header_rows=grid.header_rows)
+    if first.anchors[-len(second.anchors):] == second.anchors:
+        first.anchors = first.anchors[:-len(second.anchors)]
+    second.status = BlockStatus.OK
+    items = set(str(merge.evidence.get("moved_items", "")).split(","))
     for entry in state.ledger:
-        if entry.block == second.id and entry.disposition == "output":
-            entry.disposition, entry.block = "merged", first.id
+        if entry.item in items and entry.disposition == "merged" and entry.block == first.id:
+            entry.disposition, entry.block = "output", second.id
+    state.relations[:] = [r for r in state.relations
+                          if (r.kind, r.src, r.dst) != (RelationKind.CONTINUES, first.id, second.id)]
+    for block, other in ((first, second), (second, first)):
+        block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="unjoin_table", reason=reason,
+                                        evidence=evidence, actor=actor, refs=[other.id]))
+
+
+def _joined(state: DocumentState, first: Block) -> list:
+    """The joins of tables into *first* still in place (a separated one's block is no longer merged), in order."""
+    blocks = {b.id: b for b in state.blocks}
+    return [d for d in first.decisions if d.choice == "merge_table" and d.refs
+            and blocks.get(d.refs[0]) is not None and blocks[d.refs[0]].status == BlockStatus.MERGED]
+
+
+def _seam(first: Block, second: Block, merge) -> int:
+    """The first row of *second*'s part in the joined table."""
+    if "rows_before" in merge.evidence:
+        return int(merge.evidence["rows_before"])
+    return first.cells.n_rows - second.cells.n_rows + int(merge.evidence.get("drop_rows", 0))
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

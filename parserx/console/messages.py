@@ -64,6 +64,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "act.join": {"zh": "接续", "en": "join"},
     "act.exclude": {"zh": "不输出", "en": "exclude"},
     "act.include": {"zh": "恢复", "en": "include"},
+    "act.unadopt": {"zh": "撤回采用", "en": "unadopt"},
     "act.move": {"zh": "调整顺序", "en": "move"},
     "act.close": {"zh": "关闭", "en": "close"},
     "act.recognize": {"zh": "重新识别", "en": "re-read"},
