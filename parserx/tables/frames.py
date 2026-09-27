@@ -11,6 +11,9 @@ its first row repeats a label of that table's first row: "设备名称 | 与研�
 rows) or a closing row of it ("增值税税率为 %"), and stays in it.  Once a frame is cut, its full-width rows between or around the parts become paragraphs (whether one is a title
 is the title step's and the agent's to judge, Q89), and each part keeps only the column lines it uses.
 
+A table that is not cut may still open with full-width rows: a title drawn inside the frame ("（二）考核指标、考核
+方式/方法", "一、基本信息").  They become paragraphs before it; full-width rows at its end stay (a closing row).
+
 Like ``split`` of a text block, the table block keeps the first part and its ledger (the content is only divided,
 never rewritten); the other parts become new blocks right after it, on the same anchors.
 """
@@ -59,6 +62,8 @@ def frame_parts(grid: TableGrid) -> list[TableGrid | str] | None:
         bands.append(current)
     if any(not _inside(grid, band) for band in bands):
         return None  # a cell reaches across a full-width row: not a frame of parts
+    if not bands:
+        return None
     lines = [_lines(grid, band) for band in bands]
     tables: list[list[int]] = [list(bands[0])]  # parts: bands of one table, with the rows between them
     for previous, band, before, after in zip(bands, bands[1:], lines, lines[1:]):
@@ -66,8 +71,10 @@ def frame_parts(grid: TableGrid) -> list[TableGrid | str] | None:
             tables[-1] += list(range(previous[-1] + 1, band[0])) + band
         else:
             tables.append(list(band))
-    if len(tables) == 1:
-        return None  # one table: its full-width rows are group or closing rows
+    if len(tables) == 1:  # one table: its full-width rows are group or closing rows, a title above it is not
+        if bands[0][0] == 0:
+            return None
+        tables[0] += list(range(bands[-1][-1] + 1, grid.n_rows))
     inside = {r for rows in tables for r in rows}
     out: list[TableGrid | str] = []
     row = 0

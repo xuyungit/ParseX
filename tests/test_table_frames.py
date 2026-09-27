@@ -89,3 +89,8 @@ def test_a_table_read_in_a_drawing_is_its_labels():
     assert tables_in_drawings(state) == ["b-p001-0001-r001"]
     assert (labels.kind, labels.text, labels.cells) == (BlockKind.TEXT, "坡度 0.1 系数 9.8 开始", None)
     assert photo.kind == BlockKind.TABLE
+
+
+def test_a_title_drawn_at_the_top_of_a_table_is_a_paragraph_and_a_closing_row_stays():
+    table = _grid([[("（二）考核指标", 2)], [("指标", 1), ("数值", 1)], [("量程", 1), ("1000KN", 1)], [("注：实测", 2)]])
+    assert _shapes(frame_parts(table)) == ["（二）考核指标", "3x2"]
