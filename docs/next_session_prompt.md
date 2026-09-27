@@ -39,7 +39,7 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 598 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 600 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
@@ -49,12 +49,10 @@
 
 请我从下面的清单（退出报告 §4）选定本轮主题，再写分解（事实、工作项、顺序、退出条件、待决问题），请我确认后再动代码：
 
-1. ~~Agent 的标题修改~~：Q81 已做（先读懂全文）。剩下的待决：
-   - **只出现在页眉里的部分名**：patent01 的"权利要求书""说明书"；页眉被排除，结构少一层。程序层面的问题，要全语料衡量；
-   - **real_doc01 标注**：附着合同的层级、"响应文件格式"下各项；
-   - **节选文档的绝对层级**：val_word_template01、unseen_scan_form01；
-   - **`process` 不报告自己对状态的改动**。
-2. **只有一种证据的标题**：讨论材料建议加"编号同级"信号（eval_reports/2026-09-26_headings_discussion.md §2.4，建议 B），尚未决定。
+1. ~~Agent 的标题修改~~（Q81）、~~绝对层级~~（Q82，指标 2.3）、~~页眉里的部分名~~（排除）、~~real_doc01 标注~~、~~编号同级信号~~（Q83 不加）。剩下：
+   - **Q84 `process` 的设计**：产品中 Agent 不再拿到 `process`，待办清单由 `overview` 返回——待用户确认；
+   - **画在表格里的节名**（表单式文档整页是表格，unseen_scan_form01、unseen_pdf_tables01）：输出作为表格行保留，标注把它们提成标题。
+2. ~~只有一种证据的标题~~：Q83。
 3. **公式待核对项多时逐项交 Agent，成本高**：paper_chn02 本次 $1.56。
 4. **扫描 PDF 上不可见的 OCR 文字层可作为独立读数**。
 5. **DOCX 页面层**（Q69）。
