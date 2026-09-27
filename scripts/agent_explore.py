@@ -284,7 +284,7 @@ def _parse_one(args, doc: str) -> int:
     agent["engine"] = args.engine  # Codex, or our own loop (Q86)
     if args.model:
         agent["model"] = args.model
-    for setting in args.agent_set or []:  # e.g. api=chat, vision=agent, endpoint=${OPENAI_BASE_URL_C}
+    for setting in args.agent_set or []:  # e.g. api=chat, vision=agent, budget_usd=0.5
         key, _, value = setting.partition("=")
         agent[key] = yaml.safe_load(value) if value[:1] not in ("$",) else value
     (doc_dir / "parserx.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
