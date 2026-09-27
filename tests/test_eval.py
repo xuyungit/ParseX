@@ -483,3 +483,14 @@ def test_format_compare_report_shows_deltas():
     assert "Warning Type Delta" in report
     assert "| Number mismatch | 1 | 0 | -1 |" in report
     assert "| doc-a | +0.050 | +0.100 | -0.100 | — | +0.100 | +0 | -1 | -1 | -0.5s |" in report
+
+
+def test_heading_metrics_forgive_one_uniform_level_offset():
+    """Where the outline starts is a convention (Q82): a whole outline one level deeper or shallower still matches,
+    and the offset is reported; a partial shift does not."""
+    m = compute_heading_metrics("# 3 System\n## 3.1 Design\n## 3.2 Tests", "## 3 System\n### 3.1 Design\n### 3.2 Tests")
+    assert m.f1 == 1.0 and m.level_offset == 1
+    m = compute_heading_metrics("# Title\n### Section 1", "# Title\n## Section 1")  # only part of it shifted
+    assert m.correct_count == 1 and m.level_offset == 0
+    m = compute_heading_metrics("### A\n#### B", "# A\n## B")  # two levels off: not forgiven
+    assert m.f1 == 0.0

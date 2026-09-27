@@ -24,8 +24,9 @@ from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.2"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.3"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
+# 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
 
 __all__ = [
     "METRIC_VERSION",
@@ -72,6 +73,7 @@ class HeadingMetrics:
     detected_count: int = 0
     expected_count: int = 0
     correct_count: int = 0
+    level_offset: int = 0  # the uniform shift of the output's levels that scored best (Q82)
 
 
 @dataclass
@@ -240,6 +242,11 @@ def compute_heading_metrics(
     **and** their heading level is identical.  This ensures that a
     ``### Section`` is not silently accepted where ``## Section`` was
     expected — level mismatches indicate structural regressions.
+
+    Where the outline starts is a convention, not structure (Q82: an excerpt that begins at chapter 3, a document
+    without a title): the whole output one level deeper or shallower is scored as well, and the best of the three is
+    kept (``level_offset``).  Only a uniform shift is forgiven — levels are not clamped, so a shifted H1 matches
+    nothing.
     """
     detected = _extract_headings(output_md)
     expected = _extract_headings(expected_md)
@@ -252,22 +259,9 @@ def compute_heading_metrics(
             expected_count=0,
         )
 
-    # Match detected to expected using (level, normalized text)
     expected_entries = [(lvl, _normalize_heading(t)) for lvl, t in expected]
-    matched = set()
-    correct = 0
-
-    for det_level, title in detected:
-        norm = _normalize_heading(title)
-        for i, (exp_level, exp_norm) in enumerate(expected_entries):
-            if i in matched:
-                continue
-            # Text must match (exact or substring) AND level must match
-            text_ok = norm == exp_norm or norm in exp_norm or exp_norm in norm
-            if text_ok and det_level == exp_level:
-                matched.add(i)
-                correct += 1
-                break
+    detected_entries = [(lvl, _normalize_heading(t)) for lvl, t in detected]
+    correct, offset = max((_matches(detected_entries, expected_entries, k), -abs(k), k) for k in (0, 1, -1))[::2]
 
     precision = correct / max(len(detected), 1)
     recall = correct / max(len(expected), 1)
@@ -280,7 +274,21 @@ def compute_heading_metrics(
         detected_count=len(detected),
         expected_count=len(expected),
         correct_count=correct,
+        level_offset=offset,
     )
+
+
+def _matches(detected: list[tuple[int, str]], expected: list[tuple[int, str]], offset: int) -> int:
+    """Detected headings, their levels shifted by *offset*, that match an expected heading: text equal or one
+    containing the other, and the same level."""
+    matched: set[int] = set()
+    for det_level, norm in detected:
+        for i, (exp_level, exp_norm) in enumerate(expected):
+            if i not in matched and det_level + offset == exp_level and (
+                    norm == exp_norm or norm in exp_norm or exp_norm in norm):
+                matched.add(i)
+                break
+    return len(matched)
 
 
 def _meaningful_lines(markdown: str) -> list[str]:

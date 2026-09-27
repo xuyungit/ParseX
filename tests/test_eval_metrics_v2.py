@@ -224,10 +224,10 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_2():
+def test_metric_version_is_2_3():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.2"
+    assert METRIC_VERSION == "2.3"
 
 
 def test_headings_skip_fenced_code_and_compare_after_nfkc():
