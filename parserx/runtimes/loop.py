@@ -9,7 +9,7 @@ reached through an adapter (``runtimes/models.py``): the OpenAI Responses API or
 The context (guide Q88): the task and the tools are a prefix that never changes, the conversation is only appended
 to, so the provider's cache carries every turn's history.  When the last turn's context passed ``clear_at_tokens``,
 or holds more than ``MAX_IMAGES`` images, the older tool results are replaced at once by one-line placeholders (the
-state is in the workspace: anything can be read again), and the agent is told so.  With ``vision: agent`` the images
+state is in the workspace: anything can be read again), and the agent is told so, with its notes (Q87).  With ``vision: agent`` the images
 of ``view_source``'s ``as: image`` looks go into the tool results; with ``vision: tool`` the agent asks the service
 VLM instead (``as: answer``).
 
@@ -31,6 +31,7 @@ from parserx.runtimes.codex import AgentUsage
 from parserx.runtimes.models import Answer, ChatModel, Model, Note, ResponsesModel, ToolCall, ToolResult, summary
 from parserx.tools import AGENT_TOOLS, ToolContext, agent_json, call_tool, tool_schema
 from parserx.workspace import Workspace
+from parserx.workspace.queries import current_notes
 from parserx.workspace.store import read_records
 
 MAX_STEPS = 200  # model turns; Codex's runs took at most ~50 tool calls a document
@@ -43,7 +44,7 @@ OVER_BUDGET = 1.2  # of the budget: stopped
 START = "开始处理 {source}。"
 SUBMIT_NOW = "{why}：现在调用 submit_draft 交稿，然后写最终报告；不要再开始新的检查。未处理完的待办写进报告。"
 CLEARED = ("上下文已清理：较早的 {n} 个工具结果换成了占位，需要时再调用一次（状态都在工作区里）。"
-           "已被接受的修改 {changes} 条（read_draft 的 changes 视图）。")
+           "已被接受的修改 {changes} 条（read_draft 的 changes 视图）。{notes}")
 
 
 class LoopAgent:
@@ -103,7 +104,7 @@ class LoopAgent:
                     events.append("told to submit")
                 cleared = _clear(history, context_tokens, self.agent.clear_at_tokens)
                 if cleared:
-                    history.append(Note(CLEARED.format(n=cleared, changes=_changes(ws_dir))))
+                    history.append(Note(CLEARED.format(n=cleared, changes=_changes(ws_dir), notes=_notes(ws_dir))))
                     events.append(f"cleared {cleared}")
                 t0 = time.monotonic()
                 try:
@@ -201,6 +202,14 @@ def _changes(ws_dir: Path) -> int:
         if record.get("type") == "call" and record.get("tool") == "edit_draft" and record.get("result"):
             count += sum(1 for o in record["result"].get("outcomes") or [] if o.get("accepted"))
     return count
+
+
+def _notes(ws_dir: Path) -> str:
+    """The agent's current notes, put back into the context after a clearing (Q87, Q88)."""
+    notes = current_notes(Workspace.open(ws_dir).load())
+    if not notes:
+        return "还没有理解记录（edit_draft 的 note）。"
+    return "你记下的理解：\n" + "\n".join(f"- [{n.id}] {n.scope}：{n.text}" for n in notes)
 
 
 def _error(message: str) -> str:

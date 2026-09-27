@@ -103,7 +103,7 @@ def test_the_shipped_task_is_the_task_the_cli_adapter_and_the_generated_referenc
         for name in ("read_draft", "view_source", "edit_draft", "submit_draft", "doc_text", "evidence"):
             assert name in text
         for op in ("replace_text", "set_cells", "insert_text", "adopt", "set_role", "move", "join", "unjoin", "split",
-                   "exclude", "include", "mark_pending", "dismiss"):  # every operation, from the schema
+                   "exclude", "include", "mark_pending", "dismiss", "note"):  # every operation, from the schema
             assert f"**`{op}`**" in text, op
         for old in ("./px tool process", "overview", "ask_image", "apply_structure", "review_table", "describe_figure",
                     "workspace init", "`correct`", "`close`", "`skim`", "set_level", "merge_tables", '"link"',

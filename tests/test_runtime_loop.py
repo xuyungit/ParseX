@@ -102,6 +102,20 @@ def test_the_agent_sees_its_image_looks_when_it_looks_itself(tmp_path):
     assert json.loads(agent._call(tmp_path / "ws", ToolCall("c", "nope", "{}"), "tool").text)["ok"] is False
 
 
+def test_a_cleared_context_gets_the_agents_notes_back(tmp_path):
+    from parserx.runtimes.loop import _notes
+    from parserx.tools import call_tool
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 90), "SENTINEL page", fontsize=12)
+    doc.save(tmp_path / "d.pdf")
+    workspace_init(tmp_path / "d.pdf", tmp_path / "ws", config=_config())
+    assert "还没有理解记录" in _notes(tmp_path / "ws")
+    call_tool("edit_draft", tmp_path / "ws", {"ops": [{"op": "note", "scope": "全文", "text": "一页的说明"}]},
+              config=_config())
+    assert "- [n-001] 全文：一页的说明" in _notes(tmp_path / "ws")
+
+
 def test_older_tool_results_are_cleared_at_once_past_the_threshold():
     history = [ToolResult(ToolCall(f"c{i}", "read_draft", json.dumps({"view": "text", "page": i})), "x" * 100)
                for i in range(7)]

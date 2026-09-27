@@ -120,6 +120,19 @@ class ClosedItem(IRModel):
     occluded: bool = False  # text the page draws under another element: content, kept, and named in the summary (Q71)
 
 
+class Note(IRModel):
+    """The agent's understanding of the document, written down (Q87): a revisable interpretation — what a part is,
+    which convention holds where — with its scope and the evidence it rests on; separate from the source's facts.
+    Notes are revised (``replaces``), never removed: the one no later note replaces is current."""
+
+    id: str  # n-001 …
+    text: str
+    scope: str  # what it applies to: the whole document, pages 20–35, the appendix …
+    evidence: list[str] = []  # evidence ids (view_source)
+    replaces: str | None = None  # the note it revises
+    actor: str
+
+
 class DocumentState(IRModel):
     schema_version: Literal[1] = 1
     id: str
@@ -137,6 +150,7 @@ class DocumentState(IRModel):
     readings: list[PageReading] = []  # local page readings (guide §9.5, Q56)
     closed: list[ClosedItem] = []  # worklist signals checked and left as they are
     evidence: list[Evidence] = []  # what was looked at in the source and seen there (Q85)
+    notes: list[Note] = []  # the agent's understanding of the document (Q87)
     ledger: list[LedgerEntry] = []
     missing: list[Missing] = []
     stats: Stats = Stats()

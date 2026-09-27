@@ -120,6 +120,25 @@ def test_the_changes_view_lists_what_was_accepted_in_order(draft, context):
     assert changes[0]["text"]["doc_text"] == "3 件 → 8 件" and changes[0]["evidence"] == evidence
 
 
+def test_notes_are_written_revised_and_read_back(draft, context):
+    evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]
+    first = _ok("edit_draft", draft, {"ops": [{"op": "note", "scope": "第 2 页", "text": "扫描页，正文一段",
+                                               "evidence": [evidence]}]}, context)["outcomes"][0]
+    assert first["accepted"] and first["target"] == "n-001"
+    outcomes = _ok("edit_draft", draft, {"ops": [
+        {"op": "note", "scope": "第 2 页", "text": "扫描页：一个标题与一段正文", "replaces": "n-001"},
+        {"op": "note", "scope": "全文", "text": "x", "replaces": "n-001"},  # n-001 is no longer current
+        {"op": "note", "scope": "全文", "text": "y", "evidence": ["e-000000000000"]}]}, context)["outcomes"]
+    assert [(o["accepted"], o.get("rule")) for o in outcomes] == [(True, None), (False, "unknown_note"),
+                                                                  (False, "evidence")]
+    notes = _ok("read_draft", draft, {"view": "notes"}, context)["notes"]
+    assert [(n["id"], n["text"], n["replaces"]) for n in notes] == [("n-002", "扫描页：一个标题与一段正文", "n-001")]
+    assert _ok("read_draft", draft, {}, context)["summary"]["notes"] == 1
+    changes = _ok("read_draft", draft, {"view": "changes"}, context)["changes"]
+    assert [c["target"] for c in changes if c["op"] == "note"] == ["n-001", "n-002"]
+    assert len(Workspace.open(draft).load().notes) == 2  # the history stays, in the state and so in the sidecar
+
+
 def test_find_must_name_one_place(draft, context):
     text = _block(draft, "扫描文字")
     evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]

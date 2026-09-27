@@ -33,13 +33,13 @@ from parserx.hierarchy.typography_titles import body_typography, native_style, t
 from parserx.ir.base import IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, TaskKind
-from parserx.ir.state import DocumentState
+from parserx.ir.state import DocumentState, Note
 from parserx.render.markdown import semantic_block
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import DocText, FailureCode, ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.views import BlockView, DocInfo, ObservationView, block_view, doc_info, observation_view, \
     unresolved_items
-from parserx.workspace.queries import HIDDEN, block_unit, ordered
+from parserx.workspace.queries import HIDDEN, block_unit, current_notes, ordered
 from parserx.workspace.store import read_records
 from parserx.workspace.views import PageRow, page_rows
 
@@ -54,14 +54,15 @@ DESCRIPTION = ("读初稿：程序做出的解析结果（文字、表格、图�
 
 
 class ReadDraftRequest(IRModel):
-    view: Literal["summary", "issues", "text", "outline", "blocks", "changes"] = Field(
+    view: Literal["summary", "issues", "text", "outline", "blocks", "changes", "notes"] = Field(
         "summary", description="summary：文档、各页状态、块与待办的计数、已花费用；"
                                "issues：待办清单，每项有编号 w-…（dismiss 用它）、类别、位置、说明、相关原文；"
                                "text：按阅读顺序的行（块号、角色、页、排版类别 cls、文字）；"
                                "outline：排版类别表（字体字号粗细与编号样式相同的块归为一类，附当前角色分布与例子）"
                                "与所有像标题的行（附后文开头），Word 文档附样式与编号；"
                                "blocks：指定块的细节（表格的每个单元格、状态）；"
-                               "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据")
+                               "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据；"
+                               "notes：你记下的对文档的理解（edit_draft 的 note），修订过的只列最新的")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
     page: int | None = Field(None, description="issues、text：只看这一页")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
@@ -104,6 +105,7 @@ class DraftSummary(IRModel):
     issues: dict[str, int]  # open issues by kind
     requests: dict[str, int]  # service requests made for the document so far
     usd: float | None
+    notes: int = 0  # the agent's current notes (view=notes)
 
 
 class DraftLine(IRModel):
@@ -161,6 +163,7 @@ class ReadDraftResult(IRModel):
     blocks: list[BlockView] | None = None
     sources: list[ObservationView] | None = None
     changes: list[DraftChange] | None = None
+    notes: list[Note] | None = None
     total_blocks: int | None = None  # text: shown blocks in the document
     before_id: str | None = None  # text: read back from here with before
     after_id: str | None = None  # text: read on from here with after
@@ -178,6 +181,8 @@ def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
         return output(_blocks(state, req))
     if req.view == "changes":
         return output(ReadDraftResult(view="changes", changes=_changes(ctx)))
+    if req.view == "notes":
+        return output(ReadDraftResult(view="notes", notes=current_notes(state)))
     shown = [b for b in ordered(state) if b.status not in HIDDEN]
     classes = _classes(state, shown)
     if req.view == "outline":
@@ -195,7 +200,8 @@ def _summary(state: DocumentState) -> DraftSummary:
     return DraftSummary(doc=doc_info(state), pages=page_rows(state),
                         blocks=dict(sorted(Counter(b.kind.value for b in shown).items())),
                         issues=dict(sorted(Counter(u.kind.value for u in unresolved_items(state)).items())),
-                        requests=dict(state.stats.requests), usd=state.stats.cost_usd)
+                        requests=dict(state.stats.requests), usd=state.stats.cost_usd,
+                        notes=len(current_notes(state)))
 
 
 def _issues(state: DocumentState, req: ReadDraftRequest) -> list[Unresolved]:
@@ -310,6 +316,9 @@ def _change(op: dict, outcome: dict) -> DraftChange:
         what = f"split at line break {op.get('at_break', 1)}: {outcome.get('block')}"
     elif kind == "dismiss":
         target, what = outcome.get("target"), f"closed {op['issue']}"
+    elif kind == "note":
+        target, what = outcome.get("target"), f"{op['scope']}：{op['text']}" + (
+            f" (revises {op['replaces']})" if op.get("replaces") else "")
     evidence = op.get("evidence")
     return DraftChange(op=kind, target=target, what=what, text=DocText(doc_text=text) if text else None,
                        reason=op.get("reason", ""), evidence=evidence if isinstance(evidence, str) else None)

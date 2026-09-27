@@ -9,7 +9,8 @@ one that changes content cites the evidence it rests on (``evidence``, from ``vi
   figure's text, a table read again, a figure's description);
 - structure: ``set_role``, ``move``, ``join`` / ``unjoin``, ``split``, ``exclude`` / ``include``, ``mark_pending`` —
   never the text;
-- the worklist: ``dismiss`` an issue the evidence shows needs no change.
+- the worklist: ``dismiss`` an issue the evidence shows needs no change;
+- the understanding: ``note`` what the document is and which conventions hold where (Q87), revised, never removed.
 
 The program checks each operation: content must rest on evidence of its place, a native text layer's numbers change
 only as the local reading shows them, a table read again passes the acceptance gate, structure stays legal (no
@@ -50,7 +51,7 @@ from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
-from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry
+from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
 from parserx.reading.compare import holders_of, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
@@ -60,7 +61,7 @@ from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.evidence import image_evidence, image_evidence_at
 from parserx.tools.recognize import _next_block_seq, _next_item, integrate_page, scan_engine_pages
 from parserx.tools.views import unresolved_items
-from parserx.workspace.queries import block_unit, ordered
+from parserx.workspace.queries import block_unit, current_notes, ordered
 
 ACTOR = "agent"
 _TEXT_KINDS = frozenset({BlockKind.TEXT, BlockKind.TITLE, BlockKind.LIST, BlockKind.CAPTION, BlockKind.FOOTNOTE,
@@ -148,9 +149,21 @@ class Dismiss(IRModel):
     occluded: bool = Field(False, description="text_not_seen：文字确实在，只是被别的元素盖住（保留原文）")  # Q71
 
 
+class WriteNote(IRModel):
+    model_config = agent_doc("记下对文档的理解：由哪几部分组成、某一部分的标题惯例、某处为什么这样判断，写明适用范围与证据。"
+                             "记录不改初稿，只能修订（replaces 指向旧记录）、不能删除；上下文被清理后仍在（read_draft 的 "
+                             "notes 视图）。没有 reason：结论本身就是。结果的 target 是记录的编号。")
+
+    op: Literal["note"]
+    text: str = Field(description="结论")
+    scope: str = Field(description="适用范围，如“全文”“第 20–35 页”“附件一”")
+    evidence: list[str] = Field([], description="证据编号（可省）")
+    replaces: str | None = Field(None, description="修订哪一条记录（n-…）")
+
+
 EditOp = Annotated[
     ReplaceText | SetCells | InsertText | Adopt | SetRole | Move | Join | Unjoin | Split | Exclude | Include
-    | MarkPending | Dismiss,
+    | MarkPending | Dismiss | WriteNote,
     Field(discriminator="op"),
 ]
 
@@ -167,7 +180,7 @@ class OpOutcome(IRModel):
     rule: str | None = None  # what refused it
     detail: str | None = None
     block: str | None = None  # a block the operation made (insert_text, split)
-    target: str | None = None  # dismiss: what the issue was about (a block, or a page "p3")
+    target: str | None = None  # dismiss: what the issue was about (a block, a page "p3"); note: the note's id
 
 
 class EditDraftResult(IRModel):
@@ -229,6 +242,8 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             detail = _adopt(ctx, state, op)
         elif isinstance(op, Dismiss):
             target = _dismiss(state, op, issues)
+        elif isinstance(op, WriteNote):
+            target = _note(state, op)
     except _Refused as exc:
         return OpOutcome(index=index, op=op.op, accepted=False, rule=exc.rule, detail=exc.detail)
     except ToolFailure as exc:
@@ -442,6 +457,24 @@ def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> 
     read = scan.image_blocks(scan.PageScan(page=0, raw=page, raw_ref=evidence.raw_ref or "",
                                            engine_version=evidence.engine or scan.ENGINE), asset, figure=block.id)
     integrate_image(state, block.id, read)
+
+
+# ── the understanding ───────────────────────────────────────────────────
+
+
+def _note(state: DocumentState, op: WriteNote) -> str:
+    if not op.text.strip() or not op.scope.strip():
+        raise _Refused("note", "a note says what holds (text) and where (scope)")
+    if op.replaces is not None and op.replaces not in {n.id for n in current_notes(state)}:
+        raise _Refused("unknown_note", f"no current note {op.replaces} (read_draft view=notes)")
+    known = {e.id for e in state.evidence}
+    unknown = [e for e in op.evidence if e not in known]
+    if unknown:
+        raise _Refused("evidence", f"no evidence {unknown} (view_source gives it)")
+    note = Note(id=f"n-{len(state.notes) + 1:03d}", text=op.text.strip(), scope=op.scope.strip(),
+                evidence=op.evidence, replaces=op.replaces, actor=ACTOR)
+    state.notes.append(note)
+    return note.id
 
 
 # ── the worklist ────────────────────────────────────────────────────────

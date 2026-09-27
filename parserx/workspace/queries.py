@@ -12,6 +12,12 @@ HIDDEN = frozenset({BlockStatus.EXCLUDED, BlockStatus.MERGED, BlockStatus.DUPLIC
 JOINABLE = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.FOOTNOTE, BlockKind.OTHER})  # join: one paragraph
 
 
+def current_notes(state: DocumentState) -> list:
+    """The agent's notes that no later note revises (Q87)."""
+    replaced = {n.replaces for n in state.notes if n.replaces}
+    return [n for n in state.notes if n.id not in replaced]
+
+
 def block_map(state: DocumentState) -> dict[str, Block]:
     return {block.id: block for block in state.blocks}
 
