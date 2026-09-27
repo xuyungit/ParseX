@@ -284,6 +284,9 @@ def _parse_one(args, doc: str) -> int:
     agent["engine"] = args.engine  # Codex, or our own loop (Q86)
     if args.model:
         agent["model"] = args.model
+    for setting in args.agent_set or []:  # e.g. api=chat, vision=agent, endpoint=${OPENAI_BASE_URL_C}
+        key, _, value = setting.partition("=")
+        agent[key] = yaml.safe_load(value) if value[:1] not in ("$",) else value
     (doc_dir / "parserx.yaml").write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
     python = _toolkit(args) / "venv" / "bin" / "python"
     env = {**os.environ, **{k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}}
@@ -315,6 +318,7 @@ def _parse_one(args, doc: str) -> int:
     if expected is not None and outcome and not outcome.get("error"):
         scores = _scores(doc, expected, {"exported": True, "markdown": outcome["markdown"]})
     record = {"doc": doc, "runtime_mode": args.runtime, "engine": args.engine, "model": args.model,
+              "agent_set": args.agent_set,
               "no_agent": args.no_agent,
               "exit_code": proc.returncode,
               "wall_s": wall, "outcome": outcome, "agent_usage": usage, "audit": audit, "integrity": integrity,
@@ -353,6 +357,8 @@ def main() -> int:
     prs.add_argument("--engine", choices=("codex", "loop"), default="codex",
                      help="the agent: Codex, or our own function-calling loop (Q86)")
     prs.add_argument("--model", help="the agent's model (default: the config's, gpt-6-sol)")
+    prs.add_argument("--agent-set", action="append", metavar="KEY=VALUE",
+                     help="a runtime.agent setting (api, endpoint, api_key, vision, budget_usd, …); repeatable")
     prs.add_argument("--no-agent", action="store_true", help="Codex not on PATH: the fallback")
     prs.add_argument("--lang", choices=("zh", "en"), default="zh")
     prs.add_argument("--tag", help="suffix of the run directory (several runs of one document)")

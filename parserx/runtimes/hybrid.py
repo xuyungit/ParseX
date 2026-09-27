@@ -269,7 +269,7 @@ def codex_agent(config: ParserXConfig) -> CodexAgent:
     env = agent_env(dict(os.environ), _dotenv_names(), secrets)
     home = Path.home()
     return CodexAgent(cfg.model, cfg.effort, env=env, price=config.scheduling.prices.get(cfg.model),
-                      forbidden={"parserx config": home / ".config" / "parserx"})
+                      forbidden={"parserx config": home / ".config" / "parserx"}, vision=cfg.vision)
 
 
 def deadline_minutes(config: ParserXConfig, pages: int) -> int:
@@ -301,7 +301,7 @@ def prepare_agent_dir(agent_dir: Path, config: ParserXConfig, keys_file: Path, *
     (agent_dir / "skills").mkdir(exist_ok=True)
     for file in SKILL_FILES:
         (agent_dir / "skills" / file).write_text(skills[file.removesuffix(".md")], encoding="utf-8")
-    task = compose_task("cli", input_name=input_name, minutes=minutes, vision="tool")
+    task = compose_task("cli", input_name=input_name, minutes=minutes, vision=config.runtime.agent.vision)
     (agent_dir / "AGENTS.md").write_text(task, encoding="utf-8")
 
 

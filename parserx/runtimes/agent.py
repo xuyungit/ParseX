@@ -69,8 +69,8 @@ class CodexAgent:
     engine, adapter = "codex", "cli"
 
     def __init__(self, model: str, effort: str, *, env: dict[str, str], price=None, forbidden: dict[str, Path] | None = None,
-                 executable: str = "codex"):
-        self.model, self.effort = model, effort
+                 executable: str = "codex", vision: str = "tool"):
+        self.model, self.effort, self.vision = model, effort, vision  # vision: agent — its own image viewing on
         self.env = env  # already without secrets (agent_env)
         self.price = price  # PriceConfig of the model, for the list-price cost
         self.forbidden = forbidden or {}  # paths the agent must not name (the secrets file, the user's config)
@@ -91,7 +91,7 @@ class CodexAgent:
         work_dir, log_dir = Path(work_dir), Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         argv = exec_command(model=self.model, effort=self.effort, doc_dir=work_dir,
-                            last_message=log_dir / "last_message.md", prompt=PROMPT, vision="tool")
+                            last_message=log_dir / "last_message.md", prompt=PROMPT, vision=self.vision)
         argv[0] = self.executable
         env = dict(self.env, RUST_LOG="codex_core=info")
         t0 = time.monotonic()

@@ -1,13 +1,21 @@
-"""Our own agent loop (Q62, Q86): the model calls the four tools as functions, in this process.
+"""Our own agent loop (Q62, Q86, Q88): the model calls the four tools as functions, in this process.
 
 The agent has the tools and nothing else — no shell, no files — so what it may touch holds by construction.  The
 function definitions are the tools' request models (``tool_schema``), the calls run in-process (``call_tool``, each
 logged in the workspace's call records like a command-line call), and each envelope goes back as the agent reads it
-(``agent_json``).  The task is Codex's with the function-call adapter (``compose_task("call", …)``).
+(``agent_json``).  The task is Codex's with the function-call adapter (``compose_task("call", …)``).  The model is
+reached through an adapter (``runtimes/models.py``): the OpenAI Responses API or OpenAI-compatible Chat Completions.
 
-The model is reached through the Responses API without storing anything on the provider's side: each turn sends the
-whole conversation, the reasoning items travelling back encrypted.  The loop ends when the model answers without
-calling a tool; it fails at the deadline, after ``max_steps`` model turns, or when the model cannot be reached.
+The context (guide Q88): the task and the tools are a prefix that never changes, the conversation is only appended
+to, so the provider's cache carries every turn's history.  When the last turn's context passed ``clear_at_tokens``,
+or holds more than ``MAX_IMAGES`` images, the older tool results are replaced at once by one-line placeholders (the
+state is in the workspace: anything can be read again), and the agent is told so.  With ``vision: agent`` the images
+of ``view_source``'s ``as: image`` looks go into the tool results; with ``vision: tool`` the agent asks the service
+VLM instead (``as: answer``).
+
+The loop ends when the model answers without calling a tool.  At 80% of the deadline, or when the agent's cost
+reaches its budget, it is told to submit; it fails at the deadline, at 1.2 times the budget, after ``max_steps``
+model turns, or when the model cannot be reached.
 """
 
 from __future__ import annotations
@@ -20,26 +28,40 @@ from typing import Any, Callable
 from parserx.config.schema import ParserXConfig
 from parserx.runtimes.agent import AgentOutcome, list_price
 from parserx.runtimes.codex import AgentUsage
+from parserx.runtimes.models import Answer, ChatModel, Model, Note, ResponsesModel, ToolCall, ToolResult, summary
 from parserx.tools import AGENT_TOOLS, ToolContext, agent_json, call_tool, tool_schema
 from parserx.workspace import Workspace
+from parserx.workspace.store import read_records
 
 MAX_STEPS = 200  # model turns; Codex's runs took at most ~50 tool calls a document
 RETRIES = 3  # a model turn that fails to arrive is tried again this many times
+KEEP_RESULTS = 4  # tool results a clearing leaves in place, the latest
+MAX_IMAGES = 6  # images in the context before a clearing
+WRAP_UP = 0.8  # of the deadline: time to submit
+OVER_BUDGET = 1.2  # of the budget: stopped
+
+START = "开始处理 {source}。"
+SUBMIT_NOW = "{why}：现在调用 submit_draft 交稿，然后写最终报告；不要再开始新的检查。未处理完的待办写进报告。"
+CLEARED = ("上下文已清理：较早的 {n} 个工具结果换成了占位，需要时再调用一次（状态都在工作区里）。"
+           "已被接受的修改 {changes} 条（read_draft 的 changes 视图）。")
 
 
 class LoopAgent:
     engine, adapter = "loop", "call"
 
     def __init__(self, model: str, effort: str, *, config: ParserXConfig, price=None,
-                 context_class: type[ToolContext] = ToolContext, client_factory: Callable[..., Any] | None = None,
+                 context_class: type[ToolContext] = ToolContext, model_factory: Callable[[float], Model] | None = None,
                  max_steps: int = MAX_STEPS):
         self.model, self.effort, self.config, self.price = model, effort, config, price
+        self.agent = config.runtime.agent
         self.context_class, self.max_steps = context_class, max_steps
-        self.client_factory = client_factory or _openai_client
+        self.model_factory = model_factory or self._model
 
     def available(self) -> tuple[bool, str | None]:
-        service = self.config.services.vlm  # the agent model is reached where the service models are
-        reachable = service.endpoint or service.api_key or self.client_factory is not _openai_client
+        if self.model_factory != self._model:
+            return True, None
+        service = self.config.services.vlm  # the agent model is reached where the service models are, by default
+        reachable = self.agent.endpoint or self.agent.api_key or service.endpoint or service.api_key
         return (True, None) if reachable else (False, "loop_not_configured")
 
     def run(self, work_dir: Path, deadline_s: float, log_dir: Path,
@@ -50,47 +72,66 @@ class LoopAgent:
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         source = Path(Workspace.open(ws_dir).load().source).name
-        task = compose_task("call", input_name=source, minutes=round(deadline_s / 60), vision="tool")
-        tools = [{"type": "function", "name": name, "description": schema["description"],
-                  "parameters": schema["request"]} for name in AGENT_TOOLS for schema in [tool_schema(name)]]
-        items: list[dict] = [{"role": "developer", "content": task},
-                             {"role": "user", "content": f"开始处理 {source}。"}]
+        vision = self.agent.vision
+        system = compose_task("call", input_name=source, minutes=round(deadline_s / 60), vision=vision)
+        tools = [{"name": name, "description": schema["description"], "parameters": schema["request"]}
+                 for name in AGENT_TOOLS for schema in [tool_schema(name)]]
+        history: list = [Note(START.format(source=source))]
         usage = AgentUsage()
         started = time.monotonic()
         last_message: str | None = None
         reason = detail = None
+        context_tokens = 0
+        told_to_submit = False
+        budget = self.agent.budget_usd
         with open(log_dir / "trace.jsonl", "w", encoding="utf-8") as trace:
             for step in range(self.max_steps):
-                left = deadline_s - (time.monotonic() - started)
-                if left <= 0:
+                elapsed = time.monotonic() - started
+                cost = list_price(self.price, usage) or 0.0
+                if elapsed >= deadline_s:
                     reason, detail = "agent_timeout", f"{deadline_s / 60:.0f} min"
                     break
+                if budget is not None and cost >= OVER_BUDGET * budget:
+                    reason, detail = "agent_budget", f"${cost:.2f} of ${budget:.2f}"
+                    break
+                events: list[str] = []
+                why = "时间快到了" if elapsed >= WRAP_UP * deadline_s else (
+                    "预算快用完了" if budget is not None and cost >= budget else None)
+                if why and not told_to_submit:
+                    history.append(Note(SUBMIT_NOW.format(why=why)))
+                    told_to_submit = True
+                    events.append("told to submit")
+                cleared = _clear(history, context_tokens, self.agent.clear_at_tokens)
+                if cleared:
+                    history.append(Note(CLEARED.format(n=cleared, changes=_changes(ws_dir))))
+                    events.append(f"cleared {cleared}")
                 t0 = time.monotonic()
                 try:
-                    response = self._turn(items, tools, timeout=left)
+                    answer = self._answer(system, tools, history, timeout=deadline_s - elapsed)
                 except Exception as exc:  # noqa: BLE001 - the model could not be reached: the run fails, reported
                     usage.failed_turns += 1
                     usage.errors.append(f"{type(exc).__name__}: {exc}"[:300])
                     reason, detail = "agent_failed", usage.errors[-1]
                     break
-                _count(usage, response)
-                output = [item.model_dump(exclude_none=True) for item in response.output]
-                items += output
-                calls = [item for item in response.output if item.type == "function_call"]
-                record = {"step": step, "model_s": round(time.monotonic() - t0, 1),
-                          "usage": response.usage.model_dump() if response.usage else None,
-                          "output": [o["type"] for o in output], "calls": []}
-                if not calls:
-                    last_message = response.output_text
+                _count(usage, answer)
+                context_tokens = answer.usage.input_tokens
+                reply = answer.reply
+                history.append(reply)
+                record: dict[str, Any] = {"step": step, "model_s": round(time.monotonic() - t0, 1),
+                                          "usage": vars(answer.usage), "events": events, "text_chars": len(reply.text),
+                                          "calls": []}
+                if not reply.calls:
+                    last_message = reply.text
                     trace.write(json.dumps(record, ensure_ascii=False) + "\n")
                     break
-                for call in calls:
+                for call in reply.calls:
                     t1 = time.monotonic()
-                    result = self._call(ws_dir, call.name, call.arguments)
-                    items.append({"type": "function_call_output", "call_id": call.call_id, "output": result})
+                    result = self._call(ws_dir, call, vision)
+                    history.append(result)
                     record["calls"].append({"name": call.name, "arguments": call.arguments,
-                                            "s": round(time.monotonic() - t1, 1), "result_chars": len(result)})
-                usage.commands += len(calls)
+                                            "s": round(time.monotonic() - t1, 1), "result_chars": len(result.text),
+                                            "images": len(result.images)})
+                usage.commands += len(reply.calls)
                 trace.write(json.dumps(record, ensure_ascii=False) + "\n")
                 trace.flush()
             else:
@@ -103,38 +144,67 @@ class LoopAgent:
             return AgentOutcome(ok=False, reason=reason, detail=detail, **outcome)
         return AgentOutcome(ok=True, **outcome)
 
-    def _turn(self, items: list[dict], tools: list[dict], *, timeout: float):
-        client = self.client_factory(self.config, timeout=timeout)
+    def _answer(self, system: str, tools: list[dict], history: list, *, timeout: float) -> Answer:
+        model = self.model_factory(timeout)
         for attempt in range(RETRIES + 1):
             try:
-                return client.responses.create(model=self.model, input=items, tools=tools, store=False,
-                                               reasoning={"effort": self.effort},
-                                               include=["reasoning.encrypted_content"])
+                return model.answer(system, tools, history, timeout=timeout)
             except Exception as exc:  # noqa: BLE001 - a transient failure is tried again, the last one raised
                 if attempt == RETRIES or not _transient(exc):
                     raise
                 time.sleep(2 ** attempt)
+        raise AssertionError("unreachable")
 
-    def _call(self, ws_dir: Path, name: str, arguments: str) -> str:
-        """One tool call; what goes back is the envelope as the agent reads it, or why the call was not made."""
-        if name not in AGENT_TOOLS:
-            return json.dumps({"ok": False, "error": f"no tool {name}; the tools are {', '.join(AGENT_TOOLS)}"},
-                              ensure_ascii=False)
+    def _model(self, timeout: float) -> Model:
+        from openai import OpenAI
+
+        service = self.config.services.vlm
+        endpoint = self.agent.endpoint or service.endpoint
+        key = self.agent.api_key or (service.api_key if not self.agent.endpoint else "")
+        client = OpenAI(api_key=key or "no-key", base_url=endpoint or None, max_retries=0, timeout=max(timeout, 1.0),
+                        default_headers={"User-Agent": service.user_agent} if service.user_agent else None)
+        if self.agent.api == "chat":
+            return ChatModel(client, self.model, extra_body=self.agent.extra_body)
+        return ResponsesModel(client, self.model, self.effort)
+
+    def _call(self, ws_dir: Path, call: ToolCall, vision: str) -> ToolResult:
+        """One tool call: the envelope as the agent reads it (or why the call was not made), with the images of
+        ``as: image`` looks when the agent sees images itself."""
+        if call.name not in AGENT_TOOLS:
+            return ToolResult(call, _error(f"no tool {call.name}; the tools are {', '.join(AGENT_TOOLS)}"))
         try:
-            request = json.loads(arguments or "{}")
+            request = json.loads(call.arguments or "{}")
         except ValueError as exc:
-            return json.dumps({"ok": False, "error": f"the arguments are not JSON: {exc}"}, ensure_ascii=False)
-        envelope, _ = call_tool(name, ws_dir, request, config=self.config, context_factory=self.context_class)
-        return agent_json(envelope)  # an invalid request comes back as a failure (invalid_request)
+            return ToolResult(call, _error(f"the arguments are not JSON: {exc}"))
+        envelope, _ = call_tool(call.name, ws_dir, request, config=self.config, context_factory=self.context_class)
+        images = []
+        if vision == "agent" and call.name == "view_source" and envelope.result is not None:
+            images = [Path(r.image.path) for r in envelope.result.results if r.image is not None]
+        return ToolResult(call, agent_json(envelope), images)  # an invalid request comes back as a failure
 
 
-def _openai_client(config: ParserXConfig, *, timeout: float):
-    from openai import OpenAI
+def _clear(history: list, context_tokens: int, clear_at: int) -> int:
+    """Replace the older tool results by placeholders when the context grew past *clear_at* tokens or holds more
+    than MAX_IMAGES images; returns how many were cleared."""
+    live = [e for e in history if isinstance(e, ToolResult) and e.cleared is None]
+    if context_tokens < clear_at and sum(len(e.images) for e in live) <= MAX_IMAGES:
+        return 0
+    older = live[:-KEEP_RESULTS]
+    for entry in older:
+        entry.cleared = summary(entry)
+    return len(older)
 
-    service = config.services.vlm
-    return OpenAI(api_key=service.api_key or "no-key", base_url=service.endpoint or None, max_retries=0,
-                  timeout=max(timeout, 1.0),
-                  default_headers={"User-Agent": service.user_agent} if service.user_agent else None)
+
+def _changes(ws_dir: Path) -> int:
+    count = 0
+    for record in read_records(Path(ws_dir) / "calls.jsonl"):
+        if record.get("type") == "call" and record.get("tool") == "edit_draft" and record.get("result"):
+            count += sum(1 for o in record["result"].get("outcomes") or [] if o.get("accepted"))
+    return count
+
+
+def _error(message: str) -> str:
+    return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
 
 
 def _transient(exc: Exception) -> bool:
@@ -144,15 +214,10 @@ def _transient(exc: Exception) -> bool:
                             openai.InternalServerError))
 
 
-def _count(usage: AgentUsage, response) -> None:
+def _count(usage: AgentUsage, answer: Answer) -> None:
     usage.turns += 1
-    if response.usage is None:
-        return
-    usage.input_tokens += response.usage.input_tokens
-    usage.output_tokens += response.usage.output_tokens
-    details = response.usage.input_tokens_details
-    usage.cached_input_tokens += getattr(details, "cached_tokens", 0) or 0
-    reasoning = getattr(response.usage.output_tokens_details, "reasoning_tokens", 0) or 0
-    usage.reasoning_output_tokens += reasoning
-    for item in response.output:
-        usage.items[item.type] = usage.items.get(item.type, 0) + 1
+    usage.input_tokens += answer.usage.input_tokens
+    usage.cached_input_tokens += answer.usage.cached_input_tokens
+    usage.output_tokens += answer.usage.output_tokens
+    usage.reasoning_output_tokens += answer.usage.reasoning_tokens
+    usage.items["tool_call"] = usage.items.get("tool_call", 0) + len(answer.reply.calls)
