@@ -57,7 +57,7 @@ def _rerecognize(ws):
                             config=_config(), context_factory=_context_class())
     assert envelope.ok and envelope.result.outcomes[0].accepted, envelope.result
     titles = [u.target for u in envelope.result.issues_opened if u.kind == "structure_pending"]  # a new title's level
-    envelope, _ = call_tool("edit_draft", ws, {"ops": [{"op": "set_level", "block": b, "level": 2, "reason": "节标题"}
+    envelope, _ = call_tool("edit_draft", ws, {"ops": [{"op": "set_role", "block": b, "role": "H2", "reason": "节标题"}
                                                        for b in titles]},
                             config=_config(), context_factory=_context_class())
     assert envelope.ok and all(o.accepted for o in envelope.result.outcomes)
@@ -190,8 +190,7 @@ def test_interrupted_tool_call_still_claims_its_changes(pdf, tmp_path, monkeypat
     monkeypatch.setattr(edit, "unresolved_items", interrupt_after_the_commit)
     block = json.loads((ws / "state.json").read_text())["blocks"][0]["id"]
     with pytest.raises(KeyboardInterrupt):
-        call_tool("edit_draft", ws, {"ops": [{"op": "set_role", "block": block, "kind": "title", "level": 1,
-                                              "reason": "test"}]},
+        call_tool("edit_draft", ws, {"ops": [{"op": "set_role", "block": block, "role": "H1", "reason": "test"}]},
                   config=_config(), context_factory=_context_class())
     assert verify_workspace(ws).ok
     last = json.loads((ws / "calls.jsonl").read_text().splitlines()[-1])
@@ -250,8 +249,8 @@ def test_agent_actions_are_read_from_the_call_records():
     records = [
         rec("view_source", {"looks": [{"page": 4, "as": "answer", "question": "是标题吗？"},
                                       {"block": "b-p004-0002", "as": "answer", "question": "?"}]}, {}),
-        rec("edit_draft", {"ops": [{"op": "set_role", "block": "b-p004-0002", "kind": "title", "level": 2},
-                                   {"op": "set_level", "block": "b-p005-0001", "level": 3}]},
+        rec("edit_draft", {"ops": [{"op": "set_role", "block": "b-p004-0002", "role": "H2"},
+                                   {"op": "set_role", "block": "b-p005-0001", "role": "H3"}]},
             {"outcomes": [{"index": 0, "accepted": True}, {"index": 1, "accepted": False}]}),
         rec("edit_draft", {"ops": [{"op": "dismiss", "issue": "w-1", "reason": "封面信息，不是节标题"},
                                    {"op": "insert_text", "page": 2, "text": "授权公告日 2020-01-01"},
@@ -266,11 +265,11 @@ def test_agent_actions_are_read_from_the_call_records():
         ("look", "p4", 4), ("look", "b-p004-0002", 4), ("set_title", "b-p004-0002", 4), ("rejected", None, None),
         ("close", "p1", 1), ("add", "p2", 2), ("rejected", None, None)]
     assert got[2].text == "技术领域" and got[2].level == 2 and got[4].detail == "封面信息，不是节标题"
-    joins = rec("edit_draft", {"ops": [{"op": "link", "kind": "continues", "src": f"b-p001-000{i}",
-                                        "dst": f"b-p001-000{i + 1}"} for i in range(5)]},
+    joins = rec("edit_draft", {"ops": [{"op": "join", "first": f"b-p001-000{i}", "second": f"b-p001-000{i + 1}"}
+                                       for i in range(5)]},
                 {"outcomes": [{"index": i, "accepted": True} for i in range(5)]})
     assert [(a.action, a.page, a.count) for a in actions(joins)] == [("join", 1, 5)]
-    titles = rec("edit_draft", {"ops": [{"op": "set_role", "block": f"b-p00{i}-0001", "kind": "title", "level": 1}
+    titles = rec("edit_draft", {"ops": [{"op": "set_role", "block": f"b-p00{i}-0001", "role": "H1"}
                                         for i in range(1, 6)]},
                  {"outcomes": [{"index": i, "accepted": True} for i in range(5)]})
     assert [a.action for a in actions(titles)] == ["set_title"] * 5  # each title is worth its own line

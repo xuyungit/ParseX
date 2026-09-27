@@ -33,7 +33,7 @@ def _state(blocks, fmt="pdf"):
 
 
 def _pairs(state):
-    return [(c["src"], c["dst"]) for c in propose_continuations(state)]
+    return [(c["first"], c["second"]) for c in propose_continuations(state)]
 
 
 def test_a_sentence_cut_by_the_page_continues_across_furniture():
@@ -44,7 +44,7 @@ def test_a_sentence_cut_by_the_page_continues_across_furniture():
         _block("h", BlockKind.HEADER, 2, "某工程采购说明", status=BlockStatus.EXCLUDED),
         _block("b", T, 2, "不少于总量的 60%。"),
     ])
-    assert propose_continuations(state) == [{"op": "link", "kind": "continues", "src": "a", "dst": "b"}]
+    assert [(c["op"], c["first"], c["second"]) for c in propose_continuations(state)] == [("join", "a", "b")]
 
 
 def test_finished_sentences_and_new_items_do_not_continue():

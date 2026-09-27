@@ -77,8 +77,8 @@ def _state() -> DocumentState:
         engines={"native_pdf": "pymupdf-1.27"}, prompt_hashes={},
         pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE, size_pt=(595.0, 842.0))],
         blocks=blocks,
-        relations=[Relation(id=ids.relation_id(RelationKind.FOLLOWS, "b-p001-0001", "b-p001-0002"),
-                            kind=RelationKind.FOLLOWS, src="b-p001-0001", dst="b-p001-0002")],
+        relations=[Relation(id=ids.relation_id(RelationKind.CONTINUES, "b-p001-0001", "b-p001-0002"),
+                            kind=RelationKind.CONTINUES, src="b-p001-0001", dst="b-p001-0002")],
         assets=[Asset(id=ids.asset_id("ab" * 32), sha256="ab" * 32, path="assets/x.png", media_type="image/png",
                       width=10, height=10, role="original", source=PDF_ANCHOR)],
         images=[ImageRecord(id=ids.asset_id("ab" * 32), route=ImageRoute.FIGURE, shown=True, t=0.1, f=0.8)],
@@ -121,7 +121,7 @@ def test_figure_semantic_discriminates_on_type():
 
 @pytest.mark.parametrize("model, fields", [
     (Observation, {**_obs().model_dump(), "flag": True}),
-    (Relation, {"id": "r", "kind": "follows", "src": "a", "dst": "b", "metadata": {}}),
+    (Relation, {"id": "r", "kind": "continues", "src": "a", "dst": "b", "metadata": {}}),
     (Decision, {"stage": "exclude", "choice": "x", "reason": "y", "evidence": {}, "actor": "pipeline", "note": 1}),
     (LedgerEntry, {"item": "i", "unit": "native_line", "source": PDF_ANCHOR.model_dump(), "chars": 1, "extra": 0}),
 ])
@@ -199,7 +199,7 @@ def test_ids_are_deterministic():
     assert ids.block_id_pdf(3, 12) == "b-p003-0012"
     assert ids.block_id_docx(7) == "b-d00007"
     assert ids.observation_id("b-p003-0012", "paddleocr", 1) == "o-b-p003-0012-paddleocr-1"
-    assert ids.relation_id(RelationKind.CAPTIONS, "b-1", "b-2") == "r-captions-b-1-b-2"
+    assert ids.relation_id(RelationKind.CONTINUES, "b-1", "b-2") == "r-continues-b-1-b-2"
     assert ids.asset_id("0123456789abcdef" * 4) == "a-0123456789abcdef"
     assert ids.ledger_item_pdf(2, 5) == "i-p002-00005"
     assert ids.ledger_item_docx(9) == "i-d00009"

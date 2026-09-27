@@ -7,8 +7,8 @@ one that changes content cites the evidence it rests on (``evidence``, from ``vi
 - content: ``replace_text`` (a span that occurs exactly once in the block), ``insert_text`` (text a page shows where
   no block has it), ``set_cells`` (table cells), ``adopt`` (a reading of the source as it was read: a page's or a
   figure's text, a table read again, a figure's description);
-- structure: ``set_role``, ``set_level``, ``move``, ``link`` / ``unlink``, ``merge_tables``, ``split``, ``exclude`` /
-  ``include``, ``mark_pending`` — never the text;
+- structure: ``set_role``, ``move``, ``join`` / ``unjoin``, ``split``, ``exclude`` / ``include``, ``mark_pending`` —
+  never the text;
 - the worklist: ``dismiss`` an issue the evidence shows needs no change.
 
 The program checks each operation: content must rest on evidence of its place, a native text layer's numbers change
@@ -29,18 +29,7 @@ from parserx.content.select import add_gate, integrate_image, transcribed
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
-from parserx.hierarchy.changes import (
-    Exclude,
-    Include,
-    Link,
-    MarkPending,
-    MergeTables,
-    Move,
-    SetLevel,
-    SetRole,
-    Split,
-    Unlink,
-)
+from parserx.hierarchy.changes import Exclude, Include, Join, MarkPending, Move, SetRole, Split, Unjoin
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import BBox, IRModel
@@ -124,8 +113,8 @@ class Dismiss(IRModel):
 
 
 EditOp = Annotated[
-    ReplaceText | InsertText | SetCells | Adopt | Dismiss | SetRole | SetLevel | Move | Link | Unlink | MergeTables
-    | MarkPending | Exclude | Include | Split,
+    ReplaceText | InsertText | SetCells | Adopt | Dismiss | SetRole | Move | Join | Unjoin | Split | Exclude | Include
+    | MarkPending,
     Field(discriminator="op"),
 ]
 
@@ -216,7 +205,7 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
     return OpOutcome(index=index, op=op.op, accepted=True, block=made, detail=detail, target=target)
 
 
-_STRUCTURE = (SetRole, SetLevel, Move, Link, Unlink, MergeTables, MarkPending, Exclude, Include, Split)
+_STRUCTURE = (SetRole, Move, Join, Unjoin, Split, Exclude, Include, MarkPending)
 
 
 def _structure(state: DocumentState, batch: list[tuple[int, object]], issues: "_Issues") -> list[OpOutcome]:

@@ -86,7 +86,7 @@ def merge_candidate(state: DocumentState, first: Block, second: Block) -> MergeC
 
 
 def propose_merges(state: DocumentState) -> list[dict]:
-    """``merge_tables`` changes for the confirmed candidates; a table over several pages merges into its first part."""
+    """``join`` changes for the confirmed candidates; a table over several pages merges into its first part."""
     work = state.model_copy(deep=True)
     changes: list[dict] = []
     while True:
@@ -96,7 +96,7 @@ def propose_merges(state: DocumentState) -> list[dict]:
         reason = "cross-page table continuation: same columns, aligned edges, consecutive pages"
         merge_tables(work, candidate.first, candidate.second, candidate.drop_rows, actor="propose", reason=reason,
                      evidence=candidate.evidence)
-        changes.append({"op": "merge_tables", "first": candidate.first, "second": candidate.second,
+        changes.append({"op": "join", "first": candidate.first, "second": candidate.second,
                         "drop_rows": candidate.drop_rows, "reason": reason, "evidence": candidate.evidence})
 
 

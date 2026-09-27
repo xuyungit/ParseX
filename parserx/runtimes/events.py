@@ -66,8 +66,8 @@ class ReviewCount:
 
 @dataclass(frozen=True)
 class AgentAction:
-    """One thing the agent did, from a tool call record: look, edit, add, set_title, set_level, split, merge,
-    exclude, restore, close, recognize, describe, review_table, rejected."""
+    """One thing the agent did, from a tool call record: look, edit, add, set_title, set_role, split, join, move,
+    exclude, include, close, recognize, table_fix, rejected."""
 
     action: str
     target: str | None = None  # "p4", a block id

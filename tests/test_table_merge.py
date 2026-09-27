@@ -1,4 +1,4 @@
-"""Cross-page table continuation (guide §6.9): candidates, confirmation, the merge_tables change."""
+"""Cross-page table continuation (guide §6.9): candidates, confirmation, the join of two tables."""
 
 from pydantic import TypeAdapter
 
@@ -98,12 +98,12 @@ def test_merge_appends_rows_and_keeps_every_source():
 
 def test_merge_legality():
     def rules(state, change):
-        return [r.rule for r in check_changes(state, CHANGE.validate_python([{"op": "merge_tables", **change}]))]
+        return [r.rule for r in check_changes(state, CHANGE.validate_python([{"op": "join", **change}]))]
 
     state = _continued(_rows(21, 30, header=False))
     assert rules(state, {"first": "t1", "second": "t2", "drop_rows": 1, "reason": "r"}) == ["rows_not_duplicate"]
     assert rules(state, {"first": "t2", "second": "t1", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
-    assert rules(state, {"first": "t1", "second": "after", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]
+    assert rules(state, {"first": "t1", "second": "after", "drop_rows": 0, "reason": "r"}) == ["not_joinable"]
     # §11.5: a table with other columns never continues the one before it, whoever asks
     other_columns = _continued([["a", "b"], ["1", "2"]])
     assert rules(other_columns, {"first": "t1", "second": "t2", "drop_rows": 0, "reason": "r"}) == ["not_merge_candidate"]

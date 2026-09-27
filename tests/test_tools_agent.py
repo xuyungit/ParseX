@@ -119,9 +119,9 @@ def test_find_must_name_one_place(draft, context):
 def test_structure_ops_and_dismissing_an_issue(draft, context):
     text, title = _block(draft, "扫描文字"), _block(draft, "SENTINEL-OCR 标题")
     result = _ok("edit_draft", draft, {"ops": [
-        {"op": "set_role", "block": text, "kind": "title", "level": 3, "reason": "小节名"},
+        {"op": "set_role", "block": text, "role": "H3", "reason": "小节名"},
         {"op": "mark_pending", "block": title, "reason": "拿不准"},
-        {"op": "set_level", "block": text, "level": 5, "reason": "跳级"},
+        {"op": "set_role", "block": text, "role": "H5", "reason": "跳级"},
     ]}, context)
     assert [o["accepted"] for o in result["outcomes"]] == [True, True, False]
     assert result["outcomes"][2]["rule"] == "level_skip"
@@ -141,20 +141,20 @@ def test_atomic_edits_apply_all_or_nothing(draft, context):
     text = _block(draft, "扫描文字")
     before = _markdown(draft)
     result = _ok("edit_draft", draft, {"atomic": True, "ops": [
-        {"op": "set_role", "block": text, "kind": "title", "level": 3, "reason": "r"},
-        {"op": "set_level", "block": text, "level": 6, "reason": "跳级"},
+        {"op": "set_role", "block": text, "role": "H3", "reason": "r"},
+        {"op": "set_role", "block": text, "role": "H6", "reason": "跳级"},
     ]}, context)
     assert [o["accepted"] for o in result["outcomes"]] == [False, False] and _markdown(draft) == before
 
 
-def test_links_and_exclusion_are_reversible(draft, context):
+def test_joins_and_exclusion_are_reversible(draft, context):
     first, second = _block(draft, "SENTINEL-NATIVE 采购"), _block(draft, "扫描文字")
-    ops = [{"op": "link", "kind": "continues", "src": first, "dst": second, "reason": "跨页续接"},
+    ops = [{"op": "join", "first": first, "second": second, "reason": "跨页续接"},
            {"op": "exclude", "block": second, "reason": "r"}]
     assert all(o["accepted"] for o in _ok("edit_draft", draft, {"ops": ops}, context)["outcomes"])
     assert "扫描文字" not in _markdown(draft)
     back = [{"op": "include", "block": second, "reason": "r"},
-            {"op": "unlink", "kind": "continues", "src": first, "dst": second, "reason": "r"}]
+            {"op": "unjoin", "first": first, "second": second, "reason": "r"}]
     assert all(o["accepted"] for o in _ok("edit_draft", draft, {"ops": back}, context)["outcomes"])
     assert "扫描文字" in _markdown(draft)
 
@@ -301,10 +301,10 @@ def test_an_outline_is_relevelled_in_one_call(report, context):
     scope, terms, methods = (lines[t]["id"] for t in ("1 Scope", "1.1 Terms", "2 Methods"))
     before = {lines[t]["role"] for t in ("1 Scope", "2 Methods")}
     assert before == {"H2"}  # under the report's title
-    ops = [{"op": "set_level", "block": b, "level": lv, "reason": "no document title above them"}
+    ops = [{"op": "set_role", "block": b, "role": f"H{lv}", "reason": "no document title above them"}
            for b, lv in ((scope, 1), (terms, 2), (methods, 1))]
     title = lines["SENTINEL-NATIVE Annual Report"]["id"]
-    ops.insert(0, {"op": "set_role", "block": title, "kind": "text", "reason": "a cover line"})
+    ops.insert(0, {"op": "set_role", "block": title, "role": "text", "reason": "a cover line"})
     outcomes = _ok("edit_draft", report, {"ops": ops}, context)["outcomes"]
     assert all(o["accepted"] for o in outcomes), outcomes
     roles = {line["id"]: line["role"] for line in _ok("read_draft", report, {"view": "outline"}, context)["lines"]}

@@ -170,7 +170,7 @@ def test_docx_title_shifts_headings_and_body_outline_is_ignored(tmp_path):
     doc.save(path)
     state = extract_docx(path).to_state(doc_id="d", source="d.docx", source_sha256="0" * 64)
     changes = propose_docx_structure(state)
-    levels = {c["block"]: c["level"] for c in changes if c["op"] == "set_level"}
+    levels = {c["block"]: int(c["role"][1:]) for c in changes if c["role"].startswith("H")}
     texts = {b.id: b.text for b in state.blocks}
     assert {texts[b]: lv for b, lv in levels.items()} == {"Report": 1, "Chapter": 2}
 

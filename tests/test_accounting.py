@@ -79,7 +79,7 @@ def test_a_duplicate_whose_original_is_hidden_is_a_silent_loss():
 def test_illegal_references_are_listed():
     state = _state()
     state.ledger[0].block = "b-nowhere"
-    state.relations.append(Relation(id="r-2", kind="follows", src="b-out", dst="b-gone"))
+    state.relations.append(Relation(id="r-2", kind="continues", src="b-out", dst="b-gone"))
     state.blocks[0].anchors.append(AssetAnchor(asset="a-missing", bbox=(0, 0, 1, 1), image_size=(1, 1)))
     state.blocks[3].decisions[0].refs.append("o-unknown")
     result = check(state)

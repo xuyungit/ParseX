@@ -13,10 +13,11 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from parserx.ir.base import IRModel
-from parserx.ir.enums import RelationKind
 
-# table / figure / formula / scan hold content in other forms; they never change role.
-StructuralKind = Literal["title", "text", "list", "caption", "footnote", "header", "footer", "page_number", "other"]
+# A block's role, as the draft shows it and as it is set (Q86): a title by its level, or a kind of body text.
+# table / figure / formula / scan hold content in other forms and never change role; page furniture (header, footer,
+# page number, watermark) is the program's label for what it leaves out, not a role to set.
+Role = Literal["H1", "H2", "H3", "H4", "H5", "H6", "text", "list", "caption", "footnote", "other"]
 Grounds = dict[str, float | int | str | bool]  # what a change rests on: named facts, or an evidence id (Q85)
 EvidenceRef = Grounds | str
 
@@ -24,18 +25,17 @@ EvidenceRef = Grounds | str
 class SetRole(IRModel):
     op: Literal["set_role"]
     block: str
-    kind: StructuralKind
-    level: int | None = Field(None, ge=1, le=6)  # with kind "title": its level in the same change (P2-5)
+    role: Role
     reason: str
     evidence: EvidenceRef = {}
 
+    @property
+    def kind(self) -> str:
+        return "title" if self.role.startswith("H") else self.role
 
-class SetLevel(IRModel):
-    op: Literal["set_level"]
-    block: str
-    level: int | None = Field(ge=1, le=6)
-    reason: str
-    evidence: EvidenceRef = {}
+    @property
+    def level(self) -> int | None:
+        return int(self.role[1]) if self.role.startswith("H") else None
 
 
 class Move(IRModel):
@@ -48,35 +48,24 @@ class Move(IRModel):
     evidence: EvidenceRef = {}
 
 
-class Link(IRModel):
-    """Relate two blocks: ``continues`` (one paragraph or table broken in two), ``captions``, ``footnotes`` …"""
+class Join(IRModel):
+    """``second`` continues ``first`` (guide §6.9): two paragraphs broken by a page or a column are output as one;
+    two tables become one, ``second``'s rows appended to ``first`` (a table continued on the next page)."""
 
-    op: Literal["link"]
-    kind: RelationKind
-    src: str
-    dst: str
-    reason: str = ""
-    evidence: EvidenceRef = {}
-    confidence: float | None = None
-
-
-class Unlink(IRModel):
-    """Remove the relation ``link`` made (named the same way)."""
-
-    op: Literal["unlink"]
-    kind: RelationKind
-    src: str
-    dst: str
-    reason: str = ""
-
-
-class MergeTables(IRModel):
-    """``second`` continues ``first`` on the next page (guide §6.9): its rows are appended to ``first``."""
-
-    op: Literal["merge_tables"]
+    op: Literal["join"]
     first: str
     second: str
-    drop_rows: int = Field(0, ge=0)  # leading rows of ``second`` repeating the header of ``first``
+    drop_rows: int = Field(0, ge=0)  # tables: leading rows of ``second`` repeating the header of ``first``
+    reason: str
+    evidence: EvidenceRef = {}
+
+
+class Unjoin(IRModel):
+    """Undo the joining of two paragraphs; joined tables are one table and stay so."""
+
+    op: Literal["unjoin"]
+    first: str
+    second: str
     reason: str
     evidence: EvidenceRef = {}
 
@@ -99,8 +88,8 @@ class Exclude(IRModel):
 
 
 class Include(IRModel):
-    """Undo an exclusion (page furniture, a decorative image, an earlier ``exclude``); text deleted by a revision
-    stays deleted (Q26)."""
+    """Undo an exclusion (page furniture, a decorative image, an earlier ``exclude``): page furniture comes back as
+    text; text deleted by a revision stays deleted (Q26)."""
 
     op: Literal["include"]
     block: str
@@ -121,7 +110,7 @@ class Split(IRModel):
 
 
 StructureChange = Annotated[
-    SetRole | SetLevel | Move | Link | Unlink | MarkPending | MergeTables | Exclude | Include | Split,
+    SetRole | Move | Join | Unjoin | MarkPending | Exclude | Include | Split,
     Field(discriminator="op"),
 ]
 
@@ -129,18 +118,19 @@ StructureChange = Annotated[
 class LegalityRule(StrEnum):
     UNKNOWN_BLOCK = "unknown_block"
     KIND_NOT_STRUCTURAL = "kind_not_structural"
-    LEVEL_ON_NON_TITLE = "level_on_non_title"
     LEVEL_SKIP = "level_skip"
     NUMBERING_LEVEL_INCONSISTENT = "numbering_level_inconsistent"
     ORDER_CYCLE = "order_cycle"
-    DUPLICATE_RELATION = "duplicate_relation"
-    NOT_MERGE_CANDIDATE = "not_merge_candidate"
+    ALREADY_JOINED = "already_joined"  # join: second continues first already
+    NOT_JOINABLE = "not_joinable"  # join: two paragraphs or two tables, both in the output
+    NOT_MERGE_CANDIDATE = "not_merge_candidate"  # join of tables: not a continuation of the same table
     ROWS_NOT_DUPLICATE = "rows_not_duplicate"
     REASON_REQUIRED = "reason_required"  # exclude: content leaves the output only with a reason
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
-    UNKNOWN_RELATION = "unknown_relation"  # unlink: no such relation
+    NOT_JOINED = "not_joined"  # unjoin: second does not continue first
+    TABLES_MERGED = "tables_merged"  # unjoin: joined tables are one table
     NO_LINE_BREAK = "no_line_break"  # split: the block has no such line break with text on both sides
     DECIDED_BY_AGENT = "decided_by_agent"  # a program proposal on a block whose structure the agent decided
 

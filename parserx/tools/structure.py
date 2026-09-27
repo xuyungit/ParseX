@@ -21,7 +21,7 @@ class ApplyStructureResult(IRModel):
     outline_after: list[OutlineNode]
 
 
-_FIELDS = ("kind", "level", "order", "status", "rows")  # rows: a table's row count (merge_tables)
+_FIELDS = ("kind", "level", "order", "status", "rows")  # rows: a table's row count (a join of tables)
 
 
 def run(ctx: ToolContext, req: ApplyStructureRequest) -> ToolOutput[ApplyStructureResult]:

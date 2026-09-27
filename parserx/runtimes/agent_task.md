@@ -87,16 +87,14 @@
 结构（从不改文字）：
 
 ```
-{"op": "set_role", "block": ID, "kind": "title|text|list|caption|footnote|header|footer|page_number|other", "level": 2, "reason": "……"}
-{"op": "set_level", "block": ID, "level": 1, "reason": "……"}                 # level 1–6，null 表示取消层级
+{"op": "set_role", "block": ID, "role": "H1…H6|text|list|caption|footnote|other", "reason": "……"}   # 角色与 read_draft 显示的相同
 {"op": "move", "block": ID, "after": ID, "reason": "……"}                     # after 为 null 表示移到最前
-{"op": "link", "kind": "continues", "src": 前一块, "dst": 后一块, "reason": "……"}   # 同一段被分页或换行拆成两块：输出合成一段
-{"op": "link", "kind": "captions|footnotes|contains|follows|belongs_to_section|duplicate_of", "src": ID, "dst": ID, "reason": "……"}
-{"op": "unlink", "kind": "continues", "src": ID, "dst": ID, "reason": "……"}  # 取消 link 建立的关系
-{"op": "merge_tables", "first": ID, "second": ID, "drop_rows": 0, "reason": "……"}  # second 是 first 在下一页的续表；drop_rows 去掉 second 开头逐字重复表头的行
+{"op": "join", "first": 前一块, "second": 后一块, "reason": "……"}            # 被分页或分栏拆开的一段：输出合成一段
+{"op": "join", "first": ID, "second": ID, "drop_rows": 1, "reason": "……"}   # 下一页的续表：合成一张表，drop_rows 去掉续表开头重复的表头行
+{"op": "unjoin", "first": ID, "second": ID, "reason": "……"}                  # 撤销段落的续接（合成的表不能拆开）
 {"op": "split", "block": ID, "at_break": 1, "reason": "……"}                  # 在块内第 n 个换行处拆成两块
 {"op": "exclude", "block": ID, "reason": "……"}                               # 不输出（文字留在 sidecar）
-{"op": "include", "block": ID, "reason": "……"}                               # 撤销页眉页脚、装饰图或 exclude 的判定
+{"op": "include", "block": ID, "reason": "……"}                               # 撤销页眉页脚、装饰图或 exclude 的判定（页眉页脚恢复为 text）
 {"op": "mark_pending", "block": ID, "reason": "……"}                          # 是不是标题拿不准：保留正文，结构待定
 ```
 

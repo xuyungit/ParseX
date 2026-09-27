@@ -26,10 +26,9 @@ from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, EvidenceLevel, RelationKind
 from parserx.ir.semantic import ChartSemantic, DiagramSemantic, Evidenced, GenericSemantic
 from parserx.ir.state import DocumentState
-from parserx.workspace.queries import block_unit, ordered
+from parserx.workspace.queries import JOINABLE, block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
-_JOINABLE = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.FOOTNOTE, BlockKind.OTHER})
 _LEVEL = {EvidenceLevel.VISIBLE: "可见", EvidenceLevel.ESTIMATED: "估读", EvidenceLevel.INFERRED: "推断",
           EvidenceLevel.UNKNOWN: "未知"}
 _ARROW = {"forward": "→", "backward": "←", "both": "↔", "unknown": "—"}
@@ -77,7 +76,7 @@ def _continuations(state: DocumentState) -> dict[str, list[Block]]:
 
     def joinable(block_id: str) -> bool:
         block = blocks.get(block_id)
-        return block is not None and block.status in _VISIBLE and block.kind in _JOINABLE
+        return block is not None and block.status in _VISIBLE and block.kind in JOINABLE
 
     following = {r.src: r.dst for r in sorted(state.relations, key=lambda r: r.id)
                  if r.kind == RelationKind.CONTINUES and joinable(r.src) and joinable(r.dst)}

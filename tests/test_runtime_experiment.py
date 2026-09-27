@@ -105,7 +105,7 @@ def test_the_shipped_task_names_the_four_tools_and_only_them():
         for name in ("read_draft", "view_source", "edit_draft", "submit_draft", "doc_text", "evidence"):
             assert name in text
         for old in ("./px tool process", "overview", "ask_image", "apply_structure", "review_table", "describe_figure",
-                    "workspace init", "`correct`", "`close`", "`skim`"):
+                    "workspace init", "`correct`", "`close`", "`skim`", "set_level", "merge_tables", '"link"'):
             assert old not in text, old
     # the two ways of seeing images differ only where the source is looked at
     assert "`image`：返回图片文件的路径" in agent and "`answer`：视觉模型" not in agent

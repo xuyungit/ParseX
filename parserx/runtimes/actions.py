@@ -116,20 +116,15 @@ def _edit(op: dict, outcome: dict, text_of: Lookup) -> AgentAction | None:
 
 def _structure(change: dict, text_of: Lookup) -> AgentAction | None:
     op = change.get("op")
-    block = change.get("block") or change.get("first") or change.get("src")
+    block = change.get("block") or change.get("first")
     common = dict(target=block, page=_page_of(block), text=_short(text_of(block) if block else None))
     if op == "set_role":
-        if change.get("kind") == "title":
-            return AgentAction("set_title", level=change.get("level"), **common)
-        return AgentAction("set_role", detail=change.get("kind"), **common)
-    if op == "set_level":
-        return AgentAction("set_level", level=change.get("level"), **common)
-    if op == "merge_tables":
-        return AgentAction("merge", **common)
-    if op in ("split", "exclude", "include", "move"):
+        role = change.get("role") or ""
+        if role.startswith("H") and role[1:].isdigit():
+            return AgentAction("set_title", level=int(role[1:]), **common)
+        return AgentAction("set_role", detail=role, **common)
+    if op in ("join", "split", "exclude", "include", "move"):
         return AgentAction(op, **common)
-    if op == "link" and change.get("kind") == "continues":
-        return AgentAction("join", **common)
     return None
 
 

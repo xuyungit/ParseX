@@ -308,7 +308,7 @@ class ConsoleReporter:
             parts.append(" · ".join(p for p in (self._msg("count", n=e.count), where) if p))
         elif e.action == "look":
             parts.append(" · ".join(p for p in (where, e.detail) if p))
-        elif e.action == "set_title" or e.action == "set_level":
+        elif e.action == "set_title":
             parts.append(" ".join(p for p in (e.text or where, self._msg("level", level=e.level)
                                               if e.level is not None else "") if p))
         elif e.action == "set_role" and e.detail:

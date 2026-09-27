@@ -9,6 +9,7 @@ from parserx.ir.state import DocumentState
 
 # Blocks whose content is represented elsewhere or deliberately left out of the output.
 HIDDEN = frozenset({BlockStatus.EXCLUDED, BlockStatus.MERGED, BlockStatus.DUPLICATE})
+JOINABLE = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.FOOTNOTE, BlockKind.OTHER})  # join: one paragraph
 
 
 def block_map(state: DocumentState) -> dict[str, Block]:

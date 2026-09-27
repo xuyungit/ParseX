@@ -136,11 +136,10 @@ def leading_number(text: str) -> tuple[int, ...] | None:
 
 
 def title_changes(titles: list[tuple[str, str, int, dict]], levels: dict[str, int], *, reason: str) -> list[dict]:
-    """``set_role`` + ``set_level`` per (block id, text, proposed level, evidence), at the unified level."""
+    """``set_role`` per (block id, text, proposed level, evidence), at the unified level."""
     changes: list[dict] = []
     for block_id, _text, proposed, evidence in titles:
         level = levels[block_id]
-        changes.append({"op": "set_role", "block": block_id, "kind": "title", "reason": reason, "evidence": evidence})
-        changes.append({"op": "set_level", "block": block_id, "level": level, "evidence": evidence,
+        changes.append({"op": "set_role", "block": block_id, "role": f"H{level}", "evidence": evidence,
                         "reason": reason + ("" if level == proposed else "; unified with the outline")})
     return changes

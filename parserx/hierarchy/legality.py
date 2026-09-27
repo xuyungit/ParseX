@@ -4,21 +4,21 @@ Checks are correctness constraints, not guesses about meaning:
 
 - references point to existing blocks and relations;
 - only structural kinds change role (content kinds keep their form);
-- ``level`` only on titles; the outline never skips a level
-  (a title is at most one level deeper than the title before it, and its
-  successor at most one level deeper than it);
+- the outline never skips a level (a title is at most one level deeper than
+  the title before it, and its successor at most one level deeper than it);
 - titles sharing a numbering pattern (``1.2`` / ``1.3`` → ``N.N``,
   ``第二章`` → ``第N章``, ``1 Scope`` / ``2. Terms`` → ``N``) share a level
   within the document;
-- reordering cannot form a cycle; relations are not duplicated;
-- tables merge only when the second can continue the first
-  (``tables.merge.merge_candidate``), and only rows that repeat the first
-  table's header are dropped;
+- reordering cannot form a cycle;
+- ``join`` joins two paragraphs or two tables in the output; tables only when
+  the second can continue the first (``tables.merge.merge_candidate``), and
+  only rows that repeat the first table's header are dropped;
 - the program's proposals leave alone the blocks whose structure the agent
-  decided (calling ``process`` again re-proposes the program's titles).
+  decided.
 
 Changes are checked one by one against the state as the earlier accepted
-changes of the batch leave it, so a batch can set a role and then a level.
+changes of the batch leave it; ``apply_batch`` judges the outline as a run of
+changes leaves it.
 """
 
 from __future__ import annotations
@@ -26,20 +26,18 @@ from __future__ import annotations
 import re
 
 from parserx.hierarchy.changes import (
-    Link,
     ApplyOutcome,
     Exclude,
+    Include,
+    Join,
     LegalityRule,
     MarkPending,
-    MergeTables,
     Move,
     Rejection,
-    Unlink,
-    Include,
-    SetLevel,
     SetRole,
     Split,
     StructureChange,
+    Unjoin,
 )
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor
@@ -49,8 +47,9 @@ from parserx.ir.observation import Observation
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState
+from parserx.layout.labels import FURNITURE
 from parserx.tables.merge import merge_candidate, merge_tables, repeats_header
-from parserx.workspace.queries import HIDDEN, ordered
+from parserx.workspace.queries import HIDDEN, JOINABLE, ordered
 
 _CONTENT_KINDS = frozenset({BlockKind.TABLE, BlockKind.FIGURE, BlockKind.FORMULA, BlockKind.SCAN})
 _NUMERAL = r"[0-9０-９]+|[一二三四五六七八九十百千零〇两]+|[IVXLCDM]+|[ivxlcdm]+"
@@ -136,7 +135,7 @@ def apply_batch(state: DocumentState, changes: list[StructureChange], *, actor: 
         illegal, judged = {}, set()
         for index in reversed(applied):  # a block's level is the last change's: that one answers for it
             change = changes[index]
-            if isinstance(change, (SetRole, SetLevel)) and change.level is not None and change.block not in judged:
+            if isinstance(change, SetRole) and change.level is not None and change.block not in judged:
                 judged.add(change.block)
                 block = blocks[change.block]
                 if block.kind == BlockKind.TITLE and block.level is not None:
@@ -160,23 +159,19 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
     for name in _block_refs(change):
         if name not in blocks:
             return LegalityRule.UNKNOWN_BLOCK, f"no block {name}"
-    if isinstance(change, Unlink) and _relation(state, change) is None:
-        return LegalityRule.UNKNOWN_RELATION, f"no {change.kind} relation {change.src} → {change.dst}"
     if isinstance(change, SetRole):
         block = blocks[change.block]
         if block.kind in _CONTENT_KINDS:
             return LegalityRule.KIND_NOT_STRUCTURAL, f"{change.block} is a {block.kind}"
-        if change.level is not None:
-            if change.kind != "title":
-                return LegalityRule.LEVEL_ON_NON_TITLE, f"a level needs kind title, not {change.kind}"
-            if not levels:
-                return None
-            kind = block.kind
+        if change.level is not None and levels:
+            kind, status = block.kind, block.status
             block.kind = BlockKind.TITLE  # judge the level as the title it is about to become
+            if kind in FURNITURE:
+                block.status = BlockStatus.OK  # page furniture given a body role comes back
             try:
                 return _level_problem(state, block, change.level)
             finally:
-                block.kind = kind
+                block.kind, block.status = kind, status
         return None
     if isinstance(change, Exclude):
         if not change.reason.strip():
@@ -192,20 +187,18 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
         if excluded and excluded[-1].choice == "revision_deleted":
             return LegalityRule.NOT_RESTORABLE, "text deleted by a revision stays deleted (Q26)"
         return None
-    if isinstance(change, SetLevel):
-        block = blocks[change.block]
-        if block.kind != BlockKind.TITLE:
-            return LegalityRule.LEVEL_ON_NON_TITLE, f"{change.block} is a {block.kind}, not a title"
-        if change.level is not None and levels:
-            return _level_problem(state, block, change.level)
-        return None
     if isinstance(change, Move):
         if change.after == change.block or _moves_into_itself(state, change):
             return LegalityRule.ORDER_CYCLE, f"{change.block} cannot follow {change.after}"
         return None
-    if isinstance(change, Link):
-        if any((r.kind, r.src, r.dst) == (change.kind, change.src, change.dst) for r in state.relations):
-            return LegalityRule.DUPLICATE_RELATION, f"{change.kind} {change.src} → {change.dst} exists"
+    if isinstance(change, Join):
+        return _join_problem(state, blocks[change.first], blocks[change.second], change.drop_rows)
+    if isinstance(change, Unjoin):
+        if blocks[change.second].status == BlockStatus.MERGED:
+            return LegalityRule.TABLES_MERGED, f"{change.second} is merged into {change.first}: joined tables stay one"
+        if _joined(state, change.first, change.second) is None:
+            return LegalityRule.NOT_JOINED, f"{change.second} does not continue {change.first}"
+        return None
     if isinstance(change, Split):
         block = blocks[change.block]
         if block.kind in _CONTENT_KINDS or block.cells is not None:
@@ -215,15 +208,32 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
         if _split_parts(block.text, change.at_break) is None:
             return LegalityRule.NO_LINE_BREAK, f"{change.block} has no line break {change.at_break} with text on both sides"
         return None
-    if isinstance(change, MergeTables):
-        first, second = blocks[change.first], blocks[change.second]
-        if merge_candidate(state, first, second) is None:
-            return (LegalityRule.NOT_MERGE_CANDIDATE, f"{change.second} cannot continue {change.first}: tables with "
-                    "the same columns on consecutive pages, only page furniture between them")
-        if change.drop_rows and not repeats_header(first.cells, second.cells, change.drop_rows):
-            return (LegalityRule.ROWS_NOT_DUPLICATE,
-                    f"the first {change.drop_rows} rows of {change.second} do not repeat the header of {change.first}")
     return None
+
+
+def _join_problem(state: DocumentState, first: Block, second: Block, drop_rows: int) -> tuple[LegalityRule, str] | None:
+    if first.id == second.id or first.status in HIDDEN or second.status in HIDDEN:
+        return LegalityRule.NOT_JOINABLE, f"{second.id} and {first.id}: two different blocks, both in the output"
+    if first.kind == BlockKind.TABLE and second.kind == BlockKind.TABLE:
+        if merge_candidate(state, first, second) is None:
+            return (LegalityRule.NOT_MERGE_CANDIDATE, f"{second.id} cannot continue {first.id}: tables with the same "
+                    "columns on consecutive pages, only page furniture between them")
+        if drop_rows and not repeats_header(first.cells, second.cells, drop_rows):
+            return (LegalityRule.ROWS_NOT_DUPLICATE,
+                    f"the first {drop_rows} rows of {second.id} do not repeat the header of {first.id}")
+        return None
+    if first.kind not in JOINABLE or second.kind not in JOINABLE:
+        return (LegalityRule.NOT_JOINABLE, f"{first.id} is {_role(first)}, {second.id} is {_role(second)}: join joins "
+                "two paragraphs (text, list, footnote, other) or two tables")
+    if drop_rows:
+        return LegalityRule.NOT_JOINABLE, "drop_rows is for tables"
+    if _joined(state, first.id, second.id) is not None:
+        return LegalityRule.ALREADY_JOINED, f"{second.id} continues {first.id} already"
+    return None
+
+
+def _role(block: Block) -> str:
+    return f"H{block.level}" if block.kind == BlockKind.TITLE and block.level else block.kind.value
 
 
 _STRUCTURE_STAGES = frozenset({DecisionStage.HEADING_ROLE, DecisionStage.HEADING_LEVEL, DecisionStage.STRUCTURE,
@@ -246,13 +256,11 @@ def _decided_by_agent(state: DocumentState, change: StructureChange, actor: str)
 
 
 def _block_refs(change: StructureChange) -> list[str]:
-    if isinstance(change, (SetRole, SetLevel, MarkPending, Exclude, Include, Split)):
+    if isinstance(change, (SetRole, MarkPending, Exclude, Include, Split)):
         return [change.block]
     if isinstance(change, Move):
         return [change.block] + ([change.after] if change.after else [])
-    if isinstance(change, (Link, Unlink)):
-        return [change.src, change.dst]
-    if isinstance(change, MergeTables):
+    if isinstance(change, (Join, Unjoin)):
         return [change.first, change.second]
     return []
 
@@ -324,23 +332,24 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
     blocks = {b.id: b for b in state.blocks}
     if isinstance(change, SetRole):
         block = blocks[change.block]
-        if change.kind != "title":
+        if block.kind in FURNITURE and block.status == BlockStatus.EXCLUDED:  # a body role: it is output again
+            _set_excluded(state, block, False, change.reason, actor, _grounds(change.evidence))
+        if change.level is None:
             block.level = None  # before the kind: a text block never holds a level, not even in between
         block.kind = BlockKind(change.kind)
+        block.level = change.level
         block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice=change.kind, reason=change.reason,
                                         evidence=_grounds(change.evidence), actor=actor))
         if change.level is not None:
-            block.level = change.level
             block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
                                             reason=change.reason, evidence=_grounds(change.evidence), actor=actor))
     elif isinstance(change, (Exclude, Include)):
-        _set_excluded(state, blocks[change.block], isinstance(change, Exclude), change.reason, actor,
-                      _grounds(change.evidence))
-    elif isinstance(change, SetLevel):
         block = blocks[change.block]
-        block.level = change.level
-        block.decisions.append(Decision(stage=DecisionStage.HEADING_LEVEL, choice=str(change.level),
-                                        reason=change.reason, evidence=_grounds(change.evidence), actor=actor))
+        _set_excluded(state, block, isinstance(change, Exclude), change.reason, actor, _grounds(change.evidence))
+        if isinstance(change, Include) and block.kind in FURNITURE:  # page furniture comes back as text
+            block.kind = BlockKind.TEXT
+            block.decisions.append(Decision(stage=DecisionStage.HEADING_ROLE, choice="text", reason=change.reason,
+                                            evidence=_grounds(change.evidence), actor=actor))
     elif isinstance(change, Move):
         block = blocks[change.block]
         sequence = [b for b in ordered(state) if b.id != block.id]
@@ -351,15 +360,22 @@ def _apply(state: DocumentState, change: StructureChange, actor: str) -> None:
         block.decisions.append(Decision(stage=DecisionStage.STRUCTURE, choice="move", reason=change.reason,
                                         evidence=_grounds(change.evidence), actor=actor,
                                         refs=[block.id] + ([change.after] if change.after else [])))
-    elif isinstance(change, Link):
-        state.relations.append(Relation(id=ids.relation_id(change.kind, change.src, change.dst), kind=change.kind,
-                                        src=change.src, dst=change.dst, confidence=change.confidence))
-    elif isinstance(change, Unlink):
-        gone = _relation(state, change)
+    elif isinstance(change, Join):
+        if blocks[change.first].kind == BlockKind.TABLE:
+            merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
+                         evidence=_grounds(change.evidence))
+        else:
+            state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTINUES, change.first, change.second),
+                                            kind=RelationKind.CONTINUES, src=change.first, dst=change.second))
+            blocks[change.second].decisions.append(Decision(
+                stage=DecisionStage.STRUCTURE, choice="join", reason=change.reason, evidence=_grounds(change.evidence),
+                actor=actor, refs=[change.first, change.second]))
+    elif isinstance(change, Unjoin):
+        gone = _joined(state, change.first, change.second)
         state.relations[:] = [r for r in state.relations if r is not gone]
-    elif isinstance(change, MergeTables):
-        merge_tables(state, change.first, change.second, change.drop_rows, actor=actor, reason=change.reason,
-                     evidence=_grounds(change.evidence))
+        blocks[change.second].decisions.append(Decision(
+            stage=DecisionStage.STRUCTURE, choice="unjoin", reason=change.reason, evidence=_grounds(change.evidence),
+            actor=actor, refs=[change.first, change.second]))
     elif isinstance(change, Split):
         _split(state, blocks[change.block], change.at_break, change.reason, actor)
     elif isinstance(change, MarkPending):
@@ -374,8 +390,10 @@ def _grounds(evidence) -> dict:
     return {"evidence": evidence} if isinstance(evidence, str) else dict(evidence)
 
 
-def _relation(state: DocumentState, change: Unlink):
-    return next((r for r in state.relations if (r.kind, r.src, r.dst) == (change.kind, change.src, change.dst)), None)
+def _joined(state: DocumentState, first: str, second: str):
+    """The relation by which *second* continues *first*, if any."""
+    return next((r for r in state.relations
+                 if (r.kind, r.src, r.dst) == (RelationKind.CONTINUES, first, second)), None)
 
 
 def _split_parts(text: str | None, at_break: int) -> tuple[str, str] | None:

@@ -65,11 +65,10 @@ def propose_docx_structure(state: DocumentState) -> list[dict]:
     for block_id, _text, proposed in titles:
         ev = evidence[block_id]
         flat = {"style": ev["style"], "outline_level": ev["outline_level"], "proposed_level": proposed}
-        changes.append({"op": "set_role", "block": block_id, "kind": "title", "reason": ev["reason"], "evidence": flat})
-        changes.append({"op": "set_level", "block": block_id, "level": levels[block_id],
+        changes.append({"op": "set_role", "block": block_id, "role": f"H{levels[block_id]}",
                         "reason": ev["reason"] + ("" if levels[block_id] == proposed else "; unified with the outline"),
                         "evidence": flat})
     for block_id in lists:
-        changes.append({"op": "set_role", "block": block_id, "kind": "list",
+        changes.append({"op": "set_role", "block": block_id, "role": "list",
                         "reason": "numbered paragraph without heading style or outline level", "evidence": {}})
     return changes

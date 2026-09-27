@@ -64,8 +64,8 @@ def propose_continuations(state: DocumentState) -> list[dict]:
             continue
         if first.text.strip() == second.text.strip() or _CAPTION_LABEL.match(first.text):
             continue
-        changes.append({"op": "link", "kind": RelationKind.CONTINUES.value, "src": first.id,
-                        "dst": second.id})
+        changes.append({"op": "join", "first": first.id, "second": second.id,
+                        "reason": "a paragraph cut by the page break continues on the next page"})
     return changes
 
 

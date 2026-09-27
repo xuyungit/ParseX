@@ -1,4 +1,4 @@
-"""apply_structure legality (guide §6.8, interfaces §5.7): every rule has a rejected example."""
+"""Structure changes and their legality (guide §6.8, Q86): every rule has a rejected example."""
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -28,7 +28,7 @@ def _state():
                                  _b("p2", 2, text="正文"),
                                  _b("p3", 3, text="1.2 术语"),
                                  _b("t", 4, BlockKind.TABLE, cells=grid)],
-                         relations=[Relation(id="r-follows-p1-p2", kind="follows", src="p1", dst="p2")])
+                         relations=[Relation(id="r-continues-p1-p2", kind="continues", src="p1", dst="p2")])
 
 
 def _changes(*items):
@@ -41,11 +41,10 @@ def _rules(changes):
 
 def test_legal_batch_is_accepted_and_applied():
     state = _state()
-    changes = _changes({"op": "set_role", "block": "p1", "kind": "title", "reason": "numbered heading"},
-                       {"op": "set_level", "block": "p1", "level": 2, "reason": "under chapter"})
+    changes = _changes({"op": "set_role", "block": "p1", "role": "H2", "reason": "numbered heading under chapter"})
     assert check_changes(state, changes) == []
     outcome = apply_changes(state, changes, actor="program:hierarchy.typography")
-    assert outcome.accepted == [0, 1] and outcome.rejected == []
+    assert outcome.accepted == [0] and outcome.rejected == []
     p1 = next(b for b in state.blocks if b.id == "p1")
     assert (p1.kind, p1.level, p1.text) == (BlockKind.TITLE, 2, "1.1 范围")
     assert [d.stage for d in p1.decisions] == ["heading_role", "heading_level"]
@@ -53,22 +52,19 @@ def test_legal_batch_is_accepted_and_applied():
 
 
 def test_unknown_block():
-    assert _rules([{"op": "set_role", "block": "nope", "kind": "title", "reason": "r"}]) == [(0, "unknown_block")]
+    assert _rules([{"op": "set_role", "block": "nope", "role": "H1", "reason": "r"}]) == [(0, "unknown_block")]
 
 
 def test_content_kinds_cannot_change_role():
-    assert _rules([{"op": "set_role", "block": "t", "kind": "text", "reason": "r"}]) == [(0, "kind_not_structural")]
-    with pytest.raises(ValidationError):  # and nothing can become a table: the request schema has no such kind
-        _changes({"op": "set_role", "block": "p1", "kind": "table", "reason": "r"})
-
-
-def test_level_only_on_titles():
-    assert _rules([{"op": "set_level", "block": "p2", "level": 2, "reason": "r"}]) == [(0, "level_on_non_title")]
+    assert _rules([{"op": "set_role", "block": "t", "role": "text", "reason": "r"}]) == [(0, "kind_not_structural")]
+    # nothing can become a table, a title has a level, page furniture is not a role: the schema has no such role
+    for role in ("table", "title", "H7", "header", "page_number"):
+        with pytest.raises(ValidationError):
+            _changes({"op": "set_role", "block": "p1", "role": role, "reason": "r"})
 
 
 def test_level_skip():
-    assert _rules([{"op": "set_role", "block": "p1", "kind": "title", "reason": "r"},
-                   {"op": "set_level", "block": "p1", "level": 3, "reason": "r"}]) == [(1, "level_skip")]
+    assert _rules([{"op": "set_role", "block": "p1", "role": "H3", "reason": "r"}]) == [(0, "level_skip")]
 
 
 def test_same_numbering_pattern_same_level():
@@ -76,11 +72,9 @@ def test_same_numbering_pattern_same_level():
     assert numbering_signature("第三章 结构") == "第N章" and numbering_signature("正文") is None
     assert numbering_signature("1 Scope") == numbering_signature("2. Terms") == "N"
     assert numbering_signature("2024 年度报告") is None and numbering_signature("3") is None
-    rules = _rules([{"op": "set_role", "block": "p1", "kind": "title", "reason": "r"},
-                    {"op": "set_level", "block": "p1", "level": 2, "reason": "r"},
-                    {"op": "set_role", "block": "p3", "kind": "title", "reason": "r"},
-                    {"op": "set_level", "block": "p3", "level": 1, "reason": "r"}])
-    assert rules == [(3, "numbering_level_inconsistent")]
+    rules = _rules([{"op": "set_role", "block": "p1", "role": "H2", "reason": "r"},
+                    {"op": "set_role", "block": "p3", "role": "H1", "reason": "r"}])
+    assert rules == [(1, "numbering_level_inconsistent")]
 
 
 def test_order_cycle():
@@ -89,39 +83,46 @@ def test_order_cycle():
     assert _rules([{"op": "move", "block": "p1", "after": "p1", "reason": "r"}]) == [(0, "order_cycle")]
 
 
-def test_duplicate_relation():
-    assert _rules([{"op": "link", "kind": "follows", "src": "p1", "dst": "p2"}]) == [
-        (0, "duplicate_relation")]
+def test_join_joins_two_paragraphs_and_unjoin_undoes_it():
+    assert _rules([{"op": "join", "first": "p1", "second": "p2", "reason": "r"}]) == [(0, "already_joined")]
+    assert _rules([{"op": "join", "first": "h1", "second": "p1", "reason": "r"}]) == [(0, "not_joinable")]  # a title
+    assert _rules([{"op": "join", "first": "p3", "second": "t", "reason": "r"}]) == [(0, "not_joinable")]
+    assert _rules([{"op": "join", "first": "p2", "second": "p3", "drop_rows": 1, "reason": "r"}]) == \
+        [(0, "not_joinable")]  # drop_rows is for tables
+    assert _rules([{"op": "unjoin", "first": "p2", "second": "p3", "reason": "r"}]) == [(0, "not_joined")]
+    state = _state()
+    outcome = apply_changes(state, _changes({"op": "unjoin", "first": "p1", "second": "p2", "reason": "两段"},
+                                            {"op": "join", "first": "p2", "second": "p3", "reason": "分页断开"}),
+                            actor="agent")
+    assert outcome.accepted == [0, 1] and [r.id for r in state.relations] == ["r-continues-p2-p3"]
+    assert [d.choice for d in next(b for b in state.blocks if b.id == "p3").decisions] == ["join"]
 
 
 def test_atomic_batch_applies_nothing_on_any_rejection():
     state = _state()
     before = state.model_copy(deep=True)
-    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "kind": "title", "reason": "r"},
-                                            {"op": "set_level", "block": "p2", "level": 2, "reason": "r"}),
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "role": "H2", "reason": "r"},
+                                            {"op": "set_role", "block": "p2", "role": "H4", "reason": "r"}),
                             actor="agent", atomic=True)
-    assert outcome.accepted == [] and [r.rule for r in outcome.rejected] == ["level_on_non_title"]
+    assert outcome.accepted == [] and [r.rule for r in outcome.rejected] == ["level_skip"]
     assert state == before
 
 
 def test_non_atomic_batch_applies_the_legal_part():
     state = _state()
-    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "kind": "title", "reason": "r"},
-                                            {"op": "set_level", "block": "p2", "level": 2, "reason": "r"}),
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "role": "H2", "reason": "r"},
+                                            {"op": "set_role", "block": "p2", "role": "H4", "reason": "r"}),
                             actor="agent")
     assert outcome.accepted == [0] and next(b for b in state.blocks if b.id == "p1").kind == BlockKind.TITLE
 
 
-def test_move_mark_pending_and_relations_apply():
+def test_move_and_mark_pending_apply():
     state = _state()
     apply_changes(state, _changes({"op": "move", "block": "p3", "after": "h1", "reason": "r"},
-                                  {"op": "mark_pending", "block": "p2", "reason": "unclear role"},
-                                  {"op": "unlink", "kind": "follows", "src": "p1", "dst": "p2"},
-                                  {"op": "link", "kind": "follows", "src": "p3", "dst": "p1"}), actor="agent")
+                                  {"op": "mark_pending", "block": "p2", "reason": "unclear role"}), actor="agent")
     assert [b.id for b in sorted(state.blocks, key=lambda b: b.order)] == ["h1", "p3", "p1", "p2", "t"]
     p2 = next(b for b in state.blocks if b.id == "p2")
     assert p2.status == BlockStatus.DEGRADED and p2.text == "正文"
-    assert [r.id for r in state.relations] == ["r-follows-p3-p1"]
 
 
 def test_requests_carry_no_text_field():
@@ -142,16 +143,18 @@ def test_appendix_numbering_has_its_own_signature():
 # ── P2-5: role with level, exclude and restore ──────────────────────────
 
 
-def test_set_role_to_title_may_carry_its_level():
-    state = _state()
-    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "kind": "title", "level": 2,
-                                             "reason": "numbered heading"}), actor="agent")
-    p1 = next(b for b in state.blocks if b.id == "p1")
-    assert outcome.accepted == [0] and (p1.kind, p1.level) == (BlockKind.TITLE, 2)
-    assert [d.stage for d in p1.decisions] == ["heading_role", "heading_level"]
-    assert _rules([{"op": "set_role", "block": "p1", "kind": "title", "level": 3, "reason": "r"}]) == [(0, "level_skip")]
-    assert _rules([{"op": "set_role", "block": "p1", "kind": "text", "level": 2, "reason": "r"}]) == \
-        [(0, "level_on_non_title")]
+def test_page_furniture_given_a_body_role_or_included_comes_back():
+    state = _ledgered_state()
+    for block in state.blocks[1:3]:  # p1, p2: running headers the program left out
+        block.kind, block.status = BlockKind.HEADER, BlockStatus.EXCLUDED
+        next(e for e in state.ledger if e.block == block.id).disposition = "excluded"
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "role": "H2", "reason": "节标题"},
+                                            {"op": "include", "block": "p2", "reason": "是正文"}), actor="agent")
+    p1, p2 = state.blocks[1:3]
+    assert outcome.accepted == [0, 1]
+    assert (p1.kind, p1.level, p1.status) == (BlockKind.TITLE, 2, BlockStatus.OK)
+    assert (p2.kind, p2.status) == (BlockKind.TEXT, BlockStatus.OK)
+    assert {e.disposition for e in state.ledger if e.block in ("p1", "p2")} == {"output"}
 
 
 def _ledgered_state():
@@ -198,7 +201,7 @@ def test_restore_undoes_an_exclusion_but_not_a_deleted_revision():
 
 def test_a_title_with_a_level_can_become_text_again():
     state = _state()
-    outcome = apply_changes(state, _changes({"op": "set_role", "block": "h1", "kind": "text", "reason": "封面标识"}),
+    outcome = apply_changes(state, _changes({"op": "set_role", "block": "h1", "role": "text", "reason": "封面标识"}),
                             actor="agent")
     h1 = next(b for b in state.blocks if b.id == "h1")
     assert outcome.accepted == [0] and (h1.kind, h1.level) == (BlockKind.TEXT, None)
@@ -215,13 +218,13 @@ def test_numbering_consistency_holds_within_the_same_section_only():
     state = _titled(("1 总则", 1), ("1.1 范围", 2), ("1.1.1 适用", 3), ("2 术语", 1), ("附件3 检测报告", 1),
                     ("1 概述", None), ("1.2 定义", None))
     rules = [(r.index, r.rule) for r in check_changes(state, _changes(
-        {"op": "set_level", "block": "t5", "level": 2, "reason": "附件中另起的编号"},
-        {"op": "set_level", "block": "t6", "level": 3, "reason": "附件里的小节"}))]
+        {"op": "set_role", "block": "t5", "role": "H2", "reason": "附件中另起的编号"},
+        {"op": "set_role", "block": "t6", "role": "H3", "reason": "附件里的小节"}))]
     assert rules == []
     # within the main text, 1.2 must be the level of 1.1
     state = _titled(("1 总则", 1), ("1.1 范围", 2), ("1.1.1 适用", 3), ("1.2 定义", None), ("2 术语", 1))
     assert [r.rule for r in check_changes(state, _changes(
-        {"op": "set_level", "block": "t3", "level": 3, "reason": "r"}))] == ["numbering_level_inconsistent"]
+        {"op": "set_role", "block": "t3", "role": "H3", "reason": "r"}))] == ["numbering_level_inconsistent"]
 
 
 def test_titles_read_inside_an_image_number_on_their_own():
@@ -229,12 +232,12 @@ def test_titles_read_inside_an_image_number_on_their_own():
     state = _titled(("一、总则", 1), ("二、要求", 1), ("附件", 2), ("一、概况", None), ("二、结论", None))
     state.blocks.append(_b("fig", 99, BlockKind.FIGURE))
     state.relations = [Relation(id=f"r-contains-fig-t{i}", kind="contains", src="fig", dst=f"t{i}") for i in (3, 4)]
-    assert check_changes(state, _changes({"op": "set_level", "block": "t3", "level": 3, "reason": "图中文件的小节"},
-                                         {"op": "set_level", "block": "t4", "level": 3, "reason": "同上"})) == []
+    assert check_changes(state, _changes({"op": "set_role", "block": "t3", "role": "H3", "reason": "图中文件的小节"},
+                                         {"op": "set_role", "block": "t4", "role": "H3", "reason": "同上"})) == []
     # inside the image the pattern still has one level
     assert [r.rule for r in check_changes(state, _changes(
-        {"op": "set_level", "block": "t3", "level": 3, "reason": "r"},
-        {"op": "set_level", "block": "t4", "level": 4, "reason": "r"}))] == ["numbering_level_inconsistent"]
+        {"op": "set_role", "block": "t3", "role": "H3", "reason": "r"},
+        {"op": "set_role", "block": "t4", "role": "H4", "reason": "r"}))] == ["numbering_level_inconsistent"]
 
 
 def test_split_divides_a_block_at_one_of_its_line_breaks():
@@ -280,19 +283,17 @@ def test_the_chinese_four_level_numbering_is_legal():
                           status=DocumentStatus.IN_PROGRESS, pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
                           blocks=blocks)
     levels = [1, 2, 3, 4, 4, 3, 2, 1]
-    changes = [c for i, lv in enumerate(levels) for c in (
-        {"op": "set_role", "block": f"t{i}", "kind": "title", "reason": "r"},
-        {"op": "set_level", "block": f"t{i}", "level": lv, "reason": "r"})]
+    changes = [{"op": "set_role", "block": f"t{i}", "role": f"H{lv}", "reason": "r"} for i, lv in enumerate(levels)]
     assert apply_changes(state, _changes(*changes), actor="t").rejected == []
 
 
 def test_the_program_does_not_override_the_agents_structure_decisions():
-    # a second `process` call re-proposes the program's titles; what the agent decided on a block stays
+    # the program's proposals leave alone what the agent decided on a block
     state = _state()
-    demote = _changes({"op": "set_role", "block": "h1", "kind": "text", "reason": "a contents entry"})
+    demote = _changes({"op": "set_role", "block": "h1", "role": "text", "reason": "a contents entry"})
     assert apply_changes(state, demote, actor="agent").accepted == [0]
-    again = _changes({"op": "set_role", "block": "h1", "kind": "title", "level": 1, "reason": "typography"},
-                     {"op": "set_role", "block": "p1", "kind": "title", "level": 1, "reason": "typography"})
+    again = _changes({"op": "set_role", "block": "h1", "role": "H1", "reason": "typography"},
+                     {"op": "set_role", "block": "p1", "role": "H1", "reason": "typography"})
     outcome = apply_changes(state, again, actor="program:hierarchy.typography")
     assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == [(0, "decided_by_agent")]
     assert next(b for b in state.blocks if b.id == "h1").kind == BlockKind.TEXT
@@ -313,7 +314,7 @@ def test_a_batch_is_judged_by_the_outline_it_produces():
 
     # moving a whole group: each step alone breaks "one level per numbering pattern", the result does not
     state = _outline()
-    changes = _changes(*({"op": "set_level", "block": b, "level": lv, "reason": "r"}
+    changes = _changes(*({"op": "set_role", "block": b, "role": f"H{lv}", "reason": "r"}
                          for b, lv in (("a", 1), ("s1", 2), ("s2", 2))))
     assert [r.rule for r in apply_changes(_outline(), changes, actor="agent").rejected] == \
         ["level_skip", "numbering_level_inconsistent", "numbering_level_inconsistent"]  # step by step
@@ -326,8 +327,8 @@ def test_a_batch_refuses_what_is_illegal_in_the_result_and_keeps_the_rest():
     from parserx.hierarchy import apply_batch
 
     state = _outline()
-    changes = _changes({"op": "set_level", "block": "s1", "level": 2, "reason": "only one of the two siblings"},
-                       {"op": "set_role", "block": "c", "kind": "title", "level": 1, "reason": "unchanged, legal"})
+    changes = _changes({"op": "set_role", "block": "s1", "role": "H2", "reason": "only one of the two siblings"},
+                       {"op": "set_role", "block": "c", "role": "H1", "reason": "unchanged, legal"})
     outcome = apply_batch(state, changes, actor="agent")
     assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == \
         [(0, "numbering_level_inconsistent")]

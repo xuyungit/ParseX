@@ -171,7 +171,7 @@ flowchart TD
 | **Block** 内容块 | 段落、标题、列表、表格、图、公式、图注、页眉页脚等逻辑内容 | `id`、`kind`、`order`、`text`、`cells`、`level`、`semantic`、`status`、`chosen_observation` |
 | **SourceAnchor** 来源定位 | 内容在原文件里的位置 | PDF：`page`、`bbox`、`coord_space`（`page_pt` / `image_px`）、`image_size`、`transform`；DOCX：`part`、`node_path`、`run_range`；嵌入图片内的区域：`asset`、`bbox`（image_px）、`image_size`、`transform`（原图位置记在 Asset 上）。一个 Block 可有多个 anchor |
 | **Observation** 识别记录 | 某个引擎对某个 anchor 的一次识别结果 | `engine`、`engine_version`、`raw_ref`（原始响应缓存键）、`text`/`cells`、`det_confidence`、`rec_confidence`、`status`（ok / empty / failed / skipped_budget） |
-| **Relation** 关系 | 块与块之间的结构 | `kind`（contains / follows / continues / captions / footnotes / belongs_to_section / duplicate_of）、`src`、`dst`、`confidence` |
+| **Relation** 关系 | 块与块之间的结构 | `kind`（contains：图片中读出的文字；continues：被分页拆开的段落或表格，`join` 建立；duplicate_of：重复的读数，不输出；Q86 删去了从未起作用的 follows / captions / footnotes / belongs_to_section）、`src`、`dst`、`confidence` |
 | **Asset** 资源 | 原图、裁剪图、渲染图 | `sha256`、`path`、`width`、`height`、`derived_from`、`transform` |
 
 ```python

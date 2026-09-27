@@ -222,11 +222,11 @@ def test_session_through_every_tool(ws, tmp_path):
     env, _ = _call("edit_draft", ws, {"ops": [
         {"op": "adopt", "block": table.id, "evidence": reading.evidence, "reason": "图上是 8"},
         {"op": "adopt", "block": figure.id, "evidence": description.evidence, "reason": "描述"},
-        {"op": "set_level", "block": title.id, "level": 1, "reason": "engine title"},
-        {"op": "set_level", "block": table.id, "level": 2, "reason": "illegal"}]}, context=context)
+        {"op": "set_role", "block": title.id, "role": "H1", "reason": "engine title"},
+        {"op": "set_role", "block": table.id, "role": "H2", "reason": "illegal"}]}, context=context)
     data = _assert_contract(env, "edit_draft")
     assert [o["accepted"] for o in data["result"]["outcomes"]] == [True, True, True, False]
-    assert data["result"]["outcomes"][3]["rule"] == "level_on_non_title"
+    assert data["result"]["outcomes"][3]["rule"] == "kind_not_structural"
 
     env, _ = _call("submit_draft", ws, {"out": str(tmp_path / "out")}, context=context)
     data = _assert_contract(env, "submit_draft")
@@ -707,7 +707,7 @@ def test_an_empty_position_of_the_grid_may_be_filled(ws):
 
 
 def test_a_table_continued_across_pages_is_corrected_as_one(ws):
-    # after merge_tables the first block holds all rows and the anchors of every page; the continuation is merged
+    # after the join the first block holds all rows and the anchors of every page; the continuation is merged
     from parserx.ir.anchor import PdfAnchor
     from parserx.ir.enums import BlockStatus
     from parserx.ir.relation import Relation
@@ -940,9 +940,9 @@ def test_a_picture_in_a_table_cell_is_exported_with_the_table(ws):
 
 
 def test_structure_changes_return_the_issues_they_open(ws):
-    # a title without a level is open work: the call that made it says so (the agent sees what its change opened)
+    # a structure left pending is open work: the call that made it says so (the agent sees what its change opened)
     block = next(b for b in json.loads((ws / "state.json").read_text())["blocks"] if b["kind"] == "text")["id"]
-    env, _ = _call("edit_draft", ws, {"ops": [{"op": "set_role", "block": block, "kind": "title", "reason": "test"}]})
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "mark_pending", "block": block, "reason": "test"}]})
     data = _assert_contract(env, "edit_draft")
     assert [(u["target"], u["kind"]) for u in data["result"]["issues_opened"]] == [(block, "structure_pending")]
 

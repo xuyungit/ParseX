@@ -281,18 +281,19 @@ def docx_titles(source: Path, state: DocumentState, config: ParserXConfig) -> li
     leaves undeclared from agreeing evidence (``hierarchy.typography_titles``, Q72), placed in the same outline.
     A block the styles already make a title or a list item keeps that."""
     declared = propose_docx_structure(state)
-    taken = {c["block"] for c in declared if c["op"] == "set_role"}
-    found = typography_titles(state, skip=taken, titled=any(c["op"] == "set_level" and c["level"] == 1
-                                                          and "Title style" in c["reason"] for c in declared))
+    taken = {c["block"] for c in declared}
+    levels = {c["block"]: int(c["role"][1]) for c in declared if c["role"].startswith("H")}  # the file's own levels
+    found = typography_titles(state, skip=taken, titled=any(levels.get(c["block"]) == 1 and "Title style" in c["reason"]
+                                                          for c in declared))
     if not found:
         return [(DOCX_ACTOR, declared)]
     position = {b.id: i for i, b in enumerate(ordered(state))}
     texts = {b.id: b.text for b in state.blocks}
-    combined = sorted([(c["block"], texts[c["block"]], c["level"]) for c in declared if c["op"] == "set_level"]
-                      + [t[:3] for t in found], key=lambda t: position[t[0]])
-    fixed = {c["block"] for c in declared if c["op"] == "set_level"}  # the file's own levels stay
+    combined = sorted([(b, texts[b], level) for b, level in levels.items()] + [t[:3] for t in found],
+                      key=lambda t: position[t[0]])
     return [(DOCX_ACTOR, declared),
-            (TYPOGRAPHY_ACTOR, title_changes(found, unify_levels(combined, fixed=fixed), reason=TYPOGRAPHY_REASON))]
+            (TYPOGRAPHY_ACTOR, title_changes(found, unify_levels(combined, fixed=set(levels)),
+                                             reason=TYPOGRAPHY_REASON))]
 
 
 def pdf_titles(source: Path, state: DocumentState, config: ParserXConfig) -> list[tuple[str, list[dict]]]:
