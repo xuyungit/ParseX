@@ -39,6 +39,7 @@ from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
 from parserx.ir.state import AccountingSummary, DocumentState
 from parserx.runtimes.events import Step
+from parserx.tables.drawings import tables_in_drawings
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
 from parserx.tools import describe_figure, recognize, structure
@@ -161,7 +162,10 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     ctx.report(Step("process", "structure"))
     if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):
         with ctx.ws.txn("tool:process:frames") as state:
+            labels = tables_in_drawings(state)  # a drawing's labels read as a table are text
             frames = split_frames(state)  # several tables in one frame, before continuations are looked for
+        if labels:
+            steps.append(StepSummary(step="tables_in_drawings", detail=f"{len(labels)} tables read in drawings: text"))
         if frames:
             steps.append(StepSummary(step="split_frames", detail=f"{len(frames)} frames holding several tables"))
     state = ctx.ws.load()
