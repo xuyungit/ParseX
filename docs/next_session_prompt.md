@@ -35,7 +35,7 @@
 - 表格的分与合（T1–T7，Q89–Q92，docs/v2_tables_plan.md）：扫描表跨页只比左边、有线表恢复合并单元格、外框里的几张表拆开、三线表补回表头并移出表题、图中示意图的"表"改为文字；全语料表格 F1 0.866 → 0.914。Agent（Codex）会修看得见的表格问题，发现不了结构性的。见 eval_reports/2026-09-27_tables.md。改标注前先把原件加进 git。
 - DeepSeek（`.env` 的 `_D` 组，deepseek-flash）驱动自己的循环（d1）：9 篇上与 Codex 质量相当，按标价费用约四分之一，用时多三分之一；它发现了文字层的康熙部首码位（⽤→用，4 篇 180 字），应由程序通用修正。默认仍是 Codex（包月）。见 eval_reports/2026-09-27_deepseek.md。
 - 文字层的部首码位（Q96–Q99，docs/v2_radicals_plan.md）：原生 PDF 与 DOCX 读出时把康熙部首与 CJK 部首补充的码位换成 Unicode 规定的等价统一汉字（对照表原样放在 `parserx/content/data/`），每块写 Decision 列出原字符；全语料输出中的部首 180 → 0。两个冻结 run 重新冻结（`2026-09-27_radicals_fixed_full`、`2026-09-27_radicals_v2_toolkit`）。见 eval_reports/2026-09-27_radicals.md。
-- 表格的待办信号：分解已写（docs/v2_table_signal_plan.md，G1–G5，Q93–Q95），等用户确认后再动代码。
+- 表格的待办信号（docs/v2_table_signal_plan.md，G1–G5，Q93–Q95）：本地读数在表格区域里看到、格子里没有的行挂到那张表上并写明修法；Codex 按它补回了 text_table_word 的表头和 unseen_scan_form01 的漏行；复核门槛两处误拒（下标数字、合并当成补入）已修正。见 eval_reports/2026-09-27_table_signal.md。
 
 ## 先做四件事
 
@@ -47,7 +47,7 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 652 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 655 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-27_radicals_v2_toolkit`
