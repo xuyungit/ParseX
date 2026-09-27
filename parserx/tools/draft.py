@@ -240,7 +240,8 @@ def _text(state: DocumentState, shown: list[Block], classes: "_Classes", req: Re
         if req.start is not None:
             at = next((i for i, b in enumerate(shown) if b.id == req.start), -1)
             if at < 0:
-                raise ToolFailure(FailureCode.NOT_FOUND, f"no shown block {req.start}", targets=[req.start])
+                raise ToolFailure(FailureCode.NOT_FOUND, f"no shown block {req.start} (block ids come from the draft; "
+                                                         "to read a page, give page)", targets=[req.start])
         lo, hi = max(0, at - req.before), min(len(shown), at + req.after)
         result.lines = lines(shown[lo:hi])
         result.before_id = shown[lo].id if lo > 0 else None

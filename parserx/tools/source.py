@@ -46,10 +46,12 @@ from parserx.workspace.queries import block_unit
 ASK_PROMPT = "ask_image"
 TABLE_PROMPT = "review_table"
 _SCAN_MEDIA = frozenset({"image/png", "image/jpeg"})
+_WORD = "a Word document has no page images: only its figure blocks can be looked at; its text is the source itself"
 
 
 DESCRIPTION = ("看原件：原文档的页面和图片。不改初稿。每次看（looks 的一项）指明位置（block、page 或 seam 之一）和看法 as，"
-               "得到一个证据编号 evidence（e-…），改初稿时引用它。看原件有时间和费用成本：只在需要判断的地方看，"
+               "得到一个证据编号 evidence（e-…），改初稿时引用它。Word 文档没有页面图像，只能看其中的图片块"
+               "（文字就是原件本身）。看原件有时间和费用成本：只在需要判断的地方看，"
                "不要逐页看；几处要看就放进一次调用的 looks，内部并发。text、table、description 读出的内容要用 "
                "edit_draft 的 adopt 采用才进入初稿。")
 
@@ -67,7 +69,8 @@ class Look(IRModel):
     page: int | None = Field(None, description="位置：一整页")
     seam: int | None = Field(None, description="位置：第 seam 页下半与下一页上半拼在一起（跨页的表格或句子）")
     bbox: BBox | None = Field(None, description="与 page 一起：只看页面上的这个区域 [x0, y0, x1, y1]（页面点）")
-    rows: tuple[int, int] | None = Field(None, description="与表格的 block 一起：只看这几行 [首行, 末行]（从 0 起），更清楚")
+    rows: tuple[int, int] | None = Field(None, description="与表格的 block 一起：只看这几行 [首行, 末行]（从 0 起），更清楚；"
+                                                           "只用于从一页 PDF 上读出的表格（跨页合并的、从图片里读出的看整块）")
     as_: Literal["image", "answer", "text", "table", "description"] = Field(
         "image", alias="as", description="image：返回图片文件的路径，打开它亲自看；answer：视觉模型看图回答 question；"
                                          "text：识别引擎读一页（尚未识别或识别失败的页）或一张图片里的文字；"
@@ -175,7 +178,7 @@ def _image_of(ctx: ToolContext, state, one: Look) -> tuple[Path, str, str]:
         return strip[0], strip[1], _rows_note(blocks[one.block].cells, list(one.rows))
     if one.bbox is not None:
         if state.format != "pdf":
-            raise ToolFailure(FailureCode.INVALID_REQUEST, "DOCX has no page images")
+            raise ToolFailure(FailureCode.INVALID_REQUEST, _WORD)
         page = pages[one.page]
         crop, data, _t, _render, _png = region_crop(ctx.ws.source_path, page.n, one.bbox, ctx.config.tools.read_dpi,
                                                     ctx.config.tools.crop_pad_pt, page.size_pt)
@@ -400,7 +403,7 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
     renders = ctx.ws.root / "renders"
     if whole_page:
         if state.format != "pdf":
-            return None, "DOCX has no page images; figure blocks can be read with image=crop"
+            return None, _WORD
         n = page if page is not None else block_unit(state, blocks_by_id[block])
         page = next((p for p in state.pages if p.n == n), None)
         if page is None:
@@ -434,7 +437,7 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
         return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,
                         transform=None), None
     if state.format != "pdf" or not isinstance(first, PdfAnchor):
-        return None, "this block has no page geometry to crop (DOCX text)"
+        return None, _WORD
     page = next(p for p in state.pages if p.n == first.page)
     crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page.n, first.bbox, dpi, pad, page.size_pt)
     path = renders / f"{crop.id}.png"
@@ -467,8 +470,9 @@ def _row_strip(ctx: ToolContext, state, block, rows: list[int]):
         return None, f"{block.id} has rows 0–{grid.n_rows - 1}"
     pages = [a for a in block.anchors if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
     if len(pages) != 1:
-        return None, (f"{block.id} is not on a single PDF page (a table merged across pages or a DOCX table): ask its "
-                      "page, the seam, or the whole block")
+        where = ("continues across pages" if pages else "was read from an image"
+                 if any(isinstance(a, AssetAnchor) for a in block.anchors) else "is in a Word document")
+        return None, f"{block.id} {where}: rows cannot be cut out of it; look at the whole block (or its page, the seam)"
     heights = [1] * grid.n_rows
     for cell in grid.cells:
         if cell.rowspan == 1:
