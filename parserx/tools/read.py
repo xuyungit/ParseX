@@ -12,6 +12,8 @@ from parserx.ir.enums import BlockKind
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import image_crop, page_render, region_crop, write_once
+from parserx.ir.evidence import Evidence, evidence_id
+from parserx.tools import evidence as evidence_store
 from parserx.tools.views import BlockView, ImageRef, ObservationView, block_view, observation_view
 from parserx.workspace.queries import HIDDEN, block_map, block_unit, ordered
 
@@ -38,6 +40,7 @@ class ReadRequest(IRModel):
 
 class ReadResult(IRModel):
     image: ImageRef | None
+    evidence: str | None = None  # the look at the image, to cite when a change rests on it
     blocks: list[BlockView]
     observations: list[ObservationView] | None
 
@@ -62,10 +65,15 @@ def run(ctx: ToolContext, req: ReadRequest) -> ToolOutput[ReadResult]:
         if problem:
             failures.append(Failure(code=FailureCode.INVALID_REQUEST, message=problem, retryable=False,
                                     targets=[req.block or f"p{req.page}"]))
+    evidence = None
+    if image is not None:
+        evidence = look(ctx, image.asset, block=req.block if req.image == "crop" else None,
+                        page=None if req.image == "crop" else (req.page if req.page is not None
+                                                               else block_unit(state, blocks_by_id[req.block])))
     observations = None
     if req.observations:
         observations = [observation_view(b, o, geometry=req.geometry) for b in blocks for o in b.observations]
-    return output(ReadResult(image=image, blocks=[block_view(state, b, geometry=req.geometry) for b in blocks],
+    return output(ReadResult(image=image, evidence=evidence, blocks=[block_view(state, b, geometry=req.geometry) for b in blocks],
                              observations=observations), failures=failures)
 
 
@@ -116,3 +124,15 @@ def _image(ctx: ToolContext, state, req: ReadRequest, blocks_by_id) -> tuple[Ima
     write_once(path, data)
     return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,
                     transform=transform), None
+
+
+def look(ctx: ToolContext, image: str, *, block: str | None = None, page: int | None = None,
+         seam: int | None = None, rows=None, question: str | None = None, answer: str | None = None) -> str:
+    """Record a look at an image of the source (Q85); returns the evidence id."""
+    target = {"block": block, "page": page, "seam": seam, "rows": rows}
+    how = "image" if question is None else "answer"
+    evidence = Evidence(id=evidence_id(how, {**target, "image": image, "question": question}, answer), how=how,
+                        block=block, page=page, seam=seam, rows=tuple(rows) if rows else None, image=image,
+                        question=question, answer=answer)
+    with ctx.ws.txn("tool:evidence") as state:
+        return evidence_store.record(state, evidence).id

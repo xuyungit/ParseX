@@ -24,7 +24,7 @@ from parserx.tools.context import ToolContext, ToolOutput, output, service_failu
 from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
 from parserx.ir.anchor import PdfAnchor
 from parserx.tools.imaging import region_crop, seam_image, write_once
-from parserx.tools.read import ReadRequest, _image
+from parserx.tools.read import ReadRequest, _image, look
 
 PROMPT = "ask_image"
 
@@ -70,7 +70,8 @@ class AskAnswer(IRModel):
     page: int | None
     answer: DocText | None
     seam: int | None = None
-    image: str | None  # the image the answer was read from: pass it to correct as image evidence
+    image: str | None  # the image the answer was read from
+    evidence: str | None = None  # the look and its answer, to cite when a change rests on it
 
 
 class AskImageResult(IRModel):
@@ -147,7 +148,10 @@ def run(ctx: ToolContext, req: AskImageRequest) -> ToolOutput[AskImageResult]:
             text = None
         else:
             text = DocText(doc_text=str(outcome.value).strip())
-        answers.append(AskAnswer(block=q.block, page=q.page, seam=q.seam, answer=text, image=outcome.task.image))
+        evidence = None if text is None else look(ctx, outcome.task.image, block=q.block, page=q.page, seam=q.seam,
+                                                 rows=q.rows, question=q.question, answer=text.doc_text)
+        answers.append(AskAnswer(block=q.block, page=q.page, seam=q.seam, answer=text, image=outcome.task.image,
+                                 evidence=evidence))
     first = answers[0] if single and answers else None
     return output(AskImageResult(answer=first.answer if first else None, image=first.image if first else None,
                                  answers=answers), failures=failures)

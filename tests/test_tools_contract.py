@@ -174,7 +174,8 @@ def test_session_through_every_tool(ws, tmp_path):
 
     env, _ = _call("read", ws, {"page": 1, "image": "page", "observations": True}, context=context)
     data = _assert_contract(env, "read")
-    assert data["result"]["image"]["path"].endswith(".png") and data["ws_version"] == 1  # reading changes nothing
+    assert data["result"]["image"]["path"].endswith(".png") and data["result"]["evidence"].startswith("e-")
+    assert data["ws_version"] == 2 and not data["diff"]  # the look is kept as evidence; the draft is unchanged
 
     env, _ = _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     data = _assert_contract(env, "recognize")

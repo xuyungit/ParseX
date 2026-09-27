@@ -18,7 +18,7 @@ from parserx.content.select import GateCheck
 from parserx.ir.base import IRModel
 from parserx.ir.state import ClosedItem
 from parserx.tools.context import ToolContext, ToolOutput, output
-from parserx.tools.correct import _image_evidence, _image_evidence_at
+from parserx.tools.evidence import image_evidence, image_evidence_at
 from parserx.tools.envelope import FailureCode, ToolFailure, UnresolvedKind
 from parserx.tools.views import unresolved_items
 
@@ -60,12 +60,12 @@ def run(ctx: ToolContext, req: CloseRequest) -> ToolOutput[CloseResult]:
         n = int(req.target[1:])
         page = next((p for p in state.pages if p.n == n), None)
         box = (0.0, 0.0, *page.size_pt) if page is not None and page.size_pt else (0.0, 0.0, 1e6, 1e6)
-        image = _image_evidence_at(ctx, state, n, box, req.image)
+        image = image_evidence_at(state, n, box, req.image)
     else:
         block = next((b for b in state.blocks if b.id == req.target), None)
         if block is None:
             raise ToolFailure(FailureCode.NOT_FOUND, f"no block {req.target}", targets=[req.target])
-        image = _image_evidence(ctx, state, block, req.image)
+        image = image_evidence(state, block, req.image)
     if not image.passed:
         return output(CloseResult(closed=False, gate=[image]))
     with ctx.ws.txn(f"tool:close:{req.actor}") as state:

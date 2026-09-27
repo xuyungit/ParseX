@@ -15,6 +15,7 @@ from parserx.ir.asset import Asset
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import DocumentStatus, ImageRoute, PageStatus
+from parserx.ir.evidence import Evidence
 from parserx.ir.relation import Relation
 
 Disposition = Literal["output", "merged", "duplicate", "excluded", "failed"]
@@ -115,7 +116,7 @@ class ClosedItem(IRModel):
     quotes: list[str] = []
     reason: str
     actor: str
-    image: str  # the image it was checked on
+    image: str  # the evidence it was checked on (an evidence id, or an image id of earlier workspaces)
     occluded: bool = False  # text the page draws under another element: content, kept, and named in the summary (Q71)
 
 
@@ -135,6 +136,7 @@ class DocumentState(IRModel):
     images: list[ImageRecord] = []
     readings: list[PageReading] = []  # local page readings (guide §9.5, Q56)
     closed: list[ClosedItem] = []  # worklist signals checked and left as they are
+    evidence: list[Evidence] = []  # what was looked at in the source and seen there (Q85)
     ledger: list[LedgerEntry] = []
     missing: list[Missing] = []
     stats: Stats = Stats()

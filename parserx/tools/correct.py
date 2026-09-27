@@ -32,9 +32,9 @@ from parserx.reading.compare import holders_of, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import Change, DocText, FailureCode, ToolFailure, Unresolved, UnresolvedKind
+from parserx.tools.evidence import image_evidence, image_evidence_at
 from parserx.tools.recognize import _next_block_seq, _next_item
 from parserx.workspace.queries import block_unit, ordered
-from parserx.workspace.store import read_records
 
 _TEXT_KINDS = frozenset({BlockKind.TEXT, BlockKind.TITLE, BlockKind.LIST, BlockKind.CAPTION, BlockKind.FOOTNOTE,
                          BlockKind.FORMULA, BlockKind.OTHER})
@@ -60,7 +60,7 @@ class AddText(IRModel):
 
 class CorrectRequest(IRModel):
     block: str | None = None  # the block to correct; none when adding
-    image: str  # the image the correction was read from: the asset id ``read --image`` returned
+    image: str  # the evidence the correction rests on (an evidence id, or the image a look returned)
     reason: str
     edits: list[TextEdit] = []
     cells: list[CellEdit] = []
@@ -102,7 +102,7 @@ def run(ctx: ToolContext, req: CorrectRequest) -> ToolOutput[CorrectResult]:
     else:
         raise ToolFailure(FailureCode.INVALID_REQUEST, f"{req.block} is a {block.kind}; only text and table blocks "
                                                        "can be corrected", targets=[req.block])
-    image = _image_evidence(ctx, state, block, req.image)
+    image = image_evidence(state, block, req.image)
     with ctx.ws.txn(f"tool:correct:{req.actor}") as state:
         block = next(b for b in state.blocks if b.id == req.block)
         n = sum(1 for o in block.observations if o.task == TaskKind.CORRECT) + 1
@@ -136,7 +136,7 @@ def _add(ctx: ToolContext, req: CorrectRequest) -> ToolOutput[CorrectResult]:
         raise ToolFailure(FailureCode.INVALID_REQUEST, f"no PDF page {add.page}", targets=[f"p{add.page}"])
     if add.after is not None and add.after not in {b.id for b in state.blocks}:
         raise ToolFailure(FailureCode.NOT_FOUND, f"no block {add.after}", targets=[add.after])
-    gate = add_gate(add.text, image=_image_evidence_at(ctx, state, add.page, add.bbox, req.image),
+    gate = add_gate(add.text, image=image_evidence_at(state, add.page, add.bbox, req.image),
                     seen=text_at(state, add.page, add.bbox), holders=holders_of(state, add.page, add.bbox, add.text))
     if not all(g.passed for g in gate):
         return output(CorrectResult(candidate="", adopted=False, gate=gate), unresolved=[Unresolved(
@@ -178,31 +178,6 @@ def _place(state, sequence: list, page: int, bbox) -> int:
     return sum(1 for b in sequence if (block_unit(state, b) or 0) < page)
 
 
-def _image_evidence_at(ctx: ToolContext, state, page: int, bbox, image: str) -> GateCheck:
-    """The image must have been read in this workspace for *page* as a whole, or for a block there that overlaps
-    the place."""
-    known = (ctx.ws.root / "renders" / f"{image}.png").is_file() or any(a.id == image for a in state.assets)
-    if not known:
-        return _no_evidence(image)
-    blocks = {b.id: b for b in state.blocks}
-    for record in reversed(read_records(ctx.ws.calls_path)):
-        if record.get("type") != "call":
-            continue
-        for target_block, target_page, whole_page in _images_read(record, image):
-            block = blocks.get(target_block)
-            if whole_page and (target_page == page or (block is not None and block_unit(state, block) == page)):
-                return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of page {page}")
-            if block is not None and any(isinstance(a, PdfAnchor) and a.page == page and _overlap(a.bbox, bbox)
-                                         for a in block.anchors):
-                return GateCheck(name="image_evidence", passed=True,
-                                 detail=f"read the image {image} of {target_block}, at this place")
-    return _no_evidence(image)
-
-
-def _overlap(a, b) -> bool:
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
 def _edited_text(text: str, edits: list[TextEdit], block: str) -> str:
     for edit in edits:
         count = text.count(edit.find) if edit.find else 0
@@ -229,75 +204,3 @@ def _edited_grid(grid: TableGrid, edits: list[CellEdit], block: str) -> TableGri
                      cells=sorted(cells.values(), key=lambda c: (c.row, c.col)))
 
 
-def _image_evidence(ctx: ToolContext, state, block, image: str) -> GateCheck:
-    """The image must have been read in this workspace — by the agent (``read --image``) or by the service VLM
-    (``ask_image``) — for this block, for a page it is on (a table merged across pages is on each), or, for a
-    block read inside an embedded image, for that whole image (its figure)."""
-    pages = {a.page for a in block.anchors if isinstance(a, PdfAnchor)} or {block_unit(state, block)}
-    known = (ctx.ws.root / "renders" / f"{image}.png").is_file() or any(a.id == image for a in state.assets)
-    if not known:
-        return _no_evidence(image)
-    containers = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS and r.dst == block.id}
-    parts = _merged_parts(state, block.id)  # a table merged across pages: its continuations' crops show it too
-    for record in reversed(read_records(ctx.ws.calls_path)):
-        if record.get("type") != "call":
-            continue
-        for target_block, target_page, whole_page in _images_read(record, image):
-            if target_block == block.id:
-                return GateCheck(name="image_evidence", passed=True, detail=f"read the image {image} of this block")
-            if target_block in containers:
-                return GateCheck(name="image_evidence", passed=True,
-                                 detail=f"read the image {image} this block was read from")
-            if target_block in parts:
-                return GateCheck(name="image_evidence", passed=True,
-                                 detail=f"read the image {image} of {target_block}, merged into this block")
-            if whole_page:
-                if target_page is None and target_block is not None:
-                    other = next((b for b in state.blocks if b.id == target_block), None)
-                    target_page = block_unit(state, other) if other is not None else None
-                if target_page in pages:
-                    return GateCheck(name="image_evidence", passed=True,
-                                     detail=f"read the image {image} of page {target_page}")
-    return _no_evidence(image)
-
-
-def _merged_parts(state, block_id: str) -> set[str]:
-    """Blocks merged into *block_id* (continuations of a table across pages, followed through chains)."""
-    merged = {b.id for b in state.blocks if b.status == BlockStatus.MERGED}
-    following: dict[str, list[str]] = {}
-    for r in state.relations:
-        if r.kind == RelationKind.CONTINUES and r.dst in merged:
-            following.setdefault(r.src, []).append(r.dst)
-    parts, todo = set(), [block_id]
-    while todo:
-        for part in following.get(todo.pop(), []):
-            if part not in parts:
-                parts.add(part)
-                todo.append(part)
-    return parts
-
-
-def _images_read(record: dict, image: str) -> list[tuple[str | None, int | None, bool]]:
-    """(block, page, whole page?) of every reading of *image* in a call record."""
-    result, request = record.get("result") or {}, record.get("request") or {}
-    if record.get("tool") == "read":
-        if ((result.get("image") or {}).get("asset")) != image:
-            return []
-        return [(request.get("block"), request.get("page"), request.get("image") == "page")]
-    if record.get("tool") == "ask_image":
-        answers = result.get("answers") or [{"block": request.get("block"), "page": request.get("page"),
-                                             "seam": request.get("seam"), "image": result.get("image")}]
-        readings = []
-        for a in (a for a in answers if a.get("image") == image):
-            if a.get("seam") is not None:  # the seam image shows both pages around the break
-                readings += [(None, a["seam"], True), (None, a["seam"] + 1, True)]
-            else:
-                readings.append((a.get("block"), a.get("page"), a.get("page") is not None))
-        return readings
-    return []
-
-
-def _no_evidence(image: str) -> GateCheck:
-    return GateCheck(name="image_evidence", passed=False,
-                     detail=f"{image} is not an image read for this block or its page "
-                            "(read --image crop, or ask_image, first)")
