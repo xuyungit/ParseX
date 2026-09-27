@@ -291,3 +291,21 @@ def test_one_way_of_reading_at_a_time(report, context):
     assert code == 2 and not env.ok
     env, code = _run("read_draft", report, {"view": "summary", "find": "x"}, context)
     assert code == 2 and not env.ok
+
+
+def test_an_outline_is_relevelled_in_one_call(report, context):
+    # "1 Scope" / "2 Methods" and "1.1 Terms" moved up together: each move alone would skip a level
+    assert _ok("run_pipeline", report, {}, context)
+    lines = {(line["text"] or {}).get("doc_text"): line
+             for line in _ok("read_draft", report, {"view": "outline"}, context)["lines"]}
+    scope, terms, methods = (lines[t]["id"] for t in ("1 Scope", "1.1 Terms", "2 Methods"))
+    before = {lines[t]["role"] for t in ("1 Scope", "2 Methods")}
+    assert before == {"H2"}  # under the report's title
+    ops = [{"op": "set_level", "block": b, "level": lv, "reason": "no document title above them"}
+           for b, lv in ((scope, 1), (terms, 2), (methods, 1))]
+    title = lines["SENTINEL-NATIVE Annual Report"]["id"]
+    ops.insert(0, {"op": "set_role", "block": title, "kind": "text", "reason": "a cover line"})
+    outcomes = _ok("edit_draft", report, {"ops": ops}, context)["outcomes"]
+    assert all(o["accepted"] for o in outcomes), outcomes
+    roles = {line["id"]: line["role"] for line in _ok("read_draft", report, {"view": "outline"}, context)["lines"]}
+    assert (roles[scope], roles[terms], roles[methods]) == ("H1", "H2", "H1")

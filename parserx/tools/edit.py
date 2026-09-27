@@ -28,7 +28,7 @@ from parserx.content import scan
 from parserx.content.select import add_gate, integrate_image, transcribed
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
-from parserx.hierarchy import apply_changes
+from parserx.hierarchy import apply_batch
 from parserx.hierarchy.changes import (
     Exclude,
     Include,
@@ -169,8 +169,15 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
         with ctx.ws.txn("tool:edit_draft:agent") as state:
             before = _snapshot(state)
             issues = _Issues(state)
+            batch: list[tuple[int, object]] = []  # consecutive structure changes: judged by the outline they produce
             for index, op in enumerate(req.ops):
+                if isinstance(op, _STRUCTURE):
+                    batch.append((index, op))
+                    continue
+                outcomes += _structure(state, batch, issues)
+                batch = []
                 outcomes.append(_apply(ctx, state, index, op, issues))
+            outcomes += _structure(state, batch, issues)
             accepted = [o.accepted for o in outcomes]
             if not any(accepted) or (req.atomic and not all(accepted)):
                 raise _Rollback
@@ -200,13 +207,6 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             detail = _adopt(ctx, state, op)
         elif isinstance(op, Dismiss):
             target = _dismiss(state, op, issues)
-        else:
-            known = {b.id for b in state.blocks}
-            outcome = apply_changes(state, [op], actor=ACTOR)
-            if outcome.rejected:
-                rejection = outcome.rejected[0]
-                raise _Refused(rejection.rule.value, rejection.detail)
-            made = next((b.id for b in state.blocks if b.id not in known), None)
     except _Refused as exc:
         return OpOutcome(index=index, op=op.op, accepted=False, rule=exc.rule, detail=exc.detail)
     except ToolFailure as exc:
@@ -214,6 +214,31 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
                          detail=exc.failure.message)
     issues.changed()
     return OpOutcome(index=index, op=op.op, accepted=True, block=made, detail=detail, target=target)
+
+
+_STRUCTURE = (SetRole, SetLevel, Move, Link, Unlink, MergeTables, MarkPending, Exclude, Include, Split)
+
+
+def _structure(state: DocumentState, batch: list[tuple[int, object]], issues: "_Issues") -> list[OpOutcome]:
+    """A run of structure changes, applied together (``apply_batch``): the outline is judged as it comes out, so a
+    whole numbering pattern can move a level at once."""
+    if not batch:
+        return []
+    known = {b.id for b in state.blocks}
+    outcome = apply_batch(state, [op for _, op in batch], actor=ACTOR)
+    made = [b.id for b in state.blocks if b.id not in known]
+    refused = {r.index: r for r in outcome.rejected}
+    out = []
+    for j, (index, op) in enumerate(batch):
+        if j in refused:
+            out.append(OpOutcome(index=index, op=op.op, accepted=False, rule=refused[j].rule.value,
+                                 detail=refused[j].detail))
+        else:
+            block = next((b for b in made if isinstance(op, Split) and b.startswith(op.block + "-")), None)
+            out.append(OpOutcome(index=index, op=op.op, accepted=True, block=block))
+    if outcome.accepted:
+        issues.changed()
+    return out
 
 
 # ── content ─────────────────────────────────────────────────────────────

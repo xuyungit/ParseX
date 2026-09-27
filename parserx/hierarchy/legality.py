@@ -100,15 +100,16 @@ def check_changes(state: DocumentState, changes: list[StructureChange]) -> list[
 
 
 def apply_changes(state: DocumentState, changes: list[StructureChange], *, actor: str,
-                  atomic: bool = False) -> ApplyOutcome:
-    """Apply the legal changes in order and record a Decision for each; with *atomic*, all or nothing."""
+                  atomic: bool = False, levels: bool = True) -> ApplyOutcome:
+    """Apply the legal changes in order and record a Decision for each; with *atomic*, all or nothing.  *levels*
+    False leaves the outline rules (no skipped level, one level per numbering pattern) to the caller."""
     if atomic:
         rejected = check_changes(state, changes)
         if rejected:
             return ApplyOutcome(accepted=[], rejected=rejected)
     outcome = ApplyOutcome()
     for index, change in enumerate(changes):
-        problem = _problem(state, change) or _decided_by_agent(state, change, actor)
+        problem = _problem(state, change, levels=levels) or _decided_by_agent(state, change, actor)
         if problem is not None:
             outcome.rejected.append(Rejection(index=index, rule=problem[0], detail=problem[1]))
             continue
@@ -117,10 +118,44 @@ def apply_changes(state: DocumentState, changes: list[StructureChange], *, actor
     return outcome
 
 
+def apply_batch(state: DocumentState, changes: list[StructureChange], *, actor: str) -> ApplyOutcome:
+    """Apply *changes* judged by the outline they produce, not step by step: an outline is re-levelled as a whole
+    (every title of a numbering pattern moves at once, though each move alone would break the pattern's level).
+    The other rules are checked change by change as usual.  A change whose title is illegal in the result is
+    refused with the reason, and the rest is judged again, until what remains is legal."""
+    remaining = list(range(len(changes)))
+    refused: dict[int, Rejection] = {}
+    while True:
+        trial = state.model_copy(deep=True)
+        outcome = apply_changes(trial, [changes[i] for i in remaining], actor=actor, levels=False)
+        for rejection in outcome.rejected:
+            index = remaining[rejection.index]
+            refused[index] = Rejection(index=index, rule=rejection.rule, detail=rejection.detail)
+        applied = [remaining[j] for j in outcome.accepted]
+        blocks = {b.id: b for b in trial.blocks}
+        illegal, judged = {}, set()
+        for index in reversed(applied):  # a block's level is the last change's: that one answers for it
+            change = changes[index]
+            if isinstance(change, (SetRole, SetLevel)) and change.level is not None and change.block not in judged:
+                judged.add(change.block)
+                block = blocks[change.block]
+                if block.kind == BlockKind.TITLE and block.level is not None:
+                    problem = _level_problem(trial, block, block.level)
+                    if problem is not None:
+                        illegal[index] = Rejection(index=index, rule=problem[0], detail=problem[1])
+        if not illegal:
+            break
+        refused.update(illegal)
+        remaining = [i for i in applied if i not in illegal]
+    final = apply_changes(state, [changes[i] for i in applied], actor=actor, levels=False)
+    assert not final.rejected, final.rejected  # the trial ran the same changes on the same state
+    return ApplyOutcome(accepted=applied, rejected=sorted(refused.values(), key=lambda r: r.index))
+
+
 # ── Checks ──────────────────────────────────────────────────────────────
 
 
-def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRule, str] | None:
+def _problem(state: DocumentState, change: StructureChange, *, levels: bool = True) -> tuple[LegalityRule, str] | None:
     blocks = {b.id: b for b in state.blocks}
     for name in _block_refs(change):
         if name not in blocks:
@@ -134,6 +169,8 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
         if change.level is not None:
             if change.kind != "title":
                 return LegalityRule.LEVEL_ON_NON_TITLE, f"a level needs kind title, not {change.kind}"
+            if not levels:
+                return None
             kind = block.kind
             block.kind = BlockKind.TITLE  # judge the level as the title it is about to become
             try:
@@ -159,7 +196,7 @@ def _problem(state: DocumentState, change: StructureChange) -> tuple[LegalityRul
         block = blocks[change.block]
         if block.kind != BlockKind.TITLE:
             return LegalityRule.LEVEL_ON_NON_TITLE, f"{change.block} is a {block.kind}, not a title"
-        if change.level is not None:
+        if change.level is not None and levels:
             return _level_problem(state, block, change.level)
         return None
     if isinstance(change, Move):

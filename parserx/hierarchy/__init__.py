@@ -17,10 +17,10 @@ from parserx.hierarchy.changes import (
     StructuralKind,
     StructureChange,
 )
-from parserx.hierarchy.legality import apply_changes, check_changes, numbering_signature
+from parserx.hierarchy.legality import apply_batch, apply_changes, check_changes, numbering_signature
 
 __all__ = [
     "Link", "ApplyOutcome", "Exclude", "LegalityRule", "MarkPending", "MergeTables", "Move", "Rejection", "Unlink",
-    "Include", "SetLevel", "SetRole", "Split", "StructuralKind", "StructureChange", "apply_changes", "check_changes",
+    "Include", "SetLevel", "SetRole", "Split", "StructuralKind", "StructureChange", "apply_batch", "apply_changes", "check_changes",
     "numbering_signature",
 ]

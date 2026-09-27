@@ -297,3 +297,38 @@ def test_the_program_does_not_override_the_agents_structure_decisions():
     assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == [(0, "decided_by_agent")]
     assert next(b for b in state.blocks if b.id == "h1").kind == BlockKind.TEXT
     assert apply_changes(state, again[:1], actor="agent").accepted == [0]  # the agent may change its mind
+
+
+def _outline():
+    # 第一章 H1 / 1.1 H3 / 1.2 H3 / 1.3 H3: the sections sit one level too deep
+    return DocumentState(id="d", source="x", source_sha256="0" * 64, format="pdf", status=DocumentStatus.IN_PROGRESS,
+                         blocks=[_b("c", 0, BlockKind.TITLE, "第一章 总则", level=1),
+                                 _b("a", 1, BlockKind.TITLE, "1.1 范围", level=2),
+                                 _b("s1", 2, BlockKind.TITLE, "1.1.1 目的", level=3),
+                                 _b("s2", 3, BlockKind.TITLE, "1.1.2 依据", level=3)])
+
+
+def test_a_batch_is_judged_by_the_outline_it_produces():
+    from parserx.hierarchy import apply_batch
+
+    # moving a whole group: each step alone breaks "one level per numbering pattern", the result does not
+    state = _outline()
+    changes = _changes(*({"op": "set_level", "block": b, "level": lv, "reason": "r"}
+                         for b, lv in (("a", 1), ("s1", 2), ("s2", 2))))
+    assert [r.rule for r in apply_changes(_outline(), changes, actor="agent").rejected] == \
+        ["level_skip", "numbering_level_inconsistent", "numbering_level_inconsistent"]  # step by step
+    outcome = apply_batch(state, changes, actor="agent")
+    assert outcome.accepted == [0, 1, 2] and outcome.rejected == []
+    assert [b.level for b in state.blocks] == [1, 1, 2, 2]
+
+
+def test_a_batch_refuses_what_is_illegal_in_the_result_and_keeps_the_rest():
+    from parserx.hierarchy import apply_batch
+
+    state = _outline()
+    changes = _changes({"op": "set_level", "block": "s1", "level": 2, "reason": "only one of the two siblings"},
+                       {"op": "set_role", "block": "c", "kind": "title", "level": 1, "reason": "unchanged, legal"})
+    outcome = apply_batch(state, changes, actor="agent")
+    assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == \
+        [(0, "numbering_level_inconsistent")]
+    assert "s2" in outcome.rejected[0].detail and [b.level for b in state.blocks] == [1, 2, 3, 3]
