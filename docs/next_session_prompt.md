@@ -1,4 +1,4 @@
-# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后；Q79–Q81 之后更新）
+# 下一轮会话启动提示词（2026-09-26 生成，阶段五之后；Q79–Q85 之后更新，2026-09-27）
 
 复制下面整段作为新会话的第一条消息。
 
@@ -6,7 +6,7 @@
 
 你在 /Users/xuyun/Projects/ParserX 工作。这是一个把 PDF / DOCX（含扫描件与图片）转成适合大模型使用的 Markdown 的工具。设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
 
-**当前**：v2 重建的阶段零至五全部完成。只剩一条流水线：工作区 + 工具包 + 程序约束。
+**当前**：v2 重建的阶段零至五全部完成。只剩一条流水线：工作区 + 工具包 + 程序约束。Agent 的工具是四个：`read_draft`、`view_source`、`edit_draft`、`submit_draft`（Q85，指导 §5.1、docs/v2_toolkit_review.md）；`run_pipeline` 做出初稿，不给 Agent。
 
 - `parserx parse` 默认走混合方案：先跑固定流水线，有待核对项时交给 Codex Agent；
 - `--runtime fixed` 只用固定流水线；
@@ -28,18 +28,20 @@
 - Q80：依赖升级，段落由版面检测器分；
 - Q81：Agent 先读懂全文再定标题（`skim` 工具，structure Skill 改为通用阅读方法）；修正再次调用 `process` 覆盖 Agent 结构决定的缺陷。
   交 Agent 的 10 篇有大纲文档，角色 F1 0.680–0.690（此前 0.664），heading_f1 持平。见 eval_reports/2026-09-26_skim_reading_method.md。
+- Q82：指标 2.3（标题层级允许整篇统一差一级）；Q83：不加编号同级信号；real_doc01、patent01 标注修订。
+- Q85：工具包按第一性原理重新设计为四个工具；证据存入状态；旧工具删除，探索模式退役。见 eval_reports/2026-09-27_four_tools.md。
 
 ## 先做四件事
 
 任一不通过先处理，不要绕过：
 
 1. 阅读：
-   - 指导 §0、§2、§3、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78、Q81；
+   - 指导 §0、§2、§3、§5、§9.5、§12、§14，尤其 Q13、Q40、Q56、Q72、Q78、Q81、Q85；
    - 阶段五退出报告全文；
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 600 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 611 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`
@@ -49,8 +51,7 @@
 
 请我从下面的清单（退出报告 §4）选定本轮主题，再写分解（事实、工作项、顺序、退出条件、待决问题），请我确认后再动代码：
 
-1. ~~Agent 的标题修改~~（Q81）、~~绝对层级~~（Q82，指标 2.3）、~~页眉里的部分名~~（排除）、~~real_doc01 标注~~、~~编号同级信号~~（Q83 不加）。剩下：
-   - **Q84 `process` 的设计**：产品中 Agent 不再拿到 `process`，待办清单由 `overview` 返回——待用户确认；
+1. ~~Agent 的标题修改~~（Q81）、~~绝对层级~~（Q82，指标 2.3）、~~页眉里的部分名~~（排除）、~~real_doc01 标注~~、~~编号同级信号~~（Q83 不加）、~~`process` 的设计~~（Q85 四个工具）。剩下：
    - **画在表格里的节名**（表单式文档整页是表格，unseen_scan_form01、unseen_pdf_tables01）：输出作为表格行保留，标注把它们提成标题。
 2. ~~只有一种证据的标题~~：Q83。
 3. **公式待核对项多时逐项交 Agent，成本高**：paper_chn02 本次 $1.56。
