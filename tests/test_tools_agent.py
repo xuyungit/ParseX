@@ -309,3 +309,16 @@ def test_an_outline_is_relevelled_in_one_call(report, context):
     assert all(o["accepted"] for o in outcomes), outcomes
     roles = {line["id"]: line["role"] for line in _ok("read_draft", report, {"view": "outline"}, context)["lines"]}
     assert (roles[scope], roles[terms], roles[methods]) == ("H1", "H2", "H1")
+
+
+def test_a_look_at_a_region_is_evidence_for_the_blocks_in_it(draft, context):
+    state = Workspace.open(draft).load()
+    block = next(b for b in state.blocks if (b.text or "").startswith("SENTINEL-NATIVE 采购"))
+    x0, y0, x1, y1 = block.anchors[0].bbox
+    around = _ok("view_source", draft, {"looks": [{"page": 1, "bbox": [x0 - 5, y0 - 5, x1 + 5, y1 + 5]}]},
+                 context)["results"][0]["evidence"]
+    elsewhere = _ok("view_source", draft, {"looks": [{"page": 1, "bbox": [72, 600, 300, 700]}]},
+                    context)["results"][0]["evidence"]
+    edit = {"op": "replace_text", "block": block.id, "find": "采购", "replace": "采买", "reason": "r"}
+    assert not _ok("edit_draft", draft, {"ops": [{**edit, "evidence": elsewhere}]}, context)["outcomes"][0]["accepted"]
+    assert _ok("edit_draft", draft, {"ops": [{**edit, "evidence": around}]}, context)["outcomes"][0]["accepted"]

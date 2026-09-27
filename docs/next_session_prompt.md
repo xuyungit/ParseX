@@ -29,7 +29,7 @@
 - Q81：Agent 先读懂全文再定标题（`skim` 工具，structure Skill 改为通用阅读方法）；修正再次调用 `process` 覆盖 Agent 结构决定的缺陷。
   交 Agent 的 10 篇有大纲文档，角色 F1 0.680–0.690（此前 0.664），heading_f1 持平。见 eval_reports/2026-09-26_skim_reading_method.md。
 - Q82：指标 2.3（标题层级允许整篇统一差一级）；Q83：不加编号同级信号；real_doc01、patent01 标注修订。
-- Q85：工具包按第一性原理重新设计为四个工具；证据存入状态；旧工具删除，探索模式退役。见 eval_reports/2026-09-27_four_tools.md。
+- Q85：工具包按第一性原理重新设计为四个工具；证据存入状态；旧工具删除，探索模式退役；结构操作按结果判定层级。质量与之前持平，工具调用少三分之一以上。见 eval_reports/2026-09-27_four_tools.md。
 
 ## 先做四件事
 
@@ -41,7 +41,7 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 611 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 615 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-26_q80_v2_toolkit`

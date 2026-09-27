@@ -30,8 +30,8 @@ def cited(state: DocumentState, ref: str) -> list[Evidence]:
 
 
 def image_evidence(state: DocumentState, block, ref: str) -> GateCheck:
-    """*ref* shows *block*: its own image, the image it was read from, a part merged into it, or a whole page it is
-    on (a page, or a seam across two pages)."""
+    """*ref* shows *block*: its own image, the image it was read from, a part merged into it, a whole page it is
+    on (a page, or a seam across two pages), or a region of a page that overlaps it."""
     pages = {a.page for a in block.anchors if isinstance(a, PdfAnchor)} or {block_unit(state, block)}
     containers = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS and r.dst == block.id}
     parts = _merged_parts(state, block.id)
@@ -45,6 +45,9 @@ def image_evidence(state: DocumentState, block, ref: str) -> GateCheck:
         shown = _whole_pages(evidence)
         if shown & pages:
             return _passed(f"{evidence.id} shows page {min(shown & pages)}")
+        if evidence.bbox is not None and any(isinstance(a, PdfAnchor) and a.page == evidence.page
+                                             and _overlap(a.bbox, evidence.bbox) for a in block.anchors):
+            return _passed(f"{evidence.id} shows the region of page {evidence.page} this block is in")
     return _no_evidence(ref)
 
 
