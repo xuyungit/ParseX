@@ -41,6 +41,8 @@
 - [evaluation.md](evaluation.md)：指标定义，按 §9.2 修复。
 - [v2_phase0_plan.md](v2_phase0_plan.md)：阶段零剩余任务分解（改动文件、测试、验收、顺序）。
 - [v2_phase1_interfaces.md](v2_phase1_interfaces.md)：阶段一 IR、TableGrid、返回信封与七个工具的 pydantic 模型和 JSON CLI 签名（历史）；工具的字段级定义现在以代码中的请求模型为准（`parserx tool schema <name>`，Q86），§4、§5 是概要。
+- [v2_toolkit_review.md](v2_toolkit_review.md)：四个工具（Q85）与接口定型（Q86）。
+- [v2_agent_design.md](v2_agent_design.md)：Agent 的角色（Q87）与自己的循环的上下文、模型适配（Q88）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -892,6 +894,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q84 | `process` 的设计：一个工具做完整条流水线，还兼作待办清单 | ✅ 由 Q85 取代（2026-09-27）。事实：阶段二第一轮 Agent 只用细粒度工具，每一步模型时间 3–5 s，大文档读几百次、图片逐张描述，慢且贵（P2-4 报告 §3）；按当时的用户方向加了 `process`（Agent 主控，第一个工具完成标准处理）。阶段四起混合方案在 Agent 开始前就跑完流水线，Agent 再调 `process` 只是为了取待办清单，而其中标题、续表、段落续接三步每次重做，覆盖了 Agent 的决定（已由 `decided_by_agent` 挡住）。建议：产品中 Agent 不再拿到 `process`；待办清单由 `overview` 完整返回；流水线入口改名并只供固定流水线与实验装置使用；其余工具保持细粒度 |
 | Q85 | 工具包怎样设计才一致、无歧义、不冗余 | ✅ 用户决定（2026-09-27）：从第一性原理重新设计，采用四个工具 `read_draft`、`view_source`、`edit_draft`、`submit_draft`；看原件与采用分两步；核对与导出合为交稿。设计与讨论见 [v2_toolkit_review.md](v2_toolkit_review.md)。**实施**：证据存入状态（`ir/evidence.py`），编辑检查按证据编号查找；待办有稳定编号；结构操作改名 `move`、`link`/`unlink`、`include`；旧工具删除（overview、skim、read、ask_image、correct、close、review_table、apply_structure、check、export），`process` 改为 `run_pipeline`，不给 Agent；`px` 只放行四个工具；任务说明与三份 Skill 重写；阶段二的探索模式（Agent 自己建工作区、导出）退役。用户同时问清的几点：程序＝流水线、工具、把关、信号，含义判断归 Agent；Agent 自带的读取与分析能力照用，改初稿只经 `edit_draft`；`read_draft` 提供全稿检索（含表格行、图片描述，可用正则）；修改是块上的操作（唯一片段替换、单元格、按位置补入、采用读数），不是 diff 或整段替换。**测量**（[报告](../eval_reports/2026-09-27_four_tools.md)）：交 Agent 的 10 篇质量与 s2 持平（heading_f1 0.654、角色 F1 0.718），工具调用 247 次（s2 364–431），费用持平；发现并修正两处：一次调用中连续的结构操作按结果判定层级（`apply_batch`，被拒的层级操作 32 → 0），页面区域的证据可用于其中的块 |
 | Q86 | 工具的契约怎样与 Agent 无关：换 Agent 或自己的循环时只换适配层 | ✅ 用户同意并实施（2026-09-27）：评价 Q85 后发现契约散在三处（几乎没有说明的 schema、手写的任务说明、名字不一致的命令行参数），读写两套词（`H2` 与 `kind=title level=2`、`set_level`；设成页眉仍输出），摆着不起作用的东西（4 种无效关系、永远为空的 `unresolved`、与结果重复的 `diff`、给程序用的导出参数），没有改动记录。设计见 [v2_toolkit_review.md](v2_toolkit_review.md) §11：schema 为唯一来源（中文说明；命令行参数与工具参考由它生成；顶层保持对象，不用联合类型）；一套角色词表 `set_role {role: H1…}`，`join`/`unjoin` 取代 `link continues` 与 `merge_tables`，页眉类只作程序的不输出标签；信封精简，导出从交稿拆出；`read_draft` 加 `changes` 视图；任务说明与适配层分开；最后用最小函数调用循环验证。评价工具看过程指标。**实施**：dd648fe 一套词表；a7686fe 请求模型是契约（说明、生成的命令行参数与工具参考、`agent_task.md` + `adapter_cli.md`、信封去掉 `diff`/`unresolved` 并省去 null 字段、`export` 从交稿拆出）；bb31f1f `changes` 视图；0373525 自己的循环 `runtimes/loop.py`（`runtime.agent.engine: loop`，Responses API，函数定义即请求 schema）。按视图区分的联合类型没有做：主流函数调用接口不接受顶层 oneOf。**测量**（[报告](../eval_reports/2026-09-27_q86_interface.md)，5 篇各一次）：循环 + gpt-6-sol 与 Codex 质量相当（heading_f1 0.678 / 0.646，s3 0.630），Agent 用时 315 s / 459 s，标价 $0.94 / $1.03；循环 + gpt-6-luna 也全部交稿，标题 0.570（固定流水线 0.513），费用 $0.046；Codex 在新接口上没有退步。三个 Agent 犯同样的错（看 Word 页面图、对图片里的表格用 rows），据此修正了说明与拒绝信息（1d0b531） |
+| Q87 | Agent 只是校对员，还是能做更多（外部评审与用户讨论，2026-09-27） | 🟡 用户同意（2026-09-27），设计见 [v2_agent_design.md](v2_agent_design.md) §1：从校对员升为能重新解释局部的编辑，不做批量处理的调度，不自由重写正文。四项：① 文档理解记录（`edit_draft` 的 `note`、`read_draft` 的 `notes` 视图，随 sidecar 输出，Agent 不需要读文件）；② 凭证据的例外（规则分正确性约束、文档经验、输出约定三类，经验可凭 `override` + 证据突破）；③ 局部重新解释（区域重读 → `adopt` 替换，内容守恒、旧块保留、`unadopt` 撤回；`unjoin` 能拆开合并的表）；④ 没有待办的文档先测量再决定是否分诊 |
+| Q88 | 自己的循环怎样构造上下文、用好缓存、清理，并能换模型 | 🟡 用户同意（2026-09-27），设计见 [v2_agent_design.md](v2_agent_design.md) §2：中立的对话记录 + 每家一个适配器（`responses`、`chat`）；固定前缀 + 只追加的历史；超过阈值时一次性把旧工具结果换成占位，并放回理解记录（不用模型写摘要）；看图两种方式都经 `view_source`（`vision: agent` 把图片放进工具结果，`vision: tool` 经 `as: answer`），默认测量后定；截止前与预算到时先请 Agent 交稿；模型必需可靠的函数调用，看图可选。验证：两种看图方式对比、qwen3.6-plus（DashScope）换模型、real_doc03 长文档 |
 
 ## 15. 变更记录
 
@@ -1017,3 +1021,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-27 | v1.29 | Q85 测量与两处修正：结构操作按结果判定层级（`apply_batch`）；区域证据可用于其中的块 |
 | 2026-09-27 | v1.30 | **Q86 接口定型**（设计）：schema 为唯一来源、一套词表、去掉不起作用的字段与关系、改动记录、任务说明与适配层分开、最小循环验证 |
 | 2026-09-27 | v1.31 | **Q86 实施与测量**：一套词表、请求模型是契约、`changes` 视图、自己的函数调用循环；循环与 Codex 质量相当，gpt-6-luna 也能完成；L0 617 |
+| 2026-09-27 | v1.32 | **Q87、Q88 设计**（外部评审之后）：Agent 的角色（理解记录、凭证据的例外、局部重新解释、分诊先测量）；自己的循环的上下文与模型适配 |
