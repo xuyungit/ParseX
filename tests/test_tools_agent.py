@@ -107,6 +107,19 @@ def test_a_content_change_needs_evidence_of_its_place(draft, context):
     assert "| SENTINEL-OCR 甲 | 8 |" in _markdown(draft)
 
 
+def test_the_changes_view_lists_what_was_accepted_in_order(draft, context):
+    text, title = _block(draft, "扫描文字"), _block(draft, "SENTINEL-OCR 标题")
+    evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]
+    _ok("edit_draft", draft, {"ops": [
+        {"op": "replace_text", "block": text, "find": "3 件", "replace": "8 件", "reason": "图上是 8", "evidence": evidence},
+        {"op": "set_role", "block": text, "role": "H5", "reason": "refused: a skipped level"},
+        {"op": "exclude", "block": title, "reason": "扫描软件字样"}]}, context)
+    changes = _ok("read_draft", draft, {"view": "changes"}, context)["changes"]
+    assert [(c["op"], c["target"], c["reason"]) for c in changes] == [
+        ("replace_text", text, "图上是 8"), ("exclude", title, "扫描软件字样")]
+    assert changes[0]["text"]["doc_text"] == "3 件 → 8 件" and changes[0]["evidence"] == evidence
+
+
 def test_find_must_name_one_place(draft, context):
     text = _block(draft, "扫描文字")
     evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]

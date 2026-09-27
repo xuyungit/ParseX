@@ -272,7 +272,7 @@ Sidecar（与 Markdown 同名 `.blocks.json`）：
 
 | 工具 | 做什么 | 改不改初稿 | 费用 | 模块 |
 |---|---|---|---|---|
-| `read_draft` | 读初稿：`summary`、`issues`（待办，每项有稳定编号）、`text`（翻看、一页、查找、正则、一个排版类别）、`outline`（排版类别与像标题的行）、`blocks`（块的细节） | 不改 | 无 | `tools/draft.py` |
+| `read_draft` | 读初稿：`summary`、`issues`（待办，每项有稳定编号）、`text`（翻看、一页、查找、正则、一个排版类别）、`outline`（排版类别与像标题的行）、`blocks`（块的细节）、`changes`（已被接受的修改，取自调用记录；Q86） | 不改 | 无 | `tools/draft.py` |
 | `view_source` | 看原件：`image`（取图）、`answer`（视觉模型作答）、`text`（识别引擎读一页或一张图）、`table`（视觉模型重读表格）、`description`（描述图片）；每次得到一个证据编号 | 不改（证据存入状态） | 读图的方式有 | `tools/source.py` |
 | `edit_draft` | 改初稿：内容（`replace_text`、`insert_text`、`set_cells`、`adopt`）、结构（`set_role`、`move`、`join`/`unjoin`、`split`、`exclude`/`include`、`mark_pending`）、待办（`dismiss`）；一个事务，逐条采用或拒绝 | 唯一入口 | 无 | `tools/edit.py` |
 | `submit_draft` | 交稿：账目平衡即接受，否则说明阻碍；没有参数 | 不改 | 无 | `tools/submit.py` |

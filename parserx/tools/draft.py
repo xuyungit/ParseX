@@ -13,7 +13,9 @@ One ``view`` per call:
   current roles and title evidence) and the titles and the lines numbered or laid out like one, each with the start
   of what follows; Word documents add their paragraph styles and list numbering;
 - **blocks**: the named blocks in detail — every table cell, status, level, and with ``sources`` each engine's
-  reading.
+  reading;
+- **changes**: what ``edit_draft`` accepted so far, in order — from the call records, so an agent that lost its
+  context, and its final report, need not remember (Q86).
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from parserx.tools.envelope import DocText, FailureCode, ToolFailure, Unresolved
 from parserx.tools.views import BlockView, DocInfo, ObservationView, block_view, doc_info, observation_view, \
     unresolved_items
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
+from parserx.workspace.store import read_records
 from parserx.workspace.views import PageRow, page_rows
 
 GLANCE = 120  # characters of a paragraph shown when skimming
@@ -51,13 +54,14 @@ DESCRIPTION = ("读初稿：程序做出的解析结果（文字、表格、图�
 
 
 class ReadDraftRequest(IRModel):
-    view: Literal["summary", "issues", "text", "outline", "blocks"] = Field(
+    view: Literal["summary", "issues", "text", "outline", "blocks", "changes"] = Field(
         "summary", description="summary：文档、各页状态、块与待办的计数、已花费用；"
                                "issues：待办清单，每项有编号 w-…（dismiss 用它）、类别、位置、说明、相关原文；"
                                "text：按阅读顺序的行（块号、角色、页、排版类别 cls、文字）；"
                                "outline：排版类别表（字体字号粗细与编号样式相同的块归为一类，附当前角色分布与例子）"
                                "与所有像标题的行（附后文开头），Word 文档附样式与编号；"
-                               "blocks：指定块的细节（表格的每个单元格、状态）")
+                               "blocks：指定块的细节（表格的每个单元格、状态）；"
+                               "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
     page: int | None = Field(None, description="issues、text：只看这一页")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
@@ -137,6 +141,15 @@ class WordNumbering(IRModel):
     example: DocText | None
 
 
+class DraftChange(IRModel):
+    op: str
+    target: str | None  # the block, page ("p3") or table the change is about
+    what: str | None = None  # the role set, the block it follows, the issue closed …
+    text: DocText | None = None  # the document text it wrote: find → replace, cells, inserted text
+    reason: str
+    evidence: str | None = None
+
+
 class ReadDraftResult(IRModel):
     view: str
     summary: DraftSummary | None = None
@@ -147,6 +160,7 @@ class ReadDraftResult(IRModel):
     numbering: list[WordNumbering] | None = None  # outline, Word documents
     blocks: list[BlockView] | None = None
     sources: list[ObservationView] | None = None
+    changes: list[DraftChange] | None = None
     total_blocks: int | None = None  # text: shown blocks in the document
     before_id: str | None = None  # text: read back from here with before
     after_id: str | None = None  # text: read on from here with after
@@ -162,6 +176,8 @@ def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
         return output(ReadDraftResult(view="issues", issues=_issues(state, req)))
     if req.view == "blocks":
         return output(_blocks(state, req))
+    if req.view == "changes":
+        return output(ReadDraftResult(view="changes", changes=_changes(ctx)))
     shown = [b for b in ordered(state) if b.status not in HIDDEN]
     classes = _classes(state, shown)
     if req.view == "outline":
@@ -256,6 +272,46 @@ def _search(state: DocumentState, shown: list[Block], classes: "_Classes", req: 
                 line.text = DocText(doc_text=_around(text, req, width))
             found.append(line)
     return found
+
+
+def _changes(ctx: ToolContext) -> list[DraftChange]:
+    """The operations ``edit_draft`` accepted, in order, from the workspace's call records."""
+    out = []
+    for record in read_records(ctx.ws.calls_path):
+        if record.get("type") != "call" or record.get("tool") != "edit_draft" or not record.get("result"):
+            continue
+        ops = (record.get("request") or {}).get("ops") or []
+        for outcome in record["result"].get("outcomes") or []:
+            if outcome.get("accepted") and outcome.get("index", -1) < len(ops):
+                out.append(_change(ops[outcome["index"]], outcome))
+    return out
+
+
+def _change(op: dict, outcome: dict) -> DraftChange:
+    kind, block = op["op"], op.get("block")
+    target, what, text = block, None, None
+    if kind == "replace_text":
+        text = f"{op['find']} → {op['replace']}"
+    elif kind == "set_cells":
+        text = "; ".join(f"({c['row']}, {c['col']}) {c['content']}" for c in op["cells"])
+    elif kind == "insert_text":
+        target, text = outcome.get("block") or f"p{op['page']}", op["text"]
+    elif kind == "adopt":
+        target = block or f"p{op['page']}"
+    elif kind == "set_role":
+        what = op["role"]
+    elif kind == "move":
+        what = f"after {op['after']}" if op.get("after") else "to the front"
+    elif kind in ("join", "unjoin"):
+        target = op["second"]
+        what = ("continues " if kind == "join" else "no longer continues ") + op["first"]
+    elif kind == "split":
+        what = f"split at line break {op.get('at_break', 1)}: {outcome.get('block')}"
+    elif kind == "dismiss":
+        target, what = outcome.get("target"), f"closed {op['issue']}"
+    evidence = op.get("evidence")
+    return DraftChange(op=kind, target=target, what=what, text=DocText(doc_text=text) if text else None,
+                       reason=op.get("reason", ""), evidence=evidence if isinstance(evidence, str) else None)
 
 
 # ── style classes and the outline ───────────────────────────────────────
