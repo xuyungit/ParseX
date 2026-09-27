@@ -13,7 +13,7 @@
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
 - **阶段零 ✅**（2026-09-23）：指标、硬检查、回归配置、响应缓存、L1 离线回放、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)；按指标 2.1 离线重算为 `.rescored-2.1.json`）。
 - **阶段一 ✅**（2026-09-24）：文档工作区、七个工具与 JSON CLI、程序约束（去向检查、合法性、接受门、预算）、内容获取（原生 PDF、扫描页引擎、DOCX 直接读 OOXML）、渲染与 sidecar、三份 Skill 草稿、版面检测与图片路由（影子）、固定序列运行时与 `pipeline: v1 | v2` 开关。v2 冻结 run `eval_runs/2026-09-24_p1_v2_toolkit`（提交 65041be），[验收报告](../eval_reports/2026-09-24_p1_toolkit_acceptance.md)；[工具形态试用](../eval_reports/2026-09-24_p1-7b_tool_trial.md)。决策 Q23–Q32 见 §14。**全量语料（27 篇）参考运行**暴露的三处差距（Q33：跨页续表、扫描页标题层级、多栏阅读顺序）已在阶段二之前处理，v2 冻结 run 以空缓存重新冻结（提交 e14752f）。处理后与 v1 比：char_f1 变差 11 篇、变好 9 篇（此前 15 / 7），平均 0.932（v1 0.893）；v2 仍不能在所有文档上替代 v1，剩余差距见验收报告"全量语料"一节。Q34（原生页页眉页脚识别、扫描页多栏区域顺序）也已在阶段二之前处理：与 v1 比 char_f1 变差 9 篇、变好 9 篇、持平 9 篇，平均 0.940（v1 0.893），剩余差距（扫描页识别差异、图片中的文字、无样式标题、界面元素、代码块）见验收报告。阶段二（Agent 探索）🟡：分解 [v2_phase2_plan.md](v2_phase2_plan.md) 已确认（Q35–Q39；Agent 运行时为 Codex，主力模型 gpt-6-sol）；P2-1 实验装置 ✅（[报告](../eval_reports/2026-09-24_p2-1_harness.md)），P2-2 任务说明 ✅，P2-3 对照运行 ✅，P2-4 第一轮 ✅（13 次运行全部有效，[报告](../eval_reports/2026-09-24_p2-4_round1_findings.md)），P2-5 工具包 v1.1 ✅（Agent 以 `process` 开始、只处理待办与定向抽查；推理强度 medium；默认经 `ask_image` 看图；输出包 Q42），P2-6 第二轮 ✅（[报告](../eval_reports/2026-09-24_p2-6_round2.md)：同样 13 篇耗时中位数 265 s → 155 s、Agent 标价 $17.3 → $3.32，文字与表格不变或更好，无样式标题变差——Q48），P2-7 ✅（固定流水线新增跨页段落续接、DOCX 无样式标题、表格算术一致性与可疑字符提示、单元格中的图片），P2-9 ✅（[探索报告](../eval_reports/2026-09-24_p2_agent_exploration.md)），P2-8 ✅（未见集与 §9.4 协议）——**阶段二 ✅**；**阶段三 ✅**（2026-09-25）：[对比报告](../eval_reports/2026-09-24_p3_runtime_comparison.md)、缺陷 D1–D6 修正、本地读数双向比对（Q56）、[重跑对比](../eval_reports/2026-09-25_p4_runtime_comparison.md)；**Q13：默认混合方案**（固定流水线 → 有待核对项交 Agent）；**阶段四 ✅**（2026-09-26）：`parserx parse` 默认走混合方案（控制台中英文进度、回退、中断续跑、`--json`），补齐标题、图片、DOCX、代码块、三线表、原生页公式等能力；全语料运行 B 混合方案 char_f1 0.947、表格 F1 0.875、heading_f1 0.756、角色 F1 0.868（v1 0.890 / 0.775 / 0.494 / 0.614），[退出报告](../eval_reports/2026-09-26_p4-7_full_run_b.md)；**阶段五 ✅**（2026-09-26，[分解](v2_phase5_plan.md)，Q72–Q78，[退出报告](../eval_reports/2026-09-26_p5-7_cleanup_exit.md)）：adapter:v1 由 v2 自有标题路径替代（"两种独立证据一致"），v1 全部删除（本地标签 `v1-final` 保留），依赖与代码一致，README 重写。最终测量（修订后的标注）：固定流水线 char_f1 0.950、表格 F1 0.866、heading_f1 0.699、角色 F1 0.805；混合方案 0.952 / 0.875 / 0.697 / 0.806（运行 B 的标题 0.774，Q78 接受并记录）。
-- **测试基线**：L0 655 通过，无已知失败（2026-09-27，表格的待办信号之后），约 65 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
+- **测试基线**：L0 666 通过，无已知失败（2026-09-28，模型条目之后），约 65 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
 - **代码状态**：全部在 main，未推送远端。冻结 run、响应缓存与新报告只在本地（`eval_runs/`、`.parserx_cache/`、`eval_reports/`，不入 git）。
 
 ### 0.2 新会话启动清单
@@ -26,7 +26,7 @@
    - [标注修订记录](annotation_changes.md)。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都 OK 才继续。
 3. 运行测试，都应 PASS：
-   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（655 通过，无已知失败）；
+   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（666 通过，无已知失败）；
    - L1：`uv run python scripts/regression_test.py --core --repeat 2`；
    - 冻结 run 回放：`--replay eval_runs/2026-09-27_radicals_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-27_radicals_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在文字层的部首码位之后重新冻结，2026-09-27，Q97）。
 4. 为选定的主题写分解，请用户确认后再动代码。
@@ -46,6 +46,8 @@
 - [v2_tables_plan.md](v2_tables_plan.md)：表格的分与合（T1–T7，Q89–Q92）。
 - [v2_table_signal_plan.md](v2_table_signal_plan.md)：表格的待办信号（G1–G5，Q93–Q95）。
 - [v2_radicals_plan.md](v2_radicals_plan.md)：文字层的部首码位（R1–R5，Q96–Q99，已完成）。
+- [v2_model_config.md](v2_model_config.md)：模型接入与配置文件（Q100；决定一已实施，决定二以后做，Q101）。
+- [v2_model_comparison_plan.md](v2_model_comparison_plan.md)：模型能力比较（M1–M6，Q101–Q105）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -693,7 +695,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 
 上表的价格与实测针对服务层。主 Agent 经 Codex 账号调用，不经服务层，用量由实验装置从 Codex 事件流记账（§5.2 的分开计数）；探索与对比实验中，服务层模型保持不变，只让主 Agent 的模型按实验设计变化。
 
-接口事实（已在 `services/llm.py` 处理；`parserx.yaml` 对 gpt-6-luna 显式设 `send_temperature: false`，不靠 400 探测）：gpt-5.6-*/gpt-6-* 拒绝 `temperature`；Chat Completions 两代模型都拒绝 `max_tokens`，要求 `max_completion_tokens`；推理 token 会耗尽过小的输出预算返回空文本；`reasoning.effort` 支持 none/low/medium，不支持 minimal。实现方式不按模型名维护能力表，而是后端 400 "Unsupported parameter/value" 时去掉或改名该参数、记入实例并重试一次；`ServiceConfig` 新增 `reasoning_effort`、`send_temperature`、`min_output_tokens`；`parserx.yaml` vlm `none` + 1024，llm `none` + 256。luna 无法设 temperature，同一输入两次输出有差异（receipt char_f1 0.962 / 0.954，gpt-5.4-mini 两次均 0.971），复现性只能靠缓存。
+接口事实（已在 `services/llm.py` 处理；`parserx.yaml` 对 gpt-6-luna 显式设 `send_temperature: false`，不靠 400 探测）：gpt-5.6-*/gpt-6-* 拒绝 `temperature`；Chat Completions 两代模型都拒绝 `max_tokens`，要求 `max_completion_tokens`；推理 token 会耗尽过小的输出预算返回空文本；`reasoning.effort` 支持 none/low/medium，不支持 minimal。实现方式：模型接受哪些参数写在配置的模型条目里（`models`，Q100，2026-09-28 起），由用户维护，代码里没有按模型名写的表；后端 400 "Unsupported parameter/value" 时去掉或改名该参数、记入实例并重试一次，只作兜底；`ServiceConfig` 新增 `reasoning_effort`、`send_temperature`、`min_output_tokens`；`parserx.yaml` vlm `none` + 1024，llm `none` + 256。luna 无法设 temperature，同一输入两次输出有差异（receipt char_f1 0.962 / 0.954，gpt-5.4-mini 两次均 0.971），复现性只能靠缓存。
 
 单页探测（ocr01 第 1 页，827×1170）：三款模型整页转录与按区域转录（14/14 区域，精确率 ≥ 0.99）相当；6 路并发全部成功；示意图语义提取 gpt-5.6-luna 边关系略好于 gpt-6-luna，阶段四在完整语料复核。模型分层：转录与复核 gpt-6-luna（`none`）；图片描述与表格解释 gpt-6-luna（`low`），复杂图表可升级 gpt-5.6-terra；文档级结构判断 gpt-6-luna（2026-09-23 起为 LLM 默认模型）。
 
@@ -911,6 +913,12 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q97 | 替换改变了图片描述请求的上下文（缓存键），冻结 run 怎样重新冻结 | ✅ 用户按建议决定（2026-09-27）：全语料冻结 run 以旧冻结 run 的缓存为起点（只有键变了的请求是新请求）；验收冻结 run 按惯例以空缓存重新冻结；L1 缓存用 `--core --allow-calls` 补录 receipt 的 2 个描述响应 |
 | Q98 | 标注里从文字层继承的部首码位 | ✅ 用户按建议决定（2026-09-27）：text_pic02（151 个）、receipt（13 个）换成统一汉字，记入 annotation_changes.md，receipt 的原件先加进 git |
 | Q99 | `text_suspicious` 是否报部首 | ✅ 用户按建议决定（2026-09-27）：不加。读出时已替换，语料里不剩；剩下的只可能是没有等价字的 ⺀，或扫描引擎、Agent 写出的（从未见过） |
+| Q100 | 各服务商接口兼容 OpenAI 但参数不同，怎样接入；YAML 与 `.env` 两个配置文件能否合一 | ✅ 用户基本同意（2026-09-27），先写设计、不实施，见 [v2_model_config.md](v2_model_config.md)：① 接口差异写在配置里，按模型写，不为每家服务商写封装；代码只按协议分（Responses、Chat），结构上的行为按响应内容通用处理。新增 `models` 模型条目，`services.*` 与 `runtime.agent` 用 `use` 按名字选；条目的 `efforts` 列出接受的思考强度，任务请求的取值不在其中时换成最近的一个（一样近取低的）；400 探测只作兜底，不为各家报错写专门代码；§10.3"不按模型名维护能力表"改为模型特性写在配置里、由用户维护。② 只用 YAML，三层叠加：包内默认（生产设置与已知模型）← 项目 `parserx.yaml`（可选）← 个人 `~/.config/parserx/config.yaml`（密钥、个人端点、各角色用哪个模型），显式 `--config` 最高；不再读 `.env`，`${VAR}` 保留；Q67 的模板复制与一致性测试随之删去，Q65 ④ 不受影响。依据是 2026-09-27 的实测：glm-5.3-flashx 只有 Chat、effort 只接受 low/high/max、拒绝时的中文报错不被自动探测认出；官方推荐设置（max）与 low 准确度相同、描述任务的耗时与 token 约为 5 倍。待定：个人文件位置、仓库根目录的 `parserx.yaml` 去留、effort 取舍方向 |
+| Q101 | Q100 决定二（只用 YAML、三层叠加、不再读 `.env`）是否与模型比较一起做 | ✅ 用户按建议决定（2026-09-28）：以后做；比较只需要决定一 |
+| Q102 | glm-5.3-flashx 的价格 | ✅ 用户让我查（2026-09-28）：bigmodel.cn 输入 2.0 元、缓存命中 0.57 元、输出 7.0 元 / 百万 token（官方页只列 GLM-5.3-Flash 的 0.8 / 0.23 / 2.8，FlashX 为其 2.5 倍，第三方页面一致）；按 2026-09-24 中间价 6.75 折合 0.30 / 0.084 / 1.04 美元，写入 `scheduling.prices` |
+| Q103 | Agent 角色的思考强度怎样换算 | ✅ 用户按建议决定（2026-09-28）：Agent 照旧请求 medium，换算时两边一样近取高的（能力优先）；服务层取低的 |
+| Q104 | 模型比较中 Agent 角色每个组合跑几次 | ✅ 用户按建议决定（2026-09-28）：2 次 |
+| Q105 | 结构化输出是否写进模型条目 | ✅ 用户按建议决定（2026-09-28）：写 `structured_output`（模型最强能用的一级），服务从这一级往下退，不靠认报错 |
 
 ## 15. 变更记录
 
@@ -1043,3 +1051,5 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-27 | v1.36 | **DeepSeek 对比 Codex（d1）**：deepseek-flash 驱动自己的循环，9 篇上质量与 Codex 相当（标题 0.776 对 0.785，角色 0.831 对 0.826），按标价费用约四分之一，用时多三分之一；发现文字层的康熙部首码位（4 篇、180 字，应由程序修正）；默认仍是 Codex（[报告](../eval_reports/2026-09-27_deepseek.md)）。**表格的待办信号**分解（[v2_table_signal_plan.md](v2_table_signal_plan.md)，G1–G5），Q93–Q95 待定 |
 | 2026-09-27 | v1.37 | **文字层的部首码位**（[分解](v2_radicals_plan.md)，Q96–Q99，[报告](../eval_reports/2026-09-27_radicals.md)）：原生 PDF 与 DOCX 读出时把康熙部首与 CJK 部首补充的码位换成 Unicode 规定的等价统一汉字（`EquivalentUnifiedIdeograph.txt` 原样放入仓库），在判断词间空格之前替换，每块写 `unified_ideographs` Decision 列出原字符（§6.3）；全语料输出中的部首 180 → 0，另修正 text_pic02 的两个多余空格与一处跨页续接；deepseek char_f1 0.918 → 0.923（⻓→长）；text_pic02、receipt 标注同样修订。图片描述的上下文变了，冻结 run 重新冻结：全语料 `2026-09-27_radicals_fixed_full`（旧缓存起步，新请求 VLM 8、扫描引擎 1），验收 `2026-09-27_radicals_v2_toolkit`（空缓存）；text_pic02 一张截图的新描述少列了可见文字，被转写成界面表格，char_f1 −0.012（Q92 一类，非本改动）。L0 652 |
 | 2026-09-27 | v1.38 | **表格的待办信号**（[分解](v2_table_signal_plan.md)，G1–G5，Q93–Q95 按建议，[报告](../eval_reports/2026-09-27_table_signal.md)）：本地读数在表格区域里看到、格子里没有的行挂到那张表上，说明写明修法（全语料 47 行中 18 行移到 4 篇 8 张表，输出不变）；删去两个没有代码写入的待办种类。Codex 验证：3 篇上都按表格待办重读、采用或补格，text_table_word 表头补回（表格 F1 0.913 → 1.000），unseen_scan_form01 漏行补回；paper_chn02 暴露复核门槛两处误拒（下标数字、合并被当成补入），已修正，表 5 仍卡在文字层与原件字序的真实分歧上；L0 655 |
+| 2026-09-27 | v1.39 | **Q100 设计**（[v2_model_config.md](v2_model_config.md)，未实施）：接口差异按模型写在配置里（`models` + `use`、`efforts` 换算）；配置只用 YAML，包内默认、项目、个人三层叠加，不再用 `.env`；附中转站、DeepSeek、GLM 的接口实测与 GLM 推荐设置的对比 |
+| 2026-09-28 | v1.40 | **模型条目（Q100 决定一，比较的 M1）**：配置新增 `models`，`services.vlm` 与 `runtime.agent` 用 `use` 按名字选，加载时展开，写在使用处的字段优先；`efforts` 换算思考强度（服务取低、Agent 取高，Q103），`structured_output` 定结构化输出的起点（Q105）；缓存键按实际发送的强度；`models` 与 `use` 不进配置指纹，Agent 的工具配置不带模型条目（别的模型的密钥不进 Agent 一侧）；`parserx.yaml` 写入 gpt-6-luna、deepseek-flash、glm-5.3-flashx 三个条目与 GLM 价格（Q102）；`configs/vlm_c.yaml` 删去。生产配置展开后与原来相同，两个冻结 run 回放 PASS；比较分解见 [v2_model_comparison_plan.md](v2_model_comparison_plan.md)，Q101–Q105 按建议；L0 666 |

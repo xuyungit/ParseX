@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Sub-configs ─────────────────────────────────────────────────────────
@@ -30,9 +30,47 @@ class BuildersConfig(BaseModel):
     ocr: OCRBuilderConfig = Field(default_factory=OCRBuilderConfig)
 
 
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")  # reasoning efforts, low to high
+
+
+def effort_for(requested: str | None, accepted: list[str] | None, *, higher: bool = False) -> str | None:
+    """The effort to send for *requested* to a model that accepts only *accepted* (Q100 §2.4): itself when accepted
+    (or when the model's efforts are not listed, or either is not a known effort), else the nearest accepted one;
+    on a tie the lower one — services are economy first (Q40) — or, with *higher*, the higher one — the agent is
+    capability first (Q103).  None stays None, and a model that takes no effort (``[]``) is sent none."""
+    if requested is None or accepted is None or requested in accepted:
+        return requested
+    if not accepted:
+        return None
+    if requested not in EFFORTS:
+        return requested
+    known = [e for e in accepted if e in EFFORTS]
+    if not known:
+        return requested
+    at = EFFORTS.index(requested)
+    return min(known, key=lambda e: (abs(EFFORTS.index(e) - at), -EFFORTS.index(e) if higher else EFFORTS.index(e)))
+
+
+class ModelProfile(BaseModel):
+    """How to talk to one model (Q100): where it is and which parameters it takes.  The services and the agent
+    choose one by name (``use``); what the model accepts is written here, by the user, not guessed from errors."""
+
+    endpoint: str = ""
+    api_key: str = ""
+    model: str = ""
+    api_style: Literal["auto", "responses", "chat"] = "auto"
+    send_temperature: bool | None = None
+    efforts: list[str] | None = None  # the reasoning efforts it accepts; None: whatever is asked is sent; []: none
+    structured_output: Literal["json_schema", "json_object", "off"] | None = None  # the strongest it honours
+    min_output_tokens: int = 0
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    user_agent: str = "parserx/0.1"
+
+
 class ServiceConfig(BaseModel):
     """Configuration for an AI service (LLM or VLM)."""
 
+    use: str | None = None  # a ``models`` entry: its fields fill the ones not written here (Q100)
     provider: str = "openai"
     endpoint: str = ""
     model: str = ""
@@ -53,6 +91,10 @@ class ServiceConfig(BaseModel):
     reasoning_effort: str | None = None
     send_temperature: bool | None = None
     min_output_tokens: int = 0
+    # What the model accepts (Q100, from its ``models`` entry): the efforts it takes — a task's effort is sent as
+    # the nearest of them — and the strongest structured output it honours — the fallback starts there.
+    efforts: list[str] | None = None
+    structured_output: Literal["json_schema", "json_object", "off"] | None = None
     max_concurrent: int = 6
     timeout: int = 180
     # Longest pause in a streamed answer (Responses API) before the request counts as stalled: a transport
@@ -142,6 +184,7 @@ class AgentConfig(BaseModel):
     """The main agent of the hybrid runtime (Q13, Q40, Q57): chosen apart from the service models."""
 
     engine: Literal["codex", "loop"] = "codex"  # loop: our own function-calling loop (runtimes/loop.py, Q86)
+    use: str | None = None  # the loop: a ``models`` entry for its model, endpoint, key, api, efforts (Q100)
     model: str = "gpt-6-sol"
     effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
     vision: Literal["tool", "agent"] = "tool"  # tool: the service VLM answers questions (Q47); agent: it looks itself
@@ -151,6 +194,7 @@ class AgentConfig(BaseModel):
     endpoint: str = ""
     api_key: str = ""
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    efforts: list[str] | None = None  # the loop: the efforts its model accepts; ``effort`` is sent as the nearest
     cache_markers: bool = False  # chat: mark cache breakpoints (providers that cache only marked prompts, DashScope)
     budget_usd: float | None = None  # the loop: at it, the agent is asked to submit; at 1.2 times it, stopped
     clear_at_tokens: int = 100_000  # the loop: a context this long gets its older tool results cleared
@@ -194,6 +238,7 @@ class ParserXConfig(BaseModel):
     """Top-level ParserX configuration.  Keys of earlier versions (``pipeline``, ``providers``, ``processors``,
     ``verification``, ``output``, ``services.llm`` …) are ignored."""
 
+    models: dict[str, ModelProfile] = Field(default_factory=dict)  # by name, chosen with ``use`` (Q100)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -202,6 +247,42 @@ class ParserXConfig(BaseModel):
     layout: LayoutConfig = Field(default_factory=LayoutConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_uses(cls, data: Any) -> Any:
+        return expand_uses(data) if isinstance(data, dict) else data
+
+
+# Where a model is used, and which of its entry's fields go there under which name (the agent's ``api`` is the
+# entry's ``api_style``; the loop has no temperature, output floor or structured output of its own).
+_USE_SITES: dict[tuple[str, str], dict[str, str]] = {
+    ("services", "vlm"): {f: f for f in ModelProfile.model_fields},
+    ("runtime", "agent"): {"endpoint": "endpoint", "api_key": "api_key", "model": "model", "api_style": "api",
+                           "extra_body": "extra_body", "efforts": "efforts"},
+}
+
+
+def expand_uses(data: dict[str, Any], *, replace: set[tuple[str, str]] = frozenset()) -> dict[str, Any]:
+    """Fill each place that names a model (``use``) from its ``models`` entry; what the place writes itself wins.
+    Places in *replace* take every field their entry has, over what they had: the model was changed."""
+    models = data.get("models") or {}
+    out = dict(data)
+    for (section, key), fields in _USE_SITES.items():
+        site = (out.get(section) or {}).get(key)
+        if not isinstance(site, dict) or not site.get("use"):
+            continue
+        name = site["use"]
+        if name not in models:
+            raise ValueError(f"{section}.{key}.use: no model {name!r} in models ({', '.join(models) or 'none'})")
+        entry = models[name]
+        entry = entry.model_dump(exclude_unset=True) if isinstance(entry, BaseModel) else dict(entry)
+        filled = {fields[f]: v for f, v in entry.items() if f in fields}
+        if fields.get("api_style") == "api" and filled.get("api") not in ("responses", "chat"):
+            filled.pop("api", None)  # the loop needs a definite API; "auto" leaves its own
+        own = {k: v for k, v in site.items() if (section, key) not in replace or k not in filled}
+        out[section] = {**out[section], key: {**filled, **own}}
+    return out
 
 
 # ── Loader ──────────────────────────────────────────────────────────────
@@ -351,6 +432,7 @@ def apply_overrides(
         return config
 
     data = config.model_dump()
+    changed: set[tuple[str, str]] = set()
     for override in overrides:
         if "=" not in override:
             raise ValueError(
@@ -374,5 +456,7 @@ def apply_overrides(
             raise ValueError(f"Unknown config path '{dotted_path}'.")
 
         current[leaf] = yaml.safe_load(raw_value)
+        if leaf == "use" and len(parts) == 3:
+            changed.add((parts[0], parts[1]))
 
-    return ParserXConfig.model_validate(data)
+    return ParserXConfig.model_validate(expand_uses(data, replace=changed))

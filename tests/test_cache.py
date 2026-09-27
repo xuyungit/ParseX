@@ -74,6 +74,15 @@ def test_identity_ignores_credentials():
     assert service_identity(base) != service_identity(base.model_copy(update={"reasoning_effort": "low"}))
 
 
+def test_identity_has_the_effort_as_sent():
+    # Q100: the key is what is sent; configurations that do not limit the model keep their keys
+    base = ServiceConfig(endpoint="https://api.example.com/v1", model="m", reasoning_effort="none")
+    limited = base.model_copy(update={"efforts": ["low", "high"]})
+    assert service_identity(limited)["reasoning_effort"] == "low"
+    assert "structured_output" not in service_identity(base)
+    assert service_identity(base) != service_identity(base.model_copy(update={"structured_output": "off"}))
+
+
 def test_read_only_miss_raises_and_is_recorded(tmp_path):
     meter = RequestMeter()
     inner, vlm = _vlm(tmp_path, ResponseCache(tmp_path / "c", "read_only"), meter)

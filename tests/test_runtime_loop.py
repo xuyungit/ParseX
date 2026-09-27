@@ -225,3 +225,19 @@ def test_a_chat_providers_own_reasoning_goes_back_to_it_only(tmp_path):
                ToolResult(call, '{"ok": true}')]
     assert ChatModel(None, "m").messages("任务", history)[2]["reasoning_content"] == "先看待办"
     assert "reasoning_content" not in json.dumps(ResponsesModel(None, "m", None).input("任务", history))
+
+
+def test_the_loop_sends_its_effort_as_the_nearest_the_model_accepts():
+    # Q100, Q103: medium to a model that takes low / high / max is high (the agent is capability first); a chat
+    # model gets it too, and a model that takes no effort gets none
+    from parserx.config.schema import ParserXConfig
+
+    def model(efforts, api):
+        config = ParserXConfig.model_validate({"models": {"g": {"endpoint": "https://g/v4", "model": "g", "api_style": api,
+                                                                "efforts": efforts}},
+                                               "runtime": {"agent": {"engine": "loop", "use": "g"}}})
+        return LoopAgent("g", "medium", config=config)._model(10)
+
+    assert model(["low", "high", "max"], "chat").effort == "high"
+    assert model(["low", "high", "max"], "responses").effort == "high"
+    assert model([], "chat").effort is None

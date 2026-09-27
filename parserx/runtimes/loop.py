@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from parserx.config.schema import ParserXConfig
+from parserx.config.schema import ParserXConfig, effort_for
 from parserx.runtimes.agent import AgentOutcome, list_price
 from parserx.runtimes.codex import AgentUsage
 from parserx.runtimes.models import Answer, ChatModel, Model, Note, ResponsesModel, ToolCall, ToolResult, summary
@@ -173,10 +173,11 @@ class LoopAgent:
         key = self.agent.api_key or (service.api_key if not self.agent.endpoint else "")
         client = OpenAI(api_key=key or "no-key", base_url=endpoint or None, max_retries=0, timeout=max(timeout, 1.0),
                         default_headers={"User-Agent": service.user_agent} if service.user_agent else None)
+        effort = effort_for(self.effort, self.agent.efforts, higher=True)  # capability first (Q103)
         if self.agent.api == "chat":
-            return ChatModel(client, self.model, extra_body=self.agent.extra_body,
+            return ChatModel(client, self.model, effort, extra_body=self.agent.extra_body,
                              cache_markers=self.agent.cache_markers)
-        return ResponsesModel(client, self.model, self.effort)
+        return ResponsesModel(client, self.model, effort)
 
     def _call(self, ws_dir: Path, call: ToolCall, vision: str) -> ToolResult:
         """One tool call: the envelope as the agent reads it (or why the call was not made), with the images of

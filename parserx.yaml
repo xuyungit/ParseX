@@ -8,20 +8,38 @@ builders:
     token: ${PADDLE_OCR_TOKEN}
     model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.6}
 
+# Models (Q100): how to talk to each one — where it is and which parameters it takes, written here instead of
+# guessed from rejected requests.  The services and the agent's own loop choose one by name (`use`); what a
+# place writes itself wins over the entry.  `efforts`: the reasoning efforts the model accepts (a task's effort
+# is sent as the nearest; not listed: sent as asked; []: none sent); `structured_output`: the strongest JSON
+# constraint it honours (json_schema / json_object / off).  Checked with `scripts/check_services.py --model`.
+models:
+  gpt-6-luna:
+    endpoint: ${OPENAI_BASE_URL_B}
+    api_key: ${OPENAI_API_KEY_B}
+    model: gpt-6-luna
+    # a reasoning model: it rejects temperature, so it is never sent (auto-detection would waste one rejected
+    # request per concurrent worker before the service learns); it accepts every effort the tasks ask
+    # (none / low / medium, guide §10.3)
+    send_temperature: false
+    min_output_tokens: 1024
+  deepseek-flash:
+    endpoint: ${OPENAI_BASE_URL_D:https://api.deepseek.com}
+    api_key: ${OPENAI_API_KEY_D}
+    model: deepseek-flash
+    api_style: chat
+  glm-5.3-flashx:
+    endpoint: ${OPENAI_BASE_URL_G:https://open.bigmodel.cn/api/paas/v4/}
+    api_key: ${OPENAI_API_KEY_G}
+    model: glm-5.3-flashx
+    api_style: chat          # no Responses API (404)
+    efforts: [low, high, max]  # always thinks; none / minimal / medium are rejected (2026-09-27)
+
 services:
   vlm:
+    use: gpt-6-luna
     provider: openai
-    # 2026-09-23: default switched to the official OpenAI endpoint (*_B vars);
-    # the relay endpoint (OPENAI_BASE_URL) no longer serves gpt-5.4-mini.
-    endpoint: ${OPENAI_BASE_URL_B}
-    model: ${VLM_MODEL_B:gpt-6-luna}
-    api_key: ${OPENAI_API_KEY_B}
-    # gpt-6-luna is a reasoning model: it rejects temperature, so it is never
-    # sent (auto-detection would waste one rejected request per concurrent
-    # worker before the service learns).  effort=none for transcription work.
-    send_temperature: false
     reasoning_effort: none
-    min_output_tokens: 1024
     max_concurrent: 6
     timeout: 180
 
@@ -46,3 +64,4 @@ scheduling:
     gpt-5.6-terra: {input: 2.00, cached_input: 0.20, output: 12.00}
     gpt-6-sol:    {input: 2.00, cached_input: 0.20, output: 10.00}
     deepseek-flash: {input: 0.30, cached_input: 0.006, output: 1.20}  # peak hours (off-peak half), api-docs.deepseek.com, 2026-09-27
+    glm-5.3-flashx: {input: 0.30, cached_input: 0.084, output: 1.04}  # CNY 2.0 / 0.57 / 7.0 at 6.75 (2026-09-24), bigmodel.cn, 2026-09-28

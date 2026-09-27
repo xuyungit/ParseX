@@ -236,6 +236,22 @@ def test_reasoning_effort_forwarded_per_api_style(monkeypatch):
     assert client.chat.completions.calls[0]["reasoning_effort"] == "low"
 
 
+def test_the_effort_sent_is_the_nearest_the_model_accepts(monkeypatch):
+    # Q100: GLM takes low / high / max only; a task's "none" is sent as "low", not rejected request by request
+    service, client = _make_service(monkeypatch, api_style="chat", reasoning_effort="none", efforts=["low", "high", "max"])
+    service.complete("system", "user")
+    assert client.chat.completions.calls[0]["reasoning_effort"] == "low"
+
+
+def test_structured_output_starts_at_what_the_model_honours():
+    from parserx.services.llm import _structured_output_modes
+
+    assert _structured_output_modes("json_schema", has_schema=True) == ("json_schema", "json_object", "off")
+    assert _structured_output_modes("json_schema", has_schema=True, strongest="json_object") == ("json_object", "off")
+    assert _structured_output_modes("json_object", has_schema=False, strongest="off") == ("off",)
+    assert _structured_output_modes("off", has_schema=True, strongest="json_schema") == ("off",)
+
+
 def test_rejected_reasoning_value_drops_reasoning(monkeypatch):
     service, client = _make_service(monkeypatch, api_style="responses", reasoning_effort="minimal")
 

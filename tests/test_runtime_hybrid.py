@@ -219,6 +219,21 @@ def test_service_keys_never_enter_the_agent_directory_or_environment(tmp_path):
     assert env == {"PATH": "/bin", "HOME": "/h"}
 
 
+def test_other_models_keys_stay_behind(tmp_path):
+    # Q100: the agent's tools use the model their places name; the entries of the others (and their keys) stay out
+    from parserx.config.schema import ParserXConfig
+
+    config = ParserXConfig.model_validate({
+        "models": {"used": {"endpoint": "https://u", "model": "u", "api_key": "sk-SECRET-USED"},
+                   "other": {"endpoint": "https://o", "model": "o", "api_key": "sk-SECRET-OTHER"}},
+        "services": {"vlm": {"use": "used"}}})
+    text, secrets = agent_config(config, tmp_path)
+    assert set(secrets.values()) == {"sk-SECRET-USED"} and "sk-SECRET-OTHER" not in text and "models" not in text
+    import yaml
+
+    assert ParserXConfig.model_validate(yaml.safe_load(text)).services.vlm.model == "u"  # loads without the entries
+
+
 def test_px_of_the_agent_directory_runs_the_tools(pdf, tmp_path):
     # the generated px starts this installation's tools with the directory's config (no services needed here)
     import subprocess

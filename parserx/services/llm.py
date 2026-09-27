@@ -32,7 +32,7 @@ from typing import Any, Callable, Protocol
 import httpx2
 from openai import OpenAI
 
-from parserx.config.schema import ServiceConfig
+from parserx.config.schema import ServiceConfig, effort_for
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +161,8 @@ class OpenAICompatibleService:
     ) -> str:
         """Image understanding with optional structured-output constraints."""
         image_data_url = _encode_image_data_url(image_path)
-        for mode in _structured_output_modes(structured_output_mode, has_schema=bool(json_schema)):
+        for mode in _structured_output_modes(structured_output_mode, has_schema=bool(json_schema),
+                                             strongest=self._config.structured_output):
             try:
                 if self._api_style != "chat":
                     try:
@@ -257,7 +258,7 @@ class OpenAICompatibleService:
             key = _PARAM_RENAMES["max_tokens"] if "max_tokens" in self._unsupported else "max_tokens"
             kwargs[key] = budget
 
-        effort = self._config.reasoning_effort
+        effort = effort_for(self._config.reasoning_effort, self._config.efforts)  # what the model accepts (Q100)
         if effort:
             if api_style == "responses" and "reasoning" not in self._unsupported:
                 kwargs["reasoning"] = {"effort": effort}
@@ -507,13 +508,19 @@ def _is_not_found(exc: Exception) -> bool:
     return "404" in exc_str or "Not Found" in exc_str
 
 
-def _structured_output_modes(requested_mode: str, *, has_schema: bool) -> tuple[str, ...]:
-    """Return a strongest-to-weakest structured-output fallback chain."""
+_STRUCTURED = ("json_schema", "json_object", "off")
+
+
+def _structured_output_modes(requested_mode: str, *, has_schema: bool, strongest: str | None = None) -> tuple[str, ...]:
+    """Return a strongest-to-weakest structured-output fallback chain, starting no stronger than what the model
+    honours (``strongest``, from its ``models`` entry, Q105)."""
     if requested_mode == "json_schema" and has_schema:
-        return ("json_schema", "json_object", "off")
-    if requested_mode == "json_object":
-        return ("json_object", "off")
-    return ("off",)
+        chain = _STRUCTURED
+    elif requested_mode == "json_object":
+        chain = _STRUCTURED[1:]
+    else:
+        return ("off",)
+    return chain[chain.index(strongest):] if strongest in chain else chain
 
 
 def _structured_output_kwargs(

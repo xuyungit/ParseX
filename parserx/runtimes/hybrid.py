@@ -307,8 +307,13 @@ def prepare_agent_dir(agent_dir: Path, config: ParserXConfig, keys_file: Path, *
 
 def agent_config(config: ParserXConfig, agent_dir: Path) -> tuple[str, dict[str, str]]:
     """The effective config for the agent's tools, with every credential replaced by a ``${…}`` reference, and
-    those credentials by name.  Its response cache lives in the agent's directory (the sandbox writes only there)."""
+    those credentials by name.  Its response cache lives in the agent's directory (the sandbox writes only there).
+    The model entries stay behind (Q100): the places that use a model are already filled from its entry, so the
+    other models' keys never reach the agent's side."""
     data = config.model_dump(mode="json")
+    data.pop("models", None)
+    for section, key in (("services", "vlm"), ("runtime", "agent")):
+        data.get(section, {}).get(key, {}).pop("use", None)
     secrets: dict[str, str] = {}
 
     def walk(node: dict[str, Any]) -> None:

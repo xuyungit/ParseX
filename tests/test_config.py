@@ -235,3 +235,64 @@ def test_init_template_has_the_production_settings(tmp_path, monkeypatch):
     assert (config_dir / "config.yaml.bak").read_text() == "old: true\n"
     assert "gpt-6-sol" in (config_dir / "config.yaml").read_text()
     assert (config_dir / ".env").read_text() == "OPENAI_API_KEY=mine\n"
+
+
+# ── Model entries (Q100) ────────────────────────────────────────────────
+
+_MODELS = {"luna": {"endpoint": "https://a/v1", "model": "luna-x", "send_temperature": False, "min_output_tokens": 1024},
+           "glm": {"endpoint": "https://g/v4", "model": "glm-x", "api_style": "chat", "efforts": ["low", "high", "max"],
+                   "structured_output": "json_object"}}
+
+
+def test_a_place_that_names_a_model_takes_its_entry_and_keeps_what_it_writes():
+    config = ParserXConfig.model_validate({
+        "models": _MODELS,
+        "services": {"vlm": {"use": "glm", "reasoning_effort": "none", "max_concurrent": 3, "endpoint": "https://mine"}},
+        "runtime": {"agent": {"engine": "loop", "use": "glm", "effort": "medium"}}})
+    vlm, agent = config.services.vlm, config.runtime.agent
+    assert (vlm.model, vlm.api_style, vlm.efforts, vlm.structured_output) == ("glm-x", "chat", ["low", "high", "max"],
+                                                                               "json_object")
+    assert vlm.endpoint == "https://mine" and vlm.max_concurrent == 3  # written at the place: it wins
+    assert (agent.model, agent.api, agent.endpoint, agent.efforts) == ("glm-x", "chat", "https://g/v4",
+                                                                       ["low", "high", "max"])
+    luna = ParserXConfig.model_validate({"models": _MODELS, "runtime": {"agent": {"use": "luna"}}}).runtime.agent
+    assert luna.api == "responses"  # the entry's "auto" leaves the loop's own API
+
+
+def test_an_unknown_model_name_is_an_error():
+    import pytest
+
+    with pytest.raises(ValueError, match="no model 'nope'"):
+        ParserXConfig.model_validate({"models": _MODELS, "services": {"vlm": {"use": "nope"}}})
+
+
+def test_changing_the_model_on_the_command_line_takes_the_new_entry():
+    from parserx.config.schema import apply_overrides
+
+    base = ParserXConfig.model_validate({"models": _MODELS, "services": {"vlm": {"use": "luna", "max_concurrent": 3}}})
+    moved = apply_overrides(base, ["services.vlm.use=glm"]).services.vlm
+    assert (moved.model, moved.endpoint, moved.send_temperature, moved.min_output_tokens) == ("glm-x", "https://g/v4",
+                                                                                                None, 0)
+    assert moved.max_concurrent == 3  # not the entry's: kept
+
+
+def test_naming_a_model_does_not_change_the_fingerprint():
+    # the production config now names its model; a frozen run that wrote the same settings in place still replays
+    from parserx.eval.reporting import config_fingerprint
+
+    named = ParserXConfig.model_validate({"models": _MODELS, "services": {"vlm": {"use": "luna", "reasoning_effort": "none"}}})
+    inline = ParserXConfig.model_validate({"services": {"vlm": {**{k: v for k, v in _MODELS["luna"].items()},
+                                                                "reasoning_effort": "none"}}})
+    assert config_fingerprint(named) == config_fingerprint(inline)
+
+
+def test_an_effort_is_sent_as_the_nearest_the_model_accepts():
+    from parserx.config.schema import effort_for
+
+    glm = ["low", "high", "max"]
+    assert effort_for("low", glm) == "low" and effort_for("none", glm) == "low"
+    assert effort_for("medium", glm) == "low"  # a tie: services are economy first (Q40)
+    assert effort_for("medium", glm, higher=True) == "high"  # the agent is capability first (Q103)
+    assert effort_for("xhigh", glm) == "high"  # between high and max: a tie, the lower
+    assert effort_for("none", None) == "none" and effort_for(None, glm) is None  # not listed / nothing asked
+    assert effort_for("medium", []) is None  # a model that takes no effort

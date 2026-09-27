@@ -91,13 +91,19 @@ def redacted_config(config: ParserXConfig) -> dict[str, Any]:
 
 
 # Settings that cannot change a replayed output: transport retries and the
-# price table only affect how requests are sent and what they cost.
+# price table only affect how requests are sent and what they cost; the model
+# entries and the names that choose them (Q100) are already expanded into the
+# places that use them, which is what the processing sees.
 _NOT_PROCESSING = {"scheduling": ("retry", "prices")}
+_NAMES = (("services", "vlm"), ("runtime", "agent"))
 
 
 def config_fingerprint(config: ParserXConfig) -> str:
     """Short hash of ``redacted_config`` minus ``_NOT_PROCESSING``: what the processing actually used."""
     material = redacted_config(config)
+    material.pop("models", None)
+    for section, key in _NAMES:
+        material.get(section, {}).get(key, {}).pop("use", None)
     for section, keys in _NOT_PROCESSING.items():
         for key in keys:
             material.get(section, {}).pop(key, None)

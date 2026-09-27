@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from parserx.config.schema import ServiceConfig
+from parserx.config.schema import ServiceConfig, effort_for
 
 CACHE_SCHEMA_VERSION = 1
 
@@ -41,16 +41,21 @@ def endpoint_identity(url: str) -> str:
 
 
 def service_identity(config: ServiceConfig) -> dict[str, Any]:
-    """The parts of an LLM/VLM service config that shape its responses."""
-    return {
+    """The parts of an LLM/VLM service config that shape its responses: the effort as sent (Q100: the nearest the
+    model accepts), and the strongest structured output only where the model's entry limits it, so the keys of
+    configurations without one stay as they were."""
+    identity = {
         "endpoint": endpoint_identity(config.endpoint),
         "model": config.model,
         "api_style": config.api_style,
-        "reasoning_effort": config.reasoning_effort,
+        "reasoning_effort": effort_for(config.reasoning_effort, config.efforts),
         "send_temperature": config.send_temperature,
         "min_output_tokens": config.min_output_tokens,
         "extra_body": config.extra_body,
     }
+    if config.structured_output is not None:
+        identity["structured_output"] = config.structured_output
+    return identity
 
 
 def digest_arguments(value: Any) -> Any:
