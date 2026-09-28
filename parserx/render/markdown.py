@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-from parserx.content.text import escape_strikethrough, join_wrapped
+from parserx.content.text import escape_strikethrough, join_wrapped, literal_breaks
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
@@ -227,10 +227,9 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return ""
     if kind == BlockKind.FORMULA:
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
-    text = escape_strikethrough(text)
     if kind == BlockKind.TITLE and block.level is not None:
-        return f"{'#' * block.level} {text}"
-    return _MARKUP_START.sub(r"\1\\\2", text)
+        return f"{'#' * block.level} {escape_strikethrough(text)}"
+    return "\n\n".join(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part)) for part in literal_breaks(text))
 
 
 def _style(block: Block):
