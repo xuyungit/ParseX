@@ -32,7 +32,6 @@ bench = [
 ]
 
 [project.scripts]
-psx = "parserx.cli:main"
 parserx = "parserx.cli:main"
 
 [build-system]

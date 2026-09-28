@@ -332,7 +332,7 @@ def test_native_pages_are_not_sent_to_the_scan_engine(ws):
 
 
 def test_cli_prints_only_the_envelope(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "read_draft", "--ws", str(ws), "--json"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "dev", "tool", "read_draft", "--ws", str(ws), "--json"])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     envelope = json.loads(capsys.readouterr().out)
@@ -340,11 +340,11 @@ def test_cli_prints_only_the_envelope(ws, monkeypatch, capsys):
 
 
 def test_cli_schema_and_invalid_request(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "schema", "view_source"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "dev", "tool", "schema", "view_source"])
     with pytest.raises(SystemExit):
         parserx.cli.main()
     assert "request" in json.loads(capsys.readouterr().out)
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "read_draft", "--ws", str(ws), "--view", "blocks", "--json"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "dev", "tool", "read_draft", "--ws", str(ws), "--view", "blocks", "--json"])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     assert exit_info.value.code == 2 and json.loads(capsys.readouterr().out)["failures"][0]["code"] == \
@@ -352,7 +352,7 @@ def test_cli_schema_and_invalid_request(ws, monkeypatch, capsys):
 
 
 def test_cli_looks_at_the_source_with_options(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "view_source", "--ws", str(ws), "--page", "1", "--as",
+    monkeypatch.setattr(sys, "argv", ["parserx", "dev", "tool", "view_source", "--ws", str(ws), "--page", "1", "--as",
                                       "image", "--json"])
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
@@ -364,7 +364,7 @@ def test_cli_options_are_the_request_fields():
     from parserx.tools.cli import _request
 
     def request(*argv):
-        args = parserx.cli.build_parser().parse_args(["tool", *argv, "--ws", "ws"])
+        args = parserx.cli.build_parser().parse_args(["dev", "tool", *argv, "--ws", "ws"])
         return _request(args.tool_name, args)
 
     assert request("read_draft", "--view", "text", "--start", "b-p001-0002", "--after", "5", "--full") == \
@@ -377,7 +377,7 @@ def test_cli_options_are_the_request_fields():
 
 
 def test_empty_standard_input_is_named(ws, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["parserx", "tool", "edit_draft", "--ws", str(ws), "--ops", "-", "--json"])
+    monkeypatch.setattr(sys, "argv", ["parserx", "dev", "tool", "edit_draft", "--ws", str(ws), "--ops", "-", "--json"])
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()

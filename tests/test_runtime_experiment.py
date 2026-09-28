@@ -27,8 +27,8 @@ def test_a_run_config_keeps_secrets_as_placeholders_and_the_cache_inside(tmp_pat
 def test_px_fixes_the_config_and_allows_only_the_agents_tools(tmp_path):
     cfg = tmp_path / "parserx.yaml"
     assert px_argv(["tool", "read_draft", "--ws", "ws", "--view", "issues", "--json"], cfg) == [
-        "tool", "read_draft", "--ws", "ws", "--view", "issues", "--json", "--config", str(cfg)]
-    assert px_argv(["tool", "schema", "edit_draft"], cfg) == ["tool", "schema", "edit_draft"]
+        "dev", "tool", "read_draft", "--ws", "ws", "--view", "issues", "--json", "--config", str(cfg)]
+    assert px_argv(["tool", "schema", "edit_draft"], cfg) == ["dev", "tool", "schema", "edit_draft"]
     for refused in (["parse", "input.pdf"], ["eval", "gt"], ["tool", "read_draft", "--config", "x.yaml"],
                     ["tool", "read_draft", "-c", "x.yaml"], ["tool", "frobnicate"], ["tool", "run_pipeline"],
                     ["workspace", "init", "input.pdf", "--ws", "ws"]):

@@ -1,8 +1,8 @@
 """JSON CLI (guide §5.3, Q86).
 
-    parserx workspace init <input> --ws DIR [--config C] --json
-    parserx tool <name> --ws DIR [--<field> VALUE … | --request FILE|-] [--expect-version N] [--config C] --json
-    parserx tool schema <name>
+    parserx dev workspace init <input> --ws DIR [--config C] --json
+    parserx dev tool <name> --ws DIR [--<field> VALUE … | --request FILE|-] [--expect-version N] [--config C] --json
+    parserx dev tool schema <name>
 
 A tool's options are its request's fields, named as in the JSON request — the request model is the contract (Q86):
 a number or a word as it is, a list of words comma-separated, a pair or a box as that many numbers, a flag for

@@ -18,7 +18,7 @@ from parserx.eval.reporting import build_config_report_metadata
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="psx",
+        prog="parserx",
         description="ParserX — high-fidelity document parsing for knowledge bases and retrieval",
     )
     sub = parser.add_subparsers(dest="command")
@@ -70,7 +70,23 @@ def build_parser() -> argparse.ArgumentParser:
                            help="the standard processing only (the same as --runtime fixed)")
 
     # parserx eval
-    eval_cmd = sub.add_parser("eval", help="Evaluate parsing against ground truth")
+    check_cmd = sub.add_parser("check", help="Check the setup: scan engine, service model, agent, LibreOffice, "
+                                             "layout model")
+    from parserx.check import add_arguments as _check_arguments
+
+    _check_arguments(check_cmd)
+
+    init_cmd = sub.add_parser("init", help="Write the personal config (~/.config/parserx/config.yaml): keys and model choices")
+    init_cmd.add_argument("--force", action="store_true",
+                          help="Write a new personal config even if one exists (the old one kept as config.yaml.bak)")
+    init_cmd.add_argument("--no-download", action="store_true",
+                          help="do not fetch the layout model now (it is fetched on first use)")
+
+    # parserx dev … (Q114): evaluation, comparison and the document toolkit, for development
+    dev_cmd = sub.add_parser("dev", help="Developer tools: evaluation, comparison, the document toolkit")
+    dev = dev_cmd.add_subparsers(dest="dev_command")
+
+    eval_cmd = dev.add_parser("eval", help="Evaluate parsing against ground truth")
     eval_cmd.add_argument("ground_truth", type=Path, help="Ground truth directory")
     eval_cmd.add_argument("-c", "--config", type=Path, help="Config YAML path")
     eval_cmd.add_argument(
@@ -93,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx compare
-    compare_cmd = sub.add_parser("compare", help="Compare two parsing configs on the same ground truth")
+    compare_cmd = dev.add_parser("compare", help="Compare two parsing configs on the same ground truth")
     compare_cmd.add_argument("ground_truth", type=Path, help="Ground truth directory")
     compare_cmd.add_argument("--config-a", type=Path, help="Base config path")
     compare_cmd.add_argument("--config-b", type=Path, help="Experiment config path")
@@ -119,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx tool-eval
-    tool_eval_cmd = sub.add_parser(
+    tool_eval_cmd = dev.add_parser(
         "tool-eval",
         help="Run llamaparse/liteparse/builtin/ParserX and score all Markdown outputs",
     )
@@ -167,22 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
     tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx init
-    check_cmd = sub.add_parser("check", help="Check the setup: scan engine, service model, agent, LibreOffice, "
-                                             "layout model")
-    from parserx.check import add_arguments as _check_arguments
-
-    _check_arguments(check_cmd)
-
-    init_cmd = sub.add_parser("init", help="Write the personal config (~/.config/parserx/config.yaml): keys and model choices")
-    init_cmd.add_argument("--force", action="store_true",
-                          help="Write a new personal config even if one exists (the old one kept as config.yaml.bak)")
-    init_cmd.add_argument("--no-download", action="store_true",
-                          help="do not fetch the layout model now (it is fetched on first use)")
-
     # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
     from parserx.tools.cli import add_parsers as _add_tool_parsers
 
-    _add_tool_parsers(sub)
+    _add_tool_parsers(dev)
 
     return parser
 
@@ -194,6 +198,10 @@ def main() -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+    if args.command == "dev":
+        if not args.dev_command:
+            parser.parse_args(["dev", "--help"])
+        args.command = args.dev_command
 
     if args.command in ("tool", "workspace"):
         from parserx.tools.cli import main as _tool_main

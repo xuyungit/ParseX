@@ -8,7 +8,7 @@ own steps (``recognize`` pages with the scan engine, ``describe_figure``) are ca
 The request models are the contract (Q86): their descriptions are what an agent reads, and the command line
 (``tools/cli.py``), the task's tool reference (``tools/reference.py``) and a function-calling runtime's tool
 definitions are all made from them.  ``call_tool(name, ws_dir, request, config=…)`` runs one in-process;
-``parserx tool <name> …`` is the same call from a shell; ``tool_schema(name)`` gives the JSON Schemas.
+``parserx dev tool <name> …`` is the same call from a shell; ``tool_schema(name)`` gives the JSON Schemas.
 """
 
 from __future__ import annotations

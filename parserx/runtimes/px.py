@@ -43,9 +43,9 @@ def px_argv(args: list[str], config: Path) -> list[str]:
     if any(a in ("-c", "--config") or a.startswith("--config=") for a in args):
         raise PxRefused("the configuration is fixed for this experiment; drop --config")
     if len(args) >= 2 and args[0] == "tool" and args[1] == "schema":
-        return list(args)
+        return ["dev", *args]
     if len(args) >= 2 and args[0] == "tool" and args[1] in AGENT_TOOLS:
-        return [*args, "--config", str(config)]
+        return ["dev", *args, "--config", str(config)]
     raise PxRefused(f"not available here: {' '.join(args[:2]) or '(nothing)'}")
 
 
