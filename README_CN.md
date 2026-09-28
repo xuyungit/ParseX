@@ -43,51 +43,51 @@ ParserX 把 PDF、DOCX、DOC 转成大模型可用的 Markdown，同时给出机
 
   层级来自文档自身的排版与编号；DOCX 还用文件的样式与大纲级别。没有关键词表。
 
-用到的服务：
-- 远程扫描引擎（PaddleOCR-VL，AI Studio jobs API）：识别扫描页与带文字的图片；
-- VLM（OpenAI，默认 `gpt-6-luna`）：描述图片、复核；
-- 本地 CPU 模型：版面检测与页面读数。
+需要什么：
 
-不需要 GPU。
+| | 用途 | 必需 |
+|---|---|---|
+| 扫描引擎：PaddleOCR-VL（AI Studio jobs API，要 token） | 扫描页，图片里的文字和表格 | 有扫描页或图片时必需 |
+| 服务模型：经 OpenAI API 调用 `gpt-6-luna`（要 key） | 图片描述、公式编辑、表格重读 | 是 |
+| Agent：本机的 [Codex CLI](https://github.com/openai/codex)（`codex login`），或自己的循环加配置里的某个模型（按该模型的 API 计费） | 复核，得到最好的结果 | 推荐 |
+| LibreOffice（`soffice`） | `.doc` 输入；Word 里的矢量图（EMF/WMF）转成图片 | 处理 `.doc` 时必需 |
+| 版面模型（约 130 MB，首次下载到 `~/.cache/parserx/models`）与本地页面读数 | 在 CPU 上做版面检测；与页面图像比对 | 是（自动下载） |
+
+不需要 GPU。Python 3.13 由 `uv` 提供。
 
 ## 安装
 
 ```bash
-# 作为命令行工具
-uv tool install -e /path/to/ParserX
-parserx init                 # 生成 ~/.config/parserx/config.yaml 与 .env
-vim ~/.config/parserx/.env   # 填写服务凭据
-
-# 开发
-git clone <repo> && cd ParserX && uv sync
-uv run parserx --help
+uv tool install /path/to/parserx-0.1.0-py3-none-any.whl   # 或：uv tool install git+<仓库地址>
+parserx init          # 写出 ~/.config/parserx/config.yaml，并下载版面模型
+$EDITOR ~/.config/parserx/config.yaml                      # 填上要用的 key
+parserx check         # 逐项检查：配了没有、连得上没有、缺了怎么补
+parserx parse report.pdf
 ```
 
-`psx` 是 `parserx` 的简写。凭据写在 `~/.config/parserx/.env` 或 `./.env`：
+系统工具：处理 `.doc` 要装 LibreOffice（`brew install --cask libreoffice`、`apt install libreoffice`）；Agent 要装
+Codex CLI（`npm install -g @openai/codex`，再 `codex login`）。没有 Codex 时输出标准处理的结果并说明原因；
+也可以用 `--agent <模型>` 改用自己的循环。
 
-```bash
-OPENAI_API_KEY=...                      # VLM
-PADDLE_OCR_ENDPOINT=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
-PADDLE_OCR_TOKEN=...                    # 扫描引擎，在 https://aistudio.baidu.com/paddleocr 获取
-```
-
-混合方案需要安装并登录 [Codex CLI](https://github.com/openai/codex)（`codex login`）。没有安装或没有登录时，采用固定流水线的结果，并说明原因。
+开发：`git clone <仓库> && cd ParserX && uv sync`，然后 `uv run parserx …`。
 
 ## 使用
 
 ```bash
-parserx parse report.pdf                       # 混合方案（默认）→ ./output/report/
+parserx parse report.pdf                       # 先做标准处理，需要时再交 Agent → ./output/report/
 parserx parse a.pdf b.docx docs/ -o out/       # 多个文件；目录取其中的 PDF/DOCX/DOC
-parserx parse report.pdf --runtime fixed       # 只用固定流水线：确定、不调用 Agent
+parserx parse report.pdf --no-agent            # 只做标准处理：结果确定
+parserx parse report.pdf --agent deepseek-flash  # 不用 Codex，改用自己的循环加配置里的某个模型
+parserx parse report.pdf --vlm glm-5.3-flashx  # 换一个服务模型
 parserx parse report.pdf --stdout              # Markdown 输出到 stdout
 parserx parse report.pdf --json                # 结果摘要以 JSON 输出到 stdout（进度在 stderr）
 parserx parse report.pdf --lang en             # 英文界面（默认中文）
 parserx parse report.pdf --no-ocr              # 不用扫描引擎：扫描页不识别（结果为 partial）
-parserx parse report.pdf --no-vlm              # 不用 VLM：图片不描述
+parserx parse report.pdf --no-vlm              # 不用服务模型：图片不描述
 parserx parse report.pdf --set runtime.formulas=false   # 覆盖任意配置
 ```
 
-Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继续。
+Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继续。处理第一篇文档之前，`parse` 会先说明哪项服务按当前配置无法工作。
 
 **输出**（`./output/<文件名>/`）：
 
@@ -102,38 +102,39 @@ Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继�
 
 ## 配置
 
-查找顺序：`--config` > `./parserx.yaml` > `~/.config/parserx/config.yaml` > 默认值。主要设置：
+分层叠加，后面的覆盖前面的：内置默认（[`parserx/config/defaults.yaml`](parserx/config/defaults.yaml)：生产设置与已知模型）→
+`./parserx.yaml`（项目自己的设置，可选）→ 个人配置 `~/.config/parserx/config.yaml`（key、个人端点、各角色用哪个模型；
+可用 `PARSERX_CONFIG_DIR` 改位置）→ `--config 文件`。`${VAR}` 读环境变量；不读 `.env` 文件。
+
+个人配置示例：
 
 ```yaml
+models:                     # 内置条目已写明端点和参数：补上 key 即可
+  gpt-6-luna: {api_key: sk-...}
+  gpt-6-sol: {api_key: sk-...}          # 用于 --agent gpt-6-sol（自己的循环）
+  deepseek-flash: {api_key: sk-...}
 builders:
-  ocr:                    # 扫描引擎
-    engine: paddleocr     # "none" 即 --no-ocr
-    endpoint: ${PADDLE_OCR_ENDPOINT}
-    token: ${PADDLE_OCR_TOKEN}
+  ocr: {token: ...}                     # 扫描引擎，在 https://aistudio.baidu.com/paddleocr 获取
 services:
-  vlm:
-    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-    model: ${VLM_MODEL:gpt-6-luna}
-    api_key: ${OPENAI_API_KEY}
+  vlm: {use: gpt-6-luna}                # 服务模型（默认）
 runtime:
-  mode: hybrid            # 或 fixed
-  agent: {model: gpt-6-sol, effort: medium}
-cache:
-  mode: read_write        # 响应缓存与回放（off / read_only / refresh）
-scheduling:
-  budget: {}              # 每篇文档的请求数、费用、时间上限
+  mode: hybrid                          # 或 fixed：不用 Agent
+  agent: {engine: codex}                # 或 {engine: loop, use: deepseek-flash}
 ```
 
-完整的生产配置见 [`parserx.yaml`](parserx.yaml)。旧版本的配置键（`processors`、`providers`、`pipeline` 等）会被忽略。
+模型条目写明怎样与这个模型对话：端点、`api_style`（responses / chat）、是否接受 temperature、接受哪些思考强度（`efforts`）、
+最强能用哪种结构化输出（`structured_output`）。`parserx check --model 名字` 实测这个模型，并与条目对照。
+旧版本的配置键（`processors`、`providers`、`pipeline` 等）会被忽略；`parserx init` 把旧的个人配置另存为
+`config.yaml.v1.bak`，并把旧 `~/.config/parserx/.env` 里的值搬过来。
 
 ## 评测
 
 ```bash
-uv run python scripts/check_services.py                  # 扫描引擎与 VLM 可用
+uv run parserx check                  # 扫描引擎与 VLM 可用
 uv run pytest -q --ignore=tests/test_live_e2e.py         # L0：离线单元与契约测试
 uv run python scripts/regression_test.py --core --repeat 2   # L1：核心文档离线回放两次
 uv run python scripts/regression_test.py --replay eval_runs/<run>   # 回放冻结 run
-uv run parserx eval ground_truth/ -o report.md            # 对照标注评分
+uv run parserx dev eval ground_truth/ -o report.md            # 对照标注评分
 ```
 
 指标：
@@ -143,7 +144,7 @@ uv run parserx eval ground_truth/ -o report.md            # 对照标注评分
 - 关键内容错误；
 - 真实请求数与费用。
 
-冻结 run（`eval_runs/`）保存输出、服务响应与环境，可以离线复现比较。`parserx tool-eval` 在同一套标注上比较其他解析工具（需安装可选组 `bench`）。
+冻结 run（`eval_runs/`）保存输出、服务响应与环境，可以离线复现比较。`parserx dev tool-eval` 在同一套标注上比较其他解析工具（需安装可选组 `bench`）。
 
 ## 目录结构
 

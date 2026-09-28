@@ -37,6 +37,7 @@
 - 文字层的部首码位（Q96–Q99，docs/v2_radicals_plan.md）：原生 PDF 与 DOCX 读出时把康熙部首与 CJK 部首补充的码位换成 Unicode 规定的等价统一汉字（对照表原样放在 `parserx/content/data/`），每块写 Decision 列出原字符；全语料输出中的部首 180 → 0。两个冻结 run 重新冻结（`2026-09-27_radicals_fixed_full`、`2026-09-27_radicals_v2_toolkit`）。见 eval_reports/2026-09-27_radicals.md。
 - 表格的待办信号（docs/v2_table_signal_plan.md，G1–G5，Q93–Q95）：本地读数在表格区域里看到、格子里没有的行挂到那张表上并写明修法；Codex 按它补回了 text_table_word 的表头和 unseen_scan_form01 的漏行；复核门槛两处误拒（下标数字、合并当成补入）已修正。见 eval_reports/2026-09-27_table_signal.md。
 - 模型能力比较（docs/v2_model_comparison_plan.md，Q100 决定一、Q101–Q105）：配置有了 `models` 条目与 `use`，`check_services.py --model` 探测模型接受的参数。服务模型三者分数相当，保持 luna；Agent 按量付费时 DeepSeek 最好（接近 Codex，每次约 $0.08），GLM 相近但贵一些，luna 便宜但公式待办多时放弃。图片描述是否编造待用户看对照页判断。见 eval_reports/2026-09-28_model_comparison.md。
+- 独立发布（docs/v2_release_plan.md，R1–R7，Q107–Q115）：配置分四层（包内默认 `parserx/config/defaults.yaml` → `./parserx.yaml` → 个人 `~/.config/parserx/config.yaml` → `--config`），key 只在个人配置，仓库的 `parserx.yaml` 与模板已删；`parse --agent codex|<模型> / --no-agent / --vlm <模型>`；`parserx check`（`--model` 探测、`--offline`）；开始前说清缺什么；版面模型下载到 `~/.cache/parserx/models`（校验 SHA-256）；开发命令收进 `parserx dev`；README 写清安装四步，已在干净环境从 wheel 装起走通。
 
 ## 先做四件事
 
@@ -47,8 +48,8 @@
    - 阶段五退出报告全文；
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
-2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都要 OK。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 668 通过，无已知失败。
+2. 运行 `uv run parserx check`：扫描引擎与服务模型两项都要 ✓（配置分层，key 在个人配置 `~/.config/parserx/config.yaml`，不再读 `.env`）。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 678 通过，无已知失败。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-27_radicals_v2_toolkit`

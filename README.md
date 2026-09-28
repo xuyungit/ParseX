@@ -16,7 +16,7 @@ Priorities, in order: **nothing on the page is lost**, then the **heading hierar
 document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ open review items? ──no──▶ export
                                │                                        │ yes
                                │  native text · scan engine · layout    ▼
-                               │  local page reading · tables ·     Agent (Codex) checks the flagged places
+                               │  local page reading · tables ·     Agent (Codex, or our loop) checks the flagged places
                                │  figures · formulas · titles        with the same tools, sees the page images
                                ▼                                        │
                         accounting check: every discovered item  ◀──────┘
@@ -31,7 +31,7 @@ document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ ope
   Content that disappears without a recorded reason is a defect, and the accounting check catches it on every run.
 - **Two runtimes over the same tools.** The fixed pipeline runs the standard processing in a fixed order: it is
   deterministic and fast. The **hybrid** runtime (the default) first runs the fixed pipeline. When there are open
-  review items, it then hands the document to an agent (Codex CLI), which looks at the flagged places in the page
+  review items, it then hands the document to an agent (Codex CLI, or our own loop), which looks at the flagged places in the page
   images and fixes what the evidence supports.
 - **Signals point, the agent judges.** Review items come from properties a correct output must have: what is on the
   page is in the output (checked against a local reading of every page), independent readings agree, the document
@@ -41,49 +41,52 @@ document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ ope
   a title's number. Levels come from the document's own typography and numbering; DOCX headings also come from the
   file's styles and outline levels. No keyword lists.
 
-Services: a remote scan engine (PaddleOCR-VL, AI Studio jobs API) for scanned pages and images with text; a VLM
-(OpenAI, `gpt-6-luna` by default) for figure descriptions and reviews; local CPU models for layout detection and
-the page reading. No GPU is needed.
+What it needs:
+
+| | What for | Required |
+|---|---|---|
+| Scan engine: PaddleOCR-VL (AI Studio jobs API, a token) | scanned pages, the text and tables of images | yes, for scans and images |
+| Service model: `gpt-6-luna` through the OpenAI API (a key) | figure descriptions, formula editing, table re-reading | yes |
+| Agent: [Codex CLI](https://github.com/openai/codex) on this machine (`codex login`), or our own loop with a model of the config (billed by its API) | the review that gets the most out of a document | recommended |
+| LibreOffice (`soffice`) | `.doc` input; drawing the vector images (EMF/WMF) of Word files | for `.doc` |
+| Layout model (about 130 MB, fetched once into `~/.cache/parserx/models`) and the local page reading | layout on the CPU; checks against the page image | yes (fetched automatically) |
+
+No GPU is needed. Python 3.13 comes with `uv`.
 
 ## Installation
 
 ```bash
-# as a command-line tool
-uv tool install -e /path/to/ParserX
-parserx init                 # writes ~/.config/parserx/config.yaml and .env
-vim ~/.config/parserx/.env   # service credentials
-
-# for development
-git clone <repo> && cd ParserX && uv sync
-uv run parserx --help
+uv tool install /path/to/parserx-0.1.0-py3-none-any.whl   # or: uv tool install git+<repo URL>
+parserx init          # writes ~/.config/parserx/config.yaml and fetches the layout model
+$EDITOR ~/.config/parserx/config.yaml                      # the keys you use
+parserx check         # every role: configured, reachable, what to do if not
+parserx parse report.pdf
 ```
 
-`psx` is a short alias of `parserx`. Credentials (`~/.config/parserx/.env` or `./.env`):
+System tools: LibreOffice (`brew install --cask libreoffice`, `apt install libreoffice`) for `.doc` files; the Codex
+CLI (`npm install -g @openai/codex`, then `codex login`) for the agent. Without Codex, ParserX writes the standard
+processing's result and says so; `--agent <model>` uses our own loop instead.
 
-```bash
-OPENAI_API_KEY=...                      # VLM
-PADDLE_OCR_ENDPOINT=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
-PADDLE_OCR_TOKEN=...                    # scan engine, from https://aistudio.baidu.com/paddleocr
-```
-
-The hybrid runtime needs the [Codex CLI](https://github.com/openai/codex), installed and logged in (`codex login`).
-When it is missing or not logged in, ParserX uses the fixed pipeline's result and says why.
+For development: `git clone <repo> && cd ParserX && uv sync`, then `uv run parserx …`.
 
 ## Usage
 
 ```bash
-parserx parse report.pdf                       # hybrid (default) → ./output/report/
+parserx parse report.pdf                       # the standard processing, then the agent where needed → ./output/report/
 parserx parse a.pdf b.docx docs/ -o out/       # several files; a directory contributes its PDF/DOCX/DOC
-parserx parse report.pdf --runtime fixed       # fixed pipeline only: deterministic, no agent
+parserx parse report.pdf --no-agent            # the standard processing only: deterministic
+parserx parse report.pdf --agent deepseek-flash  # our own loop with a model of the config instead of Codex
+parserx parse report.pdf --vlm glm-5.3-flashx  # another service model
 parserx parse report.pdf --stdout              # Markdown to stdout
 parserx parse report.pdf --json                # the result summary as JSON on stdout (progress on stderr)
 parserx parse report.pdf --lang en             # console in English (default: Chinese)
 parserx parse report.pdf --no-ocr              # without the scan engine: scanned pages stay unrecognised (partial)
-parserx parse report.pdf --no-vlm              # without the VLM: figures are not described
+parserx parse report.pdf --no-vlm              # without the service model: figures are not described
 parserx parse report.pdf --set runtime.formulas=false   # any config value
 ```
 
-Ctrl-C keeps the work directory; running the same command again continues where it stopped.
+Ctrl-C keeps the work directory; running the same command again continues where it stopped. Before the first
+document, `parse` says which service cannot work as configured.
 
 **Output** (`./output/<name>/`):
 
@@ -98,45 +101,48 @@ Exit code 0 when every document was written (complete or partial), 1 when one fa
 
 ## Configuration
 
-Resolved in order: `--config` > `./parserx.yaml` > `~/.config/parserx/config.yaml` > defaults. The main settings:
+Layers, each merged over the one before: the built-in defaults
+([`parserx/config/defaults.yaml`](parserx/config/defaults.yaml): the production settings and the known models) →
+`./parserx.yaml` (a project's own settings, optional) → the personal `~/.config/parserx/config.yaml` (keys, your
+endpoints, which model does what; `PARSERX_CONFIG_DIR` moves it) → `--config FILE`. `${VAR}` reads an environment
+variable; no `.env` file is read.
+
+A personal config:
 
 ```yaml
+models:                     # the built-in entries know endpoints and parameters: add the key
+  gpt-6-luna: {api_key: sk-...}
+  gpt-6-sol: {api_key: sk-...}          # for --agent gpt-6-sol (our own loop)
+  deepseek-flash: {api_key: sk-...}
 builders:
-  ocr:                    # the scan engine
-    engine: paddleocr     # "none" = --no-ocr
-    endpoint: ${PADDLE_OCR_ENDPOINT}
-    token: ${PADDLE_OCR_TOKEN}
+  ocr: {token: ...}                     # the scan engine, from https://aistudio.baidu.com/paddleocr
 services:
-  vlm:
-    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-    model: ${VLM_MODEL:gpt-6-luna}
-    api_key: ${OPENAI_API_KEY}
+  vlm: {use: gpt-6-luna}                # the service model (default)
 runtime:
-  mode: hybrid            # or fixed
-  agent: {model: gpt-6-sol, effort: medium}
-cache:
-  mode: read_write        # responses are recorded and replayed (off / read_only / refresh)
-scheduling:
-  budget: {}              # per-document limits on requests, cost, time
+  mode: hybrid                          # or fixed: no agent
+  agent: {engine: codex}                # or {engine: loop, use: deepseek-flash}
 ```
 
-See [`parserx.yaml`](parserx.yaml) for the full production configuration. Keys from earlier versions (`processors`,
-`providers`, `pipeline` …) are ignored.
+A model entry says how to talk to the model: endpoint, `api_style` (responses / chat), whether it takes a
+temperature, the reasoning efforts it accepts (`efforts`), the strongest structured output it honours
+(`structured_output`). `parserx check --model NAME` probes a model and compares it with its entry. Keys of earlier
+versions (`processors`, `providers`, `pipeline` …) are ignored; `parserx init` keeps an old personal config as
+`config.yaml.v1.bak` and carries the values of an old `~/.config/parserx/.env` over.
 
 ## Evaluation
 
 ```bash
-uv run python scripts/check_services.py                  # scan engine and VLM reachable
+uv run parserx check                                     # scan engine, service model, agent reachable
 uv run pytest -q --ignore=tests/test_live_e2e.py         # L0: offline unit and contract tests
 uv run python scripts/regression_test.py --core --repeat 2   # L1: core documents, offline replay, twice
 uv run python scripts/regression_test.py --replay eval_runs/<run>   # replay a frozen run
-uv run parserx eval ground_truth/ -o report.md            # scores against ground truth
+uv run parserx dev eval ground_truth/ -o report.md        # scores against ground truth
 ```
 
 Metrics: character F1 (order-aware edit distance too), table cell F1 (position and merged cells), heading F1
 (text and level) and role F1 (text only), key-content errors, real requests and cost. Frozen runs
 (`eval_runs/`) record outputs, responses and the environment so that comparisons are reproducible offline.
-`parserx tool-eval` compares other parsers on the same ground truth (install the `bench` extra).
+`parserx dev tool-eval` compares other parsers on the same ground truth (install the `bench` extra).
 
 ## Project structure
 

@@ -115,3 +115,24 @@ R1 → R2 → R3 → R4 → R5 → R6 → R7。
   - **建议**：`eval`、`compare`、`tool-eval`、`workspace`、`tool` 收进 `parserx dev`，仍随包发布。和其他工具做对比时要用 `tool-eval`。
 - **Q115 `psx` 这个别名。**
   - **建议**：删去，只留 `parserx`。
+
+## 7. 结果（2026-09-28）
+
+| 项 | 提交 | 内容 |
+|---|---|---|
+| R1 | 16037b8 | 配置分四层；key 只在个人配置；不读 `.env`；删去仓库的 `parserx.yaml` 与模板；`parserx init` 写个人配置并迁移旧文件；Agent 的 px 不读个人配置；两个冻结 run 的指纹不变 |
+| R2 | ba4e085 | `parse --agent codex / <模型> / --no-agent`、`--vlm <模型>`（代替 `--vlm-model`），名字不对时列出可选的模型；循环的模型没有 key 时事先说明；没有 Codex 时提示可改用 `--agent <模型>` |
+| R3、R5 | 4c2b30b | `parserx check`：按角色检查并说明怎么补，`--model` 探测，`--offline` 只查配置。版面模型放在 `~/.cache/parserx/models`（或 `layout.model_path`），首次使用时下载并校验 SHA-256，不写进安装目录；`parserx init` 与 `parse` 在缺模型时先下载 |
+| R4 | 74a33cc | `parse` 开始前说明哪项服务无法工作；服务缺 key 或 token 时的失败码为 `not_configured`，页级提示写明是哪项服务；另修正 `--no-vlm`（空值原被当成 null 而拒绝） |
+| R6 | 6127330 | 用户命令只有 `parse`、`check`、`init`；开发命令收进 `parserx dev`；删去 `psx` |
+| R7 | 本次 | README（中英）重写安装、使用、配置三节 |
+
+**干净环境验证（macOS）**：
+- 从 wheel 装进空目录，并把安装目录设为只读。
+- 用空的 HOME 运行 `parserx init`：写出个人配置骨架（0600），16 s 下载版面模型到用户缓存。
+- `parserx check`：逐项指出缺 token、缺 key、Codex 未登录。
+- 填好 key（用本机的个人配置）后，处理四类文档都完成：原生 PDF 1.4 s；DOCX 6 s；`.doc` 经 LibreOffice 转换，交 Codex 复核，2 分 53 秒；扫描 PDF 交 Codex 复核，3 分 23 秒。
+
+**测试**：L0 678 通过，L1 PASS，两个冻结 run 回放 PASS。
+
+**未验证**：Linux（Q113，本机没有 Docker）。
