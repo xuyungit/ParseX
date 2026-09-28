@@ -340,3 +340,13 @@ def test_px_reads_no_personal_config(tmp_path, monkeypatch):
     px.main(["--env-file", str(tmp_path / "none.env"), "--config", str(tmp_path / "parserx.yaml"), "--",
              "tool", "read_draft", "--ws", "ws", "--view", "summary"])
     assert Path(seen["dir"]).parent == tmp_path and not Path(seen["dir"]).exists()
+
+
+def test_agent_when_always_hands_a_clean_document_to_the_agent(pdf, tmp_path):
+    # Q135: what the program does not list, the agent may still see
+    agent = FakeAgent()
+    config = _config()
+    config.runtime.agent_when = "always"
+    outcome = parse_document(pdf, tmp_path / "out", config, agent=agent, reporter=lambda e: None,
+                             context_class=_context_class(None))
+    assert outcome.review_open == 0 and agent.runs and outcome.runtime == "hybrid:agent"

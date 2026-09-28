@@ -211,6 +211,9 @@ class RuntimeConfig(BaseModel):
     the fixed sequence first, then the agent on documents with open review items or not complete."""
 
     mode: Literal["hybrid", "fixed"] = "hybrid"  # read by ``parserx parse``; evaluation runs the fixed sequence
+    # when the hybrid hands a document to the agent (Q135): open review items or not complete, or always — a document
+    # without open items still read through by the agent (what the program does not list, the agent may see)
+    agent_when: Literal["open", "always"] = "open"
     agent: AgentConfig = Field(default_factory=AgentConfig)
     describe_figures: bool = True  # describe shown figures (each at most once, within the budget)
     layout_shadow: bool = True  # run the layout detector and image routing (P1-9)

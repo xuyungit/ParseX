@@ -150,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     tool_eval_sub = tool_eval_cmd.add_subparsers(dest="tool_eval_command", required=True)
     te_run = tool_eval_sub.add_parser("run", help="Run tools on ground-truth documents (kept results are not redone)")
     te_run.add_argument("--tools", default="parserx,llamaparse,mineru,datalab,paddleocr",
-                        help="comma-separated: parserx, parserx-hybrid, llamaparse, mineru, datalab, paddleocr")
+                        help="comma-separated: parserx, parserx-hybrid, parserx-agent, llamaparse, mineru, datalab, paddleocr")
     te_run.add_argument("--docs", default="", help="comma-separated document names")
     te_run.add_argument("--docs-file", type=Path, help="document names, one per line (# comments allowed)")
     te_run.add_argument("--force", action="store_true", help="redo results already on disk (requests again)")
@@ -422,6 +422,7 @@ def _cmd_tool_eval(args: argparse.Namespace) -> None:
     makers = {
         "parserx": lambda: adapters.ParserXFixedAdapter(args.parserx_run),
         "parserx-hybrid": lambda: adapters.ParserXHybridAdapter(),
+        "parserx-agent": lambda: adapters.ParserXHybridAdapter(always=True),
         "llamaparse": lambda: adapters.LlamaParseAdapter("agentic"),
         "mineru": lambda: adapters.MinerUAdapter("vlm"),
         "datalab": lambda: adapters.DatalabAdapter("accurate"),

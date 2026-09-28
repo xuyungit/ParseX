@@ -8,6 +8,7 @@
 |---|---|---|---|
 | `parserx` | `parserx-fixed` | ParserX 固定流水线，取冻结 run 的输出（`--parserx-run`，默认 `eval_runs/2026-09-28_io6_fixed_full`）；图片从它的缓存离线导出，不发请求 | 无 |
 | `parserx-hybrid` | `parserx-hybrid` | ParserX 产品默认（混合方案，有待办时交 Agent，默认 Codex），用当前代码真实运行，配置同回归（`configs/regression.yaml`）；摘要、sidecar、Agent 工作目录存在 `raw/` | 个人配置（Codex） |
+| `parserx-agent` | `parserx-agent` | 同上，但每篇都交 Agent 通读（`runtime.agent_when: always`，Q135），看 Agent 在没有待办的文档上能发现并修好多少 | 个人配置（Codex） |
 | `llamaparse` | `llamaparse-agentic` | LlamaParse Parse API v2，agentic 档；表格输出 HTML、跨页续表合并 | `LLAMA_CLOUD_API_KEY` |
 | `mineru` | `mineru-vlm` | MinerU 在线 API v4（mineru.net），`vlm` 模型 | `MINER_U_API_KEY` |
 | `datalab` | `datalab-accurate` | Datalab（marker 的托管版），accurate 模式；多页文档打开跨页合并（按篇另收费） | `DATALAB_API_KEY` |

@@ -25,7 +25,7 @@ PAGE_DPI = 110
 DIMENSIONS = [
     ("info", "信息完整"), ("headings", "标题层级"), ("tables", "表格"), ("readability", "可读性"), ("overall", "总体"),
 ]
-_SOURCE_ORDER = ("parserx-fixed", "parserx-hybrid")
+_SOURCE_ORDER = ("parserx-fixed", "parserx-hybrid", "parserx-agent")
 _lock = threading.Lock()
 
 

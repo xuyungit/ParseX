@@ -435,8 +435,11 @@ class ParserXHybridAdapter(ToolAdapter):
     name = "parserx-hybrid"
     label = "ParserX 混合方案（Agent）"
 
-    def __init__(self, config_path: Path | None = REPO_ROOT / "configs" / "regression.yaml"):
+    def __init__(self, config_path: Path | None = REPO_ROOT / "configs" / "regression.yaml", *, always: bool = False):
         self.config_path = config_path
+        self.always = always
+        if always:  # every document read through by the agent (Q135), not only those with open items
+            self.name, self.label = "parserx-agent", "ParserX Agent 通读"
 
     def parse(self, input_path: Path, out_dir: Path) -> ToolRun:
         with tempfile.TemporaryDirectory(prefix="parserx-bench-") as tmp:
@@ -445,6 +448,8 @@ class ParserXHybridAdapter(ToolAdapter):
                    "--report", "--sidecar", "--keep-work"]
             if self.config_path:
                 cmd += ["-c", str(self.config_path)]
+            if self.always:
+                cmd += ["--set", "runtime.agent_when=always"]
             done = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=3600)
             _write(out_dir / "raw" / "console.txt", (done.stdout or "") + (done.stderr or ""))
             if done.returncode != 0:
@@ -464,7 +469,8 @@ class ParserXHybridAdapter(ToolAdapter):
             summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
             processing = summary.get("processing") or {}
             return ToolRun(markdown=md_files[0].read_text(encoding="utf-8"),
-                           config={"runtime": "hybrid", "config": str(self.config_path or "personal config")},
+                           config={"runtime": "hybrid", "agent_when": "always" if self.always else "open",
+                                   "config": str(self.config_path or "personal config")},
                            cost_usd=processing.get("cost_usd"), notes=hybrid_notes(summary))
 
 

@@ -4,7 +4,8 @@
 2. the standard processing, ``process`` (stage *process*);
 3. export of the fixed-sequence result into the work directory — the fallback;
 4. routing: open review items (``review.open > 0``) or a status other than complete → the agent; otherwise the
-   fixed result is the result (and always with ``runtime.mode: fixed``);
+   fixed result is the result (and always with ``runtime.mode: fixed``); ``runtime.agent_when: always`` hands every
+   document to the agent (Q135);
 5. the agent works on the same workspace through the tools (stage *agent*);
 6. the workspace is verified (``verify_workspace``: every change made by a tool call) and exported again
    (stage *export*); the document summary records the runtime and what the agent did.
@@ -157,7 +158,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     keep_work = False
     if config.runtime.mode == "fixed":
         note = "mode_fixed"
-    elif before.review.open == 0 and before.status == DocumentStatus.COMPLETE:
+    elif before.review.open == 0 and before.status == DocumentStatus.COMPLETE and config.runtime.agent_when == "open":
         note = "no_review_items"
     else:
         agent = agent or make_agent(config, context_class)
