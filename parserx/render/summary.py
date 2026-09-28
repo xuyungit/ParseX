@@ -15,7 +15,7 @@ from parserx.ir.anchor import AssetAnchor
 from parserx.ir.base import IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus
-from parserx.ir.semantic import ChartSemantic, DiagramSemantic, GenericSemantic
+from parserx.ir.semantic import note_of
 from parserx.ir.state import DocumentState, Missing
 from parserx.render.markdown import image_file
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
@@ -202,14 +202,8 @@ def _occluded(state: DocumentState) -> list[OccludedText]:
 
 
 def _summary(block: Block | None) -> str | None:
-    semantic = block.semantic if block is not None else None
-    if isinstance(semantic, GenericSemantic):
-        return semantic.summary.value
-    if isinstance(semantic, ChartSemantic):
-        return semantic.title.value if semantic.title is not None else None
-    if isinstance(semantic, DiagramSemantic):
-        return semantic.diagram_type.value
-    return None
+    note = note_of(block.semantic if block is not None else None)
+    return note.caption if note is not None else None
 
 
 def _engines(state: DocumentState) -> dict[str, str]:

@@ -4,8 +4,8 @@
   pending is a plain paragraph (the renderer never invents structure);
 - no hard line breaks inside a paragraph (CJK-aware joining);
 - tables from ``TableGrid``: GFM, or HTML when GFM cannot express them;
-- figures: ``![<short label>](images/<file>)`` followed by the semantic block
-  ``> [图片语义] …`` with evidence levels — the layout the evaluator strips
+- figures: ``![<type>](images/<file>)`` followed by the note ``> 图片说明：…`` (one or two sentences, Q121) — the
+  layout the evaluator strips
   as a description; the label never repeats the description;
 - ``<!-- PAGE n -->`` for every PDF page; DOCX only has ``<!-- PAGE-BREAK -->``
   and ``<!-- SECTION k -->`` (no physical pages without a layout engine);
@@ -23,15 +23,12 @@ from parserx.content.text import join_wrapped
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, EvidenceLevel, RelationKind
-from parserx.ir.semantic import ChartSemantic, DiagramSemantic, Evidenced, GenericSemantic
+from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
+from parserx.ir.semantic import note_of
 from parserx.ir.state import DocumentState
 from parserx.workspace.queries import JOINABLE, block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
-_LEVEL = {EvidenceLevel.VISIBLE: "可见", EvidenceLevel.ESTIMATED: "估读", EvidenceLevel.INFERRED: "推断",
-          EvidenceLevel.UNKNOWN: "未知"}
-_ARROW = {"forward": "→", "backward": "←", "both": "↔", "unknown": "—"}
 _MARKUP_START = re.compile(r"^(\s*)([#>])")
 _MATH_START = ("$", "\\[", "\\(")  # delimited already; a bare \begin{aligned} still needs $$ to render
 
@@ -65,9 +62,9 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
         elif page.starts_with == "section_break":
             section += 1
             parts.append(f"<!-- SECTION {section} -->")
-        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body, missing))
+        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body, missing, lang))
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
-        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing))
+        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing, lang))
     return "\n\n".join(parts) + "\n"
 
 
@@ -116,7 +113,7 @@ def _transcription_starts(state: DocumentState) -> dict[str, str]:
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
                 notes: dict[str, str] | None = None, body: str | None = None,
-                missing: dict[str, str] | None = None) -> list[str]:
+                missing: dict[str, str] | None = None, lang: str = "zh") -> list[str]:
     out = []
     code: list[str] = []  # lines of the code block being collected
     face: str | None = None
@@ -141,7 +138,7 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
         if this is not None:  # code in another face starts right away
             code, face = [(block.text or "").strip("\n")], this
             continue
-        rendered = _render(block, assets, image_dir)
+        rendered = _render(block, assets, image_dir, lang)
         if rendered:
             if notes and block.id in notes:
                 out.append(notes[block.id])
@@ -153,7 +150,7 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
     return out
 
 
-def _render(block: Block, assets: dict[str, Asset], image_dir: str) -> str:
+def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = "zh") -> str:
     kind = block.kind
     if kind == BlockKind.TABLE:
         grid = block.cells
@@ -164,9 +161,9 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str) -> str:
         asset = next((assets.get(a.asset) for a in block.anchors if isinstance(a, AssetAnchor)), None)
         if asset is None:
             return ""
-        label = _label(block) if kind == BlockKind.FIGURE else "扫描图像"
+        label = _label(block, lang) if kind == BlockKind.FIGURE else SCAN_LABEL[lang]
         image = f"![{label}]({image_dir}/{image_file(asset)})"
-        semantic = semantic_block(block)
+        semantic = semantic_block(block, lang)
         return f"{image}\n\n{semantic}" if semantic else image
     text = join_wrapped(block.text.split("\n"))
     if not text:
@@ -229,62 +226,32 @@ def _missing_note(state: DocumentState, missing, lang: str) -> str:
     return f"> {MISSING_MARK['zh']}{where}{what}未能识别（{why}）"
 
 
-# ── Figure semantics ────────────────────────────────────────────────────
+# ── Figure notes (Q118, Q121) ───────────────────────────────────────────
+
+TYPE_NAMES = {"zh": {"chart": "图表", "diagram": "示意图", "photo": "照片", "screenshot": "截图", "seal": "印章或标志",
+                     "other": "图片"},
+              "en": {"chart": "Chart", "diagram": "Diagram", "photo": "Photo", "screenshot": "Screenshot",
+                     "seal": "Seal or logo", "other": "Image"}}
+NOTE_LABEL = {"zh": "图片说明：", "en": "Image description: "}
+SCAN_LABEL = {"zh": "扫描图像", "en": "Scanned page"}
 
 
-def _label(block: Block) -> str:
-    semantic = block.semantic
-    if isinstance(semantic, ChartSemantic):
-        return f"chart: {_value(semantic.title)}" if semantic.title and semantic.title.value is not None else "chart"
-    if isinstance(semantic, DiagramSemantic):
-        return f"diagram: {_value(semantic.diagram_type)}" if semantic.diagram_type.value is not None else "diagram"
-    if isinstance(semantic, GenericSemantic):
-        return semantic.type
-    return "图片"
+def _label(block: Block, lang: str = "zh") -> str:
+    """The image's alternative text: what kind of image it is (the note itself follows the image line)."""
+    note = note_of(block.semantic)
+    return TYPE_NAMES[lang][note.type] if note is not None else TYPE_NAMES[lang]["other"]
 
 
-def semantic_block(block: Block) -> str:
-    return semantic_text(block.semantic)
+def semantic_block(block: Block, lang: str = "zh") -> str:
+    return semantic_text(block.semantic, lang)
 
 
-def semantic_text(semantic) -> str:
-    """A figure's description as the Markdown shows it (the "> [图片语义] …" block)."""
-    if semantic is None:
+def semantic_text(semantic, lang: str = "zh") -> str:
+    """A figure's note as the Markdown shows it: one blockquote line right after the image line ("> 图片说明：…"),
+    which is what the evaluation drops as a description."""
+    note = note_of(semantic)
+    if note is None or not note.caption:
         return ""
-    lines: list[str]
-    if isinstance(semantic, ChartSemantic):
-        lines = [f"[图片语义] chart · {_ev(semantic.chart_type)}"]
-        for name, item in (("标题", semantic.title), ("横轴", semantic.x_axis), ("纵轴", semantic.y_axis),
-                           ("单位", semantic.unit), ("刻度", semantic.axis_scale)):
-            if item is not None and item.value is not None:
-                lines.append(f"{name}：{_ev(item)}")
-        for series in semantic.series:
-            lines.append(f"系列 {_value(series.name)}：" + "；".join(_ev(v) for v in series.values))
-    elif isinstance(semantic, DiagramSemantic):
-        lines = [f"[图片语义] diagram · {_ev(semantic.diagram_type)}"]
-        if semantic.nodes:
-            lines.append("节点：" + "；".join(_ev(n) for n in semantic.nodes))
-        if semantic.edges:
-            edges = []
-            for edge in semantic.edges:
-                label = f"：{_ev(edge.label)}" if edge.label is not None and edge.label.value is not None else ""
-                edges.append(f"{edge.src} {_ARROW[edge.direction]} {edge.dst}{label}")
-            lines.append("连接：" + "；".join(edges))
-    else:
-        lines = [f"[图片语义] {semantic.type}", f"概述：{_ev(semantic.summary)}"]
-        if semantic.visible_text:
-            lines.append("可见文字：" + "；".join(_ev(t) for t in semantic.visible_text))
-    return "\n".join(f"> {' '.join(line.split())}" for line in lines)
+    return f"> {NOTE_LABEL[lang]}{' '.join(note.caption.split())}"
 
 
-def _value(item: Evidenced | None) -> str:
-    if item is None or item.value is None:
-        return ""
-    value = item.value
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
-
-
-def _ev(item: Evidenced) -> str:
-    return f"{_value(item)}（{_LEVEL[item.level]}）"

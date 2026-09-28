@@ -32,6 +32,7 @@ from parserx.tools.vlm_tasks import describe_schema, parse_describe
 from parserx.workspace.queries import neighbors
 
 PROMPT = "describe_figure"
+LANGUAGE = {"zh": "用中文写。", "en": "Write the caption in English."}
 _SENDABLE = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 _CONTEXT_CHARS = 300
 
@@ -59,7 +60,7 @@ class DescribeItem(IRModel):
 
 class DescribeFigureResult(IRModel):
     type: str | None  # single block: chart / diagram / photo / seal / other; None when no description was made
-    semantic: DocText | None  # single block: the rendered "> [图片语义] …" block
+    semantic: DocText | None  # the rendered note ("> 图片说明：…")
     table_block: str | None = None  # figures that are tables become table blocks in Phase 4
     cached: bool = False  # single block: described before; no request was made
     items: list[DescribeItem] = []  # one per block that could be described, in request order
@@ -80,7 +81,7 @@ class Described:
 
     block: str
     anchor: AssetAnchor
-    semantic: object | None  # FigureSemantic, or None when the answer was not a description
+    semantic: object | None  # FigureNote, or None when the answer was not a description
     error: str | None
     raw_ref: str
 
@@ -92,6 +93,7 @@ def perceive(ctx: ToolContext, targets: list[str], schema: str = "auto") -> tupl
     blocks = {b.id: b for b in state.blocks}
     assets = {a.id: a for a in state.assets}
     prompt, prompt_hash = load_prompt(PROMPT)
+    prompt = prompt.replace("{language}", LANGUAGE[ctx.config.output.lang])  # the note's language (Q120)
     if schema != "auto":
         prompt += f"\n\n调用方指定的图片类型：{schema}。"
     failures: list[Failure] = []

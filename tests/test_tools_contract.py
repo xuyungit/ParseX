@@ -77,9 +77,7 @@ class FakeVLM:
             return json.dumps({"table_html": "<table><tr><td>项目</td><td>数值</td></tr>"
                                              "<tr><td>SENTINEL-OCR 甲</td><td>8</td></tr></table>",
                                "undetermined": []})
-        return json.dumps({"type": "photo", "summary": {"value": VLM_TEXT, "level": "inferred"},
-                           "visible_text": [{"value": "SENTINEL-VLM 字", "level": "visible"}],
-                           "chart": None, "diagram": None})
+        return json.dumps({"type": "photo", "caption": VLM_TEXT})
 
 
 class FakeReader:
@@ -235,7 +233,7 @@ def test_session_through_every_tool(ws, tmp_path):
     env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
     assert _assert_contract(env, "export")["result"]["accepted"]
     markdown = (tmp_path / "out" / "doc.md").read_text()
-    assert "# SENTINEL-OCR 标题" in markdown and "> [图片语义] photo" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
+    assert "# SENTINEL-OCR 标题" in markdown and f"![照片](" in markdown and f"> 图片说明：{VLM_TEXT}" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
 
     state = Workspace.open(ws).load()
     assert state.stats.requests == {"ocr": 1, "vlm": 2} and state.stats.cost_usd == pytest.approx(2 * (1000 * 0.10 + 100 * 0.50) / 1e6)
@@ -479,7 +477,7 @@ def test_batch_results_do_not_depend_on_completion_order(ws, monkeypatch):
             first.set()
             _time.sleep(0.2)
         answer = json.loads(original(image_path, prompt, **kw))
-        answer["summary"]["value"] = f"SENTINEL-VLM {Path(image_path).stem}"
+        answer["caption"] = f"SENTINEL-VLM {Path(image_path).stem}"
         return json.dumps(answer)
 
     monkeypatch.setattr(fake, "describe_image", slow_first)
@@ -487,7 +485,7 @@ def test_batch_results_do_not_depend_on_completion_order(ws, monkeypatch):
     state = Workspace.open(ws).load()
     for block in (b for b in state.blocks if b.id in {f.id for f in figures}):
         asset = next(a.asset for a in block.anchors if hasattr(a, "asset"))
-        assert block.semantic.summary.value.endswith(asset)
+        assert block.semantic.caption.endswith(asset)
 
 
 def test_batch_inputs_do_not_depend_on_other_tasks(pdf, tmp_path, monkeypatch):
@@ -1001,8 +999,7 @@ def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_no
     # P4-6 (conservation): the local reading of the image is compared with its description
     from types import SimpleNamespace
 
-    from parserx.ir.enums import EvidenceLevel
-    from parserx.ir.semantic import Evidenced, GenericSemantic
+    from parserx.ir.semantic import FigureNote
     from parserx.tools.process import _text_not_carried
 
     class Reader:
@@ -1016,9 +1013,7 @@ def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_no
 
     (tmp_path / "img.png").write_bytes(b"png")
     asset = SimpleNamespace(path="img.png")
-    described = SimpleNamespace(semantic=GenericSemantic(
-        type="other", summary=Evidenced(value="表单截图", level=EvidenceLevel.INFERRED),
-        visible_text=[Evidenced(value="ipmi_address", level=EvidenceLevel.VISIBLE)]))
+    described = SimpleNamespace(semantic=FigureNote(type="screenshot", caption="配置 ipmi_address 的表单截图"))
 
     def ctx(lines):
         return SimpleNamespace(reader=lambda: Reader(lines), ws=SimpleNamespace(root=tmp_path), cache=None)

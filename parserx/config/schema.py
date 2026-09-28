@@ -140,7 +140,7 @@ class ToolsConfig(BaseModel):
     # (guide §10.3: transcription / review ``none``, description ``low``); None keeps the service's.
     describe_reasoning_effort: str | None = "low"
     review_reasoning_effort: str | None = None
-    describe_max_tokens: int = 2048
+    describe_max_tokens: int = 300  # a note of one or two sentences (Q121)
     ask_reasoning_effort: str | None = "low"  # ask_image: the agent's questions about an image (P2-5)
     ask_max_tokens: int = 1024
     review_max_tokens: int = 4096

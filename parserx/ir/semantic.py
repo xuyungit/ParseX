@@ -1,10 +1,10 @@
-"""Figure semantics with evidence levels (guide §6.7). Phase 1 fixes the shapes only."""
+"""What a figure shows (guide §6.7, Q121): a type and a caption of one or two sentences (``FigureNote``).  The
+structured shapes with evidence levels before it (chart series, diagram nodes, visible text) are still read, so older
+states open; nothing writes them any more."""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
-
-from pydantic import Field
+from typing import Literal
 
 from parserx.ir.base import IRModel
 from parserx.ir.enums import EvidenceLevel
@@ -51,4 +51,27 @@ class GenericSemantic(IRModel):
     visible_text: list[Evidenced] = []
 
 
-FigureSemantic = Annotated[ChartSemantic | DiagramSemantic | GenericSemantic, Field(discriminator="type")]
+FIGURE_TYPES = ("chart", "diagram", "photo", "screenshot", "seal", "other")
+
+
+class FigureNote(IRModel):
+    """A figure in one or two sentences, typically at most 50 characters, at most 100 (Q121)."""
+
+    type: Literal["chart", "diagram", "photo", "screenshot", "seal", "other"]
+    caption: str
+
+
+# A note, or one of the older shapes: each rejects the others' fields, so the union needs no discriminator.
+FigureSemantic = FigureNote | ChartSemantic | DiagramSemantic | GenericSemantic
+
+
+def note_of(semantic) -> FigureNote | None:
+    """The note of a figure's semantic, older shapes included."""
+    if semantic is None or isinstance(semantic, FigureNote):
+        return semantic
+    if isinstance(semantic, GenericSemantic):
+        return FigureNote(type=semantic.type, caption=str(semantic.summary.value or ""))
+    if isinstance(semantic, ChartSemantic):
+        parts = [semantic.chart_type.value, semantic.title.value if semantic.title else None]
+        return FigureNote(type="chart", caption="：".join(str(p) for p in parts if p))
+    return FigureNote(type="diagram", caption=str(semantic.diagram_type.value or ""))

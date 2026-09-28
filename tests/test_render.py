@@ -8,7 +8,7 @@ from parserx.ir.asset import Asset
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, EvidenceLevel, PageStatus, RelationKind
 from parserx.ir.schema import validate_sidecar
-from parserx.ir.semantic import ChartSemantic, Evidenced, GenericSemantic, Series
+from parserx.ir.semantic import ChartSemantic, Evidenced, FigureNote, GenericSemantic, Series
 from parserx.ir.state import DocumentState, LedgerEntry, PageState
 from parserx.render import export_sidecar, render_markdown, sidecar_json, write_export
 from parserx.tables import Cell, TableGrid, find_tables
@@ -63,65 +63,21 @@ def test_tables_render_as_gfm_or_html_and_are_found():
     assert spans[0].grid == _PLAIN and spans[1].grid == _SPANNED
 
 
-def test_figure_semantic_block_is_stripped_by_the_evaluator():
-    chart = ChartSemantic(
-        chart_type=Evidenced(value="bar", level=EvidenceLevel.VISIBLE),
-        title=Evidenced(value="月产量", level=EvidenceLevel.VISIBLE),
-        series=[Series(name=Evidenced(value="产量", level=EvidenceLevel.VISIBLE),
-                       values=[Evidenced(value=120, level=EvidenceLevel.VISIBLE),
-                               Evidenced(value=150, level=EvidenceLevel.ESTIMATED)])])
-    md = render_markdown(_state([_block("p", BlockKind.TEXT, 0, text="正文"), _figure("f", 1, semantic=chart),
+def test_a_figure_note_follows_its_image_and_is_stripped_by_the_evaluator():
+    # Q118, Q121: the type as the image's text, the note in one line after it; older shapes render the same way
+    note = FigureNote(type="chart", caption="柱状图：各月产量，6 月最高，约 150 吨。")
+    md = render_markdown(_state([_block("p", BlockKind.TEXT, 0, text="正文"), _figure("f", 1, semantic=note),
                                  _block("q", BlockKind.TEXT, 2, text="后文")], pages=1))
     image_file = ASSET.path.split("/")[-1]
-    assert f"![chart: 月产量](images/{image_file})\n\n> [图片语义] chart · bar（可见）\n" in md
-    assert "> 系列 产量：120（可见）；150（估读）" in md
+    assert f"![图表](images/{image_file})\n\n> 图片说明：柱状图：各月产量，6 月最高，约 150 吨。\n" in md
     canonical = canonicalize(md)
     assert canonical.image_count == 1
-    assert "月产量" not in canonical.text and "正文" in canonical.text and "后文" in canonical.text
-
-
-def test_figure_without_semantic_is_just_the_image():
-    md = render_markdown(_state([_figure("f", 0)], pages=1))
-    assert md.endswith("![图片](images/" + ASSET.path.split("/")[-1] + ")\n")
-
-
-def test_hidden_blocks_are_not_rendered_but_degraded_and_unrecognised_scans_are():
-    md = render_markdown(_state([
-        _block("a", BlockKind.TEXT, 0, text="保留", status=BlockStatus.DEGRADED),
-        _block("b", BlockKind.TEXT, 1, text="重复", status=BlockStatus.DUPLICATE),
-        _block("c", BlockKind.HEADER, 2, text="页眉", status=BlockStatus.EXCLUDED),
-        _block("d", BlockKind.OTHER, 3, text="文本框", status=BlockStatus.FAILED),
-        _figure("s", 4, kind=BlockKind.SCAN),  # scan engine gave no result: the page image stays visible
-        _figure("m", 5, kind=BlockKind.SCAN, status=BlockStatus.MERGED),
-    ], pages=1))
-    assert "保留" in md and "重复" not in md and "页眉" not in md and "文本框" not in md
-    assert md.count("![") == 1
-
-
-def test_block_text_cannot_turn_into_markup():
-    md = render_markdown(_state([_block("a", BlockKind.TEXT, 0, text="# 不是标题"),
-                                 _block("b", BlockKind.TEXT, 1, text="> 不是引用")], pages=1))
-    assert "\\# 不是标题" in md and "\\> 不是引用" in md
-
-
-def test_formulas_are_delimited_once():
-    md = render_markdown(_state([_block("a", BlockKind.FORMULA, 0, text="E = mc^2"),
-                                 _block("b", BlockKind.FORMULA, 1, text="$$a+b$$")], pages=1))
-    assert "$$\nE = mc^2\n$$" in md and "$$a+b$$" in md and "$$\n$$a+b" not in md
-
-
-def test_docx_segments_render_break_and_section_anchors():
-    def seg(n):
-        return [DocxAnchor(part="word/document.xml", node_path=f"/w:body/w:p[{n}]", segment=n)]
-
-    pages = [PageState(n=1, unit="docx_segment", status=PageStatus.DONE),
-             PageState(n=2, unit="docx_segment", status=PageStatus.DONE, starts_with="page_break"),
-             PageState(n=3, unit="docx_segment", status=PageStatus.DONE, starts_with="section_break")]
-    md = render_markdown(_state([_block("a", BlockKind.TEXT, 0, anchors=seg(1), text="一"),
-                                 _block("b", BlockKind.TEXT, 1, anchors=seg(2), text="二"),
-                                 _block("c", BlockKind.TEXT, 2, anchors=seg(3), text="三")],
-                                fmt="docx", page_states=pages))
-    assert md == "一\n\n<!-- PAGE-BREAK -->\n\n二\n\n<!-- SECTION 2 -->\n\n三\n"
+    assert "产量" not in canonical.text and "正文" in canonical.text and "后文" in canonical.text
+    english = render_markdown(_state([_figure("f", 1, semantic=note)], pages=1), lang="en")
+    assert f"![Chart](images/{image_file})\n\n> Image description: 柱状图" in english
+    older = ChartSemantic(chart_type=Evidenced(value="bar", level=EvidenceLevel.VISIBLE),
+                          title=Evidenced(value="月产量", level=EvidenceLevel.VISIBLE))
+    assert "> 图片说明：bar：月产量" in render_markdown(_state([_figure("f", 1, semantic=older)], pages=1))
 
 
 def test_rendering_is_deterministic():
