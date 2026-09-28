@@ -3,11 +3,16 @@
 
     uv run python scripts/agent_explore.py snapshot --round s2 --rules r2
     uv run python scripts/agent_explore.py parse    --round s2 --doc a,b [--runtime hybrid] [--engine loop] [--no-agent] [--tag a]
+    uv run python scripts/agent_explore.py close    --round s2
 
 - ``snapshot``: the round's tool snapshot outside the repository — a wheel
   built from ``git archive`` of the (clean) HEAD, installed with the locked
   dependencies into ``<exp_root>/<round>/_toolkit/venv``, the layout model
   copied in, and a ``px-run`` launcher.  Tool code stays fixed for the round.
+  A new snapshot closes the other rounds under the same root (see ``close``).
+- ``close``: a round's environment (0.5–1.5 GB) is removed; its wheel, locked requirements and ``snapshot.json``
+  stay, and ``parse`` rebuilds the same environment from them (the wheel's hash checked) when the round is used
+  again.
 - ``parse`` (plan P4-1, P4-2): the product command ``parserx parse`` of the round's snapshot on one document, in a
   fresh directory outside the repository (keys from the repository ``.env`` reach the product process only; it
   keeps them from the agent itself); then the hygiene audit of the agent's events, the workspace integrity and the
@@ -128,21 +133,7 @@ def cmd_snapshot(args) -> int:
                    "parserx/runtimes/agent_task.md"):
         if needed not in shipped:
             sys.exit(f"the wheel lacks {needed}")
-    venv = toolkit / "venv"
-    python = venv / "bin" / "python"
-    print("installing the locked dependencies …")
-    _run(["uv", "venv", str(venv), "--python", "3.13"])
-    _run(["uv", "pip", "install", "--python", str(python), "--compile-bytecode", "-r",
-          str(toolkit / "requirements.txt")])
-    _run(["uv", "pip", "install", "--python", str(python), "--compile-bytecode", "--no-deps", str(wheel)])
-    # The layout model is downloaded into the package on first use; the sandbox cannot write there.
-    here = Path(_run([sys.executable, "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
-                .stdout.strip()) / "models"
-    there = Path(_run([str(python), "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
-                 .stdout.strip()) / "models"
-    there.mkdir(exist_ok=True)
-    for model in sorted(here.glob("*.onnx")):
-        shutil.copy2(model, there / model.name)
+    python = _install(toolkit, wheel)
     px_run = toolkit / "px-run"
     px_run.write_text(
         "#!/bin/sh\n"
@@ -171,6 +162,56 @@ def cmd_snapshot(args) -> int:
     }
     (toolkit / "snapshot.json").write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+    for other in sorted(root.glob("*/_toolkit/venv")):  # a new round: the earlier ones are not run any more
+        if other.parent != toolkit:
+            _close(other.parent)
+    return 0
+
+
+def _install(toolkit: Path, wheel: Path) -> Path:
+    """The locked dependencies and the wheel in ``<toolkit>/venv``, the layout model copied in; its Python."""
+    venv = toolkit / "venv"
+    python = venv / "bin" / "python"
+    print("installing the locked dependencies …")
+    _run(["uv", "venv", str(venv), "--python", "3.13"])
+    _run(["uv", "pip", "install", "--python", str(python), "--compile-bytecode", "-r",
+          str(toolkit / "requirements.txt")])
+    _run(["uv", "pip", "install", "--python", str(python), "--compile-bytecode", "--no-deps", str(wheel)])
+    # The layout model is downloaded into the package on first use; the sandbox cannot write there.
+    here = Path(_run([sys.executable, "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
+                .stdout.strip()) / "models"
+    there = Path(_run([str(python), "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
+                 .stdout.strip()) / "models"
+    there.mkdir(exist_ok=True)
+    for model in sorted(here.glob("*.onnx")):
+        shutil.copy2(model, there / model.name)
+    return python
+
+
+def _close(toolkit: Path) -> None:
+    """Remove a round's environment; the wheel, the locked requirements and snapshot.json stay."""
+    venv = toolkit / "venv"
+    if venv.is_dir():
+        shutil.rmtree(venv)
+        print(f"closed {toolkit.parent.name}: environment removed (rebuilt from its wheel when used again)")
+
+
+def _ensure_environment(args, snapshot: dict) -> None:
+    """A closed round's environment, rebuilt from the same wheel and locked requirements."""
+    toolkit = _toolkit(args)
+    if (toolkit / "venv" / "bin" / "python").is_file():
+        return
+    wheel = toolkit / "dist" / snapshot["wheel"]["name"]
+    if not wheel.is_file() or _sha256(wheel) != snapshot["wheel"]["sha256"] \
+            or _sha256(toolkit / "requirements.txt") != snapshot["requirements_sha256"]:
+        sys.exit(f"round {args.round}: its wheel or requirements differ from snapshot.json; start a new round")
+    print(f"round {args.round} was closed: rebuilding its environment from {wheel.name} …", flush=True)
+    _install(toolkit, wheel)
+
+
+def cmd_close(args) -> int:
+    _snapshot(args)
+    _close(_toolkit(args))
     return 0
 
 
@@ -263,7 +304,7 @@ def _scores(doc: str, expected: Path | None, export: dict) -> dict | None:
 
 
 def cmd_parse(args) -> int:
-    _snapshot(args)
+    _ensure_environment(args, _snapshot(args))
     return max(_parse_one(args, doc) for spec in args.doc for doc in spec.split(","))
 
 
@@ -349,6 +390,8 @@ def main() -> int:
     snap.add_argument("--allow-dirty", action="store_true")
     snap.add_argument("--model", default=MODEL)
     snap.add_argument("--effort", default=EFFORT)
+    cls = sub.add_parser("close", help="remove a round's environment (rebuilt from its wheel when used again)")
+    cls.add_argument("--round", required=True)
     prs = sub.add_parser("parse", help="the product command parserx parse of the snapshot, audited")
     prs.add_argument("--round", required=True)
     prs.add_argument("--doc", action="append", required=True, help="document name(s), comma-separated")
@@ -365,7 +408,7 @@ def main() -> int:
     prs.add_argument("--rerun", action="store_true")
     prs.add_argument("--timeout-min", type=int, default=120)
     args = parser.parse_args()
-    commands = {"snapshot": cmd_snapshot, "parse": cmd_parse}
+    commands = {"snapshot": cmd_snapshot, "close": cmd_close, "parse": cmd_parse}
     return commands[args.command](args)
 
 
