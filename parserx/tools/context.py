@@ -72,12 +72,12 @@ class ToolContext:
     def _new_ocr(self) -> PaddleOCRService:
         cfg = self.config.builders.ocr
         if cfg.engine == "none" or not cfg.endpoint or not cfg.token:
-            raise ToolFailure(FailureCode.SERVICE_ERROR, "scan engine not configured (builders.ocr)")
+            raise ToolFailure(FailureCode.NOT_CONFIGURED, "scan engine not configured (builders.ocr)")
         return PaddleOCRService(cfg)
 
     def _new_vlm(self, cfg):
         if not cfg.endpoint or not cfg.api_key:
-            raise ToolFailure(FailureCode.SERVICE_ERROR, "VLM service not configured (services.vlm)")
+            raise ToolFailure(FailureCode.NOT_CONFIGURED, "service model not configured (services.vlm)")
         return create_vlm_service(cfg)
 
     def _new_detector(self):

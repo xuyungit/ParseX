@@ -37,6 +37,20 @@ def expand_inputs(paths: list[Path]) -> list[Path]:
     return found
 
 
+def preflight(config: ParserXConfig) -> list[Notice]:
+    """Warnings for roles that cannot work as configured: no token for the scan engine, no key for the service model
+    or for the loop agent's model.  A role switched off on purpose (--no-ocr, --no-vlm, --no-agent) is not warned."""
+    out = []
+    ocr, vlm, agent = config.builders.ocr, config.services.vlm, config.runtime.agent
+    if ocr.engine != "none" and not (ocr.endpoint and ocr.token):
+        out.append(Notice("preflight_ocr", "warning"))
+    if vlm.endpoint and not vlm.api_key:
+        out.append(Notice("preflight_vlm", "warning", {"model": vlm.model}))
+    if config.runtime.mode == "hybrid" and agent.engine == "loop" and agent.endpoint and not agent.api_key:
+        out.append(Notice("preflight_loop", "warning", {"model": agent.model}))
+    return out
+
+
 def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoadResult) -> int:
     from parserx.runtimes.hybrid import WORK_DIR, ParseFailure, parse_document
 
@@ -50,8 +64,12 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
     if not files:
         reporter.line(t(args.lang, "no_inputs", paths=" ".join(str(p) for p in args.input)))
         return 2
-    if loaded.source in ("defaults", "missing"):
+    from parserx.config.schema import personal_config
+
+    if not personal_config().is_file() and loaded.source != "explicit":
         reporter(Notice("config_defaults", "warning"))
+    for notice in preflight(config):  # what cannot work, said before the first document (R4)
+        reporter(notice)
     if config.runtime.layout_shadow:  # the layout model, fetched before the first document when missing (R5)
         from parserx.check import fetch_layout_model
         from parserx.layout.detector import model_file

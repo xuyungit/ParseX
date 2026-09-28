@@ -272,3 +272,16 @@ def test_docx_result_has_no_page_count(tmp_path):
     stream = io.StringIO()
     ConsoleReporter(stream, lang="zh", tty=False)(DocEnd(_outcome(tmp_path, format="docx", pages=1)))
     assert "      状态 complete · 表格 2 · 图片 3 · 标题 9 · 待核对 0 项" in stream.getvalue().splitlines()
+
+
+def test_what_cannot_work_is_said_before_the_first_document(tmp_path, monkeypatch):
+    # R4: no token for the scan engine, no key for the service model or the loop's model; a role switched off is quiet
+    from parserx.config.schema import apply_overrides, load_config
+    from parserx.console.cli import preflight
+
+    monkeypatch.chdir(tmp_path)
+    bare = load_config()
+    assert [n.code for n in preflight(bare)] == ["preflight_ocr", "preflight_vlm"]
+    off = apply_overrides(bare, ["builders.ocr.engine=none", "services.vlm.endpoint=", "runtime.agent.engine=loop",
+                                 "runtime.agent.use=deepseek-flash"])
+    assert [n.code for n in preflight(off)] == ["preflight_loop"]

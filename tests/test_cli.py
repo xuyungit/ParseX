@@ -168,3 +168,14 @@ def test_parse_chooses_the_agent_and_the_service_model(tmp_path, monkeypatch, ca
     args = argparse.Namespace(input=[tmp_path / "a.pdf"], config=None, overrides=[], no_vlm=False, no_ocr=False,
                               vlm="nope", agent=None, no_agent=False, runtime=None)
     assert _cmd_parse(args) == 2 and "no model 'nope'" in capsys.readouterr().err
+
+
+def test_no_vlm_empties_the_service_endpoint(tmp_path, monkeypatch):
+    # an empty override value is an empty string (it used to be YAML null, which the config refused)
+    from parserx.cli import _collect_flag_overrides
+    from parserx.config.schema import apply_overrides, load_config
+
+    monkeypatch.chdir(tmp_path)
+    args = argparse.Namespace(no_vlm=True, no_ocr=True, vlm=None, agent=None, no_agent=False, runtime=None)
+    config = apply_overrides(load_config(), _collect_flag_overrides(args))
+    assert config.services.vlm.endpoint == "" and config.builders.ocr.engine == "none"

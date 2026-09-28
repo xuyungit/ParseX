@@ -85,7 +85,7 @@ MESSAGES: dict[str, dict[str, str]] = {
                    "en": "{seconds} · {changes} changes · {added} added · {closed} closed · {open} left"},
     # why the agent did not run or its work was not used
     "skip.no_review_items": {"zh": "待核对 0 项，跳过", "en": "nothing to review, skipped"},
-    "skip.mode_fixed": {"zh": "只用固定流水线（--runtime fixed），跳过", "en": "fixed runtime only (--runtime fixed), skipped"},
+    "skip.mode_fixed": {"zh": "不用 Agent（--no-agent），跳过", "en": "no agent (--no-agent), skipped"},
     "why.codex_not_found": {"zh": "Agent 未运行：未找到 Codex CLI（安装并运行 `codex login` 后可用；也可以用 --agent <模型> 改用自己的循环）",
                             "en": "Agent not run: Codex CLI not found (install it and run `codex login`; or use our own "
                                   "loop with --agent <model>)"},
@@ -115,7 +115,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     "failure.cache_miss_offline": {"zh": "离线回放缺少记录", "en": "no recorded response (offline)"},
     "failure.other": {"zh": "处理失败", "en": "failed"},
     "notice.agent_audit": {"zh": "Agent 访问了工作目录以外的路径：{hits}", "en": "The agent named paths outside its directory: {hits}"},
-    "notice.config_defaults": {"zh": "没有找到配置文件，使用内置默认配置", "en": "No config file found; using the built-in defaults"},
+    "notice.config_defaults": {"zh": "没有个人配置：运行 `parserx init`，把 key 写进 ~/.config/parserx/config.yaml",
+                               "en": "No personal config: run `parserx init` and put the keys in ~/.config/parserx/config.yaml"},
+    "notice.preflight_ocr": {"zh": "扫描引擎未配置：扫描页和图片里的文字不会被识别（运行 `parserx check` 查看怎么补）",
+                             "en": "The scan engine is not configured: scanned pages and the text of images will not be "
+                                   "recognised (run `parserx check`)"},
+    "notice.preflight_vlm": {"zh": "服务模型 {model} 没有 key：图片不会被描述，表格、公式不复核（运行 `parserx check`）",
+                             "en": "The service model {model} has no key: figures are not described, tables and formulas "
+                                   "not reviewed (run `parserx check`)"},
+    "notice.preflight_loop": {"zh": "Agent 用的模型 {model} 没有 key：不会交给 Agent 复核（运行 `parserx check`）",
+                              "en": "The agent's model {model} has no key: no agent review (run `parserx check`)"},
+    "notice.not_configured_ocr": {"zh": "{targets}：扫描引擎未配置，这些页没有识别（运行 `parserx check`）",
+                                  "en": "{targets}: the scan engine is not configured, these pages are not recognised "
+                                        "(run `parserx check`)"},
+    "notice.not_configured_vlm": {"zh": "{targets}：服务模型未配置，没有描述或复核（运行 `parserx check`）",
+                                  "en": "{targets}: the service model is not configured, nothing described or reviewed "
+                                        "(run `parserx check`)"},
     # result
     "done": {"zh": "完成", "en": "Done"},
     "partial": {"zh": "部分完成", "en": "Partial"},

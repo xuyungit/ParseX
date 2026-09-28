@@ -46,6 +46,7 @@ class FailureCode(StrEnum):
     NOT_FOUND = "not_found"
     BUDGET_EXHAUSTED = "budget_exhausted"
     SERVICE_ERROR = "service_error"
+    NOT_CONFIGURED = "not_configured"  # a service without its key or token: the user sets it up (R4)
     TIMEOUT = "timeout"
     CACHE_MISS_OFFLINE = "cache_miss_offline"
     CHECK_FAILED = "check_failed"

@@ -330,6 +330,10 @@ class ConsoleReporter:
         if e.code == "tool_failures":
             for failure in e.args.get("failures", [])[:5]:
                 targets = ",".join(failure.get("targets") or []) or "—"
+                if failure["code"] == "not_configured":  # what to set up, not a fault to retry (R4)
+                    which = "ocr" if "scan engine" in (failure.get("message") or "") else "vlm"
+                    self.line(INDENT + "⚠ " + self._msg(f"notice.not_configured_{which}", targets=targets))
+                    continue
                 what = self._msg(f"failure.{failure['code']}") if f"failure.{failure['code']}" in _KNOWN_FAILURES \
                     else self._msg("failure.other")
                 if self.verbose:

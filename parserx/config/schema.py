@@ -448,7 +448,7 @@ def apply_overrides(
         if leaf not in current:
             raise ValueError(f"Unknown config path '{dotted_path}'.")
 
-        current[leaf] = yaml.safe_load(raw_value)
+        current[leaf] = yaml.safe_load(raw_value) if raw_value != "" else ""  # key= empties a setting
         if leaf == "use" and len(parts) == 3:
             changed.add((parts[0], parts[1]))
 
