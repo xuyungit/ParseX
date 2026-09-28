@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     te_run.add_argument("--docs", default="", help="comma-separated document names")
     te_run.add_argument("--docs-file", type=Path, help="document names, one per line (# comments allowed)")
     te_run.add_argument("--force", action="store_true", help="redo results already on disk (requests again)")
-    te_run.add_argument("--parserx-run", type=Path, default=Path("eval_runs/2026-09-28_io6_fixed_full"),
+    te_run.add_argument("--parserx-run", type=Path, default=Path("eval_runs/2026-09-28_bench1_fixed_full"),
                         help="frozen run whose cache replays ParserX's fixed pipeline (no requests)")
     te_score = tool_eval_sub.add_parser("score", help="Score every result and write scores.json and report.md")
     te_view = tool_eval_sub.add_parser("view", help="Serve the comparison page")
