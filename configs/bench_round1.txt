@@ -1,0 +1,11 @@
+# Benchmark round 1 (docs/v2_benchmark_plan.md B4): short documents of every kind, 1–3 pages.
+omnidoc_research_report_zh_table_01   # 1 p, Chinese research report: table, chart, sidebar
+omnidoc_book_zh_text_01               # 1 p, Chinese book, two columns
+omnidoc_academic_literature_en_table_01  # 1 p, English paper with a table
+deepseek                              # 1 p
+simple_doc01                          # Word, 1 p
+text_code_block                       # 2 p, code blocks
+text_table_word                       # 2 p, tables from Word
+receipt                               # 3 p, scanned receipts
+unseen_scan_form01                    # 3 p, scanned form
+text_table01                          # 3 p, native tables

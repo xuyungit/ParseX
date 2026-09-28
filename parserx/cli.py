@@ -142,53 +142,28 @@ def build_parser() -> argparse.ArgumentParser:
     compare_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
     compare_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
-    # parserx tool-eval
+    # parserx dev tool-eval run | score | view (docs/v2_benchmark_plan.md)
     tool_eval_cmd = dev.add_parser(
         "tool-eval",
-        help="Run llamaparse/liteparse/builtin/ParserX and score all Markdown outputs",
+        help="Compare external tools with ParserX: run them, score them, view them side by side",
     )
-    tool_eval_cmd.add_argument("ground_truth", type=Path, help="Ground truth directory")
-    tool_eval_cmd.add_argument("-c", "--config", type=Path, help="ParserX config YAML path")
-    tool_eval_cmd.add_argument(
-        "--set", dest="overrides", action="append", default=[],
-        help="Override ParserX config with dotted.path=value (repeatable)",
-    )
-    tool_eval_cmd.add_argument(
-        "--include-doc", dest="include_docs", action="append", default=[],
-        help="Only evaluate the named document directory (repeatable)",
-    )
-    tool_eval_cmd.add_argument(
-        "--include-list", type=Path,
-        help="Path to newline-delimited document names to evaluate",
-    )
-    tool_eval_cmd.add_argument(
-        "--artifacts-dir",
-        type=Path,
-        default=Path("reports/tool_eval_artifacts"),
-        help="Directory where per-tool Markdown artifacts will be written",
-    )
-    tool_eval_cmd.add_argument(
-        "--llamaparse-tier",
-        default="agentic",
-        help="LlamaParse tier (default: agentic)",
-    )
-    tool_eval_cmd.add_argument(
-        "--llamaparse-version",
-        default="latest",
-        help="LlamaParse API version (default: latest)",
-    )
-    tool_eval_cmd.add_argument(
-        "--liteparse-ocr-language",
-        help="Optional LiteParse OCR language override",
-    )
-    tool_eval_cmd.add_argument(
-        "--liteparse-dpi",
-        type=int,
-        default=150,
-        help="LiteParse render DPI (default: 150)",
-    )
-    tool_eval_cmd.add_argument("-o", "--output", type=Path, help="Output report path")
-    tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    tool_eval_sub = tool_eval_cmd.add_subparsers(dest="tool_eval_command", required=True)
+    te_run = tool_eval_sub.add_parser("run", help="Run tools on ground-truth documents (kept results are not redone)")
+    te_run.add_argument("--tools", default="parserx,llamaparse,mineru,datalab,paddleocr",
+                        help="comma-separated: parserx, parserx-hybrid, llamaparse, mineru, datalab, paddleocr")
+    te_run.add_argument("--docs", default="", help="comma-separated document names")
+    te_run.add_argument("--docs-file", type=Path, help="document names, one per line (# comments allowed)")
+    te_run.add_argument("--force", action="store_true", help="redo results already on disk (requests again)")
+    te_run.add_argument("--parserx-run", type=Path, default=Path("eval_runs/2026-09-28_io6_fixed_full"),
+                        help="frozen run whose cache replays ParserX's fixed pipeline (no requests)")
+    te_score = tool_eval_sub.add_parser("score", help="Score every result and write scores.json and report.md")
+    te_view = tool_eval_sub.add_parser("view", help="Serve the comparison page")
+    te_view.add_argument("--port", type=int, default=8765)
+    for sub in (te_run, te_score, te_view):
+        sub.add_argument("--out", type=Path, default=Path("eval_runs/bench"), help="results directory")
+        sub.add_argument("--gt-dir", type=Path, action="append", default=None,
+                         help="ground-truth directory (repeatable; default ground_truth and ground_truth_public)")
+        sub.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx init
     # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
@@ -429,50 +404,40 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 
 
 def _cmd_tool_eval(args: argparse.Namespace) -> None:
-    from parserx.tool_eval.adapters import (
-        BuiltinDocPdfAdapter,
-        LlamaParseAdapter,
-        LiteParseAdapter,
-        ParserXAdapter,
-    )
-    from parserx.tool_eval.runner import MultiToolEvalRunner
+    from parserx.tool_eval import runner
 
-    config, _metadata = _load_cli_config(args.config, args.overrides, label="Tool Eval")
-    include_docs = _resolve_include_docs(
-        getattr(args, "include_docs", None),
-        getattr(args, "include_list", None),
-    )
-    runner = MultiToolEvalRunner(
-        tools=[
-            LlamaParseAdapter(
-                tier=args.llamaparse_tier,
-                version=args.llamaparse_version,
-            ),
-            LiteParseAdapter(
-                ocr_language=args.liteparse_ocr_language,
-                dpi=args.liteparse_dpi,
-            ),
-            BuiltinDocPdfAdapter(),
-            ParserXAdapter(config),
-        ]
-    )
-    records = runner.evaluate_dir(
-        args.ground_truth,
-        args.artifacts_dir,
-        include_docs=include_docs,
-    )
-    report = MultiToolEvalRunner.format_report(
-        records,
-        ground_truth_dir=args.ground_truth,
-        artifacts_dir=args.artifacts_dir,
-    )
+    gt_dirs = args.gt_dir or list(runner.DEFAULT_GT_DIRS)
+    if args.tool_eval_command == "view":
+        from parserx.tool_eval.viewer import serve
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(report, encoding="utf-8")
-        logging.info("Tool-eval report written to %s", args.output)
-    else:
-        print(report)
+        serve(args.out, gt_dirs, port=args.port)
+        return
+    if args.tool_eval_command == "score":
+        record = runner.score(args.out, gt_dirs)
+        print(f"Scored {sum(len(v) for v in record['scores'].values())} results: {args.out / 'report.md'}")
+        return
+
+    from parserx.tool_eval import adapters
+
+    makers = {
+        "parserx": lambda: adapters.ParserXFixedAdapter(args.parserx_run),
+        "parserx-hybrid": lambda: adapters.ParserXHybridAdapter(),
+        "llamaparse": lambda: adapters.LlamaParseAdapter("agentic"),
+        "mineru": lambda: adapters.MinerUAdapter("vlm"),
+        "datalab": lambda: adapters.DatalabAdapter("accurate"),
+        "paddleocr": lambda: adapters.PaddleOCRVLAdapter(),
+    }
+    names = [t.strip() for t in args.tools.split(",") if t.strip()]
+    unknown = [t for t in names if t not in makers]
+    if unknown:
+        sys.exit(f"unknown tools: {', '.join(unknown)} (known: {', '.join(makers)})")
+    doc_names = [d.strip() for d in args.docs.split(",") if d.strip()]
+    if args.docs_file:
+        doc_names += runner.read_doc_names(args.docs_file)
+    docs = runner.find_documents(gt_dirs, doc_names or None)
+    runner.run_tools([makers[t]() for t in names], docs, args.out, force=args.force)
+    record = runner.score(args.out, gt_dirs)
+    print(f"Scored {sum(len(v) for v in record['scores'].values())} results: {args.out / 'report.md'}")
 
 
 def _load_cli_config(

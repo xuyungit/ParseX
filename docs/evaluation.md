@@ -527,71 +527,10 @@ uv run parserx compare ground_truth_public \
   -o reports/compare_vlm_a_vs_b_warning_heavy.md
 ```
 
-### Step 3: Cross-tool comparison (ParserX vs LlamaParse)
+### Step 3: Cross-tool comparison and human review
 
-The `parserx tool-eval` command runs multiple parsing tools on the same
-documents and generates side-by-side artifacts for comparison.
-
-```bash
-# Public test set — generates artifacts for all 4 tools
-uv run parserx tool-eval ground_truth_public \
-  --artifacts-dir reports/tool_eval_public_artifacts \
-  -o reports/tool_eval_public.md
-
-# Private test set
-uv run parserx tool-eval ground_truth \
-  --artifacts-dir reports/tool_eval_internal_artifacts \
-  -o reports/tool_eval_internal.md
-```
-
-To run only specific documents:
-
-```bash
-uv run parserx tool-eval ground_truth_public \
-  --include-doc omnidoc_research_report_zh_table_02 \
-  --artifacts-dir reports/tool_eval_public_artifacts \
-  -o reports/tool_eval_single.md
-```
-
-#### Output structure
-
-After `tool-eval` completes, artifacts are organized as:
-
-```
-reports/tool_eval_public_artifacts/
-├── manifest.json                    # Index of all records + metrics
-├── parserx/{doc_name}/output.md     # ParserX Markdown output
-├── llamaparse/{doc_name}/output.md  # LlamaParse Markdown output
-├── liteparse/{doc_name}/output.md   # LiteParse output
-└── builtin_doc_pdf/{doc_name}/output.md
-```
-
-Each `output.md` can be directly compared side-by-side. The `manifest.json`
-contains per-document metrics for every tool.
-
-#### Running LlamaParse standalone
-
-If you only need LlamaParse output for a single document:
-
-```bash
-npm run llamaparse -- \
-  --input ground_truth_public/omnidoc_research_report_zh_table_02/input.pdf \
-  --output /tmp/llamaparse_output.md \
-  --metadata /tmp/llamaparse_meta.json
-```
-
-### Step 4: Human review
-
-After automated metrics are collected:
-
-1. Open `reports/tool_eval_*_artifacts/{tool}/{doc}/output.md` for each tool
-2. Compare side-by-side using `docs/quality_rubric.md` dimensions:
-   - Information retention (titles, dates, ratings, analysts)
-   - Table accuracy
-   - Heading structure
-   - Reading order
-   - Chart/image handling
-3. Record observations in the iteration backlog
+Superseded: see [tool_eval.md](tool_eval.md) (`parserx dev tool-eval run | score | view`) and
+[v2_benchmark_plan.md](v2_benchmark_plan.md).
 
 ### Quick reference: all evaluation commands
 
@@ -616,9 +555,9 @@ uv run parserx compare <gt_dir> \
   --label-a <name> --label-b <name> \
   -o <report.md>
 
-# ── Multi-tool eval (ParserX + LlamaParse + others) ──
-uv run parserx tool-eval <gt_dir> \
-  --artifacts-dir <dir> -o <report.md>
+# ── External tools vs ParserX (docs/tool_eval.md) ──
+uv run parserx dev tool-eval run --docs-file configs/bench_round1.txt
+uv run parserx dev tool-eval view
 
 # ── Feature toggle experiment ──
 uv run parserx compare <gt_dir> \

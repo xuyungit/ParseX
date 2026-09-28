@@ -1,5 +1,1 @@
-"""Multi-tool evaluation helpers for ParserX."""
-
-from parserx.tool_eval.runner import MultiToolEvalRunner
-
-__all__ = ["MultiToolEvalRunner"]
+"""Compare external document tools with ParserX (docs/v2_benchmark_plan.md)."""

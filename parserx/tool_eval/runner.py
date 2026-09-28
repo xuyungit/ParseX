@@ -1,346 +1,231 @@
-"""Run multiple parsing tools and score their Markdown outputs."""
+"""Run the tools over ground-truth documents, keep every result, score them all the same way.
+
+Layout (``eval_runs/bench/`` by default)::
+
+    <tool>/<doc>/output.md     the Markdown as the tool gave it
+    <tool>/<doc>/meta.json     status, time, cost, settings, notes (or the error)
+    <tool>/<doc>/images/ raw/  what the Markdown refers to; the raw response
+    scores.json, report.md     automatic scores (``score``)
+    manual_scores.json         scores given on the comparison page (``viewer``)
+
+A document a tool already produced is not requested again unless forced: reruns cost nothing.
+"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import shutil
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from parserx.eval.metrics import (
-    CostMetrics,
-    EvalResult,
-    evaluate_markdown,
-    fmt_metric,
-    mean_defined,
-)
-from parserx.tool_eval.adapters import (
-    BuiltinDocPdfAdapter,
-    LlamaParseAdapter,
-    LiteParseAdapter,
-    ParserXAdapter,
-    ToolAdapter,
-)
+from parserx.eval.metrics import evaluate_markdown, fmt_metric, mean_defined
+from parserx.eval.outline import has_outline
+from parserx.tool_eval.adapters import REPO_ROOT, ToolAdapter, page_count
+
+DEFAULT_OUT = REPO_ROOT / "eval_runs" / "bench"
+DEFAULT_GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public")
+INPUT_SUFFIXES = (".pdf", ".docx", ".doc")
+
+# Where an annotation came from decides which tool it favours (plan §3).
+GROUP_LABELS = {
+    "independent": "独立标注",
+    "llamaparse_draft": "LlamaParse 初稿改出的标注",
+    "parserx_reference": "参考过 ParserX 结果的标注",
+}
+_INDEPENDENT_SOURCES = {"OmniDocBench", "synthetic_public_smoke"}
 
 
 @dataclass
-class ToolEvalRecord:
-    """Single tool/document evaluation record."""
+class Document:
+    name: str
+    dir: Path
+    input: Path
+    expected: Path | None
+    group: str
+    pages: int | None
 
-    tool: str
-    document_name: str
-    status: str
-    artifact_dir: str
-    output_path: str
-    error: str = ""
-    metrics: EvalResult | None = None
-    metadata: dict | None = None
+    @property
+    def kind(self) -> str:
+        return "word" if self.input.suffix.lower() in (".docx", ".doc") else "pdf"
 
 
-class MultiToolEvalRunner:
-    """Generate Markdown with multiple tools and score them uniformly."""
+def annotation_group(doc_dir: Path) -> str:
+    """``meta.json`` ``annotation_origin`` when given; public sources are independent; the rest began as a
+    LlamaParse draft (docs/evaluation_workflow.md §2)."""
+    meta_path = doc_dir / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    if meta.get("annotation_origin") in GROUP_LABELS:
+        return meta["annotation_origin"]
+    return "independent" if meta.get("source") in _INDEPENDENT_SOURCES else "llamaparse_draft"
 
-    def __init__(
-        self,
-        *,
-        tools: list[ToolAdapter] | None = None,
-    ):
-        self._tools = tools or [
-            LlamaParseAdapter(),
-            LiteParseAdapter(),
-            BuiltinDocPdfAdapter(),
-            ParserXAdapter(),
-        ]
 
-    def evaluate_dir(
-        self,
-        ground_truth_dir: Path,
-        artifacts_dir: Path,
-        *,
-        include_docs: set[str] | None = None,
-    ) -> list[ToolEvalRecord]:
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-        records: list[ToolEvalRecord] = []
-
-        for doc_dir in _iter_doc_dirs(ground_truth_dir, include_docs=include_docs):
-            expected_path = doc_dir / "expected.md"
-            input_path = _resolve_input_path(doc_dir)
-            expected_md: str | None = None
-            if expected_path.exists():
-                expected_md = expected_path.read_text(encoding="utf-8")
-
-            for tool in self._tools:
-                tool_dir = artifacts_dir / tool.name / doc_dir.name
-                tool_dir.mkdir(parents=True, exist_ok=True)
-                output_path = tool_dir / "output.md"
-                metadata_path = tool_dir / "metadata.json"
-
-                try:
-                    parse_result = tool.parse(input_path, tool_dir)
-                    output_path.write_text(parse_result.markdown, encoding="utf-8")
-                    merged_metadata: dict = {
-                        "tool": tool.name,
-                        "document_name": doc_dir.name,
-                        "input_path": str(input_path.resolve()),
-                        "artifact_dir": str(tool_dir.resolve()),
-                        "wall_time_seconds": parse_result.wall_time_seconds,
-                        "warnings": parse_result.warnings,
-                        "api_calls": parse_result.api_calls,
-                        **(parse_result.metadata or {}),
-                    }
-                    if expected_md is not None:
-                        merged_metadata["expected_path"] = str(expected_path.resolve())
-                    metadata_path.write_text(
-                        json.dumps(merged_metadata, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-
-                    for name, content in parse_result.extra_files.items():
-                        if name in {"output.md", "metadata.json"}:
-                            continue
-                        (tool_dir / name).write_text(content, encoding="utf-8")
-
-                    metrics: EvalResult | None = None
-                    status = "ok"
-                    if expected_md is not None:
-                        metrics = _score_markdown(
-                            document_name=doc_dir.name,
-                            output_md=parse_result.markdown,
-                            expected_md=expected_md,
-                            wall_time_seconds=parse_result.wall_time_seconds,
-                            warnings=parse_result.warnings,
-                            api_calls=parse_result.api_calls,
-                        )
-                    else:
-                        status = "artifact_only"
-                    records.append(
-                        ToolEvalRecord(
-                            tool=tool.name,
-                            document_name=doc_dir.name,
-                            status=status,
-                            artifact_dir=str(tool_dir.resolve()),
-                            output_path=str(output_path.resolve()),
-                            metrics=metrics,
-                            metadata=merged_metadata,
-                        )
-                    )
-                except Exception as exc:
-                    error_text = str(exc).strip() or exc.__class__.__name__
-                    (tool_dir / "error.txt").write_text(error_text + "\n", encoding="utf-8")
-                    metadata = {
-                        "tool": tool.name,
-                        "document_name": doc_dir.name,
-                        "input_path": str(input_path.resolve()),
-                        "artifact_dir": str(tool_dir.resolve()),
-                        "status": "error",
-                        "error": error_text,
-                    }
-                    metadata_path.write_text(
-                        json.dumps(metadata, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    records.append(
-                        ToolEvalRecord(
-                            tool=tool.name,
-                            document_name=doc_dir.name,
-                            status="error",
-                            artifact_dir=str(tool_dir.resolve()),
-                            output_path=str(output_path.resolve()),
-                            error=error_text,
-                            metadata=metadata,
-                        )
-                    )
-
-        manifest = {
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "ground_truth_dir": str(ground_truth_dir.resolve()),
-            "artifacts_dir": str(artifacts_dir.resolve()),
-            "records": [_record_to_json(record) for record in records],
-        }
-        (artifacts_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        return records
-
-    @staticmethod
-    def format_report(
-        records: list[ToolEvalRecord],
-        *,
-        ground_truth_dir: Path,
-        artifacts_dir: Path,
-    ) -> str:
-        if not records:
-            return "No results."
-
-        tools = sorted({record.tool for record in records})
-        docs = sorted({record.document_name for record in records})
-        lines = [
-            "# Multi-Tool Markdown Evaluation",
-            "",
-            "## Run Summary",
-            "",
-            f"- Ground truth: `{ground_truth_dir.resolve()}`",
-            f"- Artifacts: `{artifacts_dir.resolve()}`",
-            f"- Tools: {', '.join(tools)}",
-            f"- Documents: {len(docs)}",
-            "",
-            "## Tool Summary",
-            "",
-            "| Tool | OK | Failed | Avg Edit Dist | Avg Char F1 | Avg Heading F1 | Avg Table F1 | Total Warn | Total Time | Artifact Root |",
-            "|------|----|--------|---------------|-------------|----------------|--------------|------------|------------|---------------|",
-        ]
-
-        for tool in tools:
-            tool_records = [record for record in records if record.tool == tool]
-            ok_records = [record for record in tool_records if record.status == "ok" and record.metrics is not None]
-            failed_count = sum(1 for record in tool_records if record.status == "error")
-            artifact_root = artifacts_dir.resolve() / tool
-            if ok_records:
-                lines.append(
-                    "| "
-                    + " | ".join(
-                        [
-                            tool,
-                            str(len(ok_records)),
-                            str(failed_count),
-                            _avg(ok_records, lambda r: r.metrics.text.edit_distance),
-                            _avg(ok_records, lambda r: r.metrics.text.char_f1),
-                            _avg(ok_records, lambda r: r.metrics.headings.f1),
-                            _avg(ok_records, lambda r: r.metrics.tables.cell_f1),
-                            str(sum(record.metrics.cost.warning_count for record in ok_records)),
-                            f"{sum(record.metrics.cost.wall_time_seconds for record in ok_records):.1f}s",
-                            f"`{artifact_root}`",
-                        ]
-                    )
-                    + " |"
-                )
-            else:
-                lines.append(
-                    f"| {tool} | 0 | {failed_count} | - | - | - | - | - | - | `{artifact_root}` |"
-                )
-
-        lines.extend(
-            [
-                "",
-                "## Per Document",
-                "",
-                "| Document | Tool | Status | Edit Dist | Char F1 | Heading F1 | Table F1 | Warn | Time | Output |",
-                "|----------|------|--------|-----------|---------|------------|----------|------|------|--------|",
-            ]
-        )
-
-        for record in sorted(records, key=lambda item: (item.document_name, item.tool)):
-            if record.metrics is None:
-                label = record.status if record.status != "ok" else "no_gt"
-                lines.append(
-                    f"| {record.document_name} | {record.tool} | {label} | - | - | - | - | - | - | `{record.artifact_dir}` |"
-                )
+def find_documents(gt_dirs=DEFAULT_GT_DIRS, names: list[str] | None = None) -> list[Document]:
+    """Documents with an input file, in the order of *names* when given (unknown names raise)."""
+    found: dict[str, Document] = {}
+    for gt_dir in map(Path, gt_dirs):
+        if not gt_dir.is_dir():
+            continue
+        for doc_dir in sorted(p for p in gt_dir.iterdir() if p.is_dir()):
+            # .docx before .doc: a converted legacy file sits next to its original.
+            inputs = [doc_dir / f"input{s}" for s in INPUT_SUFFIXES if (doc_dir / f"input{s}").exists()]
+            if not inputs or doc_dir.name in found:
                 continue
-
-            metrics = record.metrics
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        record.document_name,
-                        record.tool,
-                        record.status,
-                        fmt_metric(metrics.text.edit_distance),
-                        fmt_metric(metrics.text.char_f1),
-                        fmt_metric(metrics.headings.f1),
-                        fmt_metric(metrics.tables.cell_f1),
-                        str(metrics.cost.warning_count),
-                        f"{metrics.cost.wall_time_seconds:.1f}s",
-                        f"`{record.output_path}`",
-                    ]
-                )
-                + " |"
-            )
-
-        failures = [record for record in records if record.status == "error"]
-        if failures:
-            lines.extend(["", "## Failures", ""])
-            for record in failures:
-                lines.append(
-                    f"- `{record.tool}` / `{record.document_name}`: {record.error} "
-                    f"(artifacts: `{record.artifact_dir}`)"
-                )
-
-        return "\n".join(lines) + "\n"
+            expected = doc_dir / "expected.md"
+            found[doc_dir.name] = Document(doc_dir.name, doc_dir, inputs[0], expected if expected.exists() else None,
+                                           annotation_group(doc_dir), page_count(inputs[0]))
+    if names is None:
+        return [d for d in found.values() if d.expected is not None]
+    unknown = [n for n in names if n not in found]
+    if unknown:
+        raise KeyError(f"unknown documents: {', '.join(unknown)}")
+    return [found[n] for n in names]
 
 
-def _iter_doc_dirs(
-    ground_truth_dir: Path,
-    *,
-    include_docs: set[str] | None = None,
-) -> list[Path]:
-    """Yield document directories that contain an input file.
+def read_doc_names(path: Path) -> list[str]:
+    lines = (line.split("#", 1)[0].strip() for line in Path(path).read_text(encoding="utf-8").splitlines())
+    return [line for line in lines if line]
 
-    Directories are accepted whether or not ``expected.md`` exists — this
-    allows the tool-eval workflow to produce artifacts for manual review
-    before ground truth has been written.
-    """
-    if _has_input_file(ground_truth_dir):
-        if include_docs is not None and ground_truth_dir.name not in include_docs:
-            return []
-        return [ground_truth_dir]
 
-    doc_dirs: list[Path] = []
-    for doc_dir in sorted(ground_truth_dir.iterdir()):
-        if not doc_dir.is_dir():
+def run_tools(tools: list[ToolAdapter], docs: list[Document], out_root: Path = DEFAULT_OUT, *,
+              force: bool = False, log=print) -> list[dict]:
+    """Every tool on every document; results already on disk are kept unless *force*."""
+    metas = []
+    for doc in docs:
+        for tool in tools:
+            doc_dir = out_root / tool.name / doc.name
+            meta_path = doc_dir / "meta.json"
+            if not force and meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if meta.get("status") == "ok":
+                    metas.append(meta)
+                    continue
+            if doc_dir.exists():
+                shutil.rmtree(doc_dir)
+            doc_dir.mkdir(parents=True)
+            meta = {"tool": tool.name, "label": tool.label, "document": doc.name, "input": str(doc.input),
+                    "pages": doc.pages, "started": datetime.now().isoformat(timespec="seconds")}
+            log(f"{tool.name:18s} {doc.name} …")
+            start = time.monotonic()
+            try:
+                run = tool.parse(doc.input, doc_dir)
+            except Exception as exc:  # one failure must not stop the others; it is recorded where it happened
+                meta.update(status="error", error=f"{type(exc).__name__}: {exc}",
+                            wall_time_seconds=round(time.monotonic() - start, 1))
+                log(f"{'':18s} error: {meta['error'][:200]}")
+            else:
+                (doc_dir / "output.md").write_text(run.markdown, encoding="utf-8")
+                meta.update(status="ok", wall_time_seconds=round(time.monotonic() - start, 1), config=run.config,
+                            cost_usd=run.cost_usd, cost_note=run.cost_note, notes=run.notes)
+                log(f"{'':18s} ok, {meta['wall_time_seconds']}s"
+                    + (f", ${run.cost_usd}" if run.cost_usd else "") + (f" ({run.cost_note})" if run.cost_note else ""))
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            metas.append(meta)
+    return metas
+
+
+def load_results(out_root: Path = DEFAULT_OUT) -> dict[str, dict[str, dict]]:
+    """tool → document → meta.json, for every result on disk."""
+    results: dict[str, dict[str, dict]] = {}
+    for meta_path in sorted(Path(out_root).glob("*/*/meta.json")):
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        results.setdefault(meta_path.parent.parent.name, {})[meta_path.parent.name] = meta
+    return results
+
+
+def score(out_root: Path = DEFAULT_OUT, gt_dirs=DEFAULT_GT_DIRS) -> dict:
+    """Score every successful output that has an annotation; write ``scores.json`` and ``report.md``."""
+    out_root = Path(out_root)
+    docs = {d.name: d for d in find_documents(gt_dirs)}
+    scores: dict[str, dict[str, dict]] = {}
+    for tool, by_doc in load_results(out_root).items():
+        for name, meta in by_doc.items():
+            doc = docs.get(name)
+            if doc is None or meta.get("status") != "ok":
+                continue
+            output = (out_root / tool / name / "output.md").read_text(encoding="utf-8")
+            result = evaluate_markdown(output, doc.expected.read_text(encoding="utf-8"), name=name)
+            outline = has_outline(doc.dir)
+            scores.setdefault(tool, {})[name] = {
+                "group": doc.group,
+                "table_f1": result.tables.cell_f1,
+                "header_association": result.tables.header_association,
+                "merged_cells": result.tables.merged_cell_accuracy,
+                "missing_tables": result.tables.missing_tables,
+                "extra_tables": result.tables.extra_tables,
+                "char_f1": result.text.char_f1,
+                "edit_distance": result.text.edit_distance,
+                "order_tau": result.order.tau,
+                "heading_f1": result.headings.f1,
+                "outline": outline,
+                "key_errors": result.key_content.total,
+                "wall_time_seconds": meta.get("wall_time_seconds"),
+                "cost_usd": meta.get("cost_usd"),
+            }
+    record = {"generated": datetime.now().isoformat(timespec="seconds"), "scores": scores}
+    out_root.mkdir(parents=True, exist_ok=True)
+    (out_root / "scores.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_root / "report.md").write_text(format_report(record, docs, load_results(out_root)), encoding="utf-8")
+    return record
+
+
+_SUMMARY = [
+    ("表格 F1", "table_f1"), ("表头关联", "header_association"), ("合并单元格", "merged_cells"),
+    ("char_f1", "char_f1"), ("编辑距离", "edit_distance"), ("顺序 τ", "order_tau"), ("标题 F1", "heading_f1"),
+]
+
+
+def format_report(record: dict, docs: dict[str, Document], results: dict[str, dict[str, dict]]) -> str:
+    scores = record["scores"]
+    tools = sorted(scores)
+    lines = [f"# 对标工具比较（{record['generated']}）", "",
+             "指标与回归相同（`evaluate_markdown`）；标题 F1 只算有大纲的文档（Q79）。"
+             "平均只取所有工具都有结果的文档，各工具缺的文档另列。", ""]
+    for group, label in GROUP_LABELS.items():
+        common = sorted(set.intersection(*(
+            {n for n, s in scores[t].items() if s["group"] == group} for t in tools))) if tools else []
+        if not common:
             continue
-        if include_docs is not None and doc_dir.name not in include_docs:
-            continue
-        if not _has_input_file(doc_dir):
-            continue
-        doc_dirs.append(doc_dir)
-    return doc_dirs
+        lines += [f"## {label}（{len(common)} 篇）", "",
+                  "| 工具 | " + " | ".join(h for h, _ in _SUMMARY) + " | 关键内容错误 | 用时 | 费用 |",
+                  "|---" * (len(_SUMMARY) + 4) + "|"]
+        for tool in tools:
+            rows = [scores[tool][n] for n in common]
+            cells = []
+            for _, key in _SUMMARY:
+                values = [r[key] for r in rows if key != "heading_f1" or r["outline"]]
+                cells.append(fmt_metric(mean_defined(values)))
+            time_s = sum(r["wall_time_seconds"] or 0 for r in rows)
+            cost = sum(r["cost_usd"] or 0 for r in rows)
+            lines.append(f"| {tool} | " + " | ".join(cells)
+                         + f" | {sum(r['key_errors'] for r in rows)} | {time_s:.0f}s | ${cost:.2f} |")
+        lines.append("")
 
+    names = sorted({n for t in tools for n in scores[t]}, key=lambda n: (docs[n].pages or 0, n))
+    lines += ["## 逐篇", "", "每格：表格 F1 / char_f1 / 标题 F1。", "",
+              "| 文档 | 页数 | 标注 | " + " | ".join(tools) + " |", "|---" * (len(tools) + 3) + "|"]
+    for n in names:
+        cells = []
+        for t in tools:
+            s = scores[t].get(n)
+            cells.append("—" if s is None else
+                         f"{fmt_metric(s['table_f1'], 2)} / {fmt_metric(s['char_f1'], 3)} / {fmt_metric(s['heading_f1'], 2)}")
+        doc = docs[n]
+        pages = doc.pages if doc.pages is not None else doc.kind
+        lines.append(f"| {n} | {pages} | {GROUP_LABELS[doc.group][:6]} | " + " | ".join(cells) + " |")
 
-def _has_input_file(doc_dir: Path) -> bool:
-    """Check whether *doc_dir* contains at least one recognised input file."""
-    return any((doc_dir / f"input{ext}").exists() for ext in (".pdf", ".docx", ".doc"))
-
-
-def _resolve_input_path(doc_dir: Path) -> Path:
-    for ext in (".pdf", ".docx", ".doc"):
-        candidate = doc_dir / f"input{ext}"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(f"No input file found in {doc_dir}")
-
-
-def _score_markdown(
-    *,
-    document_name: str,
-    output_md: str,
-    expected_md: str,
-    wall_time_seconds: float,
-    warnings: list[str],
-    api_calls: dict[str, int],
-) -> EvalResult:
-    return evaluate_markdown(
-        output_md,
-        expected_md,
-        name=document_name,
-        cost=CostMetrics(
-            wall_time_seconds=wall_time_seconds,
-            ocr_calls=api_calls.get("ocr", 0),
-            vlm_calls=api_calls.get("vlm", 0),
-            llm_calls=api_calls.get("llm", 0),
-            warning_count=len(warnings),
-        ),
-        warnings=warnings,
-    )
-
-
-def _avg(records: list[ToolEvalRecord], fn) -> str:
-    return fmt_metric(mean_defined(fn(record) for record in records))
-
-
-def _record_to_json(record: ToolEvalRecord) -> dict:
-    payload = asdict(record)
-    if record.metrics is not None:
-        payload["metrics"] = asdict(record.metrics)
-    return payload
+    problems = [(t, n, m.get("error") or "") for t, by in sorted(results.items()) for n, m in sorted(by.items())
+                if m.get("status") != "ok"]
+    notes = []
+    for t, by in sorted(results.items()):
+        # A note every document of the tool carries is said once.
+        everywhere = set.intersection(*(set(m.get("notes") or []) for m in by.values()))
+        notes += [f"- {t}（全部 {len(by)} 篇）：{x}" for x in sorted(everywhere)]
+        notes += [f"- {t} / {n}：{'；'.join(x for x in m['notes'] if x not in everywhere)}"
+                  for n, m in sorted(by.items()) if set(m.get("notes") or []) - everywhere]
+    if problems:
+        lines += ["", "## 失败", ""] + [f"- {t} / {n}：{e}" for t, n, e in problems]
+    if notes:
+        lines += ["", "## 说明", ""] + notes
+    return "\n".join(lines) + "\n"

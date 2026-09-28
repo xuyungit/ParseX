@@ -1168,8 +1168,6 @@ dependencies = [
 bench = [
     { name = "datasets" },
     { name = "huggingface-hub" },
-    { name = "pdfplumber" },
-    { name = "python-docx" },
 ]
 dev = [
     { name = "pytest" },
@@ -1194,13 +1192,11 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnxruntime", specifier = ">=1.30.0" },
     { name = "openai", specifier = ">=3" },
-    { name = "pdfplumber", marker = "extra == 'bench'", specifier = ">=0.11.10" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pymupdf", specifier = ">=1.28" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-    { name = "python-docx", marker = "extra == 'bench'", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rapid-layout", specifier = ">=1.2.1" },

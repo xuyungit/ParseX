@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对标工具对照</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #667085; --line: #e3e6eb;
+  --accent: #2f6fde; --accent-soft: #e8f0fd; --bad: #c2410c; --good: #15803d; --code: #f2f4f7;
+  --pick: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --panel: #1b1f26; --ink: #e6e9ef; --muted: #98a2b3; --line: #2c323c;
+    --accent: #6ea0ff; --accent-soft: #1f2d48; --bad: #fb923c; --good: #4ade80; --code: #232833;
+    --pick: #3a3220;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --panel: #1b1f26; --ink: #e6e9ef; --muted: #98a2b3; --line: #2c323c;
+  --accent: #6ea0ff; --accent-soft: #1f2d48; --bad: #fb923c; --good: #4ade80; --code: #232833;
+  --pick: #3a3220;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+  font: 14px/1.6 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 12px;
+  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+select, button, input[type=text] { font: inherit; color: inherit; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+#doc { max-width: 380px; }
+.docinfo { color: var(--muted); font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border-radius: 999px; padding: 2px 10px; font-size: 13px; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.chip .n { font-size: 11px; margin-left: 4px; opacity: .8; }
+.tabs { margin-left: auto; display: flex; gap: 4px; }
+.tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+label.opt { font-size: 13px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
+.flash { color: var(--bad); font-size: 12px; }
+main { flex: 1; min-height: 0; }
+#compare { display: flex; gap: 8px; padding: 8px; overflow-x: auto; }
+.col { flex: 1 1 0; min-width: 300px; display: flex; flex-direction: column; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.colhead { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.colhead .title { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.colhead .auto { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.colhead .auto b { color: var(--ink); font-weight: 600; }
+.status-error { color: var(--bad); font-size: 12px; font-weight: 400; }
+.manual { margin-top: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 3px 10px; font-size: 12px; }
+.dimrow { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.manual[hidden] { display: none; }
+.manual .dim { color: var(--muted); width: 4.5em; }
+.stars { display: flex; gap: 3px; }
+.stars button { padding: 0 7px; font-size: 12px; line-height: 20px; border-radius: 4px; }
+.stars button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.manual input.note { grid-column: 1 / -1; width: 100%; font-size: 12px; }
+.saved { font-size: 11px; color: var(--good); min-height: 14px; grid-column: 1 / -1; }
+.body { flex: 1; overflow: auto; padding: 10px 14px; overflow-wrap: anywhere; }
+.body.raw { white-space: pre-wrap; font: 12px/1.55 ui-monospace, "SF Mono", Menlo, monospace; }
+.body img { max-width: 100%; height: auto; border: 1px solid var(--line); }
+.body table { border-collapse: collapse; font-size: 12px; margin: 8px 0; display: block; overflow-x: auto; }
+.body th, .body td { border: 1px solid var(--line); padding: 3px 6px; vertical-align: top; }
+.body th { background: var(--code); }
+.body blockquote { margin: 8px 0; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); color: var(--ink); }
+.body pre, .body code { background: var(--code); border-radius: 4px; font-size: 12px; }
+.body pre { padding: 8px; overflow-x: auto; }
+.body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { line-height: 1.35; margin: 14px 0 6px; }
+.body h1 { font-size: 20px; } .body h2 { font-size: 17px; } .body h3 { font-size: 15px; }
+.body h4, .body h5, .body h6 { font-size: 14px; }
+.body h1::before, .body h2::before, .body h3::before, .body h4::before, .body h5::before, .body h6::before {
+  font-size: 10px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
+  padding: 0 3px; margin-right: 6px; vertical-align: 2px; }
+.body h1::before { content: "H1"; } .body h2::before { content: "H2"; } .body h3::before { content: "H3"; }
+.body h4::before { content: "H4"; } .body h5::before { content: "H5"; } .body h6::before { content: "H6"; }
+.pagebreak { text-align: center; font-size: 11px; color: var(--muted); border-top: 1px dashed var(--line); margin: 14px 0 8px; padding-top: 2px; }
+.pageimg { margin-bottom: 10px; }
+.pageimg .cap { font-size: 11px; color: var(--muted); }
+.empty { color: var(--muted); padding: 20px; }
+#summary { overflow: auto; padding: 12px; }
+#summary table { border-collapse: collapse; background: var(--panel); font-size: 12px; }
+#summary th, #summary td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; white-space: nowrap; }
+#summary th { position: sticky; top: 0; background: var(--code); }
+#summary td.doc a { color: var(--accent); cursor: pointer; }
+#summary .m { color: var(--good); font-weight: 600; }
+#summary .err { color: var(--bad); }
+#summary tfoot td { font-weight: 600; }
+@media (max-width: 520px) { #compare { flex-direction: column; } .col { min-width: 0; min-height: 70vh; } }
+</style>
+</head>
+<body>
+<header>
+  <button id="prev" title="上一篇">‹</button>
+  <select id="doc"></select>
+  <button id="next" title="下一篇">›</button>
+  <span class="docinfo" id="docinfo"></span>
+  <div class="chips" id="sources"></div>
+  <span class="flash" id="flash"></span>
+  <label class="opt"><input type="checkbox" id="raw"> 源码</label>
+  <label class="opt"><input type="checkbox" id="sync" checked> 同步滚动</label>
+  <label class="opt"><input type="checkbox" id="showManual" checked> 手工评分</label>
+  <div class="tabs">
+    <button id="tabCompare" aria-selected="true">对比</button>
+    <button id="tabSummary" aria-selected="false">总表</button>
+  </div>
+</header>
+<main id="compare"></main>
+<main id="summary" hidden></main>
+<script>
+const MAX_COLS = 4;
+const PSEUDO = [{id: "original", label: "原件"}, {id: "expected", label: "标注"}];
+let INDEX = null, current = null, picked = [];
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem("bench." + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem("bench." + k, JSON.stringify(v)); } catch {} },
+};
+const fmt = (v, d = 3) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+function allSources() { return [...PSEUDO, ...INDEX.sources]; }
+function labelOf(id) { return (allSources().find((s) => s.id === id) || {label: id}).label; }
+function docByName(name) { return INDEX.docs.find((d) => d.name === name); }
+
+async function loadIndex() {
+  INDEX = await (await fetch("/api/index")).json();
+  const sel = $("doc"), keep = sel.value;
+  sel.innerHTML = INDEX.docs.map((d) =>
+    `<option value="${esc(d.name)}">${esc(d.name)} · ${d.pages ? d.pages + " 页" : "Word"}</option>`).join("");
+  if (keep) sel.value = keep;
+}
+
+async function init() {
+  await loadIndex();
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const docName = hash.get("doc") || store.get("doc") || (INDEX.docs[0] || {}).name;
+  const src = (hash.get("src") || "").split(",").filter(Boolean);
+  picked = src.length ? src : (store.get("picked") || ["original", ...INDEX.sources.slice(0, 3).map((s) => s.id)]);
+  picked = picked.filter((id) => allSources().some((s) => s.id === id)).slice(0, MAX_COLS);
+  $("raw").checked = !!store.get("raw");
+  $("showManual").checked = store.get("showManual") !== false;
+  if (hash.get("view") === "summary") showTab("summary");
+  selectDoc(docByName(docName) ? docName : (INDEX.docs[0] || {}).name, {refresh: false});
+}
+
+window.addEventListener("hashchange", () => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const src = (hash.get("src") || "").split(",").filter(Boolean);
+  if (src.length) picked = src.slice(0, MAX_COLS);
+  if (hash.get("doc") && (!current || hash.get("doc") !== current.name || src.length)) selectDoc(hash.get("doc"));
+});
+
+async function selectDoc(name, {refresh = true} = {}) {
+  if (refresh) await loadIndex();  // results finished since the page opened show up
+  if (!name) { $("compare").innerHTML = '<div class="empty">还没有结果：先运行 parserx dev tool-eval run</div>'; return; }
+  current = docByName(name);
+  $("doc").value = name;
+  store.set("doc", name);
+  const d = current;
+  $("docinfo").textContent = `${d.pages ? d.pages + " 页 PDF" : "Word"} · ${d.group_label}`;
+  renderChips();
+  renderColumns();
+  syncHash();
+}
+
+function syncHash() {
+  const view = $("summary").hidden ? "" : "&view=summary";
+  history.replaceState(null, "", `#doc=${encodeURIComponent(current.name)}&src=${picked.join(",")}${view}`);
+}
+
+function renderChips() {
+  $("sources").innerHTML = allSources().map((s) => {
+    const r = current.results[s.id];
+    const pos = picked.indexOf(s.id);
+    const missing = !PSEUDO.some((p) => p.id === s.id) && !r;
+    const failed = r && r.status !== "ok";
+    return `<button class="chip" data-id="${esc(s.id)}" aria-pressed="${pos >= 0}" ${missing ? "disabled title=\"这一篇没有结果\"" : ""}>`
+      + `${esc(s.label)}${failed ? " ⚠" : ""}${pos >= 0 ? `<span class="n">${pos + 1}</span>` : ""}</button>`;
+  }).join("");
+  $("sources").querySelectorAll(".chip").forEach((b) => b.onclick = () => toggleSource(b.dataset.id));
+}
+
+function toggleSource(id) {
+  const pos = picked.indexOf(id);
+  if (pos >= 0) picked.splice(pos, 1);
+  else if (picked.length >= MAX_COLS) { flash(`最多 ${MAX_COLS} 栏，先取消一个`); return; }
+  else picked.push(id);
+  store.set("picked", picked);
+  renderChips();
+  renderColumns();
+  syncHash();
+}
+
+function flash(text) { $("flash").textContent = text; setTimeout(() => $("flash").textContent = "", 2500); }
+
+function autoLine(r) {
+  if (!r) return "";
+  if (r.status !== "ok") return "";
+  const s = r.scores, parts = [];
+  if (s) {
+    parts.push(`表格 <b>${fmt(s.table_f1, 2)}</b>`, `文字 <b>${fmt(s.char_f1)}</b>`,
+      `标题 <b>${fmt(s.heading_f1, 2)}</b>${s.outline ? "" : "（不计）"}`);
+  }
+  if (r.wall_time_seconds !== null && r.wall_time_seconds !== undefined) parts.push(`${fmt(r.wall_time_seconds, 0)} 秒`);
+  if (r.cost_usd) parts.push(`$${fmt(r.cost_usd, 3)}`);
+  else if (r.cost_note) parts.push(esc(r.cost_note));
+  return parts.join(" · ") + ((r.notes || []).length ? `<br>${r.notes.map(esc).join("；")}` : "");
+}
+
+function manualPanel(source) {
+  const saved = ((INDEX.manual[current.name] || {})[source]) || {};
+  const rows = INDEX.dimensions.map((dim) =>
+    `<span class="dimrow"><span class="dim">${esc(dim.label)}</span><span class="stars" data-dim="${dim.key}">`
+    + [1, 2, 3, 4, 5].map((v) => `<button data-v="${v}" aria-pressed="${saved[dim.key] === v}">${v}</button>`).join("")
+    + "</span></span>").join("");
+  return `<div class="manual" data-source="${esc(source)}" ${$("showManual").checked ? "" : "hidden"}>${rows}`
+    + `<input class="note" type="text" placeholder="备注：看到的问题、比别人好在哪" value="${esc(saved.note || "")}">`
+    + `<span class="saved"></span></div>`;
+}
+
+async function renderColumns() {
+  const main = $("compare");
+  main.innerHTML = "";
+  if (!picked.length) { main.innerHTML = '<div class="empty">在上面选 2–4 个来源</div>'; return; }
+  const doc = current;
+  for (const id of picked) {
+    const col = document.createElement("section");
+    col.className = "col";
+    const r = doc.results[id];
+    const isTool = !PSEUDO.some((p) => p.id === id);
+    const err = r && r.status !== "ok" ? `<span class="status-error">失败：${esc(r.error || "")}</span>` : "";
+    col.innerHTML = `<div class="colhead"><div class="title">${esc(labelOf(id))}${err}</div>`
+      + `<div class="auto">${autoLine(r)}</div>${isTool && r ? manualPanel(id) : ""}</div>`
+      + `<div class="body"><div class="empty">加载中…</div></div>`;
+    main.appendChild(col);
+    const body = col.querySelector(".body");
+    body.addEventListener("scroll", onScroll);
+    wireManual(col);
+    fillBody(body, id, doc).catch((e) => body.innerHTML = `<div class="empty">${esc(e.message)}</div>`);
+  }
+}
+
+async function fillBody(body, id, doc) {
+  const raw = $("raw").checked;
+  if (id === "original") {
+    const {count, error} = await (await fetch(`/api/pages/${encodeURIComponent(doc.name)}`)).json();
+    if (error) throw new Error(error);
+    body.innerHTML = Array.from({length: count}, (_, i) =>
+      `<div class="pageimg"><div class="cap">第 ${i + 1} 页（点击看大图）</div><a href="/page/${encodeURIComponent(doc.name)}/${i + 1}.png" target="_blank"><img loading="lazy" src="/page/${encodeURIComponent(doc.name)}/${i + 1}.png"></a></div>`).join("");
+    return;
+  }
+  const r = doc.results[id];
+  if (id !== "expected" && (!r || r.status !== "ok")) { body.innerHTML = '<div class="empty">没有输出</div>'; return; }
+  if (id === "expected" && !doc.has_expected) { body.innerHTML = '<div class="empty">这一篇没有标注</div>'; return; }
+  const file = id === "expected" ? "expected.md" : "output.md";
+  const base = `/src/${encodeURIComponent(id)}/${encodeURIComponent(doc.name)}/`;
+  const md = await (await fetch(base + file)).text();
+  if (raw) { body.classList.add("raw"); body.textContent = md; return; }
+  body.classList.remove("raw");
+  body.innerHTML = "";
+  body.appendChild(renderMarkdown(md, base));
+}
+
+function renderMarkdown(md, base) {
+  // Keep TeX away from the Markdown parser, then let KaTeX render it.
+  const math = [];
+  const keep = (m) => `@@MATH${math.push(m) - 1}@@`;
+  let text = md.replace(/\$\$[\s\S]+?\$\$/g, keep).replace(/\$[^$\n]+?\$/g, keep);
+  text = text.replace(/<!--\s*PAGE\s+(\d+)\s*-->/g, (_, n) => `\n\n<div class="pagebreak">第 ${n} 页</div>\n\n`);
+  const div = document.createElement("div");
+  div.innerHTML = window.marked ? marked.parse(text, {gfm: true}) : `<pre>${esc(text)}</pre>`;
+  div.innerHTML = div.innerHTML.replace(/@@MATH(\d+)@@/g, (_, i) => esc(math[+i]));
+  div.querySelectorAll("img").forEach((img) => {
+    const src = img.getAttribute("src") || "";
+    if (src && !/^(https?:|data:|\/)/.test(src)) img.src = base + src.replace(/^\.\//, "");
+    img.loading = "lazy";
+  });
+  if (window.renderMathInElement) {
+    renderMathInElement(div, {throwOnError: false, delimiters: [
+      {left: "$$", right: "$$", display: true}, {left: "$", right: "$", display: false}]});
+  }
+  return div;
+}
+
+let syncing = false;
+function onScroll(e) {
+  if (!$("sync").checked || syncing) return;
+  const src = e.target, span = src.scrollHeight - src.clientHeight;
+  const ratio = span > 0 ? src.scrollTop / span : 0;
+  syncing = true;
+  document.querySelectorAll("#compare .body").forEach((b) => {
+    if (b !== src) b.scrollTop = ratio * (b.scrollHeight - b.clientHeight);
+  });
+  requestAnimationFrame(() => syncing = false);
+}
+
+function wireManual(col) {
+  const panel = col.querySelector(".manual");
+  if (!panel) return;
+  const source = panel.dataset.source;
+  const collect = () => {
+    const scores = {};
+    panel.querySelectorAll(".stars").forEach((s) => {
+      const on = s.querySelector('button[aria-pressed="true"]');
+      scores[s.dataset.dim] = on ? +on.dataset.v : null;
+    });
+    scores.note = panel.querySelector(".note").value;
+    return scores;
+  };
+  const save = async () => {
+    const scores = collect();
+    const res = await fetch("/api/manual", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({document: current.name, source, scores})});
+    const out = await res.json();
+    const doc = INDEX.manual[current.name] = INDEX.manual[current.name] || {};
+    if (Object.keys(out.saved || {}).length) doc[source] = out.saved; else delete doc[source];
+    panel.querySelector(".saved").textContent = res.ok ? "已保存" : "保存失败";
+  };
+  panel.querySelectorAll(".stars button").forEach((b) => b.onclick = () => {
+    const was = b.getAttribute("aria-pressed") === "true";
+    b.parentElement.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+    if (!was) b.setAttribute("aria-pressed", "true");
+    save();
+  });
+  let timer;
+  panel.querySelector(".note").oninput = () => { clearTimeout(timer); timer = setTimeout(save, 600); };
+}
+
+function renderSummary() {
+  const tools = INDEX.sources;
+  const head = `<tr><th>文档</th><th>页数</th><th>标注</th>${tools.map((t) => `<th>${esc(t.label)}</th>`).join("")}</tr>`;
+  const sums = tools.map(() => ({c: [], t: [], h: [], m: []}));
+  const rows = INDEX.docs.map((d) => {
+    const cells = tools.map((t, i) => {
+      const r = d.results[t.id];
+      if (!r) return "<td>—</td>";
+      if (r.status !== "ok") return `<td class="err" title="${esc(r.error)}">失败</td>`;
+      const s = r.scores, m = ((INDEX.manual[d.name] || {})[t.id]) || {};
+      if (s) { sums[i].c.push(s.char_f1); if (s.table_f1 !== null) sums[i].t.push(s.table_f1); if (s.outline && s.heading_f1 !== null) sums[i].h.push(s.heading_f1); }
+      if (m.overall) sums[i].m.push(m.overall);
+      const auto = s ? `文 ${fmt(s.char_f1)} · 表 ${fmt(s.table_f1, 2)} · 标 ${fmt(s.heading_f1, 2)}` : "未打分";
+      return `<td>${auto}${m.overall ? ` · <span class="m" title="${esc(m.note || "")}">手 ${m.overall}</span>` : ""}</td>`;
+    }).join("");
+    return `<tr><td class="doc"><a data-doc="${esc(d.name)}">${esc(d.name)}</a></td><td>${d.pages || "Word"}</td><td>${esc(d.group_label.slice(0, 6))}</td>${cells}</tr>`;
+  }).join("");
+  const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const foot = `<tr><td colspan="3">平均（各列按自己有值的文档）</td>${sums.map((s) =>
+    `<td>文 ${fmt(mean(s.c))} · 表 ${fmt(mean(s.t), 2)} · 标 ${fmt(mean(s.h), 2)}${s.m.length ? ` · <span class="m">手 ${fmt(mean(s.m), 1)}（${s.m.length}）</span>` : ""}</td>`).join("")}</tr>`;
+  $("summary").innerHTML = `<p class="docinfo">文 = char_f1，表 = 表格 F1，标 = 标题 F1（有大纲的文档才计入平均），手 = 手工总体分。严格比较见 report.md（只取各工具都有结果的文档）。</p>`
+    + `<table><thead>${head}</thead><tbody>${rows}</tbody><tfoot>${foot}</tfoot></table>`;
+  $("summary").querySelectorAll("a[data-doc]").forEach((a) => a.onclick = () => { showTab("compare"); selectDoc(a.dataset.doc); });
+}
+
+function showTab(which) {
+  const summary = which === "summary";
+  $("summary").hidden = !summary; $("compare").hidden = summary;
+  $("tabSummary").setAttribute("aria-selected", summary); $("tabCompare").setAttribute("aria-selected", !summary);
+  if (summary) loadIndex().then(renderSummary);
+  if (current) syncHash();
+}
+
+$("doc").onchange = (e) => selectDoc(e.target.value);
+$("prev").onclick = () => step(-1);
+$("next").onclick = () => step(1);
+function step(delta) {
+  const i = INDEX.docs.findIndex((d) => d.name === current.name) + delta;
+  if (i >= 0 && i < INDEX.docs.length) selectDoc(INDEX.docs[i].name);
+}
+$("raw").onchange = () => { store.set("raw", $("raw").checked); renderColumns(); };
+$("showManual").onchange = () => {
+  store.set("showManual", $("showManual").checked);
+  document.querySelectorAll(".manual").forEach((m) => m.hidden = !$("showManual").checked);
+};
+$("tabCompare").onclick = () => showTab("compare");
+$("tabSummary").onclick = () => showTab("summary");
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowLeft") step(-1);
+  if (e.key === "ArrowRight") step(1);
+});
+init().catch((e) => $("compare").innerHTML = `<div class="empty">${esc(e.message)}</div>`);
+</script>
+</body>
+</html>

@@ -1,8 +1,10 @@
-# 对标工具比较：分解（2026-09-28，第一批四个工具由用户确认；Q129–Q132 待确认）
+# 对标工具比较：分解（2026-09-28，第一批四个工具由用户确认；Q129–Q131 按建议，Q132 待定）
 
 **目标**：把同样的文档交给外部工具和 ParserX 解析，用同一套指标打分，再逐篇并排阅读。要回答两个问题：
 - 我们的质量在同类工具里处在什么位置；
 - 哪些地方别人做得更好、值得改进。改进本身另立分解，不在这里做。
+
+**进展**（2026-09-28）：B1–B3、B5 完成；第一轮 10 篇跑完（含 ParserX 混合方案，Codex）。用户反馈与比较发现的问题逐条查到代码原因，见 [eval_reports/2026-09-28_bench_round1.md](../eval_reports/2026-09-28_bench_round1.md)（P1–P11，Q133–Q136）。
 
 **第一批**（用户确认，2026-09-28）：LlamaParse、MinerU、marker（Datalab 托管）、PaddleOCR-VL 整套流程。四个都走在线接口，不在本机部署。测试文档可以上传云端（用户确认；类似招标的那份已脱敏）。
 
@@ -23,6 +25,9 @@
   - 剔除紧跟图片行的引用块（我们的图片说明）；
   - 剔除 HTML 注释（页码 `<!-- PAGE n -->`）；
   - 别家的非内容标记没有核对过：分页线、图片链接、自动生成的图片说明、公式定界符。
+  - 已见一例：MinerU 把正文里的百分数写成行内公式（`$18.9\%$`），我们和标注都写 `18.9%`。
+  - Datalab 自动给图片写说明，同一段话既放进图片的替代文字，又在图片后单独成段；单独那段不是引用块，打分时会被当作多出来的正文。
+  - Datalab 把中文全角标点换成半角（`，`→`, `、`（`→` (`），并在汉字和数字之间加空格。打分前的 NFKC 规范化会抹平这些差别，分数看不出来，要在并排阅读时记下。
 - **语料**：有标注的 31 篇。
   - PDF 26 篇，共 112 页；
   - Word 5 篇（real_doc01、simple_doc01、text_report01、unseen_word_spec01、val_word_template01），约 30 页；
@@ -30,7 +35,7 @@
 - **标注来源**：
   - `ground_truth/` 的标注按 [evaluation_workflow.md](evaluation_workflow.md) §2 的流程，先用 LlamaParse（agentic）生成初稿，再人工修改。LlamaParse 在这一组上会占便宜。逐篇来源没有记录。
   - real_doc01 的标注参考过 ParserX 的运行结果（Q83）。在这一篇上，占便宜的是我们。
-  - OmniDocBench 8 页用的是它自己的人工标注。
+  - OmniDocBench 8 页用的是它自己的人工标注。OmniDocBench 由 MinerU 团队（opendatalab）维护，标注的写法可能贴近 MinerU 的输出，这一组上 MinerU 可能占便宜。
 - **冻结 run**：
   - `2026-09-28_io_fixed_full`：固定流水线；
   - `2026-09-28_io_v2_toolkit`：混合方案。
@@ -41,7 +46,7 @@
 
 | | LlamaParse | MinerU | marker（Datalab） | PaddleOCR-VL 整套流程 |
 |---|---|---|---|---|
-| 接入 | 已有 key（`LLAMA_CLOUD_API_KEY`） | 要注册 mineru.net，用手机号或邮箱，在 API 管理页建 token。token 14 天过期；首次可能要先填申请表等审批（均出自第三方说明，未核实） | 要注册 datalab.to 并建 key，不用信用卡。每月免费额度：工作邮箱 $20，个人邮箱 $10 | 已有（扫描引擎在用的 AI Studio token） |
+| 接入 | 已有 key（`LLAMA_CLOUD_API_KEY`） | 已注册，key 在 `.env` 的 `MINER_U_API_KEY`（`sk-` 开头）。2026-09-28 验证：v4 接口用 `Bearer` 可用，1 页文档共 32 秒（排队约 15 秒） | 已注册，key 在 `.env` 的 `DATALAB_API_KEY`。不用信用卡，每月免费额度：工作邮箱 $20，个人邮箱 $10；没有查余额的接口，每次结果带 `cost_breakdown`，余额在网页控制台看。2026-09-28 验证：accurate 1 页 52 秒，扣 1 美分 | 已有（扫描引擎在用的 AI Studio token） |
 | 接口 | Parse API v2：先上传，再调 `parsing.parse(tier, version, expand=["markdown"])`。SDK `@llamaindex/llama-cloud` 2.16；我们锁的是 `^2.2.0`，升级后就会用上 2.16 | 精准解析 v4：<br>① `POST /api/v4/file-urls/batch` 取上传地址；<br>② PUT 文件；<br>③ 轮询 `GET /api/v4/extract-results/batch/{batch_id}`；<br>④ 下载 zip，内有 `full.md`、`content_list.json` | `POST /api/v1/convert`（multipart，头 `X-API-Key`），然后轮询 `request_check_url`。完成后要看 `success`：失败也会以"完成"状态返回 | 在用的 `/api/v2/ocr/jobs`。结果里每页有 `markdown.text`，另有 `markdownUrl`，是不是整篇未核实 |
 | 档位与关键参数 | `tier: agentic`（标注初稿用的也是这一档）；`merge_continued_tables`；表格输出 HTML（`output_tables_as_markdown: false`） | `model_version: vlm`（MinerU2.5-Pro）；`enable_table`、`enable_formula` 打开 | `mode: accurate`（实际是 Chandra 2 模型）；`merge_cross_page`（测试版，合并跨页的表格、段落、列表） | 现有参数加 `restructurePages: true`，其下的 `mergeTables`、`relevelTitles` 默认打开 |
 | DOCX | 收 | 收 | 收 | 不收 |
@@ -91,15 +96,22 @@
 
 | 项 | 内容 | 验收 |
 |---|---|---|
-| B1 注册与凭据 | 用户注册 mineru.net 和 datalab.to，把 `MINERU_API_TOKEN`、`DATALAB_API_KEY` 写进 `.env`。它们不是产品依赖，`parserx check` 不检查 | 两个 key 各在一篇两页的文档上跑通 |
+| B1 注册与凭据 | 用户注册 mineru.net 和 datalab.to，把 key 写进 `.env`：`MINER_U_API_KEY`、`DATALAB_API_KEY`（2026-09-28 均已完成并验证）。它们不是产品依赖，`parserx check` 不检查 | 两个 key 各在一篇两页的文档上跑通 |
 | B2 适配器 | `tool_eval/adapters.py` 改动：<br>① LlamaParse 改用 v2 参数，SDK 升到 2.16；<br>② 新增 MinerU、Datalab、PaddleOCR-VL 三个适配器。<br>每个适配器都是"提交 → 轮询 → 下载"：<br>- 原始响应（JSON、zip）存进工具目录；<br>- 已有原始响应的文档不再请求；<br>- 每篇记页数、用时、费用或积分 | L0：用录好的响应离线测三个新适配器的解析。<br>每个工具在一篇扫描件、一篇 DOCX 上真实跑通 |
 | B3 打分对齐 | ① tool-eval 的报告改用回归报告的全部栏目：硬检查；表格 F1 及表头关联、合并单元格；char_f1；阅读顺序；标题 F1（只算有大纲的文档）；关键内容错误。<br>② ParserX 一侧直接读冻结 run 的 `outputs/`。<br>③ 核对别家输出里的非内容标记，缺的只加通用规则 | L0；冻结 run 的输出经 tool-eval 打分，与它自己的 `metrics.json` 逐篇一致 |
-| B4 全语料运行 | 四个工具在 31 篇上各跑一次。结果放 `eval_runs/bench/<日期>_<工具>/`，包含 `outputs/`、`raw/`、`manifest.json`、`metrics.json`、`report.md`，布局与冻结 run 相同 | 31 篇都有输出，或写明失败原因；费用在 §1.2 的估计内 |
-| B5 对照页 | 本地 HTML，每篇一页：左边是原件页图，右边是六份输出渲染后的样子（固定流水线、混合方案、四个工具），按页对齐。先做三类文档：分数差距大的、扫描件、有跨页表格或多级标题的 | 用户能逐篇翻看 |
+| B4 全语料运行 | 四个工具在 31 篇上各跑一次，分三轮（§4.1）。结果放 `eval_runs/bench/<工具>/<文档>/`：`output.md`、图片、`raw/`、`meta.json`；打分写 `eval_runs/bench/scores.json`、`report.md`（[tool_eval.md](tool_eval.md)） | 31 篇都有输出，或写明失败原因；费用在 §1.2 的估计内 |
+| B5 对照页 | 用户要求（2026-09-28）：既有自动评分，也有手工评分。<br>本地页面 `parserx dev tool-eval view`（用法见 [tool_eval.md](tool_eval.md)）：<br>① 从原件（页面图）、标注、各工具的输出中选 2–4 个来源并排；<br>② Markdown 渲染后显示，图片、HTML 表格、公式都显示，标题标出层级；<br>③ 每栏上方是自动评分，下面是手工评分：信息完整、标题层级、表格、可读性、总体，各 1–5 分，加备注，存进 `manual_scores.json`；<br>④ 总表：每篇每个来源的自动分和手工总体分 | 用户能逐篇翻看、打分 |
 | B6 分析报告 | `eval_reports/<日期>_benchmarks.md`，内容包括：<br>- 总表，两组标注分开列；<br>- 逐篇结果；<br>- 差距清单：别人好在哪、原因归类、影响多少篇；<br>- 可改进点候选；<br>- 需要改的标注（清单） | 用户看过报告，决定下一步改哪些 |
 | B7 ParseBench | 最后做，见 §5 | — |
 
 ### 4.1 顺序
+
+文档由少到多、由简到繁，分三轮（用户要求，2026-09-28）：
+- 第一轮：1–3 页的短文档，每类都有，10 篇（`configs/bench_round1.txt`）；
+- 第二轮：4–9 页，扫描件、论文、跨页表格；
+- 第三轮：长而复杂的文档（专利、标准、长 Word）。
+
+工作项的顺序：
 
 1. 用户做 B1；同时做 B2 里 LlamaParse 和 PaddleOCR-VL 的部分，这两家不用新注册；
 2. B2 其余部分；
@@ -134,12 +146,16 @@
 ## 6. 待决问题
 
 - **Q129 LlamaParse 跑哪一档。** Agentic Plus 在 ParseBench 上排第一（90.2），每页 45 积分，本语料约 6700 积分。和 agentic 一起跑，会超出每月免费的 1 万积分。
+  - ✅ 用户按建议决定（2026-09-28）。
   - **建议**：只跑 agentic。它是标准档，也是标注初稿用的档。看了报告后，如果 LlamaParse 在某类文档上明显领先，再在那几篇上补跑 Agentic Plus。
 - **Q130 marker 用哪个模式。** `accurate` 实际用的是 Datalab 的 Chandra 2 模型；`balanced` 才是 marker 本身（Surya 模型）。两者在 ParseBench 上只差 0.4 分。
+  - ✅ 用户按建议决定（2026-09-28）。
   - **建议**：跑 `accurate`，看 Datalab 能给出的最好结果。`balanced` 不单独跑。
 - **Q131 PaddleOCR-VL 的整篇重组。** 在线接口打开 `restructurePages` 后，是否给出整篇合并的 Markdown（`markdownUrl`），还没核实。
+  - ✅ 用户按建议决定（2026-09-28）。
   - **建议**：先试在线参数。没有整篇结果的话，就把每页的 Markdown 顺序拼接，不在我们这边重写它的重组逻辑，报告里写明"未做跨页重组"。
 - **Q132 ParseBench 怎样进我们的测试集。** ParseBench 的标注是一条条规则，不是整篇 Markdown。
   - **建议**：B6 之后再定。有两条路：
     - 用它的规则打分：接入 parse-bench 1.0 的插件；
     - 挑几十页写 `expected.md`，放进 `ground_truth_public/`。
+- **Q133–Q136**：第一轮发现的问题引出的四个问题（本地识读补字、表单式表格、每篇通读的开关、字面 `\n`），✅ 用户按建议决定（2026-09-28），见 [第一轮报告](../eval_reports/2026-09-28_bench_round1.md) §5。
