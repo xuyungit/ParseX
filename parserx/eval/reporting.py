@@ -95,7 +95,8 @@ def redacted_config(config: ParserXConfig) -> dict[str, Any]:
 # entries and the names that choose them (Q100) are already expanded into the
 # places that use them, which is what the processing sees.
 _NOT_PROCESSING = {"scheduling": ("retry", "prices"), "layout": ("model_path", "model_dir"),  # where a file lives
-                   "output": ("report", "sidecar")}  # which files are handed over, not what they hold
+                   "output": ("report", "sidecar"),  # which files are handed over, not what they hold
+                   "input": ("max_download_mb", "download_timeout_s")}  # how an address is fetched
 _NAMES = (("services", "vlm"), ("runtime", "agent"))
 
 

@@ -9,7 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
-from parserx.content.convert import doc_to_docx
+from parserx.content.convert import IMAGE_SUFFIXES, doc_to_docx, image_to_pdf
 from parserx.content.docx import extract_docx
 from parserx.content.pdf_native import extract_pdf
 from parserx.ir.base import IRModel
@@ -42,13 +42,18 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
     if ws_dir.exists() and any(ws_dir.iterdir()):
         return fail(FailureCode.INVALID_REQUEST, f"{ws_dir} is not empty", 2)
     suffix = source.suffix.lower()
-    if suffix not in (".pdf", ".docx", ".doc"):
+    if suffix not in (".pdf", ".docx", ".doc", *IMAGE_SUFFIXES):
         return fail(FailureCode.INVALID_REQUEST, f"unsupported input type {suffix!r}", 2)
     with tempfile.TemporaryDirectory(prefix="parserx-init-") as scratch:
         try:
-            readable = doc_to_docx(source, Path(scratch)) if suffix == ".doc" else source
+            if suffix == ".doc":
+                readable = doc_to_docx(source, Path(scratch))
+            elif suffix in IMAGE_SUFFIXES:  # Q119: an image is a PDF of scanned pages
+                readable = image_to_pdf(source, Path(scratch))
+            else:
+                readable = source
             ext = (extract_pdf(readable, layout=_page_layout(config), check_tables=config.layout.check_tables)
-                   if suffix == ".pdf"
+                   if readable.suffix.lower() == ".pdf"
                    else extract_docx(readable))
         except Exception as exc:  # noqa: BLE001 - an unreadable input is reported, not raised
             return fail(FailureCode.INVALID_REQUEST, f"input could not be read: {type(exc).__name__}: {exc}", 2)
@@ -56,6 +61,8 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
                              source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
         if suffix == ".doc":
             state.warnings.insert(0, "converted from .doc to .docx with LibreOffice before reading")
+        elif suffix in IMAGE_SUFFIXES:
+            state.warnings.insert(0, f"an image ({suffix}) read as a PDF of scanned pages")
         ws = Workspace.create(ws_dir, state, readable, files=ext.asset_bytes)
     state = ws.load()
     result = InitResult(

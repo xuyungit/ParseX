@@ -219,6 +219,13 @@ class RuntimeConfig(BaseModel):
     workspace_root: str | None = None  # keep each document's workspace here; None = a temporary directory
 
 
+class InputConfig(BaseModel):
+    """Inputs given as web addresses (Q119, Q123): downloaded before they are read, within these limits."""
+
+    max_download_mb: int = 200
+    download_timeout_s: int = 120
+
+
 class OutputConfig(BaseModel):
     """What the user gets (Q116, Q120): the Markdown and the images it links, always; the summary (``report``) and the
     block-level sidecar (``sidecar``) on request.  ``lang``: the language of the text ParserX adds to the Markdown
@@ -261,6 +268,7 @@ class ParserXConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    input: InputConfig = Field(default_factory=InputConfig)
 
     @model_validator(mode="before")
     @classmethod

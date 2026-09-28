@@ -9,32 +9,68 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import logging
 import signal
 import sys
 import tempfile
 import time
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from parserx.config.schema import ConfigLoadResult, ParserXConfig
+from parserx.content.convert import IMAGE_SUFFIXES
+from parserx.content.fetch import FetchError, fetch, is_address
 from parserx.console.messages import t
 from parserx.console.reporter import ConsoleReporter
 from parserx.runtimes.events import Notice
 
-SUFFIXES = (".pdf", ".docx", ".doc")
+SUFFIXES = (".pdf", ".docx", ".doc", *IMAGE_SUFFIXES)
 
 
-def expand_inputs(paths: list[Path]) -> list[Path]:
-    """Files as given; a directory contributes its PDF, DOCX and DOC files (not its subdirectories), sorted."""
-    found: list[Path] = []
-    for path in paths:
-        if path.is_dir():
-            found += sorted(p for p in path.iterdir() if p.is_file() and p.suffix.lower() in SUFFIXES
-                            and not p.name.startswith((".", "~$")))
-        else:
-            found.append(path)
+@dataclass
+class Input:
+    """One document to parse: a local file, or a web address fetched when its turn comes (Q119)."""
+
+    given: str  # as the user wrote it
+    path: Path | None  # the local file; None for an address until it is fetched
+    place: Path = field(default_factory=Path)  # where under the output root (a subdirectory with -r)
+
+
+def expand_inputs(items: list[str], recursive: bool = False) -> list[Input]:
+    """Files as given; a directory contributes its PDF, Word and image files — with ``recursive`` those of its
+    subdirectories too, placed under the same relative path in the output; an address is kept to be fetched."""
+    found: list[Input] = []
+    for item in map(str, items):
+        if is_address(item):
+            found.append(Input(item, None))
+            continue
+        path = Path(item)
+        if not path.is_dir():
+            found.append(Input(item, path))
+            continue
+        candidates = path.rglob("*") if recursive else path.iterdir()
+        for file in sorted(candidates):
+            rel = file.relative_to(path)
+            if file.is_file() and file.suffix.lower() in SUFFIXES and not any(
+                    part.startswith((".", "~$")) for part in rel.parts):
+                found.append(Input(str(file), file, rel.parent))
     return found
+
+
+def output_dir(entry: Input, name: str, args: argparse.Namespace, several: bool, taken: set[Path]) -> Path:
+    """Where a document's output goes: ``-o`` itself for a single input, else ``<-o or output>/<place>/<name>``;
+    a name already used in this run gets ``-2``, ``-3`` … (Q122)."""
+    if not several and args.output is not None:
+        return args.output
+    base = (args.output or Path("output")) / entry.place
+    candidate, n = base / name, 1
+    while candidate in taken:
+        n += 1
+        candidate = base / f"{name}-{n}"
+    taken.add(candidate)
+    return candidate
 
 
 def preflight(config: ParserXConfig) -> list[Notice]:
@@ -57,7 +93,7 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
     _quiet_logging(args.verbose)
     # A termination request stops like Ctrl-C: the agent (in its own session) is stopped, the work is kept.
     signal.signal(signal.SIGTERM, _interrupt)
-    files = expand_inputs(args.input)
+    files = expand_inputs(args.input, recursive=getattr(args, "recursive", False))
     several = len(files) > 1
     reporter = ConsoleReporter(sys.stderr, lang=args.lang, quiet=args.quiet, verbose=args.verbose,
                                compact=several, tty=False if args.verbose else None)
@@ -78,15 +114,25 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
             fetch_layout_model(config, lang=args.lang)
     outcomes, results, failed = [], [], 0
     started = time.monotonic()
+    taken: set[Path] = set()
+    downloads = Path(tempfile.mkdtemp(prefix="parserx-fetch-"))
     try:
-        for i, path in enumerate(files, 1):
+        for i, entry in enumerate(files, 1):
             reporter.start_document(i, len(files))
+            path = entry.path
+            if path is None:  # an address: fetched now, a failure is this document's
+                try:
+                    path = fetch(entry.given, downloads / str(i), max_mb=config.input.max_download_mb,
+                                 timeout_s=config.input.download_timeout_s)
+                except FetchError as exc:
+                    failed += 1
+                    reporter.failure(entry.given, "unreadable", str(exc))
+                    results.append({"source": entry.given, "error": {"code": "unreadable", "message": str(exc)}})
+                    continue
             if args.stdout:
                 out_dir = Path(tempfile.mkdtemp(prefix="parserx-stdout-"))
-            elif several:
-                out_dir = (args.output or Path("output")) / path.stem
             else:
-                out_dir = args.output or Path("output") / path.stem
+                out_dir = output_dir(entry, path.stem, args, several, taken)
             try:
                 outcome = parse_document(path, out_dir, config, reporter=reporter, keep_work=args.keep_work)
             except KeyboardInterrupt:
@@ -110,6 +156,7 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
                 sys.stdout.write(Path(outcome.markdown).read_text(encoding="utf-8"))
     finally:
         reporter.close()
+        shutil.rmtree(downloads, ignore_errors=True)
     if several:
         reporter.total(outcomes, failed, time.monotonic() - started)
     if args.json:

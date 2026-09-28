@@ -25,8 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # parserx parse
     parse_cmd = sub.add_parser("parse", help="Parse documents to Markdown")
-    parse_cmd.add_argument("input", type=Path, nargs="+",
-                           help="Input documents (PDF, DOCX, DOC) or directories holding them")
+    parse_cmd.add_argument("input", nargs="+",
+                           help="documents (PDF, DOCX, DOC, or images: JPG, PNG, TIFF …), directories holding them, "
+                                "or web addresses (http, https)")
+    parse_cmd.add_argument("-r", "--recursive", action="store_true",
+                           help="take the documents of subdirectories too; the output keeps their relative paths")
     parse_cmd.add_argument(
         "-o", "--output", type=Path,
         help="Output directory (default: ./output/<filename>/; with several inputs: the parent, default ./output/)",
@@ -193,12 +196,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_tool_parsers(dev)
 
+    parser.parse_command = parse_cmd  # inputs may come before, between and after options (main)
     return parser
 
 
 def main() -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if argv[:1] == ["parse"] and not ({"-h", "--help"} & set(argv)):
+        # `parserx parse in -r https://… -o out`: inputs between options (argparse wants them together)
+        args = parser.parse_command.parse_intermixed_args(argv[1:])
+        args.command = "parse"
+    else:
+        args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
