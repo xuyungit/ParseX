@@ -96,10 +96,18 @@ document, `parse` says which service cannot work as configured.
 
 | File | Content |
 |---|---|
-| `<name>.md` | The Markdown: headings, paragraphs, tables (GFM, or HTML for merged cells), images each with a short note, formulas as LaTeX, page anchors (`<!-- PAGE n -->`); where something could not be read, a line says so (`> 〔未识别〕第 3 页：…`) |
+| `<name>.md` | The Markdown: headings, paragraphs, tables (GFM, or HTML for merged cells), images (below), formulas as LaTeX, page anchors (`<!-- PAGE n -->`, `<!-- PAGE n scanned -->` for a page the scan engine read); where something could not be read, a line says so (`> 〔未识别〕第 3 页：…`) |
 | `images/` | The images the Markdown links |
 | `<name>.json` (`--report`) | Summary: status (`complete` / `partial` / `failed`), outline, tables, images, what is missing and why, open review items, processing and cost |
 | `<name>.blocks.json` (`--sidecar`) | The block-level record: every block with its sources, decisions and the accounting ledger (development and audit) |
+
+**Images** are handled by what they are for:
+
+- Screenshots, charts, diagrams, photos, seals: the image, then one line `> 图片说明：…` (one or two sentences: the point, what is marked, key numbers); the words in it are not transcribed.
+- Images whose words are their content — invoices, certificates, document pages, pictured tables, formulas: the words are transcribed as text, in a quote opening with `> **〔图片识别〕** <note>　[原图](images/…)`. When the local reading of the image finds nothing the transcription lacks, the image itself is left out (the label line links to it); when something may be missing, or the text has formulas, the image stays above the quote.
+- The comments `<!-- parserx:image-text src="images/…" page=n -->` and `<!-- /parserx:image-text -->` around the quote tell a program which text was read from an image, and from which file.
+
+With `--lang en` these labels are English (`Image description:`, `[Text from image]`, `original`).
 
 A second document with the same name in the same place goes to `<name>-2/`.
 
@@ -148,7 +156,7 @@ uv run parserx dev eval ground_truth/ -o report.md        # scores against groun
 Metrics: character F1 (order-aware edit distance too), table cell F1 (position and merged cells), heading F1
 (text and level) and role F1 (text only), key-content errors, real requests and cost. Frozen runs
 (`eval_runs/`) record outputs, responses and the environment so that comparisons are reproducible offline.
-`parserx dev tool-eval` compares other parsers on the same ground truth (install the `bench` extra).
+`parserx dev tool-eval` runs other parsers (LlamaParse, MinerU, marker/Datalab, PaddleOCR-VL) on the same ground truth, scores them, and shows them side by side ([docs/tool_eval.md](docs/tool_eval.md)).
 
 ## Project structure
 
