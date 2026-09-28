@@ -14,7 +14,8 @@ text layer has, so it is adopted passage by passage.
 3. **Passages**: the native text blocks and the reading's text and formula blocks over the same place form
    passages (a block belongs to a passage when its centre lies in a block of the other reading).  The engine reads
    a paragraph cut by a column break whole, at the place before the cut: the native block after the cut joins the
-   passage when the reading carries its text.  Only passages where the reading has mathematics are considered:
+   passage when the reading carries its text; a piece the text layer cut from a formula (a prime set above the
+   line) lying inside a native block of the passage is the passage's too.  Only passages where the reading has mathematics are considered:
    prose stays the text layer's.
 4. **Choice**, per passage (the selection step's rule: two readings, conservation):
    - the reading carries every letter and digit of the text layer (a character neither the reading nor the
@@ -36,10 +37,12 @@ import pymupdf
 from rapidfuzz import fuzz
 
 from parserx.content import scan
+from parserx.content.latex import characters
 from parserx.content.text import join_wrapped
 from parserx.content.select import ACTOR as SELECT_ACTOR, renumber
 from parserx.ir import ids
 from parserx.ir.anchor import PdfAnchor
+from parserx.ir.base import BBox
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, RelationKind, TaskKind
@@ -211,7 +214,25 @@ def _passages(state: DocumentState, n: int, reading: list[Block]) -> list[tuple[
         groups.setdefault(find(len(natives) + j), ([], []))[1].append(b)
     passages = [(native_ids, blocks) for native_ids, blocks in groups.values()
                 if native_ids and blocks and any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in blocks)]
-    return _continued(sorted(natives, key=lambda b: b.order), passages)
+    return _enclosed(natives, _continued(sorted(natives, key=lambda b: b.order), passages))
+
+
+def _enclosed(natives: list[Block], passages: list[tuple[list[str], list[Block]]]
+              ) -> list[tuple[list[str], list[Block]]]:
+    """*passages* with the pieces the text layer cut from their formulas — a prime or a superscript set above the
+    line, a block of its own lying wholly inside the box of a native block of the passage and under no reading
+    block: they are the passage's (its reading carries them, else the passage is not adopted)."""
+    grouped = {native_id for native_ids, _ in passages for native_id in native_ids}
+    boxes = {b.id: b.anchors[0].bbox for b in natives}
+    for native in natives:
+        if native.id in grouped:
+            continue
+        passage = next((p for p in passages if any(_within(boxes[native.id], boxes[m]) for m in p[0] if m in boxes)),
+                       None)
+        if passage is not None:
+            passage[0].append(native.id)
+            grouped.add(native.id)
+    return passages
 
 
 def _continued(natives: list[Block], passages: list[tuple[list[str], list[Block]]]
@@ -237,7 +258,7 @@ def _carries(passage: tuple[list[str], list[Block]], natives: list[Block], nativ
     own = normalize(native.text or "")
     if len(own) < CARRIED:
         return False
-    reading = normalize(_symbols("\n".join(b.text or "" for b in passage[1])))
+    reading = normalize(characters("\n".join(b.text or "" for b in passage[1])))
     layer = normalize("\n".join(b.text or "" for b in natives if b.id in passage[0]))
     surplus = Counter(reading) - Counter(layer)
     return not Counter(own) - surplus and fuzz.partial_ratio(own, reading) >= CARRIED_MATCH
@@ -248,7 +269,7 @@ def _lost(state: DocumentState, n: int, natives: list[str], blocks: dict, native
     (the text layer holds them exactly; both readings may take a superscript l for 1); another character counts
     when the local page reading also sees it — one no one else sees is a mis-mapped glyph (an overline drawn with
     a CJK character)."""
-    missing = Counter(normalize(native_text)) - Counter(normalize(_symbols(other)))
+    missing = Counter(normalize(native_text)) - Counter(normalize(characters(other)))
     if not missing:
         return False
     if any(_EXACT.fullmatch(ch) for ch in missing):
@@ -341,6 +362,22 @@ def _keep(natives: list[Block], candidate: str) -> None:
                                                 "text layer has; the text layer stays, the reading is evidence (Q70)"))
 
 
+def passage_of(state: DocumentState, block_id: str) -> list[Block]:
+    """The native blocks of the kept passage *block_id* stands for (the block holding its reading), in order; empty
+    when it stands for none.  The text layer may cut one formula into many blocks: a look at the passage is at all
+    of them."""
+    members = [b for b in state.blocks if b.status not in HIDDEN and any(
+        d.choice == DONE and d.evidence.get("by") == "kept" and d.refs == [block_id] for d in b.decisions)]
+    return sorted(members, key=lambda b: b.order) if len(members) > 1 else []
+
+
+def passage_box(state: DocumentState, block: Block) -> BBox | None:
+    """The box of the passage *block* stands for, on its page (see ``passage_of``), or None."""
+    members = [b for b in passage_of(state, block.id) if isinstance(b.anchors[0], PdfAnchor)
+               and b.anchors[0].page == block.anchors[0].page]
+    return _union([b.anchors[0].bbox for b in members]) if members else None
+
+
 def pending_candidates(state: DocumentState) -> list[tuple[str, str]]:
     """(block id, candidate text) of passages kept with a formula reading not adopted: review items."""
     out = []
@@ -353,44 +390,37 @@ def pending_candidates(state: DocumentState) -> list[tuple[str, str]]:
     return out
 
 
-_LETTERS = {name: chr(code) for name, code in (
-    ("alpha", 0x3B1), ("beta", 0x3B2), ("gamma", 0x3B3), ("delta", 0x3B4), ("epsilon", 0x3B5), ("varepsilon", 0x3B5),
-    ("zeta", 0x3B6), ("eta", 0x3B7), ("theta", 0x3B8), ("vartheta", 0x3D1), ("iota", 0x3B9), ("kappa", 0x3BA),
-    ("lambda", 0x3BB), ("mu", 0x3BC), ("nu", 0x3BD), ("xi", 0x3BE), ("pi", 0x3C0), ("rho", 0x3C1), ("sigma", 0x3C3),
-    ("tau", 0x3C4), ("upsilon", 0x3C5), ("phi", 0x3C6), ("varphi", 0x3C6), ("chi", 0x3C7), ("psi", 0x3C8),
-    ("omega", 0x3C9), ("Gamma", 0x393), ("Delta", 0x394), ("Theta", 0x398), ("Lambda", 0x39B), ("Xi", 0x39E),
-    ("Pi", 0x3A0), ("Sigma", 0x3A3), ("Phi", 0x3A6), ("Psi", 0x3A8), ("Omega", 0x3A9), ("Upsilon", 0x3A5),
-    ("varpi", 0x3D6), ("varrho", 0x3F1), ("varsigma", 0x3C2),
-    # letter-like symbols (ℓ is the letter l, NFKC)
-    ("ell", 0x2113), ("imath", 0x131), ("jmath", 0x237), ("hbar", 0x127), ("aleph", 0x2135), ("Re", 0x211C),
-    ("Im", 0x2111))}
-_COMMAND = re.compile(r"\\([A-Za-z]+)")
 _EXACT = re.compile(r"[a-z0-9\u03b1-\u03c9]")  # normalized: lower case Latin, digits, Greek
-_ENVIRONMENT = re.compile(r"\\begin\{(?:array|tabular)\}\{[^{}]*\}|\\(?:begin|end)\{[^{}]*\}")
 
 
-def _symbols(latex: str) -> str:
-    """LaTeX's characters, for comparing them with the text layer's: letter commands (Greek, ``\\ell`` …) as their
-    letters (LaTeX's own definitions); other command names, environments and an array's column spec are markup, not characters
-    (``\\left`` carries no l) — the arguments stay."""
-    return _COMMAND.sub(lambda m: _LETTERS.get(m.group(1), ""), _ENVIRONMENT.sub(" ", latex))
+def disagreement(native_text: str, other: str) -> tuple[Counter, Counter]:
+    """The letters and digits the text layer has and *other* lacks, and those *other* adds."""
+    ours, theirs = Counter(normalize(native_text)), Counter(normalize(characters(other)))
+    return ours - theirs, theirs - ours
+
+
+def listed(counts: Counter, sep: str = "、") -> str:
+    return sep.join(f"{ch}×{k}" for ch, k in counts.most_common(DIFFERENCES))
 
 
 def _differences(native_text: str, other: str) -> str:
     """The letters and digits the two readings do not share, told to the editor: it checks each against the image
     (the page reading takes a superscript l for 1)."""
-    ours, theirs = Counter(normalize(native_text)), Counter(normalize(_symbols(other)))
-    lacks, adds = ours - theirs, theirs - ours
+    lacks, adds = disagreement(native_text, other)
     if not lacks:
         return ""
-    listed = lambda c: "、".join(f"{ch}×{k}" for ch, k in c.most_common(DIFFERENCES)) or "无"
-    return (f"\n\nB 与 A 的字母和数字不一致：A 有、B 没有的是 {listed(lacks)}；B 有、A 没有的是 {listed(adds)}。"
+    return (f"\n\nB 与 A 的字母和数字不一致：A 有、B 没有的是 {listed(lacks)}；B 有、A 没有的是 {listed(adds) or '无'}。"
             "请看图逐个核对这些字符，按图改正。")
 
 
 def _touch(a, b) -> bool:
     """One box's centre lies in the other (with the measurement tolerance)."""
     return _centre_in(a, b) or _centre_in(b, a)
+
+
+def _within(inner, outer) -> bool:
+    return (outer[0] - PAD <= inner[0] and outer[1] - PAD <= inner[1] and inner[2] <= outer[2] + PAD
+            and inner[3] <= outer[3] + PAD)
 
 
 def _centre_in(inner, outer) -> bool:

@@ -36,6 +36,7 @@ from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
 from parserx.content.continuation import ACTOR as CONTINUATION_ACTOR, propose_continuations
+from parserx.content.equation_numbers import number_equations
 from parserx.content.furniture import mark_scan_furniture
 from parserx.content.line_breaks import restore_line_breaks
 from parserx.content.lists import mark_list_items
@@ -139,6 +140,11 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             failures += problems
             steps.append(StepSummary(step="formulas", detail=f"{len(pages)} pages read; passages: " + ", ".join(
                 f"{k} {v}" for k, v in sorted(counts.items()))))
+
+    with ctx.ws.txn("tool:process:equation_numbers") as state:  # "(12)" at the right of a formula's line
+        numbered = number_equations(state)
+    if numbered:
+        steps.append(StepSummary(step="equation_numbers", detail=f"{len(numbered)} formulas numbered"))
 
     if ctx.config.runtime.describe_figures and req.describe_figures:
         state = ctx.ws.load()

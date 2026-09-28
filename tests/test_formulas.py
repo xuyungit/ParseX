@@ -9,7 +9,7 @@ import pymupdf
 from parserx.layout.detector import Region
 from parserx.tools import call_tool, workspace_init
 from parserx.reading.compare import normalize
-from parserx.tools.formulas import _symbols
+from parserx.content.latex import characters as _symbols
 from parserx.tools.views import unresolved_items
 from parserx.workspace import Workspace
 from tests.test_tools_contract import _config, _context
@@ -166,3 +166,18 @@ def test_a_paragraph_the_engine_joins_across_the_column_break_is_not_repeated(tm
     ], pdf=_columns_pdf, formula=(70, 768, 140, 784))
     assert "Here $ E=mc^{2} $ gives the energy which the second column goes on to explain fully." in md
     assert md.count("the second column goes on to explain fully") == 1
+
+
+def test_a_piece_the_text_layer_cut_from_a_formula_goes_with_its_passage():
+    from parserx.ir.anchor import PdfAnchor
+    from parserx.ir.block import Block
+    from parserx.ir.enums import BlockKind
+    from parserx.tools.formulas import _enclosed
+
+    def block(bid, box):
+        return Block(id=bid, kind=BlockKind.TEXT, order=0, anchors=[PdfAnchor(page=1, bbox=box, coord_space="page_pt")])
+
+    formula, prime, number = block("f", (307, 350, 520, 719)), block("p", (348, 351, 356, 357)), \
+        block("n", (500, 417, 543, 428))
+    passages = _enclosed([formula, prime, number], [(["f"], [block("r", (304, 358, 520, 719))])])
+    assert passages[0][0] == ["f", "p"]  # the prime above the line; the number at the right is not inside

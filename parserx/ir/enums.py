@@ -42,6 +42,7 @@ class RelationKind(StrEnum):
     CONTAINS = "contains"  # src holds dst: text read inside an image (Q42)
     CONTINUES = "continues"  # dst continues src: a paragraph or table broken by a page (``join``)
     DUPLICATE_OF = "duplicate_of"  # src repeats dst (formula readings, Q70): left out of the output
+    NUMBERS = "numbers"  # src is the equation number of dst, a display formula: rendered as its \tag
 
 
 class DecisionStage(StrEnum):

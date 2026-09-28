@@ -39,6 +39,7 @@ from parserx.tools import evidence as evidence_store
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.describe_figure import perceive as describe
 from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
+from parserx.tools.formulas import passage_box
 from parserx.tools.imaging import image_crop, page_render, region_crop, seam_image, write_once
 from parserx.tables.grid import TableGrid
 from parserx.tools.views import ImageRef, TableView, table_view
@@ -484,7 +485,8 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
     if state.format != "pdf" or not isinstance(first, PdfAnchor):
         return None, _WORD
     page = next(p for p in state.pages if p.n == first.page)
-    crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page, first.bbox, dpi, pad)
+    box = passage_box(state, block) or first.bbox  # a formula the text layer cut into blocks: all of it
+    crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page, box, dpi, pad)
     path = renders / f"{crop.id}.png"
     write_once(path, data)
     return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,

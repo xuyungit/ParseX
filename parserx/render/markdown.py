@@ -27,6 +27,7 @@ from parserx.content.lists import bulleted, strip_bullet
 from parserx.render.emphasis import emphasize
 from parserx.content.text import escape_strikethrough, join_wrapped, literal_breaks
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
+from parserx.content.equation_numbers import number_of, tagged
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
@@ -57,12 +58,15 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
               for figure, blocks in inside.items()}
     transcribed = _transcription_starts(state)
     scanned = _scanned_pages(state)
+    numbers = number_of(state)  # a display formula's number, merged into it: its \tag
     by_unit: dict[int | None, list[Block]] = {}
     for block in ordered(state):
         if block.id in skipped:
             continue
         if block.id in joined:
             block = block.model_copy(update={"text": "\n".join(b.text for b in joined[block.id])})
+        if block.id in numbers:
+            block = block.model_copy(update={"text": tagged(block.text, numbers[block.id])})
         by_unit.setdefault(block_unit(state, block), []).append(block)
     parts: list[str] = []
     section = 1

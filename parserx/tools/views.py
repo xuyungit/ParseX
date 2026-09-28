@@ -203,14 +203,21 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
             detail=f"{len(segments)} {what} are not seen on the page image where the block sits; "
                    "compare with the image"))
-    from parserx.tools.formulas import pending_candidates
+    from parserx.tools.formulas import disagreement, listed, passage_of, pending_candidates
 
+    by_id = {b.id: b for b in state.blocks}
     for block_id, candidate in pending_candidates(state):  # the page reading has this passage with formulas (Q70)
+        members = passage_of(state, block_id)
+        lacks, adds = disagreement("\n".join(b.text or "" for b in members or [by_id[block_id]]), candidate)
+        span = (f"the passage is {len(members)} blocks of the text layer ({members[0].id} … {members[-1].id}), "
+                f"a look at {block_id} shows all of it; " if members else "")
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.FORMULA_CANDIDATE, quotes=_quotes([candidate]),
             detail="the page reading writes this passage with its formulas as LaTeX, but it (and the editor's "
-                   "version) lacks characters the text layer has; look at the image: if the reading is right, correct "
-                   "the block with it (keep every character the image shows), else close the item"))
+                   f"version) lacks characters the text layer has ({listed(lacks, ', ')}; it has "
+                   f"{listed(adds, ', ') or 'nothing'} more — a reading can take a superscript l for 1); {span}"
+                   "look at the image: if the reading is right, correct the block with it (keep every character "
+                   "the image shows), else close the item"))
     for block_id in figures_without_content(state):  # an image shown with nothing a reader who cannot see it gets
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
