@@ -228,8 +228,10 @@ def test_other_models_keys_stay_behind(tmp_path):
                    "other": {"endpoint": "https://o", "model": "o", "api_key": "sk-SECRET-OTHER"}},
         "services": {"vlm": {"use": "used"}}})
     text, secrets = agent_config(config, tmp_path)
-    assert set(secrets.values()) == {"sk-SECRET-USED"} and "sk-SECRET-OTHER" not in text and "models" not in text
     import yaml
+
+    assert set(secrets.values()) == {"sk-SECRET-USED"} and "sk-SECRET-OTHER" not in text
+    assert "models" not in yaml.safe_load(text)
 
     assert ParserXConfig.model_validate(yaml.safe_load(text)).services.vlm.model == "u"  # loads without the entries
 

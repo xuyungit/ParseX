@@ -13,6 +13,8 @@ in the working directory (P2-4 F4).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import hashlib
 import io
 import logging
@@ -55,9 +57,10 @@ class RapidLayoutDetector:
     _engines: dict[tuple[str, float], object] = {}
     _lock = threading.Lock()
 
-    def __init__(self, model: str = "pp_doc_layoutv3", conf_thresh: float = 0.5):
+    def __init__(self, model: str = "pp_doc_layoutv3", conf_thresh: float = 0.5, layout=None):
         self.model = model
         self.conf_thresh = conf_thresh
+        self.layout = layout  # LayoutConfig: where the model file lives (fetched on first use); None: rapid-layout's
         self.name = "layout"
         self.version = f"{model}@rapid-layout-{metadata.version('rapid-layout')}"
 
@@ -71,7 +74,9 @@ class RapidLayoutDetector:
                 try:
                     from rapid_layout import ModelType, RapidLayout
 
-                    self._engines[key] = RapidLayout(model_type=ModelType(self.model), conf_thresh=self.conf_thresh)
+                    where = {"model_dir_or_path": str(ensure_model(self.layout))} if self.layout is not None else {}
+                    self._engines[key] = RapidLayout(model_type=ModelType(self.model), conf_thresh=self.conf_thresh,
+                                                     **where)
                 finally:
                     logging.disable(previous)
                 for name in list(logging.root.manager.loggerDict):
@@ -97,3 +102,56 @@ def detect_cached(detector: Detector, png: bytes, cache: ResponseCache | None) -
     if cache is not None:
         cache.put_derived("layout", key, [{"bbox": list(r.bbox), "label": r.label, "score": r.score} for r in regions])
     return regions
+
+
+# ── the model file (release R5, Q111) ───────────────────────────────────
+
+
+def model_file(layout) -> Path:
+    """Where the layout model's ONNX file is expected (``LayoutConfig``): a path placed by hand, or the model cache."""
+    if layout.model_path:
+        return Path(layout.model_path).expanduser()
+    return Path(layout.model_dir).expanduser() / f"{layout.model}.onnx"
+
+
+def model_source(model: str) -> tuple[str, str | None]:
+    """The URL and SHA-256 rapid-layout publishes for *model*."""
+    import yaml
+    from importlib.resources import files
+
+    table = yaml.safe_load((files("rapid_layout") / "configs" / "default_models.yaml").read_text(encoding="utf-8"))
+    entry = table[model]
+    return entry["model_dir_or_path"], entry.get("SHA256")
+
+
+def ensure_model(layout, progress=None) -> Path:
+    """The model file, downloaded first when it is not there (to a temporary name, checked, then renamed).
+    *progress* is called with (bytes so far, total bytes or None)."""
+    import hashlib
+    import requests
+
+    path = model_file(layout)
+    if path.is_file():
+        return path
+    if layout.model_path:
+        raise FileNotFoundError(f"layout.model_path {path} does not exist")
+    url, sha256 = model_source(layout.model)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".part")
+    digest = hashlib.sha256()
+    with requests.get(url, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        total = int(response.headers.get("content-length") or 0) or None
+        done = 0
+        with open(partial, "wb") as out:
+            for chunk in response.iter_content(1 << 20):
+                out.write(chunk)
+                digest.update(chunk)
+                done += len(chunk)
+                if progress is not None:
+                    progress(done, total)
+    if sha256 and digest.hexdigest() != sha256.lower():
+        partial.unlink(missing_ok=True)
+        raise RuntimeError(f"the downloaded layout model does not match its SHA-256 ({url})")
+    partial.replace(path)
+    return path

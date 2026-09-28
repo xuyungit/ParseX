@@ -167,9 +167,17 @@ def build_parser() -> argparse.ArgumentParser:
     tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx init
+    check_cmd = sub.add_parser("check", help="Check the setup: scan engine, service model, agent, LibreOffice, "
+                                             "layout model")
+    from parserx.check import add_arguments as _check_arguments
+
+    _check_arguments(check_cmd)
+
     init_cmd = sub.add_parser("init", help="Write the personal config (~/.config/parserx/config.yaml): keys and model choices")
     init_cmd.add_argument("--force", action="store_true",
                           help="Write a new personal config even if one exists (the old one kept as config.yaml.bak)")
+    init_cmd.add_argument("--no-download", action="store_true",
+                          help="do not fetch the layout model now (it is fetched on first use)")
 
     # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
     from parserx.tools.cli import add_parsers as _add_tool_parsers
@@ -198,8 +206,12 @@ def main() -> None:
 
     if args.command == "parse":
         sys.exit(_cmd_parse(args))
+    if args.command == "check":
+        from parserx.check import run as _check
+
+        sys.exit(_check(args))
     if args.command == "init":
-        _cmd_init(force=args.force)
+        _cmd_init(force=args.force, download=not args.no_download)
     elif args.command == "eval":
         _cmd_eval(args)
     elif args.command == "compare":
@@ -240,7 +252,7 @@ def _old_format(path: Path) -> bool:
     return any(k in data for k in _RETIRED) or "llm" in (data.get("services") or {}) or bool(vlm and "use" not in vlm)
 
 
-def _cmd_init(force: bool = False, config_dir: Path | None = None) -> None:
+def _cmd_init(force: bool = False, config_dir: Path | None = None, download: bool = False) -> None:
     """Write the personal config (Q107, Q109): keys and choices over the built-in defaults.  An old config (v1, or
     one that spells out the services) is kept as ``config.yaml.v1.bak``; the values of an old ``.env`` beside it
     are carried over once, and ``.env`` is not read any more."""
@@ -251,6 +263,11 @@ def _cmd_init(force: bool = False, config_dir: Path | None = None) -> None:
     config_dir = config_dir or _config_dir()
     config_path, env_path = config_dir / "config.yaml", config_dir / ".env"
     config_dir.mkdir(parents=True, exist_ok=True)
+    if download:
+        from parserx.check import fetch_layout_model
+        from parserx.config.schema import load_config
+
+        fetch_layout_model(load_config())
     if config_path.exists():
         old = _old_format(config_path)
         if not (old or force):

@@ -83,7 +83,7 @@ class ToolContext:
     def _new_detector(self):
         from parserx.layout.detector import RapidLayoutDetector
 
-        return RapidLayoutDetector(self.config.layout.model, self.config.layout.conf_thresh)
+        return RapidLayoutDetector(self.config.layout.model, self.config.layout.conf_thresh, layout=self.config.layout)
 
     def detector(self):
         if getattr(self, "_detector", None) is None:

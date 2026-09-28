@@ -79,7 +79,7 @@ def _page_layout(config: ParserXConfig):
     from parserx.cache.store import open_cache
     from parserx.layout.detector import RapidLayoutDetector, detect_cached
 
-    detector = RapidLayoutDetector(config.layout.model, config.layout.conf_thresh)
+    detector = RapidLayoutDetector(config.layout.model, config.layout.conf_thresh, layout=config.layout)
     cache = open_cache(config.cache)
     dpi = config.layout.page_dpi
 

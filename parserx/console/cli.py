@@ -52,6 +52,12 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
         return 2
     if loaded.source in ("defaults", "missing"):
         reporter(Notice("config_defaults", "warning"))
+    if config.runtime.layout_shadow:  # the layout model, fetched before the first document when missing (R5)
+        from parserx.check import fetch_layout_model
+        from parserx.layout.detector import model_file
+
+        if not model_file(config.layout).is_file():
+            fetch_layout_model(config, lang=args.lang)
     outcomes, results, failed = [], [], 0
     started = time.monotonic()
     try:

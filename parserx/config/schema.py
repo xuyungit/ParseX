@@ -155,6 +155,10 @@ class LayoutConfig(BaseModel):
     """Local layout detector (guide §6.2). Phase 1 runs it in shadow: it records, it does not decide."""
 
     model: str = "pp_doc_layoutv3"
+    # where its ONNX file lives (Q111): model_path names a file placed by hand; otherwise <model_dir>/<model>.onnx,
+    # downloaded there on first use from the source rapid-layout publishes (checked against its SHA-256)
+    model_path: str | None = None
+    model_dir: str = "~/.cache/parserx/models"
     conf_thresh: float = 0.5
     page_dpi: int = 100  # page renders for detection (A4 ≈ 827 × 1169 px)
     check_tables: bool = True  # a native ruled grid is read as a table only where the detector sees one (Phase 3 D3)
