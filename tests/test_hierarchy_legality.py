@@ -284,6 +284,25 @@ def test_split_divides_a_block_at_one_of_its_line_breaks():
     assert _rules([{"op": "split", "block": "t", "at_break": 1, "reason": "r"}]) == [(0, "kind_not_structural")]
 
 
+def test_a_part_split_from_text_read_in_an_image_stays_in_the_image():
+    # the text after the break is still the figure's transcription (IO6-2)
+    from parserx.ir import ids
+    from parserx.ir.enums import RelationKind
+
+    state = _ledgered_state()
+    p2 = next(b for b in state.blocks if b.id == "p2")
+    p2.text = "营业执照\n统一社会信用代码"
+    figure = Block(id="fig", kind=BlockKind.FIGURE, order=-1, anchors=list(p2.anchors))
+    state.blocks.append(figure)
+    state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTAINS, "fig", "p2"), kind=RelationKind.CONTAINS,
+                                    src="fig", dst="p2"))
+    outcome = apply_changes(state, _changes({"op": "split", "block": "p2", "at_break": 1, "reason": "两行"}),
+                            actor="agent")
+    assert outcome.accepted == [0]
+    new = next(b for b in state.blocks if b.id.startswith("p2-s"))
+    assert {r.dst for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == "fig"} == {"p2", new.id}
+
+
 def test_numeral_classes_are_different_numbering_styles():
     # 一、 > （一） > 1. > （1）: the numerals' class tells the styles apart (P4-3)
     assert numbering_signature("一、总则") == "C、" and numbering_signature("1、目的") == "N、"

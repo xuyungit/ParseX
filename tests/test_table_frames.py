@@ -94,3 +94,24 @@ def test_a_table_read_in_a_drawing_is_its_labels():
 def test_a_title_drawn_at_the_top_of_a_table_is_a_paragraph_and_a_closing_row_stays():
     table = _grid([[("（二）考核指标", 2)], [("指标", 1), ("数值", 1)], [("量程", 1), ("1000KN", 1)], [("注：实测", 2)]])
     assert _shapes(frame_parts(table)) == ["（二）考核指标", "3x2"]
+
+
+def test_parts_cut_from_a_table_read_in_an_image_stay_in_the_image():
+    # a frame the scan engine read inside a figure: every part is still the figure's text (IO6-2)
+    from parserx.ir import ids
+    from parserx.ir.enums import RelationKind
+    from parserx.ir.relation import Relation
+
+    frame = _grid([[("（一）经费来源", 4)], [("来源", 2), ("金额", 2)], [("财政", 2), ("100", 2)],
+                   [("（二）经费支出", 4)], [("科目", 1), ("财政", 1), ("自筹", 1), ("小计", 1)]])
+    anchor = PdfAnchor(page=1, bbox=(50, 100, 550, 400), coord_space="page_pt")
+    figure = Block(id="b-p001-0001", kind=BlockKind.FIGURE, order=0, anchors=[anchor])
+    table = Block(id="b-p001-0001-r001", kind=BlockKind.TABLE, order=1, anchors=[anchor], cells=frame)
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status=DocumentStatus.IN_PROGRESS,
+                          blocks=[figure, table],
+                          relations=[Relation(id=ids.relation_id(RelationKind.CONTAINS, figure.id, table.id),
+                                              kind=RelationKind.CONTAINS, src=figure.id, dst=table.id)])
+    split_frames(state)
+    contained = [r.dst for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == figure.id]
+    assert sorted(contained) == sorted(b.id for b in state.blocks if b.id != figure.id)
+    assert len({r.id for r in state.relations}) == len(state.relations)

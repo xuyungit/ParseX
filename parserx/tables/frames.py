@@ -26,7 +26,7 @@ from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, TaskKind
 from parserx.ir.observation import Observation
-from parserx.ir.state import DocumentState
+from parserx.ir.state import DocumentState, share_containers
 from parserx.tables.grid import Cell, TableGrid
 from parserx.workspace.queries import HIDDEN, ordered
 
@@ -156,5 +156,6 @@ def _cut(state: DocumentState, block: Block, parts: list[TableGrid | str]) -> No
     at = sequence.index(block)
     sequence[at:at + 1] = [*before, block, *after]
     state.blocks.extend(new)
+    share_containers(state, block.id, [b.id for b in new])
     for order, item in enumerate(sequence):
         item.order = order

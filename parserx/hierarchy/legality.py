@@ -48,7 +48,7 @@ from parserx.ir.decision import Decision
 from parserx.ir.observation import Observation
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.relation import Relation
-from parserx.ir.state import DocumentState
+from parserx.ir.state import DocumentState, share_containers
 from parserx.layout.labels import FURNITURE
 from parserx.tables.merge import merge_candidate, merge_tables, repeats_header, split_problem, split_tables
 from parserx.workspace.queries import HIDDEN, JOINABLE, ordered
@@ -459,6 +459,7 @@ def _split(state: DocumentState, block: Block, at_break: int, reason: str, actor
     sequence = ordered(state)
     sequence.insert(next(i for i, b in enumerate(sequence) if b.id == block.id) + 1, new)
     state.blocks.append(new)
+    share_containers(state, block.id, [new_id])
     for order, item in enumerate(sequence):
         item.order = order
 

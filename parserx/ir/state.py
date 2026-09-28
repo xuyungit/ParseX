@@ -14,7 +14,8 @@ from parserx.ir.anchor import SourceAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.block import Block
-from parserx.ir.enums import DocumentStatus, ImageRoute, PageStatus
+from parserx.ir import ids
+from parserx.ir.enums import DocumentStatus, ImageRoute, PageStatus, RelationKind
 from parserx.ir.evidence import Evidence
 from parserx.ir.relation import Relation
 
@@ -156,6 +157,14 @@ class DocumentState(IRModel):
     stats: Stats = Stats()
     warnings: list[str] = []
     version: int = Field(0, ge=0)  # +1 per committed transaction
+
+
+def share_containers(state: DocumentState, source: str, parts: list[str]) -> None:
+    """Blocks cut from *source* were read where it was: each part is contained by what contains *source* (the
+    picture its text was read in), so it still renders and counts as that picture's text (IO6-2)."""
+    for src in [r.src for r in state.relations if r.kind == RelationKind.CONTAINS and r.dst == source]:
+        state.relations += [Relation(id=ids.relation_id(RelationKind.CONTAINS, src, part), kind=RelationKind.CONTAINS,
+                                     src=src, dst=part) for part in parts]
 
 
 class AccountingSummary(IRModel):
