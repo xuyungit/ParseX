@@ -24,6 +24,7 @@ import re
 from pathlib import PurePosixPath
 
 from parserx.content.lists import bulleted, strip_bullet
+from parserx.render.emphasis import emphasize
 from parserx.content.text import escape_strikethrough, join_wrapped, literal_breaks
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
@@ -231,12 +232,26 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
     if kind == BlockKind.TITLE and block.level is not None:
         return f"{'#' * block.level} {escape_strikethrough(text)}"
+    marks = _marks(block)  # inline bold and underline (R3)
     if bulleted(block):  # a bulleted item: "- " in place of the page's bullet
-        return "- " + escape_strikethrough(strip_bullet(text))
+        body, _ = emphasize(strip_bullet(text), marks)
+        return "- " + escape_strikethrough(body)
     # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart
-    paragraphs = [join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)]
-    return "\n\n".join(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part))
-                       for paragraph in paragraphs for part in literal_breaks(paragraph))
+    out = []
+    for paragraph in (join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)):
+        for part in literal_breaks(paragraph):
+            part, marks = emphasize(part, marks)
+            out.append(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part)))
+    return "\n\n".join(out)
+
+
+def _marks(block: Block) -> list:
+    """The block's inline marks: its chosen reading's, else the first reading that has any (a split or a line
+    break keeps the text, so the source's marks still name its spans)."""
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    if chosen is not None and chosen.marks:
+        return list(chosen.marks)
+    return list(next((o.marks for o in block.observations if o.marks), []))
 
 
 def _style(block: Block):

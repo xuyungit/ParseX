@@ -214,7 +214,10 @@ def test_a_filled_in_blank_is_its_value_and_an_empty_one_stays():
 
     assert fill_in_lines("项目负责人：___ 邹贻军") == "项目负责人：邹贻军"
     assert fill_in_lines("负责人：邹贻军____") == "负责人：邹贻军"
-    assert fill_in_lines(r"项目名称： $ \underline{\text{某型支座研究与应用}} $") == "项目名称： 某型支座研究与应用"
+    assert fill_in_lines(r"项目名称： $ \underline{\text{某型支座研究与应用}} $") == "项目名称：某型支座研究与应用"
+    from parserx.content.scan import filled_in
+
+    assert [(m.kind, m.text) for m in filled_in("项目负责人：___ 邹贻军")[1]] == [("underline", "邹贻军")]  # R3
     assert fill_in_lines("<td>负责人：___ 张三</td>") == "<td>负责人：张三</td>"
     for kept in ("日期：______", "签字：____ 年 月 日", "var_name = a__b", "$a_{1}$"):
         assert fill_in_lines(kept) == kept

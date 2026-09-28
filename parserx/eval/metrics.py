@@ -17,6 +17,7 @@ from typing import Iterable
 from rapidfuzz.distance import LCSseq, Levenshtein
 
 from parserx.eval.key_content import KeyContentMetrics, compute_key_content_errors
+from parserx.eval.formatting import FormatMetrics, compute_format_metrics
 from parserx.eval.normalize import canonicalize, char_sequence
 from parserx.eval.order import OrderMetrics, compute_order_metrics
 from parserx.eval.tables import TableMetrics, compute_table_metrics
@@ -24,9 +25,11 @@ from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.3"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.4"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 # 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
+# 2.4 (2026-09-28, R3): inline emphasis (**, <u>, <b>, <strong>) is not text: dropped from both sides before the
+#     text and table metrics; bold and underline spans are scored apart (``eval/formatting.py``, report only)
 
 __all__ = [
     "METRIC_VERSION",
@@ -128,6 +131,7 @@ class EvalResult:
     cost: CostMetrics = field(default_factory=CostMetrics)
     warnings: list[str] = field(default_factory=list)
     residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
+    formatting: FormatMetrics = field(default_factory=FormatMetrics)  # bold and underline spans (report only)
     outline: bool = True  # heading scores count in averages and checks (``eval/outline.py``, Q79)
 
 
@@ -381,6 +385,7 @@ def evaluate_markdown(
         cost=cost or CostMetrics(),
         warnings=list(warnings or []),
         residuals=compute_residual_diagnostics(output_md, expected_md),
+        formatting=compute_format_metrics(output_md, expected_md),
     )
 
 

@@ -44,6 +44,9 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
 _TILDE_ESCAPE_RE = re.compile(r"\\~")  # the renderer writes a tilde that could pair into strikethrough as \~
+# inline emphasis is formatting, not text (R3, metric 2.4): scored apart (``eval/formatting.py``)
+_EMPHASIS_RE = re.compile(r"\*\*|</?(?:u|b|strong|em|i|ins)>", re.IGNORECASE)
+_STAR_ESCAPE_RE = re.compile(r"\\\*")
 _NON_WORD_RE = re.compile(r"[\W_]+")
 
 
@@ -55,6 +58,7 @@ class CanonicalDoc:
 
 def canonicalize(markdown: str) -> CanonicalDoc:
     text = _IMAGE_TEXT_RE.sub(_unquote_image_text, _TILDE_ESCAPE_RE.sub("~", markdown))
+    text = _STAR_ESCAPE_RE.sub("*", _EMPHASIS_RE.sub("", text))
     text = _COMMENT_RE.sub("", text)
     text = _flatten_tables(text)
     text, image_count = _strip_images(text)
@@ -77,7 +81,8 @@ def char_sequence(text: str) -> str:
 
 
 def normalize_cell(text: str) -> str:
-    text = unicodedata.normalize("NFKC", _BR_RE.sub(" ", _TILDE_ESCAPE_RE.sub("~", text)))
+    text = _STAR_ESCAPE_RE.sub("*", _EMPHASIS_RE.sub("", _TILDE_ESCAPE_RE.sub("~", text)))
+    text = unicodedata.normalize("NFKC", _BR_RE.sub(" ", text))
     return _WS_RE.sub("", text).lower()
 
 

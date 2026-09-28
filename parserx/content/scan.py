@@ -27,7 +27,7 @@ from parserx.ir.base import BBox
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
-from parserx.ir.observation import Observation
+from parserx.ir.observation import Mark, Observation
 from parserx.ir.relation import Relation
 from parserx.ir.rotation import onto_page, turned, unturned
 from parserx.ir.state import LedgerEntry, PageState
@@ -183,7 +183,7 @@ def page_blocks(
                                  transform=transform)
         content, pictures = take_pictures(str(entry.get("block_content") or ""))
         grid, status = None, BlockStatus.OK
-        content = fill_in_lines(engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n"))
+        content, marks = filled_in(engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n"))
         if kind == BlockKind.TABLE:
             try:
                 grid = TableGrid.from_html(content)
@@ -194,7 +194,7 @@ def page_blocks(
         obs = Observation(
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=scan.engine_version,
             task=TaskKind.RECOGNIZE, anchor=pixel_anchor, raw_ref=scan.raw_ref, label=label,
-            text=None if grid is not None else content, cells=grid,
+            text=None if grid is not None else content, cells=grid, marks=[] if grid is not None else marks,
             status=ObservationStatus.OK if content.strip() else ObservationStatus.EMPTY,
         )
         anchors: list = [PdfAnchor(page=scan.page, bbox=on_page, coord_space="page_pt")]
@@ -292,8 +292,8 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
             continue
         block_id = f"{figure}-r{offset:03d}"
         # a picture inside it is shown by the image itself: its reference becomes the marker only
-        content = engine_text(take_pictures(str(entry.get("block_content") or ""))[0],
-                              line_break="<br>" if kind == BlockKind.TABLE else "\n")
+        content, marks = filled_in(engine_text(take_pictures(str(entry.get("block_content") or ""))[0],
+                                               line_break="<br>" if kind == BlockKind.TABLE else "\n"))
         grid, status = None, BlockStatus.OK
         if kind == BlockKind.TABLE:
             try:
@@ -304,7 +304,7 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
         obs = Observation(
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=scan.engine_version,
             task=TaskKind.RECOGNIZE, anchor=anchor, raw_ref=scan.raw_ref, label=label,
-            text=None if grid is not None else content, cells=grid,
+            text=None if grid is not None else content, cells=grid, marks=[] if grid is not None else marks,
             status=ObservationStatus.OK if content.strip() else ObservationStatus.EMPTY)
         decisions = [Decision(stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine",
                               reason=f"{ENGINE} region labelled {label!r} inside image {figure}",
@@ -338,21 +338,46 @@ def engine_text(content: str, *, line_break: str = "\n") -> str:
     return "".join(part if i % 2 else part.replace("\\n", line_break) for i, part in enumerate(parts))
 
 
-_UNDERLINED = re.compile(r"\$\s*\\underline\{\s*(?:\\text\{([^{}$\\]*)\}|([^{}$\\]*))\s*\}\s*\$")
+_UNDERLINED = re.compile(r"(?:(?<=：)[ \t]+)?\$\s*\\underline\{\s*(?:\\text\{([^{}$\\]*)\}|([^{}$\\]*))\s*\}\s*\$")
 _LEADING_BLANK = re.compile(r"(?<=[\u4e00-\u9fff][：:])[ \t]*[_＿]{2,}[ \t]*(?=[^\s_＿])")
 _VALUE = re.compile(r".*?[^\W\d_]{2}")  # a word of two letters or more: a value, not a template ("年 月 日")
 _TRAILING_BLANK = re.compile(r"(?<=[：:])([^\n_＿<]*[^\s_＿<])[ \t]*[_＿]{2,}(?=[ \t]*(?:\n|<|$))")
 
 
 def fill_in_lines(content: str) -> str:
-    """A form's filled-in blank as the value it holds (P2): the engine writes the line under a filled-in field as
-    underscores next to the value ("项目负责人：___ 邹贻军") or as LaTeX ("$\\underline{\\text{桥梁…}}$"); either is
-    drawing, not text.  An underline around plain text becomes the text; underscores between a label's colon and
-    its value, or after the value to the line's end, are dropped.  A blank left empty ("日期：____"), or followed only
-by a template's single characters ("签字：____ 年 月 日"), stays."""
-    content = _UNDERLINED.sub(lambda m: (m.group(1) if m.group(1) is not None else m.group(2)).strip(), content)
-    content = _LEADING_BLANK.sub(lambda m: "" if _VALUE.match(_line_after(content, m.end())) else m.group(0), content)
-    return _TRAILING_BLANK.sub(r"\1", content)
+    """The text of ``filled_in`` (the value, without the drawn line)."""
+    return filled_in(content)[0]
+
+
+def filled_in(content: str) -> tuple[str, list[Mark]]:
+    """A form's filled-in blank as the value it holds, underlined (P2, R3): the engine writes the line under a
+    filled-in field as underscores next to the value ("项目负责人：___ 邹贻军") or as LaTeX
+    ("$\\underline{\\text{桥梁…}}$"); either is the drawn line, not text.  The value becomes plain text with an
+    underline mark (rendered ``<u>…</u>``).  A blank left empty ("日期：____"), or followed only by a template's single
+    characters ("签字：____ 年 月 日"), stays as written."""
+    marks: list[Mark] = []
+
+    def underlined(match: re.Match) -> str:
+        value = (match.group(1) if match.group(1) is not None else match.group(2)).strip()
+        if value:
+            marks.append(Mark(kind="underline", text=value))
+        return value
+
+    def leading(match: re.Match) -> str:
+        rest = _line_after(content, match.end())
+        if not _VALUE.match(rest):
+            return match.group(0)
+        marks.append(Mark(kind="underline", text=rest.strip()))
+        return ""
+
+    def trailing(match: re.Match) -> str:
+        marks.append(Mark(kind="underline", text=match.group(1).strip()))
+        return match.group(1)
+
+    content = _UNDERLINED.sub(underlined, content)
+    content = _LEADING_BLANK.sub(leading, content)
+    content = _TRAILING_BLANK.sub(trailing, content)
+    return content, marks
 
 
 def _line_after(text: str, at: int) -> str:

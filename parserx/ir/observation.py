@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import model_validator
 
 from parserx.ir.anchor import SourceAnchor
@@ -30,6 +32,15 @@ class TextStyle(IRModel):
     monospace: str | None = None  # PDF: the monospaced face the block's measurable lines are set in (code, P4-6)
 
 
+class Mark(IRModel):
+    """Inline emphasis of a span of an observation's text (R3): the text itself stays plain, so numbering, titles,
+    comparisons and the agent's edits read it unchanged; rendering finds the span and writes ``**…**`` or
+    ``<u>…</u>`` around it."""
+
+    kind: Literal["bold", "underline"]
+    text: str  # the span as it reads in the text (spacing may differ: it is found ignoring whitespace)
+
+
 class Observation(IRModel):
     id: str
     engine: str  # "native_pdf" | "docx" | "paddleocr" | "vlm" | "layout"
@@ -41,6 +52,7 @@ class Observation(IRModel):
     text: str | None = None
     cells: TableGrid | None = None
     style: TextStyle | None = None
+    marks: list[Mark] = []  # inline bold and underline spans, in reading order (R3)
     det_confidence: float | None = None
     rec_confidence: float | None = None  # None means unknown, not trusted (guide §4.2)
     status: ObservationStatus

@@ -62,7 +62,7 @@ from parserx.ir.asset import Asset
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, TaskKind
-from parserx.ir.observation import Numbering, Observation, TextStyle
+from parserx.ir.observation import Mark, Numbering, Observation, TextStyle
 from parserx.ir.state import LedgerEntry, Missing, PageState
 from parserx.layout import labels
 from parserx.tables.grid import Cell, TableGrid
@@ -380,6 +380,8 @@ class _Para:
     # chars, size, bold, rStyle, (East Asian, ASCII) faces, mostly CJK
     runs: list[tuple[int, float | None, bool | None, str | None, tuple[str | None, str | None], bool]] = \
         field(default_factory=list)
+    # per run: text, direct bold, direct underline, rStyle — for inline emphasis (R3)
+    emphasis: list[tuple[str, bool | None, bool, str | None]] = field(default_factory=list)
     breaks: int = 0  # explicit page breaks inside the paragraph
     inserted: int = 0  # tracked insertions / move destinations read as content
     fields: list[str] = field(default_factory=list)  # field stack: "instr" | "result"
@@ -439,6 +441,9 @@ def _run(r, para: _Para, path: str) -> None:
         text = "".join(para.parts)[len(before):]
         cjk = sum(1 for ch in text if unicodedata.east_asian_width(ch) in "WF")
         para.runs.append((added, size, bold, style, faces, cjk * 2 > len(text.strip() or text)))
+        underline = rpr is not None and rpr.find(_w("u")) is not None \
+            and (_attr(rpr.find(_w("u")), "val") or "single") != "none"
+        para.emphasis.append((text, bold, underline, style))
 
 
 def _run_children(node, para: _Para, path: str) -> None:
@@ -646,6 +651,7 @@ class _Reader:
         para = _read_paragraph(p, path)
         self.revisions["inserted"] += para.inserted
         style, prefix = self._style(ppr, para)
+        marks = self._marks(ppr, para)
         mark_deleted = ppr is not None and ppr.find(f"{_w('rPr')}/{_w('del')}") is not None
         for index, raw in enumerate(para.parts):
             if index:
@@ -659,13 +665,13 @@ class _Reader:
                 chars = len("".join(raw.split()))
                 self.carry = (carried + raw, items + ([(path, chars)] if chars else []))
                 continue
-            self._text_block(raw, path, style)
+            self._text_block(raw, path, style, marks)
         self._pieces(para.pieces, path)
         if ppr is not None and ppr.find(_w("sectPr")) is not None:
             self._flush_carry(path)
             self._new_segment("section_break")
 
-    def _text_block(self, raw: str, path: str, style: TextStyle | None) -> None:
+    def _text_block(self, raw: str, path: str, style: TextStyle | None, marks: list[Mark] | None = None) -> None:
         carried, items = self.carry or ("", [])
         self.carry = None
         text = _clean(carried + raw)
@@ -674,7 +680,8 @@ class _Reader:
         block_id = self._block_id()
         anchor = self._anchor(path)
         obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
-                          task=TaskKind.EXTRACT, anchor=anchor, text=text, style=style, status=ObservationStatus.OK)
+                          task=TaskKind.EXTRACT, anchor=anchor, text=text, style=style, marks=marks or [],
+                          status=ObservationStatus.OK)
         self.ext.blocks.append(Block(
             id=block_id, kind=labels.to_kind(ENGINE, "paragraph"), order=len(self.ext.blocks), anchors=[anchor],
             observations=[obs], chosen_observation=obs.id, text=text, decisions=[_source()]))
@@ -747,6 +754,36 @@ class _Reader:
             style_name=self.styles.styles[sid].name if sid in self.styles.styles else None,
             outline_level=outline, numbering=numbering,
         ), prefix
+
+    def _marks(self, ppr, para: _Para) -> list[Mark]:
+        """Inline bold and underline of a paragraph (R3): consecutive runs set alike form one span; bold as the
+        paragraph's own style resolves it (run, run style, paragraph style, document default); a run of spaces
+        continues a span and starts none (an underlined blank left empty is no text to mark)."""
+        sid = (_attr(ppr.find(_w("pStyle")), "val") if ppr is not None else None) or self.styles.default_paragraph
+        p_bold = self.styles.first(sid, "bold")
+        marks: list[Mark] = []
+        runs = {"bold": [], "underline": []}
+
+        def flush(kind: str) -> None:
+            text = "".join(runs[kind]).strip()
+            if any(ch.isalnum() for ch in text):
+                marks.append(Mark(kind=kind, text=text))
+            runs[kind] = []
+
+        for text, bold, underline, rstyle in para.emphasis:
+            bold = bold if bold is not None else self.styles.first(rstyle, "bold")
+            bold = bold if bold is not None else (p_bold if p_bold is not None else self.styles.default_bold)
+            for kind, on in (("bold", bool(bold)), ("underline", underline)):
+                if not text.strip():
+                    if runs[kind]:
+                        runs[kind].append(text)
+                elif on:
+                    runs[kind].append(text)
+                else:
+                    flush(kind)
+        flush("bold")
+        flush("underline")
+        return marks
 
     # ── pieces: revisions, images, unsupported ──────────────────────────
 

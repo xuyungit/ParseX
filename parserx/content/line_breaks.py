@@ -217,9 +217,12 @@ def _cells_with_breaks(grid: TableGrid, lines: list[tuple[ReadLine, tuple]]) -> 
 
 def _record(block: Block, *, text: str | None, grid: TableGrid | None, breaks: int) -> None:
     n = sum(1 for o in block.observations if o.engine == "line_breaks") + 1
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
     observation = Observation(id=ids.observation_id(block.id, "line_breaks", n), engine="line_breaks",
                               engine_version=ACTOR, task=TaskKind.SPLIT, anchor=block.anchors[0],
-                              text=text if text is not None else None, cells=grid, status=ObservationStatus.OK)
+                              text=text if text is not None else None, cells=grid, status=ObservationStatus.OK,
+                              style=chosen.style if chosen is not None else None,
+                              marks=list(chosen.marks) if chosen is not None else [])
     block.observations.append(observation)
     block.chosen_observation = observation.id
     if text is not None:

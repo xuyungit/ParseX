@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -59,7 +60,7 @@ from parserx.ir.base import BBox  # noqa: E402
 from parserx.ir.block import Block  # noqa: E402
 from parserx.ir.decision import Decision  # noqa: E402
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
-from parserx.ir.observation import Observation, TextStyle  # noqa: E402
+from parserx.ir.observation import Mark, Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
 from parserx.content.paragraphs import group_lines  # noqa: E402
 from parserx.layout import labels  # noqa: E402
@@ -87,6 +88,7 @@ class _Line:
     item: str = ""
     mono: bool | None = None  # code: set in a monospaced face (``_line_mono``); None: no letter or digit to tell
     mono_face: str = ""  # that face
+    emphasis: tuple[bool, ...] = ()  # per glyph: set in a bold face (R3)
     trailing_space: bool = False  # the text layer ends the line with a space: a renderer's wrap point (code)
 
 
@@ -214,7 +216,8 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
                              chars=len("".join(text.split())), size=size, bold=bold, font=font,
                              direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
                              glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins,
-                             mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip()))
+                             mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip(),
+                             emphasis=tuple(_bold(span) for span in spans for _ in span.get("chars", ()))))
     return out
 
 
@@ -247,6 +250,42 @@ def _line_typography(spans: list[dict], faces: dict[str, bool] | None = None) ->
     for span in spans:
         fallback[key(span)] += len(span.get("chars", []))
     return fallback.most_common(1)[0][0]
+
+
+_BOLD_FACE = re.compile(r"bold|semibold|demibold|heavy|black", re.IGNORECASE)
+_WORD_CHAR = re.compile(r"[^\W_]")
+
+
+def _bold(span: dict) -> bool:
+    """A span set bold: the font's bold flag, or a bold weight in its name (the flag is often missing)."""
+    return bool(span.get("flags", 0) & 16) or bool(_BOLD_FACE.search(span.get("font", "")))
+
+
+def _bold_marks(lines: list[_Line]) -> list[Mark]:
+    """The runs of bold glyphs in a block, in reading order (R3): spaces and line ends do not end a run, a glyph in
+    another weight does; a run of punctuation alone is no emphasis."""
+    marks: list[Mark] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        text = "".join(run).strip()
+        if _WORD_CHAR.search(text):
+            marks.append(Mark(kind="bold", text=text))
+        run.clear()
+
+    for line in lines:
+        for (ch, *_), bold in zip(line.glyphs, line.emphasis):
+            if ch.isspace():
+                if run:
+                    run.append(" ")
+            elif bold:
+                run.append(ch)
+            else:
+                flush()
+        if run:
+            run.append(" ")
+    flush()
+    return marks
 
 
 def _face_verdicts(spans) -> dict[str, bool]:
@@ -683,7 +722,7 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
         observations.append(Observation(
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
             task=TaskKind.EXTRACT, anchor=anchors[0], text=text, style=style,
-            status=ObservationStatus.OK))
+            marks=[] if style.monospace else _bold_marks(region.lines), status=ObservationStatus.OK))
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
         chosen_observation=observations[0].id if observations else None, text=text,

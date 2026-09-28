@@ -440,11 +440,12 @@ def _split(state: DocumentState, block: Block, at_break: int, reason: str, actor
     new_id = f"{block.id}-s{n}"
     chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
     style = chosen.style if chosen is not None else None
+    marks = list(chosen.marks) if chosen is not None else []  # each part keeps the marks; rendering finds its own
 
     def part(block_id: str, text: str) -> Observation:
         number = sum(1 for o in block.observations if o.task == TaskKind.SPLIT) + 1 if block_id == block.id else 1
         return Observation(id=ids.observation_id(block_id, "split", number), engine="split", engine_version=actor,
-                           task=TaskKind.SPLIT, anchor=block.anchors[0], text=text, style=style,
+                           task=TaskKind.SPLIT, anchor=block.anchors[0], text=text, style=style, marks=marks,
                            status=ObservationStatus.OK)
 
     kept = part(block.id, first)

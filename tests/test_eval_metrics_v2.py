@@ -224,10 +224,21 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_3():
+def test_metric_version_is_2_4():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.3"
+    assert METRIC_VERSION == "2.4"
+
+
+def test_inline_emphasis_is_not_text_and_is_scored_apart():
+    # R3, metric 2.4: bold and underline marks do not change the text scores; the spans are matched on their own
+    from parserx.eval.metrics import evaluate_markdown
+
+    plain = evaluate_markdown("项目负责人：邹贻军。发件人：Apple", "项目负责人：邹贻军。**发件人**：Apple")
+    marked = evaluate_markdown("项目负责人：<u>邹贻军</u>。**发件人**：Apple", "项目负责人：邹贻军。**发件人**：Apple")
+    assert plain.text.char_f1 == marked.text.char_f1 == 1.0
+    assert (marked.formatting.bold.matched, marked.formatting.bold.expected) == (1, 1)
+    assert (marked.formatting.underline.output, marked.formatting.underline.expected) == (1, 0)
 
 
 def test_headings_skip_fenced_code_and_compare_after_nfkc():

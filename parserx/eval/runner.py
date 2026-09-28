@@ -244,6 +244,7 @@ class EvalRunner:
             f"- Reading order tau: {avg(order_tau)} ({applicable(order_tau)} docs)"
             f" | coverage {avg(r.order.coverage for r in results)}",
             f"- Heading F1: {avg(heading_f1)} ({applicable(heading_f1)} docs with an outline)",
+            _formatting_line(results),
             "- Key content errors (missing/extra): "
             + ", ".join(f"{k} {key_missing[k]}/{key_extra[k]}" for k in KEY_KINDS),
             f"- Real requests (OCR/VLM/LLM): {total_ocr}/{total_vlm}/{total_llm} (OCR pages {total_pages})",
@@ -340,3 +341,16 @@ def _append_diagnostics(lines: list[str], results: list[EvalResult]) -> None:
             if result.residuals.missing.text:
                 lines.append(f"- Expected-only excerpt: `{result.residuals.missing.text}`")
             lines.append("")
+
+
+def _formatting_line(results: list[EvalResult]) -> str:
+    """Bold and underline spans over all documents (R3, report only): matched / output, matched / expected."""
+    def totals(kind: str) -> str:
+        found = [getattr(r.formatting, kind) for r in results]
+        matched, output, expected = (sum(k.matched for k in found), sum(k.output for k in found),
+                                     sum(k.expected for k in found))
+        precision = f"{matched / output:.3f}" if output else "—"
+        recall = f"{matched / expected:.3f}" if expected else "—"
+        return f"{kind} precision {precision} recall {recall} ({output} output / {expected} annotated spans)"
+
+    return f"- Formatting (report only): {totals('bold')}; {totals('underline')}"

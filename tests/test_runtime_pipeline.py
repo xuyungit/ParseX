@@ -123,7 +123,7 @@ def test_docx_headings_the_styles_do_not_declare_join_the_outline(tmp_path):
     path = tmp_path / "doc.docx"
     doc.save(path)
     outcome = run(path, tmp_path / "ws", tmp_path / "out", _config(), context_factory=_Session(_context()))
-    assert outcome.markdown == ("目录\n\n1.1 范围 3\n\n# 第一章 总则\n\n## 1.1 范围\n\n"
+    assert outcome.markdown == ("目录\n\n**1.1 范围 3**\n\n# 第一章 总则\n\n## 1.1 范围\n\n"  # bold, as set (R3)
                                 "本规范适用于桥梁支座，规定了支座的结构、材料、制造与检验。\n\n## 1.2 术语\n\n"
                                 "下列术语适用于本规范，未列出的术语按相关标准执行。\n")
     actors = {b["text"]: [d["actor"] for d in b["decisions"] if d["stage"] in ("heading_role", "heading_level")]
