@@ -12,7 +12,7 @@ Both sides of every comparison go through the same steps:
    is written once (2.1): a merged value counts once whether it is written as
    a span, repeated in every row, or written once with blanks around it.
 3. Image placeholders are removed and counted: ``![alt](src)``,
-   ``> [图片] …`` lines, and a blockquote directly following an image line
+   ``> [图片] …`` lines, notes on missing content (``> 〔未识别〕…``, Q117), and a blockquote directly following an image line
    (the v1 description layout).  Descriptions are scored separately later
    (guide §9.3); here they must not bias text scores toward one model's
    wording.
@@ -31,7 +31,7 @@ from parserx.tables import TableGrid, find_tables
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _IMAGE_LINE_RE = re.compile(r"^\s*!\[[^\]]*\]\([^)]*\)\s*$")
-_PLACEHOLDER_LINE_RE = re.compile(r"^\s*>\s*\[图片\]")
+_PLACEHOLDER_LINE_RE = re.compile(r"^\s*>\s*(\[图片\]|〔未识别〕|〔Not recognised〕)")  # + notes on missing content (Q117)
 _BLOCKQUOTE_RE = re.compile(r"^\s*>")
 _HEADING_MARK_RE = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
 _TAG_RE = re.compile(r"<[^>]+>")

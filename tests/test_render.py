@@ -254,3 +254,22 @@ def test_a_shown_image_without_description_or_text_is_a_review_item():
     state.relations = [Relation(id=f"r-{f}", kind=RelationKind.CONTAINS, src=f, dst=f"{f}-t") for f in ("read", "emptied")]
     items = [u.target for u in unresolved_items(state) if u.kind == UnresolvedKind.FIGURE_WITHOUT_CONTENT]
     assert items == ["bare", "emptied"]
+
+
+def test_missing_content_is_said_where_it_is():
+    # Q117: a page image whose content was not read keeps its image and gets a note after it; a failed block that is
+    # not shown gets the note in its place; evaluation ignores the notes
+    from parserx.ir.state import Missing
+
+    scan = _figure("s", 1, kind=BlockKind.SCAN)
+    table = _block("t", BlockKind.TABLE, 2, status=BlockStatus.FAILED)
+    state = _state([_block("h", BlockKind.TITLE, 0, text="概述", level=1), scan, table], pages=1)
+    state.assets = [ASSET]
+    state.missing = [Missing(block="s", reason="scan engine: scan engine not configured (builders.ocr)"),
+                     Missing(block="t", reason="vlm budget exhausted")]
+    md = render_markdown(state)
+    lines = md.rstrip("\n").split("\n\n")
+    assert lines[3] == "> 〔未识别〕第 1 页：扫描内容未能识别（未配置识别服务）" and lines[2].startswith("![扫描图像]")
+    assert lines[4] == "> 〔未识别〕第 1 页：一个表格未能识别（超出处理预算）"
+    assert "page 1: scanned content could not be read" in render_markdown(state, lang="en")
+    assert "未识别" not in canonicalize(md).text

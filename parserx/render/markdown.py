@@ -41,8 +41,9 @@ def image_file(asset: Asset) -> str:
     return PurePosixPath(asset.path).name
 
 
-def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
+def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: str = "zh") -> str:
     assets = {a.id: a for a in state.assets}
+    missing = {m.block: _missing_note(state, m, lang) for m in state.missing}  # Q117: said where it is missing
     joined = _continuations(state)  # a paragraph continued in later blocks is rendered once, at its start
     skipped = {b.id for chain in joined.values() for b in chain[1:]}
     transcribed = _transcription_starts(state)
@@ -64,9 +65,9 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images") -> str:
         elif page.starts_with == "section_break":
             section += 1
             parts.append(f"<!-- SECTION {section} -->")
-        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body))
+        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body, missing))
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
-        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body))
+        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing))
     return "\n\n".join(parts) + "\n"
 
 
@@ -114,12 +115,16 @@ def _transcription_starts(state: DocumentState) -> dict[str, str]:
 
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
-                notes: dict[str, str] | None = None, body: str | None = None) -> list[str]:
+                notes: dict[str, str] | None = None, body: str | None = None,
+                missing: dict[str, str] | None = None) -> list[str]:
     out = []
     code: list[str] = []  # lines of the code block being collected
     face: str | None = None
+    missing = missing or {}
     for block in blocks:
         if block.status not in _VISIBLE:
+            if block.id in missing:  # not shown: the note stands in its place
+                out.append(missing[block.id])
             continue
         style = _style(block)
         this = code_face(block, body)
@@ -141,6 +146,8 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
             if notes and block.id in notes:
                 out.append(notes[block.id])
             out.append(rendered)
+        if block.id in missing:  # shown as it is (a page image), its content not read: the note follows
+            out.append(missing[block.id])
     if code:
         out.append("```\n" + "\n".join(code) + "\n```")
     return out
@@ -193,6 +200,33 @@ def code_face(block: Block, body: str | None) -> str | None:
     if body is None or block.kind != BlockKind.TEXT or style is None or not style.monospace or style.monospace == body:
         return None
     return style.monospace
+
+
+# ── Missing content (Q117) ──────────────────────────────────────────────
+
+MISSING_MARK = {"zh": "〔未识别〕", "en": "〔Not recognised〕"}
+_WHAT = {BlockKind.SCAN: ("扫描内容", "scanned content"), BlockKind.FIGURE: ("一张图片", "an image"),
+         BlockKind.TABLE: ("一个表格", "a table"), BlockKind.FORMULA: ("一个公式", "a formula")}
+_WHY = (("not configured", "未配置识别服务", "the recognition service is not configured"),
+        ("budget", "超出处理预算", "over the processing budget"),
+        ("timeout", "识别超时", "recognition timed out"),
+        ("time out", "识别超时", "recognition timed out"))
+
+
+def _missing_note(state: DocumentState, missing, lang: str) -> str:
+    """A reader's line where content could not be read: which page, what, and why in plain words."""
+    block = next((b for b in state.blocks if b.id == missing.block), None)
+    en = lang == "en"
+    what = _WHAT.get(block.kind if block is not None else None, ("一处内容", "some content"))[1 if en else 0]
+    reason = missing.reason.lower()
+    why = next(((w_en if en else w_zh) for key, w_zh, w_en in _WHY if key in reason),
+               "recognition failed" if en else "识别失败")
+    unit = block_unit(state, block) if block is not None and state.format == "pdf" else None
+    if en:
+        where = f"page {unit}: " if unit is not None else ""
+        return f"> {MISSING_MARK['en']} {where}{what} could not be read ({why})"
+    where = f"第 {unit} 页：" if unit is not None else ""
+    return f"> {MISSING_MARK['zh']}{where}{what}未能识别（{why}）"
 
 
 # ── Figure semantics ────────────────────────────────────────────────────
