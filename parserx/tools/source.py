@@ -31,6 +31,7 @@ from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.enums import BlockKind
 from parserx.ir.evidence import Evidence, evidence_id
+from parserx.ir.rotation import shown, unturned, whole
 from parserx.prompts import load_prompt
 from parserx.render.markdown import semantic_text
 from parserx.scheduling import run_ordered
@@ -175,7 +176,7 @@ def _image_of(ctx: ToolContext, state, one: Look) -> tuple[Path, str, str]:
         if state.format != "pdf" or one.seam not in pages or one.seam + 1 not in pages:
             raise ToolFailure(FailureCode.INVALID_REQUEST, f"no seam after page {one.seam} (PDF pages {one.seam} and "
                                                            f"{one.seam + 1} are needed)")
-        asset, data = seam_image(ctx.ws.source_path, one.seam, ctx.config.tools.read_dpi, pages[one.seam].size_pt)
+        asset, data = seam_image(ctx.ws.source_path, pages[one.seam], ctx.config.tools.read_dpi)
         path = ctx.ws.root / "renders" / f"{asset.id}.png"
         write_once(path, data)
         return path, asset.id, ""
@@ -188,8 +189,8 @@ def _image_of(ctx: ToolContext, state, one: Look) -> tuple[Path, str, str]:
         if state.format != "pdf":
             raise ToolFailure(FailureCode.INVALID_REQUEST, _WORD)
         page = pages[one.page]
-        crop, data, _t, _render, _png = region_crop(ctx.ws.source_path, page.n, one.bbox, ctx.config.tools.read_dpi,
-                                                    ctx.config.tools.crop_pad_pt, page.size_pt)
+        crop, data, _t, _render, _png = region_crop(ctx.ws.source_path, page, one.bbox, ctx.config.tools.read_dpi,
+                                                    ctx.config.tools.crop_pad_pt)
         path = ctx.ws.root / "renders" / f"{crop.id}.png"
         write_once(path, data)
         return path, crop.id, ""
@@ -277,9 +278,9 @@ def _table(ctx: ToolContext, one: Look) -> LookResult:
     if state.format != "pdf" or not isinstance(anchor, PdfAnchor):
         raise ToolFailure(FailureCode.INVALID_REQUEST, "no page image of this table (DOCX tables are native)")
     page = next(p for p in state.pages if p.n == anchor.page)
-    bbox = (0.0, 0.0, *page.size_pt) if one.context == "page" else anchor.bbox
+    bbox = whole(page) if one.context == "page" else anchor.bbox
     crop, crop_png, _transform, render, render_png = region_crop(
-        ctx.ws.source_path, page.n, bbox, ctx.config.tools.read_dpi, ctx.config.tools.crop_pad_pt, page.size_pt)
+        ctx.ws.source_path, page, bbox, ctx.config.tools.read_dpi, ctx.config.tools.crop_pad_pt)
     crop_path = ctx.ws.root / crop.path
     write_once(ctx.ws.root / render.path, render_png)
     write_once(crop_path, crop_png)
@@ -370,8 +371,8 @@ def _text(ctx: ToolContext, one: Look) -> LookResult:
         page = next((p for p in state.pages if p.n == one.page), None)
         if state.format != "pdf" or page is None:
             raise ToolFailure(FailureCode.INVALID_REQUEST, f"no PDF page {one.page}")
-        crop, png, _t, render, render_png = region_crop(ctx.ws.source_path, page.n, one.bbox,
-                                                        ctx.config.tools.read_dpi, 0.0, page.size_pt)
+        crop, png, _t, render, render_png = region_crop(ctx.ws.source_path, page, one.bbox,
+                                                        ctx.config.tools.read_dpi, 0.0)
         write_once(ctx.ws.root / crop.path, png)
         write_once(ctx.ws.root / render.path, render_png)
         crops = [render, crop]
@@ -452,7 +453,7 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
         page = next((p for p in state.pages if p.n == n), None)
         if page is None:
             return None, f"block {block} has no page to render"
-        asset, data, transform = page_render(ctx.ws.source_path, page.n, dpi, page.size_pt)
+        asset, data, transform = page_render(ctx.ws.source_path, page, dpi)
         path = renders / f"{asset.id}.png"
         write_once(path, data)
         return ImageRef(asset=asset.id, path=str(path.resolve()), width=asset.width, height=asset.height,
@@ -483,7 +484,7 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
     if state.format != "pdf" or not isinstance(first, PdfAnchor):
         return None, _WORD
     page = next(p for p in state.pages if p.n == first.page)
-    crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page.n, first.bbox, dpi, pad, page.size_pt)
+    crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page, first.bbox, dpi, pad)
     path = renders / f"{crop.id}.png"
     write_once(path, data)
     return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,
@@ -506,7 +507,7 @@ def _row_strip(ctx: ToolContext, state, block, rows: list[int]):
     """((path, image id), None) for a band of *rows* of a table on one PDF page, or (None, why).
 
     Recognized cells carry no position: the band is placed by the rows' line counts (a row's height grows with its
-    tallest cell) and widened by a row on each side, then rendered at ``tools.strip_dpi``."""
+    tallest cell) and widened by a row on each side, down the page as shown, then rendered at ``tools.strip_dpi``."""
     grid = block.cells
     if block.kind.value != "table" or grid is None:
         return None, f"{block.id} is not a table: rows apply to tables"
@@ -524,12 +525,12 @@ def _row_strip(ctx: ToolContext, state, block, rows: list[int]):
     tops = [0]
     for h in heights:
         tops.append(tops[-1] + h)
-    x0, y0, x1, y1 = pages[0].bbox
+    page = next(p for p in state.pages if p.n == pages[0].page)
+    x0, y0, x1, y1 = shown(page, pages[0].bbox)
     scale = (y1 - y0) / tops[-1]
     band = (x0, y0 + tops[max(0, rows[0] - 1)] * scale, x1, y0 + tops[min(grid.n_rows, rows[1] + 2)] * scale)
-    page = next(p for p in state.pages if p.n == pages[0].page)
-    crop, data, _t, _render, _png = region_crop(ctx.ws.source_path, page.n, band, ctx.config.tools.strip_dpi,
-                                                ctx.config.tools.crop_pad_pt, page.size_pt)
+    crop, data, _t, _render, _png = region_crop(ctx.ws.source_path, page, unturned(page, band),
+                                                ctx.config.tools.strip_dpi, ctx.config.tools.crop_pad_pt)
     path = ctx.ws.root / "renders" / f"{crop.id}.png"
     write_once(path, data)
     return (path, crop.id), None

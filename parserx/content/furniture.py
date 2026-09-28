@@ -20,6 +20,9 @@ always consistent (a scanning app's mark in the margin is a header on one page,
 side text on the next), so ``mark_scan_furniture`` adds the same evidence for
 scanned pages: a text or an image in a margin band (the outer tenth of the page
 on any side) repeated at about the same place on another page (P3).
+
+Margins are those of the page as shown: on a page its /Rotate turns, boxes are turned to it first
+(``ir/rotation.py``).
 """
 
 from __future__ import annotations
@@ -30,7 +33,8 @@ from collections import defaultdict
 from parserx.content.extraction import Extraction
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.decision import Decision
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, PageStatus
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, PageStatus, RelationKind
+from parserx.ir.rotation import shown
 from parserx.ir.state import DocumentState
 
 ACTOR = "program:content.furniture"
@@ -44,11 +48,12 @@ _ROMAN = re.compile(r"[ivxlcdm]{1,6}", re.IGNORECASE)
 
 def mark_furniture(ext: Extraction) -> None:
     """Exclude repeated margin text of native pages as page furniture (in place)."""
-    sizes = {p.n: p.size_pt for p in ext.pages if p.status == PageStatus.DONE and p.size_pt}
+    pages = {p.n: p for p in ext.pages if p.status == PageStatus.DONE and p.size_pt}
+    sizes = {n: p.size_pt for n, p in pages.items()}
     boxes: dict[int, list] = defaultdict(list)
     for block in ext.blocks:
         if isinstance(block.anchors[0], PdfAnchor):
-            boxes[block.anchors[0].page].append(block.anchors[0].bbox)
+            boxes[block.anchors[0].page].append(shown(pages.get(block.anchors[0].page), block.anchors[0].bbox))
     found: dict[tuple[str, str], list[tuple[int, int, float]]] = defaultdict(list)  # → (block index, page, centre)
     for index, block in enumerate(ext.blocks):
         anchor = block.anchors[0]
@@ -56,7 +61,7 @@ def mark_furniture(ext: Extraction) -> None:
                 or anchor.page not in sizes:
             continue
         height = sizes[anchor.page][1]
-        top, bottom = anchor.bbox[1], anchor.bbox[3]
+        _, top, _, bottom = shown(pages[anchor.page], anchor.bbox)
         if not height or bottom - top > MAX_HEIGHT * height:
             continue
         shape = _shape(block.text)
@@ -113,20 +118,21 @@ def mark_watermarks(ext: Extraction, off_direction: dict[str, str]) -> None:
 
 
 _SCAN_ENGINES = frozenset({"paddleocr"})
+_TEXT_FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.WATERMARK})
 
 
 def mark_scan_furniture(state: DocumentState) -> list[str]:
     """Exclude text and images of scanned pages that repeat in a margin band at the same place (in place); the ids."""
-    sizes = {p.n: p.size_pt for p in state.pages if p.size_pt}
+    page_of = {p.n: p for p in state.pages if p.size_pt}
     found: dict[tuple, list[tuple]] = defaultdict(list)  # (band, what) → (block, page, centre x, centre y)
     for block in state.blocks:
         anchor = block.anchors[0] if block.anchors else None
         if block.kind not in (BlockKind.TEXT, BlockKind.FIGURE) or block.status not in (BlockStatus.OK,
-                BlockStatus.DEGRADED) or not isinstance(anchor, PdfAnchor) or anchor.page not in sizes \
+                BlockStatus.DEGRADED) or not isinstance(anchor, PdfAnchor) or anchor.page not in page_of \
                 or not any(o.engine in _SCAN_ENGINES for o in block.observations):
             continue
-        width, height = sizes[anchor.page]
-        x0, y0, x1, y1 = anchor.bbox
+        width, height = page_of[anchor.page].size_pt
+        x0, y0, x1, y1 = shown(page_of[anchor.page], anchor.bbox)
         band = ("top" if y1 <= MARGIN_BAND * height else "bottom" if y0 >= (1 - MARGIN_BAND) * height
                 else "left" if x1 <= MARGIN_BAND * width else "right" if x0 >= (1 - MARGIN_BAND) * width else None)
         what = _shape(block.text or "") if block.kind == BlockKind.TEXT else \
@@ -151,7 +157,36 @@ def mark_scan_furniture(state: DocumentState) -> list[str]:
     for entry in state.ledger:
         if entry.block in marked and entry.disposition == "output":
             entry.disposition = "excluded"
-    return marked
+    return marked + _copies_follow(state, marked)
+
+
+def _copies_follow(state: DocumentState, marked: list[str]) -> list[str]:
+    """Exclude the blocks superseded as duplicates of the furniture just excluded, and of nothing else (a text layer's
+    copy of a scanning app's mark): they are the same content at the same place, and a duplicate reaches the output
+    only through what it duplicates (guide §11.5).  Chains of duplicates follow too; the ids."""
+    blocks = {b.id: b for b in state.blocks}
+    targets: dict[str, list[str]] = defaultdict(list)
+    for relation in state.relations:
+        if relation.kind == RelationKind.DUPLICATE_OF and relation.src in blocks and relation.dst in blocks:
+            targets[relation.src].append(relation.dst)
+    gone, followed = set(marked), []
+    while more := [src for src, dsts in targets.items() if src not in gone
+                   and blocks[src].status == BlockStatus.DUPLICATE and all(d in gone for d in dsts)]:
+        for src in more:
+            block, original = blocks[src], blocks[targets[src][0]]
+            if block.kind == BlockKind.TEXT and original.kind in _TEXT_FURNITURE:
+                block.kind = original.kind
+            block.status = BlockStatus.EXCLUDED
+            block.decisions.append(Decision(
+                stage=DecisionStage.EXCLUDE, choice=block.kind.value, actor=ACTOR, refs=targets[src],
+                reason=f"page furniture: the same content as {', '.join(targets[src])}, which is page furniture",
+                evidence={"duplicate_of": ", ".join(targets[src])}))
+            gone.add(src)
+            followed.append(src)
+    for entry in state.ledger:
+        if entry.block in followed and entry.disposition == "duplicate":
+            entry.disposition = "excluded"
+    return followed
 
 
 def _is_number(shape: str) -> bool:

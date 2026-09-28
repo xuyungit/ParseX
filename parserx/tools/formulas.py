@@ -41,6 +41,7 @@ from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
+from parserx.ir.rotation import shown
 from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.reading.compare import normalize, text_at
 from parserx.runtimes.events import Step
@@ -111,11 +112,11 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
 
     state = ctx.ws.load()
     blocks = {b.id: b for b in state.blocks}
+    page_of = {p.n: p for p in state.pages}
     plans = []  # (page, native ids, reading blocks)
     for n, (raw_ref, raw) in sorted(readings.items()):
-        page_state = next(p for p in state.pages if p.n == n)
         result = scan.page_blocks(scan.PageScan(page=n, raw=raw, raw_ref=raw_ref, engine_version=ocr.model),
-                                  page_size=page_state.size_pt, first_seq=1, first_item=1)
+                                  page_size=page_of[n].size_pt, first_seq=1, first_item=1, page=page_of[n])
         plans += [(n, natives, reading) for natives, reading in _passages(state, n, result.blocks)]
 
     # the editor, for passages whose reading loses characters of the text layer (concurrently)
@@ -126,7 +127,8 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
             continue
         box = _union([blocks[b].anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading])
         with pymupdf.open(source) as doc:
-            png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=pymupdf.Rect(box) + (-4, -4, 4, 4)).tobytes("png")
+            png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=pymupdf.Rect(shown(page_of[n], box)) + (-4, -4, 4, 4)
+                                        ).tobytes("png")
         path = ctx.ws.root / "renders" / f"formula-{natives[0]}.png"
         write_once(path, png)
         need_editor.append((index, path, native_text, reading_text))

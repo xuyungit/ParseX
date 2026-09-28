@@ -111,7 +111,7 @@ class PdfAnchor(IRModel):
     type: Literal["pdf"] = "pdf"
     page: int                                   # 物理页码，从 1 开始
     bbox: BBox
-    coord_space: Literal["page_pt", "image_px"] # image_px 用于页面渲染图上的检测或 OCR 框
+    coord_space: Literal["page_pt", "image_px"] # image_px 用于页面渲染图上的检测或 OCR 框；page_pt 在未旋转页面（PDF 空间）
     image_size: tuple[int, int] | None = None   # coord_space=image_px 时必填（有校验器）
     transform: Affine | None = None             # image_px → page_pt
 
@@ -268,7 +268,8 @@ class PageState(IRModel):
     n: int
     unit: Literal["pdf_page", "docx_segment"]   # DOCX 按显式分页 / 分节切成段，用于跟踪进度
     status: PageStatus
-    size_pt: tuple[float, float] | None = None
+    size_pt: tuple[float, float] | None = None  # 显示的页面尺寸（按 /Rotate 转过）
+    rotation: Literal[0, 90, 180, 270] = 0      # 〔v1.46〕PDF /Rotate；框仍在未旋转页面，换算见 ir/rotation.py
     render: str | None = None                   # Asset id
 
 class LedgerEntry(IRModel):                     # 去向账目的最小单位（见下方说明）

@@ -23,6 +23,7 @@ from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ImageRoute, ObservationStatus, TaskKind
 from parserx.ir.observation import Observation
+from parserx.ir.rotation import onto_page, unturned
 from parserx.ir.state import ImageRecord
 from parserx.layout.detector import Region, detect_cached
 from parserx.routing.image import pixel_std, route
@@ -187,8 +188,10 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
 
 
 def _attach_page(state, n, regions, width, height, dpi, version, force):
-    """Layout observations on the visible block each region overlaps most; returns (block, observation) pairs."""
+    """Layout observations on the visible block each region overlaps most; returns (block, observation) pairs.  The
+    render shows the page as shown: regions are turned back to the unrotated page, where the blocks are."""
     scale = 72.0 / dpi
+    page = next((p for p in state.pages if p.n == n), None)
     # Superseded blocks (duplicate / merged) are not candidates; excluded page furniture still is.
     on_page = [b for b in state.blocks if block_unit(state, b) == n and b.status not in _SUPERSEDED
                and isinstance(b.anchors[0], PdfAnchor) and b.anchors[0].coord_space == "page_pt"]
@@ -198,7 +201,7 @@ def _attach_page(state, n, regions, width, height, dpi, version, force):
                                                                    and isinstance(o.anchor, PdfAnchor))]
     attached, unmatched = [], 0
     for region in regions:
-        box = tuple(v * scale for v in region.bbox)
+        box = unturned(page, tuple(v * scale for v in region.bbox))
         best, best_area = None, 0.0
         for b in on_page:
             area = _overlap(box, b.anchors[0].bbox)
@@ -212,7 +215,7 @@ def _attach_page(state, n, regions, width, height, dpi, version, force):
             id=ids.observation_id(best.id, "layout", n_obs), engine="layout", engine_version=version,
             task=TaskKind.LAYOUT, label=region.label, det_confidence=region.score, status=ObservationStatus.OK,
             anchor=PdfAnchor(page=n, bbox=region.bbox, coord_space="image_px", image_size=(width, height),
-                             transform=(scale, 0.0, 0.0, scale, 0.0, 0.0)))
+                             transform=onto_page(page, (scale, 0.0, 0.0, scale, 0.0, 0.0))))
         best.observations.append(obs)
         attached.append((best, obs))
     prefix = f"layout shadow p{n}:"

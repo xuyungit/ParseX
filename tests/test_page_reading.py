@@ -249,3 +249,32 @@ def test_a_mark_repeated_in_the_margin_of_scanned_pages_is_furniture():
     assert sorted(mark_scan_furniture(state)) == ["q1", "q2", "w1", "w2"]
     assert {b.id: b.kind for b in state.blocks if b.id in ("w1", "q1")} == {"w1": BlockKind.WATERMARK,
                                                                          "q1": BlockKind.FIGURE}
+
+
+def test_a_text_layer_copy_of_scan_furniture_is_excluded_with_it():
+    """The scan engine's block supersedes the text layer's copy of a scanning app's mark (a duplicate of it) before
+    the mark is found to be furniture: the copy is excluded with it, not left pointing at a hidden block (§11.5)."""
+    from parserx.accounting.check import check
+    from parserx.content.furniture import mark_scan_furniture
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation
+    from parserx.ir.relation import Relation
+    from parserx.ir.state import LedgerEntry
+
+    box = (563, 18, 579, 118)
+    blocks, ledger, relations = [], [], []
+    for n in (1, 2):
+        mark = _block(f"w{n}", n, box, "扫描全能王 创建")
+        mark.observations = [Observation(id=f"o-w{n}", engine="paddleocr", engine_version="v", task=TaskKind.RECOGNIZE,
+                                         anchor=mark.anchors[0], text=mark.text, status=ObservationStatus.OK)]
+        copy = _block(f"n{n}", n, box, "扫描全能王 创建", status=BlockStatus.DUPLICATE)
+        blocks += [mark, copy]
+        ledger += [LedgerEntry(item=f"i-{b.id}", unit="native_line", source=b.anchors[0], chars=7, block=b.id,
+                               disposition=d) for b, d in ((mark, "output"), (copy, "duplicate"))]
+        relations.append(Relation(id=f"r-{n}", kind="duplicate_of", src=f"n{n}", dst=f"w{n}"))
+    state = _state(blocks, [], pages=2)
+    state.ledger, state.relations = ledger, relations
+    assert check(state).mismatched == []
+    assert mark_scan_furniture(state) == ["w1", "w2", "n1", "n2"]
+    assert {(b.kind, b.status) for b in state.blocks} == {(BlockKind.WATERMARK, BlockStatus.EXCLUDED)}
+    assert check(state).mismatched == [] and {e.disposition for e in state.ledger} == {"excluded"}

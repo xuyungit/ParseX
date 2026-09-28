@@ -30,7 +30,8 @@ from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, RelationKind
 from parserx.ir.relation import Relation
-from parserx.ir.state import DocumentState
+from parserx.ir.rotation import shown
+from parserx.ir.state import DocumentState, PageState
 from parserx.layout.labels import FURNITURE
 from parserx.tables.grid import Cell, TableGrid
 from parserx.workspace.queries import HIDDEN, ordered
@@ -236,9 +237,8 @@ def _box_on(block: Block, page: int) -> BBox | None:
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
-def _page_size(state: DocumentState, n: int) -> tuple[float, float] | None:
-    page = next((p for p in state.pages if p.n == n), None)
-    return page.size_pt if page is not None else None
+def _page(state: DocumentState, n: int) -> PageState | None:
+    return next((p for p in state.pages if p.n == n), None)
 
 
 def _is_furniture(block: Block) -> bool:
@@ -256,11 +256,14 @@ def _adjacent(state: DocumentState, first: Block, second: Block) -> bool:
 def _x_offset(state: DocumentState, first: Block, second: Block, first_page: int, second_page: int, *,
               left_only: bool = False) -> float | None:
     """How far apart the two tables' edges are, as a share of the page width: the left edge only for a table the
-    scan engine read (its box is as wide as its content, so the right edge moves with the text: ocr01)."""
+    scan engine read (its box is as wide as its content, so the right edge moves with the text: ocr01).  Edges are
+    those of the page as shown."""
+    pa, pb = _page(state, first_page), _page(state, second_page)
     a, b = _box_on(first, first_page), _box_on(second, second_page)
-    sa, sb = _page_size(state, first_page), _page_size(state, second_page)
+    sa, sb = (pa.size_pt if pa else None), (pb.size_pt if pb else None)
     if a is None or b is None or not sa or not sb or not sa[0] or not sb[0]:
         return None
+    a, b = shown(pa, a), shown(pb, b)
     left = abs(a[0] / sa[0] - b[0] / sb[0])
     return left if left_only else max(left, abs(a[2] / sa[0] - b[2] / sb[0]))
 

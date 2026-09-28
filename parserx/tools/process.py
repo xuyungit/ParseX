@@ -187,7 +187,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
 
     if ctx.ws.load().readings:  # scanned lines the page ends on purpose, read by the engine as one run (P4)
         with ctx.ws.txn("tool:process:line_breaks") as state:
-            broken = restore_line_breaks(state, _turns(ctx) if state.format == "pdf" else None)
+            broken = restore_line_breaks(state)
         if broken:
             steps.append(StepSummary(step="line_breaks", detail=f"line breaks put back in {len(broken)} blocks"))
     if ctx.ws.load().readings:  # text the page shows where the output has nothing: added, not lost (Q133)
@@ -201,14 +201,6 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
     state = ctx.ws.load()
     return output(_summary(state, steps, checked), failures=failures)
-
-
-def _turns(ctx: ToolContext) -> dict:
-    """Page → the matrix from PDF space to the page as shown, for the pages a /Rotate turns."""
-    import pymupdf
-
-    with pymupdf.open(ctx.ws.source_path) as doc:
-        return {page.number + 1: page.rotation_matrix for page in doc if page.rotation}
 
 
 def _image_asset(state: DocumentState, block) -> str | None:

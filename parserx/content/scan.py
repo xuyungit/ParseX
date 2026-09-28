@@ -4,7 +4,9 @@
 (``batch_pdf``: byte-stable, so the response cache and v1 share entries) and
 every ``parsing_res_list`` entry becomes one Observation in the analysed
 image's pixel space (``image_px`` + transform to ``page_pt``), one Block and
-one ledger item.  Kinds come only from ``layout/labels.py``.  Page furniture
+one ledger item.  The engine reads the page as shown; on a page its /Rotate
+turns, boxes are turned back to the unrotated page like every PdfAnchor
+(``ir/rotation.py``).  Kinds come only from ``layout/labels.py``.  Page furniture
 (header, footer, page number) is excluded with a Decision; figures are cropped
 from a page render and keep the engine's in-image text as evidence.
 """
@@ -27,7 +29,8 @@ from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
-from parserx.ir.state import LedgerEntry
+from parserx.ir.rotation import onto_page, turned, unturned
+from parserx.ir.state import LedgerEntry, PageState
 from parserx.layout import labels
 from parserx.tables.grid import TableGrid
 
@@ -137,9 +140,11 @@ def page_blocks(
     first_item: int,
     page_image: tuple[bytes, int, int, float] | None = None,
     origin: tuple[float, float] = (0.0, 0.0),
+    page: PageState | None = None,
 ) -> PageScanResult:
     """Blocks for one scanned page; ids continue from *first_seq* / *first_item* on that page.  A reading of a
-    region of the page (Q87) gives the region's size as *page_size* and its top left corner as *origin*."""
+    region of the page (Q87) gives the region's size as *page_size* and its top left corner as *origin*.  Both are
+    of the page as shown, which the engine read; *page* (its /Rotate) turns the boxes back to the unrotated page."""
     pruned = scan.raw.get("prunedResult") or {}
     width, height = int(pruned.get("width") or 0), int(pruned.get("height") or 0)
     entries = pruned.get("parsing_res_list") or []
@@ -149,13 +154,19 @@ def page_blocks(
     sx = page_size[0] / width if width else 1.0
     sy = page_size[1] / height if height else 1.0
     ox, oy = origin
-    transform = (sx, 0.0, 0.0, sy, ox, oy)
+    transform = onto_page(page, (sx, 0.0, 0.0, sy, ox, oy))
+
+    def page_box(box: BBox) -> BBox:  # engine pixels → page points
+        shown = (round(ox + box[0] * sx, 2), round(oy + box[1] * sy, 2), round(ox + box[2] * sx, 2),
+                 round(oy + box[3] * sy, 2))
+        return tuple(round(v, 2) for v in unturned(page, shown)) if turned(page) else shown
+
     render: Asset | None = None
     if page_image is not None and any(labels.to_kind(ENGINE, e.get("block_label", "")) in _FIGURE_KINDS
                                       or _PICTURE.search(str(e.get("block_content") or "")) for e in entries):
         data, rw, rh, dpi = page_image
         render = _add(out, Asset.from_bytes(data, media_type="image/png", width=rw, height=rh, role="render", dpi=dpi,
-                                            source=PdfAnchor(page=scan.page, bbox=(0, 0, *page_size),
+                                            source=PdfAnchor(page=scan.page, bbox=unturned(page, (0, 0, *page_size)),
                                                              coord_space="page_pt")), data)
 
     boxes = [entry_bbox(e) for e in entries]
@@ -167,8 +178,7 @@ def page_blocks(
             out.warnings.append(f"page {scan.page}: unknown {ENGINE} label {label!r} kept as other")
         kind = labels.to_kind(ENGINE, label)
         block_id = ids.block_id_pdf(scan.page, first_seq + offset)
-        page_box = (round(ox + box[0] * sx, 2), round(oy + box[1] * sy, 2), round(ox + box[2] * sx, 2),
-                    round(oy + box[3] * sy, 2))
+        on_page = page_box(box)
         pixel_anchor = PdfAnchor(page=scan.page, bbox=box, coord_space="image_px", image_size=(width, height),
                                  transform=transform)
         content, pictures = take_pictures(str(entry.get("block_content") or ""))
@@ -187,7 +197,7 @@ def page_blocks(
             text=None if grid is not None else content, cells=grid,
             status=ObservationStatus.OK if content.strip() else ObservationStatus.EMPTY,
         )
-        anchors: list = [PdfAnchor(page=scan.page, bbox=page_box, coord_space="page_pt")]
+        anchors: list = [PdfAnchor(page=scan.page, bbox=on_page, coord_space="page_pt")]
         decisions = [Decision(stage=DecisionStage.CONTENT_SOURCE, choice="scan_engine",
                               reason=f"{ENGINE} region labelled {label!r}",
                               evidence={"label": label, "engine_order": entry.get("block_order") or -1},
@@ -199,7 +209,7 @@ def page_blocks(
                                       actor=ACTOR, refs=[obs.id]))
         figure = kind in _FIGURE_KINDS
         if figure and render is not None:
-            crop = _crop(out, render, page_image[0], box, scan.page, page_box)
+            crop = _crop(out, render, page_image[0], box, scan.page, on_page)
             anchors.append(AssetAnchor(asset=crop.id, bbox=(0, 0, crop.width, crop.height),
                                        image_size=(crop.width, crop.height), transform=crop.transform))
         # A figure's in-image text is evidence for its description, not body text.
@@ -215,16 +225,15 @@ def page_blocks(
             disposition="excluded" if status == BlockStatus.EXCLUDED else "output", block=block_id))
         if render is not None and status != BlockStatus.EXCLUDED:
             for k, pbox in enumerate(pictures, 1):
-                _picture(out, scan, block_id, k, pbox, render, page_image[0], (sx, sy), (width, height), transform)
+                _picture(out, scan, block_id, k, pbox, render, page_image[0], page_box(pbox), (width, height),
+                         transform)
     return out
 
 
 def _picture(out: PageScanResult, scan: PageScan, parent: str, k: int, box: BBox, render: Asset, render_png: bytes,
-             scale: tuple[float, float], size: tuple[int, int], transform) -> None:
+             page_box: BBox, size: tuple[int, int], transform) -> None:
     """A picture of *parent* (〔图k〕 in its text): a figure block right after it, cut from the page render."""
     block_id = f"{parent}-p{k:02d}"
-    page_box = (round(box[0] * scale[0], 2), round(box[1] * scale[1], 2), round(box[2] * scale[0], 2),
-                round(box[3] * scale[1], 2))
     pixel_anchor = PdfAnchor(page=scan.page, bbox=box, coord_space="image_px", image_size=size, transform=transform)
     crop = _crop(out, render, render_png, box, scan.page, page_box)
     obs = Observation(id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=scan.engine_version,

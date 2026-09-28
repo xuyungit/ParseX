@@ -241,12 +241,12 @@ def integrate_page(ctx: ToolContext, state, n: int, page: dict, raw_ref: str, en
     has_figures = any(scan.labels.to_kind(scan.ENGINE, e.get("block_label", "")) == BlockKind.FIGURE
                       or scan.take_pictures(str(e.get("block_content") or ""))[1]
                       for e in pruned.get("parsing_res_list") or [])
-    size = next(p.size_pt for p in state.pages if p.n == n)
+    page_state = next(p for p in state.pages if p.n == n)
     with pymupdf.open(ctx.ws.source_path) as doc:
         image = scan.render_page(doc, n, int(pruned.get("width") or 0)) if has_figures and pruned.get("width") else None
     scan_result = scan.page_blocks(scan.PageScan(page=n, raw=page, raw_ref=raw_ref, engine_version=engine_version),
-                                   page_size=size, first_seq=_next_block_seq(state, n), first_item=_next_item(state, n),
-                                   page_image=image)
+                                   page_size=page_state.size_pt, first_seq=_next_block_seq(state, n),
+                                   first_item=_next_item(state, n), page_image=image, page=page_state)
     for path, data in scan_result.asset_bytes.items():
         write_once(ctx.ws.root / path, data)
     return integrate_scan_page(state, n, scan_result)

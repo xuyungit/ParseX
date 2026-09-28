@@ -185,7 +185,7 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
                                       source=PdfAnchor(page=n, bbox=bbox, coord_space="page_pt"),
                                       chars=0, disposition="output", block=block_id))
     ext.pages.append(PageState(n=n, unit="pdf_page", status=PageStatus.DONE if verdict.ok else PageStatus.PENDING,
-                               size_pt=(round(rect.width, 2), round(rect.height, 2))))
+                               size_pt=(round(rect.width, 2), round(rect.height, 2)), rotation=page.rotation))
     return off_direction
 
 
@@ -615,7 +615,8 @@ def _image_asset(doc: pymupdf.Document, page: pymupdf.Page, n: int, info: dict) 
         data, media_type, width, height = payload
         return Asset.from_bytes(data, media_type=media_type, width=width, height=height,
                                 role="original", source=source), data
-    pix = page.get_pixmap(clip=pymupdf.Rect(bbox), dpi=_RENDER_DPI)
+    clip = pymupdf.Rect(bbox) * page.rotation_matrix if page.rotation else pymupdf.Rect(bbox)  # the page as shown
+    pix = page.get_pixmap(clip=clip, dpi=_RENDER_DPI)
     data = pix.tobytes("png")
     return Asset.from_bytes(data, media_type="image/png", width=pix.width, height=pix.height,
                             role="render", source=source, dpi=_RENDER_DPI), data

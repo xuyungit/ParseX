@@ -42,7 +42,8 @@ class PageState(IRModel):
     n: int = Field(ge=1)
     unit: Literal["pdf_page", "docx_segment"]  # DOCX: segments between explicit page / section breaks
     status: PageStatus
-    size_pt: tuple[float, float] | None = None
+    size_pt: tuple[float, float] | None = None  # the page as shown (turned by its /Rotate)
+    rotation: Literal[0, 90, 180, 270] = 0  # PDF /Rotate, clockwise; boxes stay in the unrotated page (ir/rotation.py)
     render: str | None = None  # Asset id
     starts_with: Literal["page_break", "section_break"] | None = None  # DOCX: what opened this segment
 

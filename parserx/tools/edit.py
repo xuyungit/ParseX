@@ -48,7 +48,7 @@ from parserx.hierarchy.changes import (
     Unjoin,
     agent_doc,
 )
-from parserx.ir import ids
+from parserx.ir import ids, rotation
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.block import Block
@@ -386,9 +386,10 @@ def add_missed_text(state: DocumentState) -> list[str]:
     added as text blocks at their places: the fixed pipeline does not lose them; the worklist lists each for review
     (``text_added``).  The new block ids."""
     engines = {r.n: r.engine for r in state.readings}
+    pages = {p.n: p for p in state.pages}
     made = []
     for n, lines in missed_lines(state).items():
-        for line in sorted(lines, key=lambda ln: (ln.bbox[1], ln.bbox[0])):
+        for line in sorted(lines, key=lambda ln: _top_left(rotation.shown(pages.get(n), ln.bbox))):
             decision = Decision(stage=DecisionStage.CONTENT_SOURCE, choice="added", actor=READING_ACTOR,
                                 reason="text the local page reading sees where the output had nothing (Q133)",
                                 evidence={"reading": engines[n], "score": round(line.score, 3)})
@@ -421,11 +422,18 @@ def _add_text_block(state: DocumentState, page: int, bbox, text: str, *, engine:
     return block_id
 
 
+def _top_left(box) -> tuple[float, float]:
+    return box[1], box[0]
+
+
 def _place(state: DocumentState, sequence: list, page: int, bbox) -> int:
-    """Reading-order position of new text on *page*: after the last block of the page that starts above it."""
+    """Reading-order position of new text on *page*: after the last block of the page that starts above it (on the
+    page as shown)."""
     on_page = [i for i, b in enumerate(sequence) if block_unit(state, b) == page]
+    pages = {p.n: p for p in state.pages}
+    top = rotation.shown(pages.get(page), bbox)[1]
     above = [i for i in on_page if isinstance(sequence[i].anchors[0], PdfAnchor)
-             and sequence[i].anchors[0].bbox[1] <= bbox[1]]
+             and rotation.shown(pages.get(sequence[i].anchors[0].page), sequence[i].anchors[0].bbox)[1] <= top]
     if above:
         return above[-1] + 1
     if on_page:
@@ -525,11 +533,13 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
     n = op.page
     old = [b for b in ordered(state) if b.status not in HIDDEN and block_unit(state, b) == n
            and b.kind not in (BlockKind.FIGURE, BlockKind.SCAN) and _inside(b, n, region)]
-    size = (region[2] - region[0], region[3] - region[1])
+    page_state = next((p for p in state.pages if p.n == n), None)
+    seen = rotation.shown(page_state, region)  # the crop the engine read is of the page as shown
+    size = (seen[2] - seen[0], seen[3] - seen[1])
     read = scan.page_blocks(scan.PageScan(page=n, raw=page_json, raw_ref=evidence.raw_ref or "",
                                           engine_version=evidence.engine or scan.ENGINE),
-                            page_size=size, origin=(region[0], region[1]), first_seq=_next_block_seq(state, n),
-                            first_item=_next_item(state, n))
+                            page_size=size, origin=(seen[0], seen[1]), first_seq=_next_block_seq(state, n),
+                            first_item=_next_item(state, n), page=page_state)
     new = [b for b in read.blocks if b.kind not in (BlockKind.FIGURE, BlockKind.SCAN)]
     kept = {b.id for b in new}
     shown = [b for b in new if b.status not in HIDDEN]
@@ -685,7 +695,7 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> str:
     if item.target.startswith("p") and item.target[1:].isdigit():
         n = int(item.target[1:])
         page = next((p for p in state.pages if p.n == n), None)
-        box = (0.0, 0.0, *page.size_pt) if page is not None and page.size_pt else (0.0, 0.0, 1e6, 1e6)
+        box = rotation.whole(page) if page is not None and page.size_pt else (0.0, 0.0, 1e6, 1e6)
         seen = image_evidence_at(state, n, box, op.evidence)
     else:
         seen = image_evidence(state, _block(state, item.target), op.evidence)

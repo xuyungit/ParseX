@@ -10,10 +10,10 @@ item of a list.  Text that flows narrow beside a picture or a table ends short w
 line, found by its first characters (compared on letters and digits, as the two readings are compared).
 
 Only where the region's right edge is known: a text block (its box) and a table cell spanning every column (the
-table's box).  Boxes are compared as the page is shown: the scan engine's boxes are in the shown page's space,
-the local reading's in PDF space, so on a page turned by its /Rotate the reading's lines are turned first (``turns``:
-page → the matrix from PDF space to the shown page).  A text block is split at the breaks into paragraphs (the output joins the lines of a paragraph); a
-cell keeps them as line breaks.  Text is never rewritten: only line breaks are added, recorded as an observation of
+table's box).  Boxes are compared as the page is shown: on a page turned by its /Rotate, the region and the reading's
+lines (in the unrotated page, like every box) are turned to the shown page first (``ir/rotation.py``).  A text block
+is split at the breaks into paragraphs (the output joins the lines of a paragraph); a cell keeps them as line
+breaks.  Text is never rewritten: only line breaks are added, recorded as an observation of
 the block.  Lines the two readings do not both have, and lines whose start cannot be found, add no break.
 """
 
@@ -31,6 +31,7 @@ from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, TaskKind
 from parserx.ir.observation import Observation
+from parserx.ir.rotation import shown
 from parserx.ir.state import DocumentState, ReadLine
 from parserx.reading.compare import _centre, _inside, normalize
 from parserx.tables.grid import TableGrid
@@ -48,10 +49,10 @@ _OPENING = "（([【《〈“‘\"'"
 _SCAN_ENGINES = frozenset({"paddleocr"})
 
 
-def restore_line_breaks(state: DocumentState, turns: dict | None = None) -> list[str]:
+def restore_line_breaks(state: DocumentState) -> list[str]:
     """Put back the line breaks of scanned text blocks and full-width cells; the ids of the blocks changed."""
     readings = {r.n: r for r in state.readings if r.lines}
-    turns = turns or {}
+    pages = {p.n: p for p in state.pages}
     changed: list[str] = []
     for block in list(state.blocks):
         anchors = [a for a in block.anchors if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
@@ -61,9 +62,11 @@ def restore_line_breaks(state: DocumentState, turns: dict | None = None) -> list
         # each line of the local reading with the region it lies in (a table continued on the next page: two)
         lines = []
         for a in anchors:
-            shown = [ln.model_copy(update={"bbox": _shown(ln.bbox, turns.get(a.page))})
-                     for ln in (readings[a.page].lines if a.page in readings else [])]
-            lines += [(ln, a.bbox) for ln in _rows([ln for ln in shown if _inside(_centre(ln.bbox), a.bbox)])]
+            page = pages.get(a.page)
+            region = shown(page, a.bbox)
+            turned = [ln.model_copy(update={"bbox": shown(page, ln.bbox)})
+                      for ln in (readings[a.page].lines if a.page in readings else [])]
+            lines += [(ln, region) for ln in _rows([ln for ln in turned if _inside(_centre(ln.bbox), region)])]
         if block.kind == BlockKind.TEXT and block.text and "\n" not in block.text:
             text = _with_breaks(block.text, lines)
             if text != block.text:
@@ -180,17 +183,6 @@ def _cells_with_breaks(grid: TableGrid, lines: list[tuple[ReadLine, tuple]]) -> 
                 cell, changed = cell.model_copy(update={"content": content}), True
         cells.append(cell)
     return grid.model_copy(update={"cells": cells}) if changed else None
-
-
-def _shown(box, turn) -> tuple:
-    """*box* as the page is shown (turned back by the page's rotation matrix, when it has one)."""
-    if turn is None:
-        return tuple(box)
-    import pymupdf
-
-    rect = pymupdf.Rect(box) * turn
-    rect.normalize()
-    return (rect.x0, rect.y0, rect.x1, rect.y1)
 
 
 def _record(block: Block, *, text: str | None, grid: TableGrid | None, breaks: int) -> None:
