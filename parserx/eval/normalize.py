@@ -43,6 +43,7 @@ _HEADING_MARK_RE = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
+_TILDE_ESCAPE_RE = re.compile(r"\\~")  # the renderer writes a tilde that could pair into strikethrough as \~
 _NON_WORD_RE = re.compile(r"[\W_]+")
 
 
@@ -53,7 +54,7 @@ class CanonicalDoc:
 
 
 def canonicalize(markdown: str) -> CanonicalDoc:
-    text = _IMAGE_TEXT_RE.sub(_unquote_image_text, markdown)
+    text = _IMAGE_TEXT_RE.sub(_unquote_image_text, _TILDE_ESCAPE_RE.sub("~", markdown))
     text = _COMMENT_RE.sub("", text)
     text = _flatten_tables(text)
     text, image_count = _strip_images(text)
@@ -76,7 +77,7 @@ def char_sequence(text: str) -> str:
 
 
 def normalize_cell(text: str) -> str:
-    text = unicodedata.normalize("NFKC", _BR_RE.sub(" ", text))
+    text = unicodedata.normalize("NFKC", _BR_RE.sub(" ", _TILDE_ESCAPE_RE.sub("~", text)))
     return _WS_RE.sub("", text).lower()
 
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-from parserx.content.text import join_wrapped
+from parserx.content.text import escape_strikethrough, join_wrapped
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
@@ -225,10 +225,11 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
     text = join_wrapped(block.text.split("\n"))
     if not text:
         return ""
-    if kind == BlockKind.TITLE and block.level is not None:
-        return f"{'#' * block.level} {text}"
     if kind == BlockKind.FORMULA:
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
+    text = escape_strikethrough(text)
+    if kind == BlockKind.TITLE and block.level is not None:
+        return f"{'#' * block.level} {text}"
     return _MARKUP_START.sub(r"\1\\\2", text)
 
 
@@ -309,6 +310,6 @@ def semantic_text(semantic, lang: str = "zh") -> str:
     note = note_of(semantic)
     if note is None or not note.caption:
         return ""
-    return f"> {NOTE_LABEL[lang]}{' '.join(note.caption.split())}"
+    return f"> {NOTE_LABEL[lang]}{escape_strikethrough(' '.join(note.caption.split()))}"
 
 

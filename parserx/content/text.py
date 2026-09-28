@@ -3,6 +3,7 @@ radical code points read as the ideographs they stand for."""
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections import Counter
 from functools import cache
@@ -29,6 +30,26 @@ def join_wrapped(lines: list[str]) -> str:
         tight = (_is_wide(out[-1]) and _is_wide(part[0])) or _hyphen_break(out, part)
         out += part if tight else " " + part
     return out
+
+
+# Formulas and code spans: their tildes are theirs (a LaTeX space, a shell path) and a renderer leaves them alone.
+_VERBATIM = re.compile(r"\$\$.+?\$\$|\$[^$\n]+\$|\\\(.+?\\\)|`[^`\n]+`", re.DOTALL)
+_BARE_TILDE = re.compile(r"(?<!\\)~")
+
+
+def escape_strikethrough(text: str) -> str:
+    """``~`` written ``\\~`` where a Markdown renderer could pair two of them into strikethrough (GFM takes one or two
+    tildes on each side: ``2022.01~2022.03：…；2022.04~2022.12`` would lose its middle to a line through it).  Only when
+    a unit of text (a paragraph, a title, a table cell) holds two or more outside formulas and code spans: a lone
+    tilde cannot pair and stays as written."""
+    parts = _VERBATIM.split(text)
+    if sum(len(_BARE_TILDE.findall(part)) for part in parts) < 2:
+        return text
+    spans = _VERBATIM.findall(text)
+    out = [_BARE_TILDE.sub(r"\\~", parts[0])]
+    for span, part in zip(spans, parts[1:]):
+        out += [span, _BARE_TILDE.sub(r"\\~", part)]
+    return "".join(out)
 
 
 def _hyphen_break(before: str, after: str) -> bool:

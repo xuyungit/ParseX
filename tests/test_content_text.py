@@ -42,3 +42,19 @@ def test_replaced_radicals_are_listed_for_the_record():
     assert decision.choice == UNIFIED and decision.stage == "content_source" and decision.evidence == {"chars": 3}
     assert decision.reason.endswith("⽤→用 ×2, ⻓→长")
     assert radicals_decision(radicals_in("使用"), "program:test") is None
+
+
+def test_tildes_that_could_pair_into_strikethrough_are_escaped_outside_formulas_and_code():
+    from parserx.content.text import escape_strikethrough
+    from parserx.eval.normalize import canonicalize, normalize_cell
+    from parserx.tables.grid import Cell, TableGrid, find_tables
+
+    schedule = "2022.01~2022.03：市场调研；2022.04~2022.12：产品试制"
+    assert escape_strikethrough(schedule) == "2022.01\\~2022.03：市场调研；2022.04\\~2022.12：产品试制"
+    assert escape_strikethrough("压力 8~12MPa") == "压力 8~12MPa"  # a lone tilde cannot pair
+    assert escape_strikethrough("$a~b$ 与 $c~d$ 和 `~/x`") == "$a~b$ 与 $c~d$ 和 `~/x`"
+    grid = TableGrid(n_rows=2, n_cols=1, cells=[Cell(row=0, col=0, content="进度"), Cell(row=1, col=0, content=schedule)])
+    assert "\\~" in grid.to_gfm() and find_tables(grid.to_gfm())[0].grid.cells[1].content == schedule
+    # the evaluation reads the escaped tilde as the tilde
+    assert canonicalize(escape_strikethrough(schedule)).text == canonicalize(schedule).text
+    assert normalize_cell(escape_strikethrough(schedule)) == normalize_cell(schedule)

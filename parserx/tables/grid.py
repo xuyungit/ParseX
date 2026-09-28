@@ -12,6 +12,7 @@ from html import escape as html_escape
 
 from pydantic import Field, model_validator
 
+from parserx.content.text import escape_strikethrough
 from parserx.ir.anchor import SourceAnchor
 from parserx.ir.base import IRModel
 from parserx.tables.html import (
@@ -175,7 +176,7 @@ _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
 def _escape_gfm(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", "<br>")
+    return escape_strikethrough(text).replace("|", "\\|").replace("\n", "<br>")
 
 
 def _escape_html(text: str) -> str:
@@ -189,7 +190,7 @@ def _split_gfm_row(line: str) -> list[str]:
     if body.endswith("|") and not body.endswith("\\|"):
         body = body[:-1]
     cells = re.split(r"(?<!\\)\|", body)
-    return [_BR_RE.sub("\n", cell.replace("\\|", "|")).strip() for cell in cells]
+    return [_BR_RE.sub("\n", cell.replace("\\|", "|").replace("\\~", "~")).strip() for cell in cells]
 
 
 def _is_delimiter_row(line: str) -> bool:
