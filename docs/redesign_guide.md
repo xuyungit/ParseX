@@ -48,6 +48,7 @@
 - [v2_radicals_plan.md](v2_radicals_plan.md)：文字层的部首码位（R1–R5，Q96–Q99，已完成）。
 - [v2_model_config.md](v2_model_config.md)：模型接入与配置文件（Q100；决定一已实施，决定二以后做，Q101）。
 - [v2_model_comparison_plan.md](v2_model_comparison_plan.md)：模型能力比较（M1–M6，Q101–Q105）。
+- [v2_release_plan.md](v2_release_plan.md)：独立发布（R1–R7，Q107–Q115）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -920,6 +921,15 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q104 | 模型比较中 Agent 角色每个组合跑几次 | ✅ 用户按建议决定（2026-09-28）：2 次 |
 | Q105 | 结构化输出是否写进模型条目 | ✅ 用户按建议决定（2026-09-28）：写 `structured_output`（模型最强能用的一级），服务从这一级往下退，不靠认报错 |
 | Q106 | 比较之后的默认模型 | ✅ 用户决定（2026-09-28）：默认不变——本机用 Codex（包月）作 Agent，服务模型经官方 API 用 gpt-6-luna。服务模型要简洁、忠实：DeepSeek 的描述长一倍、未证实的数最多，可读性不好、幻觉风险高。发布为独立工具时，Agent 与服务模型都要能配置 |
+| Q107 | 个人配置文件放哪里 | ✅ 用户按建议决定（2026-09-28）：`~/.config/parserx/config.yaml` |
+| Q108 | 仓库根目录的 `parserx.yaml` 还要不要 | ✅ 用户按建议决定（2026-09-28）：删去；生产设置在包内默认层，开发与评测用 `configs/` 下的文件并显式传 `--config` |
+| Q109 | 现有 `.env` 怎样迁移 | ✅ 用户按建议决定（2026-09-28）：`parserx init` 把 `~/.config/parserx/.env` 的值一次性写进个人配置；仓库的 `.env` 由我改写成个人配置里的模型条目，交用户确认 |
+| Q110 | 本地读数（rapidocr）是否保留 | ✅ 用户按建议决定（2026-09-28）：保留作待办信号，可在配置里关；不用它产出文字 |
+| Q111 | 版面模型从哪里下载 | ✅ 用户按建议决定（2026-09-28）：默认仍从 modelscope.cn，下载到用户缓存目录；配置可写本地路径。不换引擎（PP-DocLayoutV3 与扫描引擎 PaddleOCR-VL-1.6 的版面阶段同源） |
+| Q112 | Agent 默认值 | ✅ 用户按建议决定（2026-09-28）：本机 Codex，gpt-6-sol、medium；没有 Codex 时退回固定流水线并提示可改用循环 |
+| Q113 | 分发方式 | ✅ 用户按建议决定（2026-09-28）：先用 `uv tool install`（wheel 或 git）；PyPI、Docker 镜像以后再做；Linux 暂不验证 |
+| Q114 | 开发命令与评测代码 | ✅ 用户按建议决定（2026-09-28）：收进 `parserx dev`，仍随包发布 |
+| Q115 | `psx` 别名 | ✅ 用户按建议决定（2026-09-28）：删去，只留 `parserx` |
 
 ## 15. 变更记录
 
