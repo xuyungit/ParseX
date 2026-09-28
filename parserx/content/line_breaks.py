@@ -1,4 +1,4 @@
-"""Line breaks of scanned text that the scan engine read as one run (P4).
+"""Line breaks of text read as one run where the page keeps separate lines (P4, R2).
 
 The scan engine may return a passage whose lines were separate on the page as one run of text: the dated steps of
 a schedule, the items "（1）…（2）…（3）…", the paragraphs of an answer in a form.  The local page reading (guide §9.5)
@@ -9,8 +9,14 @@ edge wraps, unless it closes an item and the next line starts the way it did (th
 item of a list.  Text that flows narrow beside a picture or a table ends short without closing anything: it wraps.  The break is put back in the text at the start of the next
 line, found by its first characters (compared on letters and digits, as the two readings are compared).
 
-Only where the region's right edge is known: a text block (its box) and a table cell spanning every column (the
-table's box).  Boxes are compared as the page is shown: on a page turned by its /Rotate, the region and the reading's
+A line also ends on purpose when the next one carries the next number of a series a line before it in the block
+started (``ii.`` after ``i.``, ``（2）`` after ``（1）``), with an explicit delimiter.  The same test serves native text:
+its lines are joined when a paragraph is rendered, so a block's line breaks are first undone (``join_wrapped``,
+as the output does) — except the scan engine's blank lines, which are paragraph breaks — and then put back where the
+page ends a line on purpose.
+
+Only where the region's right edge is known: a text or footnote block (its box) and a table cell spanning every
+column (the table's box).  Code is left alone.  Boxes are compared as the page is shown: on a page turned by its /Rotate, the region and the reading's
 lines (in the unrotated page, like every box) are turned to the shown page first (``ir/rotation.py``).  A text block
 is split at the breaks into paragraphs (the output joins the lines of a paragraph); a cell keeps them as line
 breaks.  Text is never rewritten: only line breaks are added, recorded as an observation of
@@ -24,7 +30,9 @@ import re
 from rapidfuzz import fuzz
 
 from parserx.hierarchy.changes import Split
+from parserx.content.text import join_wrapped
 from parserx.hierarchy.legality import apply_changes, numbering_signature
+from parserx.hierarchy.levels import number_value
 from parserx.ir import ids
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.block import Block
@@ -46,7 +54,10 @@ MATCH = 80  # rapidfuzz ratio of a line against the text where it is found: the 
 _CLOSES = re.compile(r"[；。;！？!?：:.]\s*$")
 _DATE = re.compile(r"\d{4}\s*[.．年/\-]\s*\d{1,2}")
 _OPENING = "（([【《〈“‘\"'"
-_SCAN_ENGINES = frozenset({"paddleocr"})
+_ENGINES = frozenset({"paddleocr", "native_pdf"})  # the scan engine's text and the native text layer
+_PROSE = frozenset({BlockKind.TEXT, BlockKind.FOOTNOTE, BlockKind.LIST})
+_PARAGRAPH = re.compile(r"\n[ \t]*\n")
+_DELIMITED = re.compile(r"\s*[(（]?\s*[0-9０-９一二三四五六七八九十〇零A-Za-z]{1,6}\s*[.．、)）]")
 
 
 def restore_line_breaks(state: DocumentState) -> list[str]:
@@ -57,7 +68,7 @@ def restore_line_breaks(state: DocumentState) -> list[str]:
     for block in list(state.blocks):
         anchors = [a for a in block.anchors if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
         if block.status in HIDDEN or not anchors or len(anchors) != len(block.anchors) \
-                or not any(o.engine in _SCAN_ENGINES for o in block.observations):
+                or not any(o.engine in _ENGINES for o in block.observations):
             continue
         # each line of the local reading with the region it lies in (a table continued on the next page: two)
         lines = []
@@ -67,10 +78,13 @@ def restore_line_breaks(state: DocumentState) -> list[str]:
             turned = [ln.model_copy(update={"bbox": shown(page, ln.bbox)})
                       for ln in (readings[a.page].lines if a.page in readings else [])]
             lines += [(ln, region) for ln in _rows([ln for ln in turned if _inside(_centre(ln.bbox), region)])]
-        if block.kind == BlockKind.TEXT and block.text and "\n" not in block.text:
-            text = _with_breaks(block.text, lines)
-            if text != block.text:
-                _record(block, text=text, grid=None, breaks=text.count("\n"))
+        if block.kind in _PROSE and block.text and not _code(block):
+            # a paragraph's lines as the output joins them; the scan engine's blank lines stay paragraph breaks
+            parts = [join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)]
+            text = "\n".join(_with_breaks(part, lines) for part in parts if part)
+            if "\n" in text:  # a native block may already break exactly there: it is split all the same
+                if text != block.text:
+                    _record(block, text=text, grid=None, breaks=text.count("\n"))
                 for at in range(text.count("\n"), 0, -1):  # from the last: the parts stay in order
                     apply_changes(state, [Split(op="split", block=block.id, at_break=at,
                                                 reason="a line the page ends before the right edge (P4)")],
@@ -115,8 +129,9 @@ def _with_breaks(text: str, lines: list[tuple[ReadLine, tuple]]) -> str:
         # judged on the engine's text around the break: the local reader may drop a space or a mark
         this, rest = text[index[start] if start else 0:at], text[at:]
         short = box[2] - line.bbox[2] >= SHORT * (box[2] - box[0])
+        starts = [text[index[s]:] for _, _, s in chain if s < found]
         ended = (short and (_CLOSES.search(this) is not None or _item_start(rest) is not None)) \
-            or _next_item(this, rest)
+            or _next_item(this, rest) or _next_in_series(rest, starts)
         again = following.bbox[0] - next_box[0] <= LEFT * (next_box[2] - next_box[0])
         if ended and again and at > (breaks[-1] if breaks else 0):
             breaks.append(at)
@@ -161,6 +176,21 @@ def _next_item(line: str, following: str) -> bool:
         return False
     start, next_start = _item_start(line), _item_start(following)
     return start is not None and start == next_start
+
+
+def _next_in_series(rest: str, starts: list[str]) -> bool:
+    """*rest* starts with the next number of a series one of the earlier lines started, written the same way with an
+    explicit delimiter (``ii.`` after ``i.``): the next item, however the line before it ends."""
+    if not _DELIMITED.match(rest):
+        return False
+    style, value = numbering_signature(rest.strip()), number_value(rest)
+    return style is not None and value is not None and any(
+        numbering_signature(start.strip()) == style and number_value(start) == value - 1 for start in starts)
+
+
+def _code(block: Block) -> bool:
+    chosen = next((o for o in block.observations if o.id == block.chosen_observation), None)
+    return chosen is not None and chosen.style is not None and bool(chosen.style.monospace)
 
 
 def _item_start(text: str) -> str | None:

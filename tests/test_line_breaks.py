@@ -58,3 +58,29 @@ def test_a_scanned_text_block_is_split_at_the_breaks_into_paragraphs(rotation):
                           status=DocumentStatus.IN_PROGRESS, blocks=[block], readings=[reading], pages=[page])
     assert restore_line_breaks(state) == ["b-p001-0001"]
     assert [b.text for b in sorted(state.blocks, key=lambda b: b.order)] == ["第一段结束了。", "第二段从这里开始并且结束。"]
+
+
+def test_the_next_number_of_a_series_starts_a_line_however_the_one_before_ends():
+    # R2: "ii." is the longest line (it sets the edge) and ends without a mark; "iii." still starts its own line
+    text = "i. ceph osd out osd.6 ii. ceph osd purge 6 --yes-i-really-mean-it iii. 删除旧容器 docker rm ceph_osd_6"
+    lines = _lines(("i. ceph osd out osd.6", 200, 72), ("ii. ceph osd purge 6 --yes-i-really-mean-it", 460, 72),
+                   ("iii. 删除旧容器 docker rm ceph_osd_6", 280, 72))
+    assert _with_breaks(text, lines).split("\n") == ["i. ceph osd out osd.6",
+                                                     "ii. ceph osd purge 6 --yes-i-really-mean-it",
+                                                     "iii. 删除旧容器 docker rm ceph_osd_6"]
+
+
+def test_a_native_block_is_split_where_the_page_ends_a_line_and_its_wraps_are_joined():
+    anchor = PdfAnchor(page=1, bbox=BOX, coord_space="page_pt")
+    text = "第一段的第一行一直写到了\n右边。\n第二段从这里开始。"  # the native layer breaks every visual line
+    block = Block(id="b-p001-0001", kind=BlockKind.TEXT, order=0, anchors=[anchor], text=text,
+                  observations=[Observation(id="o-1", engine="native_pdf", engine_version="v", task=TaskKind.EXTRACT,
+                                            anchor=anchor, text=text, status=ObservationStatus.OK)],
+                  chosen_observation="o-1")
+    reading = PageReading(n=1, engine="local", dpi=150, lines=[r for r, _ in _lines(
+        ("第一段的第一行一直写到了", 458, 72), ("右边。", 120, 72), ("第二段从这里开始。", 250, 72))])
+    state = DocumentState(id="d", source="x.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS, blocks=[block], readings=[reading],
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE, size_pt=(595, 842))])
+    restore_line_breaks(state)
+    assert [b.text for b in sorted(state.blocks, key=lambda b: b.order)] == ["第一段的第一行一直写到了右边。", "第二段从这里开始。"]

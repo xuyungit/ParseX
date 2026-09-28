@@ -35,6 +35,7 @@ from parserx.workspace.queries import JOINABLE, block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
 _MARKUP_START = re.compile(r"^(\s*)([#>])")
+_PARAGRAPH = re.compile(r"\n[ \t]*\n")
 _MATH_START = ("$", "\\[", "\\(")  # delimited already; a bare \begin{aligned} still needs $$ to render
 
 
@@ -229,7 +230,10 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
     if kind == BlockKind.TITLE and block.level is not None:
         return f"{'#' * block.level} {escape_strikethrough(text)}"
-    return "\n\n".join(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part)) for part in literal_breaks(text))
+    # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart
+    paragraphs = [join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)]
+    return "\n\n".join(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part))
+                       for paragraph in paragraphs for part in literal_breaks(paragraph))
 
 
 def _style(block: Block):
