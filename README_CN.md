@@ -75,13 +75,17 @@ Codex CLI（`npm install -g @openai/codex`，再 `codex login`）。没有 Codex
 
 ```bash
 parserx parse report.pdf                       # 先做标准处理，需要时再交 Agent → ./output/report/
-parserx parse a.pdf b.docx docs/ -o out/       # 多个文件；目录取其中的 PDF/DOCX/DOC
+parserx parse a.pdf b.docx docs/ -o out/       # 多个文件；目录取其中的文档
+parserx parse docs/ -r -o out/                 # 连同子目录；输出保持相对路径
+parserx parse https://example.org/report.pdf   # 网址（http、https）：先下载再处理
+parserx parse scan.jpg                         # 图片（JPG、PNG、TIFF、BMP、WebP）：当作扫描页处理
 parserx parse report.pdf --no-agent            # 只做标准处理：结果确定
 parserx parse report.pdf --agent deepseek-flash  # 不用 Codex，改用自己的循环加配置里的某个模型
 parserx parse report.pdf --vlm glm-5.3-flashx  # 换一个服务模型
 parserx parse report.pdf --stdout              # Markdown 输出到 stdout
 parserx parse report.pdf --json                # 结果摘要以 JSON 输出到 stdout（进度在 stderr）
-parserx parse report.pdf --lang en             # 英文界面（默认中文）
+parserx parse report.pdf --lang en             # 英文界面，Markdown 里新加的说明也用英文（默认中文）
+parserx parse report.pdf --report --sidecar    # 另写摘要 JSON 和块级记录
 parserx parse report.pdf --no-ocr              # 不用扫描引擎：扫描页不识别（结果为 partial）
 parserx parse report.pdf --no-vlm              # 不用服务模型：图片不描述
 parserx parse report.pdf --set runtime.formulas=false   # 覆盖任意配置
@@ -89,14 +93,16 @@ parserx parse report.pdf --set runtime.formulas=false   # 覆盖任意配置
 
 Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继续。处理第一篇文档之前，`parse` 会先说明哪项服务按当前配置无法工作。
 
-**输出**（`./output/<文件名>/`）：
+**输出**（`./output/<文件名>/`）：Markdown 和它引用的图片。
 
 | 文件 | 内容 |
 |---|---|
-| `<文件名>.md` | Markdown：标题、段落、表格（GFM；有合并单元格时用 HTML）、图片及描述、LaTeX 公式、页码锚点 |
-| `<文件名>.json` | 摘要：状态（`complete` / `partial` / `failed`）、大纲、表格、图片、缺失内容及原因、待核对项、处理过程与费用 |
-| `<文件名>.blocks.json` | sidecar：每个块的来源、决定与去向账目 |
+| `<文件名>.md` | Markdown：标题、段落、表格（GFM；有合并单元格时用 HTML）、图片及一句简短说明、LaTeX 公式、页码锚点（`<!-- PAGE n -->`）；未能识别的地方有一行说明（`> 〔未识别〕第 3 页：…`） |
 | `images/` | Markdown 引用的图片 |
+| `<文件名>.json`（`--report`） | 摘要：状态（`complete` / `partial` / `failed`）、大纲、表格、图片、缺失内容及原因、待核对项、处理过程与费用 |
+| `<文件名>.blocks.json`（`--sidecar`） | 块级记录：每个块的来源、决定与去向账目（开发与审计用） |
+
+同一位置有同名文档时，后到的输出到 `<文件名>-2/`。
 
 退出码：全部写出（complete 或 partial）为 0，有文档失败为 1，Ctrl-C 为 130。
 

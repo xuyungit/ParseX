@@ -73,13 +73,17 @@ For development: `git clone <repo> && cd ParserX && uv sync`, then `uv run parse
 
 ```bash
 parserx parse report.pdf                       # the standard processing, then the agent where needed → ./output/report/
-parserx parse a.pdf b.docx docs/ -o out/       # several files; a directory contributes its PDF/DOCX/DOC
+parserx parse a.pdf b.docx docs/ -o out/       # several files; a directory contributes its documents
+parserx parse docs/ -r -o out/                 # subdirectories too; the output keeps their paths
+parserx parse https://example.org/report.pdf   # a web address (http, https): fetched, then read
+parserx parse scan.jpg                         # an image (JPG, PNG, TIFF, BMP, WebP): read as a scanned page
 parserx parse report.pdf --no-agent            # the standard processing only: deterministic
 parserx parse report.pdf --agent deepseek-flash  # our own loop with a model of the config instead of Codex
 parserx parse report.pdf --vlm glm-5.3-flashx  # another service model
 parserx parse report.pdf --stdout              # Markdown to stdout
 parserx parse report.pdf --json                # the result summary as JSON on stdout (progress on stderr)
-parserx parse report.pdf --lang en             # console in English (default: Chinese)
+parserx parse report.pdf --lang en             # English console and English notes in the Markdown (default: Chinese)
+parserx parse report.pdf --report --sidecar    # also the summary JSON and the block-level record
 parserx parse report.pdf --no-ocr              # without the scan engine: scanned pages stay unrecognised (partial)
 parserx parse report.pdf --no-vlm              # without the service model: figures are not described
 parserx parse report.pdf --set runtime.formulas=false   # any config value
@@ -88,14 +92,16 @@ parserx parse report.pdf --set runtime.formulas=false   # any config value
 Ctrl-C keeps the work directory; running the same command again continues where it stopped. Before the first
 document, `parse` says which service cannot work as configured.
 
-**Output** (`./output/<name>/`):
+**Output** (`./output/<name>/`): the Markdown and the images it links.
 
 | File | Content |
 |---|---|
-| `<name>.md` | The Markdown: headings, paragraphs, tables (GFM, or HTML for merged cells), images with descriptions, formulas as LaTeX, page anchors |
-| `<name>.json` | Summary: status (`complete` / `partial` / `failed`), outline, tables, images, what is missing and why, open review items, processing and cost |
-| `<name>.blocks.json` | The sidecar: every block with its sources, decisions and the accounting ledger |
-| `images/` | Images referenced from the Markdown |
+| `<name>.md` | The Markdown: headings, paragraphs, tables (GFM, or HTML for merged cells), images each with a short note, formulas as LaTeX, page anchors (`<!-- PAGE n -->`); where something could not be read, a line says so (`> 〔未识别〕第 3 页：…`) |
+| `images/` | The images the Markdown links |
+| `<name>.json` (`--report`) | Summary: status (`complete` / `partial` / `failed`), outline, tables, images, what is missing and why, open review items, processing and cost |
+| `<name>.blocks.json` (`--sidecar`) | The block-level record: every block with its sources, decisions and the accounting ledger (development and audit) |
+
+A second document with the same name in the same place goes to `<name>-2/`.
 
 Exit code 0 when every document was written (complete or partial), 1 when one failed, 130 on Ctrl-C.
 
