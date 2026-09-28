@@ -28,7 +28,7 @@
 3. 运行测试，都应 PASS：
    - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（678 通过，无已知失败）；
    - L1：`uv run python scripts/regression_test.py --core --repeat 2`；
-   - 冻结 run 回放：`--replay eval_runs/2026-09-27_radicals_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-27_radicals_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在文字层的部首码位之后重新冻结，2026-09-27，Q97）。
+   - 冻结 run 回放：`--replay eval_runs/2026-09-28_io_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-28_io_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在图片说明改写之后重新冻结，2026-09-28，IO5）。
 4. 为选定的主题写分解，请用户确认后再动代码。
 5. 每完成一项：跑 L0 与 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 全语料比较：固定流水线用 `scripts/heading_compare.py`（以全语料冻结 run 的缓存离线回放；段落拼接另用 `scripts/paragraph_segmentation.py`）；混合方案用 `scripts/agent_explore.py`（snapshot + parse）与 `scripts/phase4_compare.py`。v1 冻结 run 只作静态基线，不能回放。
@@ -935,6 +935,12 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q117 | 识别失败的内容在 Markdown 里怎样体现 | ✅ 用户按建议决定（2026-09-28）：在原位置留一行可见的说明 |
 | Q118 | Markdown 里的内部写法 | ✅ 用户按建议决定（2026-09-28）：图片描述块改成读者看得懂的格式，去掉类型代码与证据等级；替代文字用一句话；`<!-- PAGE n -->` 保留 |
 | Q119 | 输入扩展 | ✅ 用户按建议决定（2026-09-28）：加网址、递归目录（`-r`）、图片文件（当作扫描页）；PPTX、XLSX、HTML 暂不做 |
+| Q120 | Markdown 与控制台新加文字的语言 | ✅ 用户决定（2026-09-28）：默认中文，`--lang en` 切换为英文，只支持这两种；图片说明、缺失提示、替代文字都跟随 |
+| Q121 | 图片说明的详略 | ✅ 用户意见（2026-09-28）：一两句话，一般不超过 50 字、最多 100 字；可用"约""推断"；图表、照片怎样读由提示词整体设计，控制篇幅与耗时。实施见 [v2_io_plan.md](v2_io_plan.md) §3.1：只要 `type` 与 `caption`，图中文字不抄（交扫描引擎转写）；50 张图上中位数 127 → 47 字、单张 4.1 → 1.9 s。用户看过对照后采用新说明 |
+| Q122 | 同名输入怎样区分 | ✅ 用户按建议决定（2026-09-28）：先到的用原名，后到的加 `-2`、`-3` |
+| Q123 | 网址下载的限制 | ✅ 用户按建议决定（2026-09-28）：只接受 http、https；上限 200 MB、超时 120 s，可配置；按文件内容判断格式 |
+| Q124 | 冻结 run 怎样重新冻结 | ✅ 用户按建议决定（2026-09-28）：从各自的缓存起步；图片说明的提示词改了，只有描述请求是新发的 |
+| Q125 | 截图里读出的表格算表格还是标签 | ❓ 建议：算表格，维持现状。新说明把软件界面分为截图（以前多归"其他"或"图表"），T5 只把图表、示意图里读出的表改为文字。截图里常有真实的数据列表（text_pic02 的 OpenStack 列表与属性表），改成一串词会丢结构；代价是按钮面板也成了表（unseen_word_spec01 两张） |
 
 ## 15. 变更记录
 
@@ -1071,3 +1077,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-28 | v1.40 | **模型条目（Q100 决定一，比较的 M1）**：配置新增 `models`，`services.vlm` 与 `runtime.agent` 用 `use` 按名字选，加载时展开，写在使用处的字段优先；`efforts` 换算思考强度（服务取低、Agent 取高，Q103），`structured_output` 定结构化输出的起点（Q105）；缓存键按实际发送的强度；`models` 与 `use` 不进配置指纹，Agent 的工具配置不带模型条目（别的模型的密钥不进 Agent 一侧）；`parserx.yaml` 写入 gpt-6-luna、deepseek-flash、glm-5.3-flashx 三个条目与 GLM 价格（Q102）；`configs/vlm_c.yaml` 删去。生产配置展开后与原来相同，两个冻结 run 回放 PASS；比较分解见 [v2_model_comparison_plan.md](v2_model_comparison_plan.md)，Q101–Q105 按建议；L0 666 |
 | 2026-09-28 | v1.41 | **模型能力比较**（[报告](../eval_reports/2026-09-28_model_comparison.md)）：`check_services.py --model` 探测模型接受的参数；修正 DeepSeek 在 low 下的长时间思考（条目输出下限 8192）与只支持 json_object 的模型看不到 schema（写进提示）。服务模型全语料三者分数相当，luna 最便宜、GLM 最快；图片描述 DeepSeek 最全但未证实的数最多，待用户判断。Agent 主控 9 篇 × 2 次：DeepSeek 标题 0.767 / 角色 0.819（每次 $0.08），GLM 0.761 / 0.798（$0.12），luna 0.730 / 0.782（$0.02，公式待办多时放弃），Codex（d1）0.785 / 0.826；默认不变。冻结 run `2026-09-28_vlm_{luna,deepseek,glm}_fixed_full`；L0 668 |
 | 2026-09-28 | v1.42 | **独立发布 R1–R7**（[分解](v2_release_plan.md)，Q107–Q115 按建议）：配置分四层（包内默认 → 项目 → 个人 → `--config`），key 只在个人配置，不读 `.env`，仓库的 `parserx.yaml` 与模板删去；`parse --agent/--no-agent/--vlm`；`parserx check`；开始前说清缺什么（`not_configured`）；版面模型下载到用户缓存并校验；开发命令收进 `parserx dev`，删 `psx`；README 重写安装与配置。干净环境从 wheel 装起走通四类文档；两个冻结 run 回放不变；L0 678 |
+| 2026-09-28 | v1.43 | **输入与输出 IO1–IO5**（[分解](v2_io_plan.md)，Q116–Q125）：默认只交 Markdown 与它引用的图片，摘要 `--report`、sidecar `--sidecar` 按需（1b6dc5a）；识别失败处留一行"〔未识别〕"，评测剔除（12c18a2）；输入可以是网址、`-r` 递归目录、图片文件，同名加 `-2`（8313941）；图片说明重新设计为 `FigureNote(type, caption)`，渲染为 `![图表](…)` + `> 图片说明：…`，`--lang zh|en`，旧的三种语义结构只读（71c97e4）。两个冻结 run 从旧缓存起步重新冻结为 `2026-09-28_io_fixed_full`、`2026-09-28_io_v2_toolkit`，回放 PASS；验收 4 篇与全语料 29 篇分数不变；text_pic02 更多截图的文字经扫描引擎转写（1 → 6 张，char_f1 0.852 → 0.912，关键错误 148 → 67，多出 4 张表），unseen_word_spec01 的软件界面由图表改判为截图，T5 不再适用，按钮面板成表（table_cell_f1 1.0 → 0.808），见 Q125。L0 678 通过；L1 PASS |
