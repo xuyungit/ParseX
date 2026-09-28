@@ -49,7 +49,7 @@ dev = [
 
 [tool.pytest.ini_options]
 markers = [
-    "live_e2e: calls the real scan engine and VLM configured via .env",
+    "live_e2e: calls the real scan engine and VLM of the personal config",
     "live_layout: runs the real layout detector (downloads its model on first use)",
 ]
 addopts = "-m 'not live_layout'"

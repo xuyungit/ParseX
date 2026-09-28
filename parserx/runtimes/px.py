@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"px: {exc}\n\n{usage}", file=sys.stderr)
         return 2
     os.environ.update(secrets)
+    # The agent's config is the effective config, expanded: no personal layer under it (Q107) — the personal file
+    # holds every model's key, and the tools need none of it.
+    os.environ["PARSERX_CONFIG_DIR"] = str(ns.config.parent / ".no-personal-config")
     # A deadline or Ctrl-C stops the agent with SIGTERM: raise, so the running tool records its call (P4-1).
     signal.signal(signal.SIGTERM, _terminated)
     sys.argv = ["parserx", *parserx_args]

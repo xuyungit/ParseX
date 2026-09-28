@@ -1,12 +1,15 @@
-# ParserX global configuration (written by `parserx init`; the same settings as the project's parserx.yaml).
-# Credentials come from environment variables, e.g. ~/.config/parserx/.env next to this file.
+# ParserX built-in defaults (Q100, Q107-Q108): the production settings and the models it knows.  Keys are not
+# here: they go in the personal config ~/.config/parserx/config.yaml (`parserx init` writes it).  Layers, each
+# deep-merged over the one before: these defaults, ./parserx.yaml (a project's own settings, optional), the personal
+# config, and a --config file.  ${VAR} still reads a real environment variable.
 
+# The scan engine (guide §10.2): PaddleOCR-VL through the AI Studio jobs API.  Needed for scanned pages and the text
+# of images; its token is personal.
 builders:
   ocr:
     engine: paddleocr
-    endpoint: ${PADDLE_OCR_ENDPOINT}
-    token: ${PADDLE_OCR_TOKEN}
-    model: ${PADDLE_OCR_MODEL:PaddleOCR-VL-1.6}
+    endpoint: https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
+    model: PaddleOCR-VL-1.6
 
 # Models (Q100): how to talk to each one — where it is and which parameters it takes, written here instead of
 # guessed from rejected requests.  The services and the agent's own loop choose one by name (`use`); what a
@@ -15,8 +18,7 @@ builders:
 # constraint it honours (json_schema / json_object / off).  Checked with `scripts/check_services.py --model`.
 models:
   gpt-6-luna:
-    endpoint: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-    api_key: ${OPENAI_API_KEY}
+    endpoint: https://api.openai.com/v1
     model: gpt-6-luna
     # a reasoning model: it rejects temperature, so it is never sent (auto-detection would waste one rejected
     # request per concurrent worker before the service learns)
@@ -24,9 +26,12 @@ models:
     min_output_tokens: 1024
     efforts: [none, low, medium, high, xhigh, max]  # minimal is rejected (probed 2026-09-28)
     structured_output: json_schema
+  gpt-6-sol:                # the agent model of Codex, reachable from our own loop too (runtime.agent.use)
+    endpoint: https://api.openai.com/v1
+    model: gpt-6-sol
+    api_style: responses
   deepseek-flash:
-    endpoint: ${OPENAI_BASE_URL_D:https://api.deepseek.com}
-    api_key: ${OPENAI_API_KEY_D}
+    endpoint: https://api.deepseek.com
     model: deepseek-flash
     api_style: chat          # also Responses; our loop hands its reasoning_content back on Chat (aada802)
     structured_output: json_object  # json_schema: "This response_format type is unavailable now" (2026-09-28)
@@ -34,8 +39,7 @@ models:
     # 2048-token budget the answer comes back empty (finish_reason length), so the floor is raised (2026-09-28)
     min_output_tokens: 8192
   glm-5.3-flashx:
-    endpoint: ${OPENAI_BASE_URL_G:https://open.bigmodel.cn/api/paas/v4/}
-    api_key: ${OPENAI_API_KEY_G}
+    endpoint: https://open.bigmodel.cn/api/paas/v4/
     model: glm-5.3-flashx
     api_style: chat          # no Responses API (404)
     efforts: [low, high, max]  # always thinks; none / minimal / medium / xhigh are rejected (2026-09-28)
@@ -54,7 +58,7 @@ services:
 # replay, a miss is an error · refresh: always request and record · off.
 cache:
   mode: read_write
-  dir: __CACHE_DIR__
+  dir: ~/.cache/parserx
 
 # Scheduling (guide §8.2): transport retries happen in the gateway (the OpenAI
 # SDK never retries); prices turn recorded token usage into cost_usd; budget

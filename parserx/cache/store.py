@@ -39,7 +39,7 @@ class ResponseCache:
     def __init__(self, root: Path | str, mode: CacheMode = "read_write"):
         if mode == "off":
             raise ValueError("use open_cache() for mode 'off'")
-        self.root = Path(root)
+        self.root = Path(root).expanduser()
         self.mode = mode
 
     @property

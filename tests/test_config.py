@@ -57,15 +57,13 @@ def test_load_config_with_result_reports_project_source(tmp_path: Path, monkeypa
 
     loaded = load_config_with_result()
 
-    assert loaded.source == "project"
+    assert loaded.source == "files"
     assert loaded.resolved_path == config_file
     assert loaded.config.builders.ocr.engine == "none"
 
 
 def test_load_config_with_result_reports_default_fallback(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    import parserx.config.schema as _schema
-    monkeypatch.setattr(_schema, "_GLOBAL_CONFIG_DIR", tmp_path / "no_global")
 
     loaded = load_config_with_result()
 
@@ -161,14 +159,15 @@ services:
 _REPO = Path(__file__).resolve().parent.parent
 
 
-def test_regression_config_is_the_production_config():
-    # Phase 5: the LLM switches it turned off belonged to v1; what processes a document is the same
+def test_regression_config_is_the_production_config(tmp_path, monkeypatch):
+    # what processes a document in evaluation is the built-in production setting; only the cache differs
     from parserx.config.schema import load_config
     from parserx.eval.reporting import config_fingerprint
 
-    base = load_config(_REPO / "parserx.yaml")
+    monkeypatch.chdir(tmp_path)
     reg = load_config(_REPO / "configs" / "regression.yaml")
-    assert config_fingerprint(reg) == config_fingerprint(base)
+    assert config_fingerprint(reg) == config_fingerprint(load_config())
+    assert reg.services.vlm.model == "gpt-6-luna" and reg.cache.dir == ".parserx_cache"
 
 
 def test_config_fingerprint_ignores_secrets_but_not_settings():
@@ -206,35 +205,6 @@ def test_fields_removed_from_the_config_do_not_change_a_frozen_runs_fingerprint(
     resolved["retired_section"] = {"llm_fallback": False}  # stands for a section a later phase removes
     assert resolved_fingerprint(resolved) == config_fingerprint(ParserXConfig())
     assert ParserXConfig().runtime.mode == "hybrid"  # Q13
-
-
-def test_init_template_has_the_production_settings(tmp_path, monkeypatch):
-    # the global config written by `parserx init` processes like the project's parserx.yaml; only the credential
-    # variable names and the cache directory differ
-    from parserx.cli import _cmd_init, config_template
-    from parserx.config.schema import load_config
-
-    for name, value in {"OPENAI_BASE_URL_B": "https://e", "OPENAI_BASE_URL": "https://e", "OPENAI_API_KEY_B": "k",
-                        "OPENAI_API_KEY": "k", "PADDLE_OCR_ENDPOINT": "https://o", "PADDLE_OCR_TOKEN": "t"}.items():
-        monkeypatch.setenv(name, value)
-    for name in ("VLM_MODEL", "LLM_MODEL", "VLM_MODEL_B", "LLM_MODEL_B", "PADDLE_OCR_MODEL"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.chdir(tmp_path)  # no ./.env (the repository's sets other model names)
-    monkeypatch.setattr("parserx.config.schema._GLOBAL_CONFIG_DIR", tmp_path / "no-global")
-    (tmp_path / "global.yaml").write_text(config_template(tmp_path / "cache"), encoding="utf-8")
-    ours, project = load_config(tmp_path / "global.yaml"), load_config(_REPO / "parserx.yaml")
-    assert ours.cache.dir == str(tmp_path / "cache")
-    ours.cache.dir = project.cache.dir
-    assert ours == project
-
-    config_dir = tmp_path / "parserx"
-    config_dir.mkdir()
-    (config_dir / "config.yaml").write_text("old: true\n")
-    (config_dir / ".env").write_text("OPENAI_API_KEY=mine\n")
-    _cmd_init(force=True, config_dir=config_dir)
-    assert (config_dir / "config.yaml.bak").read_text() == "old: true\n"
-    assert "gpt-6-sol" in (config_dir / "config.yaml").read_text()
-    assert (config_dir / ".env").read_text() == "OPENAI_API_KEY=mine\n"
 
 
 # ── Model entries (Q100) ────────────────────────────────────────────────
@@ -308,3 +278,57 @@ def test_what_a_model_accepts_counts_as_what_is_sent():
     limited = apply_overrides(base, ["services.vlm.efforts=[low, high]"])  # none is sent as low
     assert config_fingerprint(listed) == config_fingerprint(base)
     assert config_fingerprint(limited) != config_fingerprint(base)
+
+
+# ── Layers (Q100 §3, Q107-Q109) ─────────────────────────────────────────
+
+
+def test_layers_merge_in_order(tmp_path, monkeypatch):
+    # built-in defaults < ./parserx.yaml < personal config < --config, each deep-merged over the one before
+    import os
+
+    personal = Path(os.environ["PARSERX_CONFIG_DIR"]) / "config.yaml"
+    personal.write_text("models:\n  gpt-6-luna:\n    api_key: sk-mine\nservices:\n  vlm:\n    timeout: 90\n")
+    (tmp_path / "parserx.yaml").write_text("services:\n  vlm:\n    timeout: 60\n    max_concurrent: 2\n")
+    explicit = tmp_path / "eval.yaml"
+    explicit.write_text("services:\n  vlm:\n    max_concurrent: 1\n")
+    monkeypatch.chdir(tmp_path)
+    loaded = load_config_with_result(explicit)
+    vlm = loaded.config.services.vlm
+    assert (vlm.model, vlm.api_key, vlm.timeout, vlm.max_concurrent) == ("gpt-6-luna", "sk-mine", 90, 1)
+    assert [p.name for p in loaded.layers] == ["defaults.yaml", "parserx.yaml", "config.yaml", "eval.yaml"]
+
+
+def test_no_env_file_is_read(tmp_path, monkeypatch):
+    # keys live in the personal config; ${VAR} still reads a real environment variable
+    (tmp_path / ".env").write_text("SOME_KEY=from-dotenv\n")
+    (tmp_path / "c.yaml").write_text("models:\n  gpt-6-luna:\n    api_key: ${SOME_KEY}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SOME_KEY", raising=False)
+    assert load_config(tmp_path / "c.yaml").services.vlm.api_key == ""
+    monkeypatch.setenv("SOME_KEY", "from-environment")
+    assert load_config(tmp_path / "c.yaml").services.vlm.api_key == "from-environment"
+
+
+def test_init_writes_the_personal_config_and_keeps_an_old_one(tmp_path):
+    import stat
+
+    from parserx.cli import _cmd_init
+
+    home = tmp_path / "parserx"
+    home.mkdir()
+    (home / "config.yaml").write_text("providers:\n  pdf: {}\nservices:\n  vlm:\n    model: gpt-4o-mini\n")
+    (home / ".env").write_text("OPENAI_API_KEY=sk-old\nPADDLE_OCR_TOKEN=tok-old\nVLM_MODEL=gpt-4o-mini\n")
+    _cmd_init(config_dir=home)
+    assert "gpt-4o-mini" in (home / "config.yaml.v1.bak").read_text()  # the old one kept, not merged
+    assert stat.S_IMODE((home / "config.yaml").stat().st_mode) == 0o600
+    import yaml
+
+    from parserx.config.schema import ParserXConfig, _deep_merge_dicts, _load_raw_config, DEFAULTS_FILE
+
+    merged = _deep_merge_dicts(_load_raw_config(DEFAULTS_FILE, set()), yaml.safe_load((home / "config.yaml").read_text()))
+    config = ParserXConfig.model_validate(merged)
+    assert (config.services.vlm.api_key, config.builders.ocr.token) == ("sk-old", "tok-old")
+    assert config.services.vlm.model == "gpt-6-luna"  # the model name of the old .env is not carried
+    _cmd_init(config_dir=home)  # a new-format config stays
+    assert not (home / "config.yaml.bak").exists()

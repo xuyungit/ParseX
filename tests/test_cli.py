@@ -36,9 +36,6 @@ def test_cmd_compare_warns_when_both_configs_omitted(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(EvalRunner, "evaluate_dir", fake_evaluate_dir)
-    # Ensure no global config interferes
-    import parserx.config.schema as _schema
-    monkeypatch.setattr(_schema, "_GLOBAL_CONFIG_DIR", tmp_path / "no_global")
 
     args = argparse.Namespace(
         ground_truth=tmp_path,
@@ -57,8 +54,8 @@ def test_cmd_compare_warns_when_both_configs_omitted(
 
     captured = capsys.readouterr()
     assert "# ParserX Compare Report" in captured.out
-    assert "Compare Base config: no project parserx.yaml found" in caplog.text
-    assert "Compare Experiment config: no project parserx.yaml found" in caplog.text
+    assert "Compare Base config: no project parserx.yaml or personal config" in caplog.text
+    assert "Compare Experiment config: no project parserx.yaml or personal config" in caplog.text
     assert len(seen_configs) == 2
     assert all(config.builders.ocr.engine == "paddleocr" for config in seen_configs)
 

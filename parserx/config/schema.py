@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -290,7 +289,16 @@ def expand_uses(data: dict[str, Any], *, replace: set[tuple[str, str]] = frozens
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::([^}]*))?\}")
 _DEFAULT_CONFIG_FILENAME = "parserx.yaml"
 _EXTENDS_KEY = "extends"
-_GLOBAL_CONFIG_DIR = Path.home() / ".config" / "parserx"
+DEFAULTS_FILE = Path(__file__).with_name("defaults.yaml")  # the built-in layer: production settings, known models
+
+
+def config_dir() -> Path:
+    """The personal config directory: ``$PARSERX_CONFIG_DIR``, else ``~/.config/parserx`` (Q107)."""
+    return Path(os.environ.get("PARSERX_CONFIG_DIR") or Path.home() / ".config" / "parserx").expanduser()
+
+
+def personal_config() -> Path:
+    return config_dir() / "config.yaml"
 
 
 @dataclass(frozen=True)
@@ -299,8 +307,9 @@ class ConfigLoadResult:
 
     config: ParserXConfig
     resolved_path: Path | None
-    source: str
+    source: str  # defaults: only the built-in layer · files: project / personal layers · explicit · missing
     requested_path: Path | None = None
+    layers: tuple[Path, ...] = ()  # the files merged, first to last (the built-in defaults first)
 
 
 def _resolve_env_vars(value: Any) -> Any:
@@ -375,51 +384,31 @@ def load_config(path: str | Path | None = None) -> ParserXConfig:
 
 
 def load_config_with_result(path: str | Path | None = None) -> ConfigLoadResult:
-    """Load configuration from YAML file with environment variable resolution.
-
-    Lookup order for .env:  ./.env → ~/.config/parserx/.env
-    Lookup order for config (when no --config given):
-      ./parserx.yaml → ~/.config/parserx/config.yaml → built-in defaults
-    """
-    # Load .env: project-local (the working directory) first, then global.  Without a path, load_dotenv would
-    # search upwards from this module's directory instead.
-    load_dotenv(Path.cwd() / ".env", override=False)
-    global_env = _GLOBAL_CONFIG_DIR / ".env"
-    if global_env.exists():
-        load_dotenv(global_env, override=False)
-
-    requested_path = Path(path) if path is not None else None
-    if path is None:
-        # Try project-local, then global config
-        default_path = Path.cwd() / _DEFAULT_CONFIG_FILENAME
-        global_config = _GLOBAL_CONFIG_DIR / "config.yaml"
-        if default_path.exists():
-            path = default_path
-        elif global_config.exists():
-            path = global_config
+    """The configuration, in layers each deep-merged over the one before (Q100, Q107-Q108): the built-in defaults,
+    ``./parserx.yaml`` (a project's own settings), the personal ``~/.config/parserx/config.yaml`` (keys, endpoints,
+    which model does what), and an explicit file with its ``extends`` chain.  ``${VAR}`` reads the environment;
+    no ``.env`` file is read."""
+    requested = Path(path) if path is not None else None
+    layers = [DEFAULTS_FILE]
+    for candidate in (Path.cwd() / _DEFAULT_CONFIG_FILENAME, personal_config()):
+        if candidate.is_file() and all(candidate.resolve() != layer.resolve() for layer in layers):
+            layers.append(candidate)
+    source = "files" if len(layers) > 1 else "defaults"
+    if requested is not None:
+        if requested.exists():
+            layers.append(requested)
+            source = "explicit"
         else:
-            return ConfigLoadResult(
-                config=ParserXConfig(),
-                resolved_path=None,
-                source="defaults",
-            )
-
-    path = Path(path)
-    if not path.exists():
-        return ConfigLoadResult(
-            config=ParserXConfig(),
-            resolved_path=path,
-            source="missing",
-            requested_path=requested_path,
-        )
-
-    raw = _load_raw_config(path, seen=set())
-    resolved = _resolve_env_vars(raw)
+            source = "missing"
+    raw: dict[str, Any] = {}
+    for layer in layers:
+        raw = _deep_merge_dicts(raw, _load_raw_config(layer, seen=set()))
     return ConfigLoadResult(
-        config=ParserXConfig.model_validate(resolved),
-        resolved_path=path,
-        source="project" if requested_path is None else "explicit",
-        requested_path=requested_path,
+        config=ParserXConfig.model_validate(_resolve_env_vars(raw)),
+        resolved_path=requested if requested is not None else (layers[-1] if len(layers) > 1 else None),
+        source=source,
+        requested_path=requested,
+        layers=tuple(layers),
     )
 
 

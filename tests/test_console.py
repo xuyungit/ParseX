@@ -234,7 +234,7 @@ def test_a_directory_is_one_line_per_document_and_a_total(tmp_path, monkeypatch,
                                                     "--json"], fake)
     assert [s[0] for s in seen] == ["a.pdf", "b.docx"] and seen[0][1] == tmp_path / "out" / "a"
     assert code == 1 and [r.get("error", {}).get("code") for r in json.loads(out)] == [None, "unreadable"]
-    lines = err.splitlines()
+    lines = [line for line in err.splitlines() if not line.startswith("⚠")]  # notices (no config here) come first
     assert lines[0].startswith("✓ a.pdf  complete · 14 页 · 待核对 0 项")
     assert "失败  b.docx  无法读取：not a zip file" in lines[1]
     assert lines[-1].startswith("合计 2 篇：完成 1 · 部分 0 · 失败 1")

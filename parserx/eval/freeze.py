@@ -37,7 +37,7 @@ ISOLATION_LIST = REPO_ROOT / "configs" / "isolation_set.txt"
 # Record fields that legitimately differ between a live run and its replay.
 _VOLATILE = frozenset({"wall_time_seconds", "requests", "attempts", "cache_hits", "ocr_pages", "cost_usd"})
 _PACKAGES = ("pymupdf", "openai", "rapidfuzz", "pydantic", "rapidocr", "rapid-layout")
-_CODE_DIRS = ("parserx", "scripts", "configs", "parserx.yaml", "pyproject.toml")
+_CODE_DIRS = ("parserx", "scripts", "configs", "pyproject.toml")
 
 
 def run_id_for(label: str, today: str | None = None) -> str:

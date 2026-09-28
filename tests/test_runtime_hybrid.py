@@ -323,3 +323,18 @@ def test_codex_runs_past_its_deadline_are_stopped(tmp_path):
         work, 1.0, tmp_path / "log")
     assert not outcome.ok and outcome.reason == "agent_timeout" and outcome.wall_s < 20
     assert outcome.usage.thread_id == "t"
+
+
+def test_px_reads_no_personal_config(tmp_path, monkeypatch):
+    # Q107: the agent's config is complete; the personal file (every model's key) is not read under it
+    from pathlib import Path
+
+    import parserx.cli
+    from parserx.runtimes import px
+
+    seen = {}
+    monkeypatch.setattr(parserx.cli, "main", lambda: seen.setdefault("dir", os.environ["PARSERX_CONFIG_DIR"]))
+    (tmp_path / "parserx.yaml").write_text("{}\n")
+    px.main(["--env-file", str(tmp_path / "none.env"), "--config", str(tmp_path / "parserx.yaml"), "--",
+             "tool", "read_draft", "--ws", "ws", "--view", "summary"])
+    assert Path(seen["dir"]).parent == tmp_path and not Path(seen["dir"]).exists()

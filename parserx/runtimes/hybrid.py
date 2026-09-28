@@ -265,11 +265,12 @@ def make_agent(config: ParserXConfig, context_class: type[ToolContext] = ToolCon
 
 def codex_agent(config: ParserXConfig) -> CodexAgent:
     cfg = config.runtime.agent
+    from parserx.config.schema import config_dir
+
     secrets = _secret_values(config)
-    env = agent_env(dict(os.environ), _dotenv_names(), secrets)
-    home = Path.home()
+    env = agent_env(dict(os.environ), set(), secrets)
     return CodexAgent(cfg.model, cfg.effort, env=env, price=config.scheduling.prices.get(cfg.model),
-                      forbidden={"parserx config": home / ".config" / "parserx"}, vision=cfg.vision)
+                      forbidden={"parserx config": config_dir()}, vision=cfg.vision)
 
 
 def deadline_minutes(config: ParserXConfig, pages: int) -> int:
@@ -335,18 +336,6 @@ def agent_config(config: ParserXConfig, agent_dir: Path) -> tuple[str, dict[str,
 
 def _secret_values(config: ParserXConfig) -> list[str]:
     return list(agent_config(config, Path("."))[1].values())
-
-
-def _dotenv_names() -> set[str]:
-    from dotenv import dotenv_values
-
-    from parserx.config.schema import _GLOBAL_CONFIG_DIR
-
-    names: set[str] = set()
-    for path in (Path.cwd() / ".env", _GLOBAL_CONFIG_DIR / ".env"):
-        if path.is_file():
-            names |= set(dotenv_values(path))
-    return names
 
 
 def _text_lookup(ws_dir: Path):

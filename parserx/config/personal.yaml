@@ -1,0 +1,35 @@
+# ParserX personal config (written by `parserx init`; Q100, Q107).  It is merged over the built-in defaults: write
+# only what is yours — keys, your own endpoints, which model does what.  Keep this file private (mode 0600); it is
+# never given to the agent.  Check it with `parserx check`.
+
+# Keys of the models you use (the built-in entries know their endpoints and parameters; see `parserx check --model`).
+# Another endpoint for a known model (a relay, a proxy): add `endpoint:` under it.
+models:
+  gpt-6-luna:
+    api_key: {openai_key}{openai_endpoint}
+  gpt-6-sol:
+    api_key: {openai_key}{openai_endpoint}
+  deepseek-flash:
+    api_key: ""
+  glm-5.3-flashx:
+    api_key: ""
+
+# The scan engine (required for scanned pages and the text of images): PaddleOCR-VL through the AI Studio jobs API.
+builders:
+  ocr:
+    token: {ocr_token}{ocr_endpoint}
+
+# The service model for figure descriptions, formula editing, table re-reading (default gpt-6-luna).
+# services:
+#   vlm:
+#     use: gpt-6-luna
+
+# The agent that reviews what the program left open (recommended; default: Codex on this machine, `codex login`).
+# Our own loop with a model of `models` instead (billed by the API):
+# runtime:
+#   agent:
+#     engine: loop
+#     use: deepseek-flash
+# No agent (the standard processing only):
+# runtime:
+#   mode: fixed

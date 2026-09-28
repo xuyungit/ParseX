@@ -160,9 +160,9 @@ def build_parser() -> argparse.ArgumentParser:
     tool_eval_cmd.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # parserx init
-    init_cmd = sub.add_parser("init", help="Create global config directory (~/.config/parserx/)")
+    init_cmd = sub.add_parser("init", help="Write the personal config (~/.config/parserx/config.yaml): keys and model choices")
     init_cmd.add_argument("--force", action="store_true",
-                          help="Replace an existing config.yaml (kept as config.yaml.bak); .env is never replaced")
+                          help="Write a new personal config even if one exists (the old one kept as config.yaml.bak)")
 
     # parserx workspace … / parserx tool … (v2 document toolkit, JSON in and out)
     from parserx.tools.cli import add_parsers as _add_tool_parsers
@@ -201,61 +201,68 @@ def main() -> None:
         _cmd_tool_eval(args)
 
 
-_ENV_TEMPLATE = """\
-# ParserX service credentials, read by ~/.config/parserx/config.yaml.
-
-# OpenAI (the VLM: gpt-6-luna by default)
-OPENAI_API_KEY=
-# OPENAI_BASE_URL=https://api.openai.com/v1
-# VLM_MODEL=gpt-6-luna
-
-# PaddleOCR (AI Studio jobs API): the scan engine for scanned pages and text in images
-PADDLE_OCR_ENDPOINT=
-PADDLE_OCR_TOKEN=
-# PADDLE_OCR_MODEL=PaddleOCR-VL-1.6
-"""
+_RETIRED = ("providers", "processors", "output", "verification", "pipeline")  # sections of the v1 config
 
 
-def config_template(cache_dir: Path | None = None) -> str:
-    """The global config: the project's production settings (``parserx/config/template.yaml``), with the response
-    cache in one place for every working directory."""
-    text = (Path(__file__).parent / "config" / "template.yaml").read_text(encoding="utf-8")
-    return text.replace("__CACHE_DIR__", str(cache_dir or Path.home() / ".cache" / "parserx"))
+def personal_template(values: dict[str, str] | None = None) -> str:
+    """The personal config ``parserx init`` writes, with the values an old ``.env`` gave (Q109)."""
+    import json
+
+    values = values or {}
+
+    def value(key: str) -> str:
+        return json.dumps(values.get(key, ""), ensure_ascii=False)
+
+    def endpoint(key: str) -> str:
+        return f"\n    endpoint: {value(key)}" if values.get(key) else ""
+
+    text = (Path(__file__).parent / "config" / "personal.yaml").read_text(encoding="utf-8")
+    return text.format(openai_key=value("OPENAI_API_KEY"), openai_endpoint=endpoint("OPENAI_BASE_URL"),
+                       ocr_token=value("PADDLE_OCR_TOKEN"), ocr_endpoint=endpoint("PADDLE_OCR_ENDPOINT"))
+
+
+def _old_format(path: Path) -> bool:
+    """A personal config of v1, or of the time keys lived in .env: it would override the built-in services."""
+    import yaml
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return True
+    vlm = (data.get("services") or {}).get("vlm") or {}
+    return any(k in data for k in _RETIRED) or "llm" in (data.get("services") or {}) or bool(vlm and "use" not in vlm)
 
 
 def _cmd_init(force: bool = False, config_dir: Path | None = None) -> None:
-    from parserx.config.schema import _GLOBAL_CONFIG_DIR
+    """Write the personal config (Q107, Q109): keys and choices over the built-in defaults.  An old config (v1, or
+    one that spells out the services) is kept as ``config.yaml.v1.bak``; the values of an old ``.env`` beside it
+    are carried over once, and ``.env`` is not read any more."""
+    from dotenv import dotenv_values
 
-    config_dir = config_dir or _GLOBAL_CONFIG_DIR
-    config_path = config_dir / "config.yaml"
-    env_path = config_dir / ".env"
+    from parserx.config.schema import config_dir as _config_dir
 
+    config_dir = config_dir or _config_dir()
+    config_path, env_path = config_dir / "config.yaml", config_dir / ".env"
     config_dir.mkdir(parents=True, exist_ok=True)
-
-    created = []
-    if force and config_path.exists():
-        backup = config_path.with_name("config.yaml.bak")
+    if config_path.exists():
+        old = _old_format(config_path)
+        if not (old or force):
+            print(f"  exists: {config_path} (--force writes a new one, keeping this as config.yaml.bak)", file=sys.stderr)
+            return
+        backup = config_path.with_name("config.yaml.v1.bak" if old else "config.yaml.bak")
         config_path.replace(backup)
         print(f"  kept the old config as {backup}", file=sys.stderr)
-    if not config_path.exists():
-        config_path.write_text(config_template(), encoding="utf-8")
-        created.append(str(config_path))
-    else:
-        print(f"  exists: {config_path}", file=sys.stderr)
-
-    if not env_path.exists():
-        env_path.write_text(_ENV_TEMPLATE, encoding="utf-8")
-        created.append(str(env_path))
-    else:
-        print(f"  exists: {env_path}", file=sys.stderr)
-
-    if created:
-        print(f"Created:", file=sys.stderr)
-        for p in created:
-            print(f"  {p}", file=sys.stderr)
-        print(f"\nNext: edit {env_path} to fill in your API keys.", file=sys.stderr)
-    else:
-        print("Global config already exists. Nothing to do (--force replaces config.yaml).", file=sys.stderr)
+    values = {k: v for k, v in dotenv_values(env_path).items() if v} if env_path.is_file() else {}
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(personal_template(values))
+    print(f"Created: {config_path}", file=sys.stderr)
+    if values:
+        carried = sorted(k for k in values if k in {"OPENAI_API_KEY", "OPENAI_BASE_URL", "PADDLE_OCR_TOKEN",
+                                                    "PADDLE_OCR_ENDPOINT"})
+        print(f"  carried over from {env_path}: {', '.join(carried) or 'nothing'}; .env is not read any more",
+              file=sys.stderr)
+    print("\nNext: fill in the keys you use, then run `parserx check`.", file=sys.stderr)
 
 
 def _cmd_parse(args: argparse.Namespace) -> int:
@@ -418,23 +425,13 @@ def _load_cli_config(
 
 
 def _log_config_resolution(label: str, loaded: ConfigLoadResult) -> None:
-    if loaded.source in {"explicit", "project"} and loaded.resolved_path is not None:
-        logging.info("%s config: %s", label, loaded.resolved_path.resolve())
-        return
-
     if loaded.source == "missing" and loaded.resolved_path is not None:
-        logging.warning(
-            "%s config file not found: %s; using built-in defaults",
-            label,
-            loaded.resolved_path,
-        )
+        logging.warning("%s config file not found: %s; using the other layers", label, loaded.resolved_path)
+    if len(loaded.layers) > 1:
+        logging.info("%s config: %s", label, " + ".join(str(p.resolve()) for p in loaded.layers[1:]))
         return
-
-    logging.warning(
-        "%s config: no project parserx.yaml found in %s; using built-in defaults",
-        label,
-        Path.cwd(),
-    )
+    logging.warning("%s config: no project parserx.yaml or personal config (%s); using the built-in defaults "
+                    "(`parserx init` writes a personal config)", label, Path.cwd())
 
 
 def _resolve_include_docs(

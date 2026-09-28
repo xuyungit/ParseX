@@ -1,4 +1,8 @@
-# Regression config (guide §12 P0-2, Phase 5): the production config.  Regression runs depend only on the
-# scan engine and VLM responses, which the response cache replays (the v1 LLM switches that used to be
-# turned off here are gone with v1).  Overrides go here.  L1: regression_test.py --core --repeat 2.
-extends: ../parserx.yaml
+# Evaluation config: the built-in defaults (parserx/config/defaults.yaml) with the service model and the response
+# cache named here, so a personal config (~/.config/parserx/config.yaml) supplies only keys and endpoints (Q100 §3.1).
+services:
+  vlm:
+    use: gpt-6-luna
+cache:
+  mode: read_write
+  dir: .parserx_cache

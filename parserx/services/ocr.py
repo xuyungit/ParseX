@@ -96,9 +96,8 @@ class PaddleOCRService:
         cfg = config or OCRBuilderConfig()
         if not cfg.endpoint or not cfg.token:
             raise ValueError(
-                "PaddleOCR requires 'endpoint' and 'token'. "
-                "Set PADDLE_OCR_ENDPOINT / PADDLE_OCR_TOKEN in environment "
-                "or provide them in parserx.yaml under builders.ocr."
+                "PaddleOCR requires 'endpoint' and 'token': put the token under builders.ocr in the personal "
+                "config (~/.config/parserx/config.yaml; `parserx init` writes it)."
             )
         self._url = cfg.endpoint.rstrip("/")
         self._headers = {"Authorization": f"bearer {cfg.token}"}

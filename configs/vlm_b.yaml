@@ -1,6 +1,4 @@
-extends: ../parserx.yaml
-
-# the official OpenAI endpoint (the *_B variables of .env): the production model entry (Q100)
+# the official OpenAI endpoint: the production model entry (Q100)
 services:
   vlm:
     use: gpt-6-luna
