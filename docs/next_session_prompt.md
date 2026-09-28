@@ -39,6 +39,12 @@
 - 模型能力比较（docs/v2_model_comparison_plan.md，Q100 决定一、Q101–Q105）：配置有了 `models` 条目与 `use`，`check_services.py --model` 探测模型接受的参数。服务模型三者分数相当，保持 luna；Agent 按量付费时 DeepSeek 最好（接近 Codex，每次约 $0.08），GLM 相近但贵一些，luna 便宜但公式待办多时放弃。图片描述是否编造待用户看对照页判断。见 eval_reports/2026-09-28_model_comparison.md。
 - 独立发布（docs/v2_release_plan.md，R1–R7，Q107–Q115）：配置分四层（包内默认 `parserx/config/defaults.yaml` → `./parserx.yaml` → 个人 `~/.config/parserx/config.yaml` → `--config`），key 只在个人配置，仓库的 `parserx.yaml` 与模板已删；`parse --agent codex|<模型> / --no-agent / --vlm <模型>`；`parserx check`（`--model` 探测、`--offline`）；开始前说清缺什么；版面模型下载到 `~/.cache/parserx/models`（校验 SHA-256）；开发命令收进 `parserx dev`；README 写清安装四步，已在干净环境从 wheel 装起走通。
 - 输入与输出（docs/v2_io_plan.md，IO1–IO5，Q116–Q125）：默认只交 Markdown 与它引用的图片（摘要 `--report`、sidecar `--sidecar` 按需）；识别失败处留一行"〔未识别〕"；图片说明改为类型 + 一两句话（中位数 127 → 47 字，单张用时 4.1 → 1.9 s），`--lang zh|en`；输入可以是网址、`-r` 递归目录、图片文件，同名加 `-2`。两个冻结 run 重新冻结（`2026-09-28_io_fixed_full`、`2026-09-28_io_v2_toolkit`）：29 篇分数不变，text_pic02 与 unseen_word_spec01 因截图的文字改由扫描引擎转写而变（Q125）。
+- 图片按用途处理（docs/v2_io_plan.md §7，IO6，Q125–Q129）：服务模型先写说明、判断用途，再决定是否转写。
+  - 内容类（票据、证照、文件页、表格、公式）：转写，放在以"〔图片识别〕"开头的引用块里。本地读数核对完整、或 Agent 看图后关闭了漏字待办时，不显示原图；含公式的核对不了，原图保留。
+  - 图画类（界面截图、图表、示意图、照片）：原图加一两句说明，图里的字不转写；说明里的数字与本地读数核对。
+  - 前后的注释 `<!-- parserx:image-text src=… -->` 供下游追溯；扫描页标 `<!-- PAGE n scanned -->`。
+  - text_pic02 的标注删去截图里的界面文字（Q128）。冻结 run 为 `2026-09-28_io6_fixed_full` 与 `2026-09-28_io6_v2_toolkit`：全语料只有三篇变化，都是变好。
+  - 待办：本地读数的低置信行（Q129），等全语料有更多内容类图片再看。
 
 ## 先做四件事
 
@@ -50,11 +56,11 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run parserx check`：扫描引擎与服务模型两项都要 ✓（配置分层，key 在个人配置 `~/.config/parserx/config.yaml`，不再读 `.env`）。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 678 通过，无已知失败。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 695 通过，无已知失败（其中 `tests/test_tool_eval.py` 3 个；另一个会话在改工具对比，提交后数目会变）。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
-   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-28_io_v2_toolkit`
-   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-28_io_fixed_full`
+   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-28_io6_v2_toolkit`
+   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-28_io6_fixed_full`
 
 ## 然后
 

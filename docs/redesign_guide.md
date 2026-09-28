@@ -13,7 +13,7 @@
 - **架构定位已定**：v2 的核心交付物是文档工作区 + 文档工具包 + 程序约束（§3）。固定流水线和 LLM 驱动的 Agent 是两种可替换的运行时，默认运行时由 §7 的实验决定，不先押注。
 - **阶段零 ✅**（2026-09-23）：指标、硬检查、回归配置、响应缓存、L1 离线回放、v1 冻结基线 `eval_runs/2026-09-23_p0_v1_gpt-6-luna`（提交 78556f4，[基线报告](../eval_reports/2026-09-23_p0-5_v1_frozen_baseline.md)；按指标 2.1 离线重算为 `.rescored-2.1.json`）。
 - **阶段一 ✅**（2026-09-24）：文档工作区、七个工具与 JSON CLI、程序约束（去向检查、合法性、接受门、预算）、内容获取（原生 PDF、扫描页引擎、DOCX 直接读 OOXML）、渲染与 sidecar、三份 Skill 草稿、版面检测与图片路由（影子）、固定序列运行时与 `pipeline: v1 | v2` 开关。v2 冻结 run `eval_runs/2026-09-24_p1_v2_toolkit`（提交 65041be），[验收报告](../eval_reports/2026-09-24_p1_toolkit_acceptance.md)；[工具形态试用](../eval_reports/2026-09-24_p1-7b_tool_trial.md)。决策 Q23–Q32 见 §14。**全量语料（27 篇）参考运行**暴露的三处差距（Q33：跨页续表、扫描页标题层级、多栏阅读顺序）已在阶段二之前处理，v2 冻结 run 以空缓存重新冻结（提交 e14752f）。处理后与 v1 比：char_f1 变差 11 篇、变好 9 篇（此前 15 / 7），平均 0.932（v1 0.893）；v2 仍不能在所有文档上替代 v1，剩余差距见验收报告"全量语料"一节。Q34（原生页页眉页脚识别、扫描页多栏区域顺序）也已在阶段二之前处理：与 v1 比 char_f1 变差 9 篇、变好 9 篇、持平 9 篇，平均 0.940（v1 0.893），剩余差距（扫描页识别差异、图片中的文字、无样式标题、界面元素、代码块）见验收报告。阶段二（Agent 探索）🟡：分解 [v2_phase2_plan.md](v2_phase2_plan.md) 已确认（Q35–Q39；Agent 运行时为 Codex，主力模型 gpt-6-sol）；P2-1 实验装置 ✅（[报告](../eval_reports/2026-09-24_p2-1_harness.md)），P2-2 任务说明 ✅，P2-3 对照运行 ✅，P2-4 第一轮 ✅（13 次运行全部有效，[报告](../eval_reports/2026-09-24_p2-4_round1_findings.md)），P2-5 工具包 v1.1 ✅（Agent 以 `process` 开始、只处理待办与定向抽查；推理强度 medium；默认经 `ask_image` 看图；输出包 Q42），P2-6 第二轮 ✅（[报告](../eval_reports/2026-09-24_p2-6_round2.md)：同样 13 篇耗时中位数 265 s → 155 s、Agent 标价 $17.3 → $3.32，文字与表格不变或更好，无样式标题变差——Q48），P2-7 ✅（固定流水线新增跨页段落续接、DOCX 无样式标题、表格算术一致性与可疑字符提示、单元格中的图片），P2-9 ✅（[探索报告](../eval_reports/2026-09-24_p2_agent_exploration.md)），P2-8 ✅（未见集与 §9.4 协议）——**阶段二 ✅**；**阶段三 ✅**（2026-09-25）：[对比报告](../eval_reports/2026-09-24_p3_runtime_comparison.md)、缺陷 D1–D6 修正、本地读数双向比对（Q56）、[重跑对比](../eval_reports/2026-09-25_p4_runtime_comparison.md)；**Q13：默认混合方案**（固定流水线 → 有待核对项交 Agent）；**阶段四 ✅**（2026-09-26）：`parserx parse` 默认走混合方案（控制台中英文进度、回退、中断续跑、`--json`），补齐标题、图片、DOCX、代码块、三线表、原生页公式等能力；全语料运行 B 混合方案 char_f1 0.947、表格 F1 0.875、heading_f1 0.756、角色 F1 0.868（v1 0.890 / 0.775 / 0.494 / 0.614），[退出报告](../eval_reports/2026-09-26_p4-7_full_run_b.md)；**阶段五 ✅**（2026-09-26，[分解](v2_phase5_plan.md)，Q72–Q78，[退出报告](../eval_reports/2026-09-26_p5-7_cleanup_exit.md)）：adapter:v1 由 v2 自有标题路径替代（"两种独立证据一致"），v1 全部删除（本地标签 `v1-final` 保留），依赖与代码一致，README 重写。最终测量（修订后的标注）：固定流水线 char_f1 0.950、表格 F1 0.866、heading_f1 0.699、角色 F1 0.805；混合方案 0.952 / 0.875 / 0.697 / 0.806（运行 B 的标题 0.774，Q78 接受并记录）。
-- **测试基线**：L0 678 通过，无已知失败（2026-09-28，独立发布之后），约 65 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
+- **测试基线**：L0 695 通过，无已知失败（2026-09-28，IO6 之后），约 75 s。L1：`regression_test.py --core --repeat 2`（只有一条流水线、一个 L1），应 PASS。
 - **代码状态**：全部在 main，未推送远端。冻结 run、响应缓存与新报告只在本地（`eval_runs/`、`.parserx_cache/`、`eval_reports/`，不入 git）。
 
 ### 0.2 新会话启动清单
@@ -26,9 +26,9 @@
    - [标注修订记录](annotation_changes.md)。
 2. 运行 `uv run python scripts/check_services.py`：扫描引擎与 VLM 两项都 OK 才继续。
 3. 运行测试，都应 PASS：
-   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（678 通过，无已知失败）；
+   - L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`（695 通过，无已知失败）；
    - L1：`uv run python scripts/regression_test.py --core --repeat 2`；
-   - 冻结 run 回放：`--replay eval_runs/2026-09-28_io_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-28_io_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在图片说明改写之后重新冻结，2026-09-28，IO5）。
+   - 冻结 run 回放：`--replay eval_runs/2026-09-28_io6_v2_toolkit`（验收）与 `--replay eval_runs/2026-09-28_io6_fixed_full --gt-dir ground_truth --gt-dir ground_truth_public`（全语料；两者都在图片按用途处理之后重新冻结，2026-09-28，IO6）。
 4. 为选定的主题写分解，请用户确认后再动代码。
 5. 每完成一项：跑 L0 与 L1；更新 §12 与 §15；新的决策写进 §14；提交一次。
 6. 全语料比较：固定流水线用 `scripts/heading_compare.py`（以全语料冻结 run 的缓存离线回放；段落拼接另用 `scripts/paragraph_segmentation.py`）；混合方案用 `scripts/agent_explore.py`（snapshot + parse）与 `scripts/phase4_compare.py`。v1 冻结 run 只作静态基线，不能回放。
@@ -944,8 +944,8 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q125 | 截图里读出的表格算表格还是标签 | ✅ 用户决定（2026-09-28）：界面截图不转写，保留原图、写说明，问题随之取消。实验（11 张截图，模型筛去界面文字）表明转写全放与筛选都不理想；改为按图的用途处理（[v2_io_plan.md](v2_io_plan.md) §7 IO6）：内容类（票据、证照、表格、成段文字）转写并留痕迹标记，图画类（界面、图表、示意图、照片）只放原图与说明 |
 | Q126 | 内容类图片的说明放在哪里 | ✅ 用户决定（2026-09-28）：看过实验后，说明放进可见的标签行 `> **〔图片识别〕** 说明　[原图](…)`，转写放在同一个引用块里；原图不显示 |
 | Q127 | 说明里的数字在图中读不到时怎么办 | ✅ 用户按建议决定（2026-09-28）：列为待办交 Agent 看图核对；没有 Agent 时只在摘要里列出 |
-| Q128 | 标注里图画类图片的转写 | ✅ 用户按建议决定（2026-09-28）：按标注修订规则删去并记录，改前先列清单给用户看 |
-| Q129 | 本地读数的低置信行要不要参与图片文字的核对 | ❓ 建议：先保持现状（宁可多显示原图）；Agent 看图后关闭的漏字待办已算作核对完成。全语料跑完后按 §9.5 的办法看置信度能否作为校准过的容差 |
+| Q128 | 标注里图画类图片的转写 | ✅ 用户按建议决定（2026-09-28），看过审阅页后同意删去 text_pic02 的 141 行（annotation_changes.md）：按标注修订规则删去并记录，改前先列清单给用户看 |
+| Q129 | 本地读数的低置信行要不要参与图片文字的核对 | ✅ 用户按建议决定（2026-09-28）：先保持现状（宁可多显示原图）；Agent 看图后关闭的漏字待办已算作核对完成。全语料跑完后按 §9.5 的办法看置信度能否作为校准过的容差 |
 
 ## 15. 变更记录
 
@@ -1083,3 +1083,4 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | 2026-09-28 | v1.41 | **模型能力比较**（[报告](../eval_reports/2026-09-28_model_comparison.md)）：`check_services.py --model` 探测模型接受的参数；修正 DeepSeek 在 low 下的长时间思考（条目输出下限 8192）与只支持 json_object 的模型看不到 schema（写进提示）。服务模型全语料三者分数相当，luna 最便宜、GLM 最快；图片描述 DeepSeek 最全但未证实的数最多，待用户判断。Agent 主控 9 篇 × 2 次：DeepSeek 标题 0.767 / 角色 0.819（每次 $0.08），GLM 0.761 / 0.798（$0.12），luna 0.730 / 0.782（$0.02，公式待办多时放弃），Codex（d1）0.785 / 0.826；默认不变。冻结 run `2026-09-28_vlm_{luna,deepseek,glm}_fixed_full`；L0 668 |
 | 2026-09-28 | v1.42 | **独立发布 R1–R7**（[分解](v2_release_plan.md)，Q107–Q115 按建议）：配置分四层（包内默认 → 项目 → 个人 → `--config`），key 只在个人配置，不读 `.env`，仓库的 `parserx.yaml` 与模板删去；`parse --agent/--no-agent/--vlm`；`parserx check`；开始前说清缺什么（`not_configured`）；版面模型下载到用户缓存并校验；开发命令收进 `parserx dev`，删 `psx`；README 重写安装与配置。干净环境从 wheel 装起走通四类文档；两个冻结 run 回放不变；L0 678 |
 | 2026-09-28 | v1.43 | **输入与输出 IO1–IO5**（[分解](v2_io_plan.md)，Q116–Q125）：默认只交 Markdown 与它引用的图片，摘要 `--report`、sidecar `--sidecar` 按需（1b6dc5a）；识别失败处留一行"〔未识别〕"，评测剔除（12c18a2）；输入可以是网址、`-r` 递归目录、图片文件，同名加 `-2`（8313941）；图片说明重新设计为 `FigureNote(type, caption)`，渲染为 `![图表](…)` + `> 图片说明：…`，`--lang zh|en`，旧的三种语义结构只读（71c97e4）。两个冻结 run 从旧缓存起步重新冻结为 `2026-09-28_io_fixed_full`、`2026-09-28_io_v2_toolkit`，回放 PASS；验收 4 篇与全语料 29 篇分数不变；text_pic02 更多截图的文字经扫描引擎转写（1 → 6 张，char_f1 0.852 → 0.912，关键错误 148 → 67，多出 4 张表），unseen_word_spec01 的软件界面由图表改判为截图，T5 不再适用，按钮面板成表（table_cell_f1 1.0 → 0.808），见 Q125。L0 678 通过；L1 PASS |
+| 2026-09-28 | v1.44 | **图片按用途处理 IO6**（[分解](v2_io_plan.md) §7，Q125–Q129）：服务模型先写说明、判用途（新类型 `content`），只转写内容类；守恒转写与 T5 删去，服务模型不可用时按路线回退。切表、拆段后的块继承"转写自这张图"的关系。说明里的数字与本地读数核对（待办 `caption_number_unseen`）。图片里的文字放进以〔图片识别〕开头的引用块，前后有 `parserx:image-text` 注释；内容类在本地读数核对完整、或 Agent 看图后关闭漏字待办时不显示原图；含公式的保留原图；扫描页标 `scanned`。skill `figure.md` 重写，README 更新。real_doc03：不带 Agent 40 张内容类中 18 张不显示原图，Codex 复核后 39 张中 33 张（6 分 24 秒，标价 $0.72）。text_pic02 标注删去截图界面文字（Q128）。冻结 run：`2026-09-28_io6_fixed_full`（全语料，三篇变好：text_pic02 char_f1 0.912 → 0.986、关键错误 67 → 5；unseen_word_spec01 0.982 → 0.998、44 → 0；patent01 关键错误 40 → 31；其余不变）、`2026-09-28_io6_v2_toolkit`（验收，4 篇不变）。草稿 `2026-09-28_io6draft_fixed_full` 是改标注之前的，已被取代。L0 695，L1 PASS |
