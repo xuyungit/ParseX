@@ -30,10 +30,11 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-from parserx.ir.anchor import PdfAnchor
+from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import BBox
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus
+from parserx.ir.enums import BlockKind, BlockStatus, RelationKind, TaskKind
+from parserx.layout.labels import NOT_PROSE
 from parserx.ir.state import DocumentState, ReadLine
 from parserx.content.text import normalize_fullwidth_ascii
 
@@ -157,6 +158,40 @@ def holders_of(state: DocumentState, page: int, box: BBox, text: str) -> list[st
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
+def read_inside(state: DocumentState) -> dict[str, list[Block]]:
+    """Shown figure id → the shown blocks of the text read inside its image (``contains``), in reading order."""
+    blocks = {b.id: b for b in state.blocks}
+    out: dict[str, list[Block]] = {}
+    for relation in state.relations:
+        src, dst = blocks.get(relation.src), blocks.get(relation.dst)
+        if relation.kind == RelationKind.CONTAINS and src is not None and dst is not None \
+                and src.kind == BlockKind.FIGURE and src.status in _SHOWN and dst.status in _SHOWN:
+            out.setdefault(src.id, []).append(dst)
+    return {k: sorted(v, key=lambda b: (b.order, b.id)) for k, v in out.items()}
+
+
+def lacking_in_transcription(state: DocumentState, figure: Block) -> list[str] | None:
+    """Lines of the local reading of *figure*'s image that the text read inside it does not account for — compared
+    as a page is (IO6-5): letters and digits, a contiguous near match; text the scan engine read and excluded (page
+    furniture) accounts for its lines; a line inside a region the layout detector calls picture, seal, chart or
+    formula content is not prose and is not compared.  None when it cannot be checked: the image was not read
+    locally, or its text has formulas, which the local reader does not read."""
+    asset = next((a.asset for a in figure.anchors if isinstance(a, AssetAnchor)), None)
+    record = next((r for r in state.images if r.id == asset), None)
+    blocks = {b.id: b for b in state.blocks}
+    inside = [blocks[r.dst] for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == figure.id
+              and r.dst in blocks and blocks[r.dst].status in _ACCOUNTS]
+    if record is None or record.reading is None or any(
+            b.kind == BlockKind.FORMULA or has_math(b.text or "") for b in inside):
+        return None
+    pictures = [o.anchor.bbox for o in figure.observations if o.task == TaskKind.LAYOUT and o.label in NOT_PROSE
+                and isinstance(o.anchor, AssetAnchor)]
+    text = normalize(" ".join(_text(b) for b in inside))
+    return [line.text for line in record.reading
+            if not any(_inside(_centre(line.bbox), box) for box in pictures)
+            and len(norm := normalize(line.text)) >= 2 and (not text or fuzz.partial_ratio(norm, text) < SOMEWHERE)]
+
+
 def _places(state: DocumentState) -> dict[int, list[tuple[Block, BBox]]]:
     places: dict[int, list[tuple[Block, BBox]]] = defaultdict(list)
     for block in state.blocks:
@@ -175,6 +210,14 @@ def _segments(block: Block) -> list[str]:
 def _text(block: Block) -> str:
     cells = " ".join(c.content for c in block.cells.cells) if block.cells is not None else ""
     return f"{block.text or ''} {cells}"
+
+
+_MATH = re.compile(r"\$|\\\(|\\\[|\\begin\{")
+
+
+def has_math(text: str) -> bool:
+    """Whether *text* holds a formula written as LaTeX (delimited, or an environment)."""
+    return bool(_MATH.search(text))
 
 
 def normalize(text: str) -> str:

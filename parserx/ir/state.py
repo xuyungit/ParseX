@@ -65,6 +65,7 @@ class ImageRecord(IRModel):
     f: float | None = None
     regions: int = 0
     complete: bool | None = None
+    reading: list[ReadLine] | None = None  # the local reading of the image (image pixels): checks its text (IO6-5)
 
 
 class Missing(IRModel):

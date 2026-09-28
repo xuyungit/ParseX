@@ -208,7 +208,19 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
             detail="this image is shown without a description and without transcribed text after it; look at it: "
                    "describe it if it carries information, or close the item with the reason (a code, a logo …)"))
+    from parserx.reading.compare import lacking_in_transcription, read_inside
     from parserx.tools.describe_figure import unseen_in_description
+
+    blocks = {b.id: b for b in state.blocks}
+    for figure, inside in read_inside(state).items():  # the image's local reading has lines its text lacks (IO6-5)
+        lacking = lacking_in_transcription(state, blocks[figure])
+        if lacking:
+            items.append(Unresolved(
+                target=figure, kind=UnresolvedKind.TEXT_UNACCOUNTED, quotes=_quotes(lacking),
+                detail=f"{len(lacking)} line(s) the local reading sees in this image are not in the text read from it "
+                       "(the blocks after it); the quotes are the local reading. Look at the image and add what is "
+                       "missing (insert_text, or set_cells in a table); if the local reading took a drawing or a "
+                       "symbol for text, close the item. The image is shown above its text until nothing is missing"))
 
     for block in ordered(state):  # a picture's description quotes a number its image's reading lacks (IO6-4)
         numbers = unseen_in_description(block) if block.kind == BlockKind.FIGURE and block.status not in HIDDEN \

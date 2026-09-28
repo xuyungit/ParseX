@@ -9,7 +9,7 @@ from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, EvidenceLevel, PageStatus, RelationKind
 from parserx.ir.schema import validate_sidecar
 from parserx.ir.semantic import ChartSemantic, Evidenced, FigureNote, GenericSemantic, Series
-from parserx.ir.state import DocumentState, LedgerEntry, PageState
+from parserx.ir.state import DocumentState, LedgerEntry, PageState, ReadLine
 from parserx.render import export_sidecar, render_markdown, sidecar_json, write_export
 from parserx.tables import Cell, TableGrid, find_tables
 
@@ -229,3 +229,120 @@ def test_missing_content_is_said_where_it_is():
     assert lines[4] == "> 〔未识别〕第 1 页：一个表格未能识别（超出处理预算）"
     assert "page 1: scanned content could not be read" in render_markdown(state, lang="en")
     assert "未识别" not in canonicalize(md).text
+
+
+# ── Text read inside an image (IO6-5) ──────────────────────────────────
+
+
+def _read_image(kind="content", reading=("营业执照", "名称", "数值", "甲", "10"), children=True):
+    """A figure the scan engine read: a title and a table follow it, contained by it; *reading* is the local
+    reading of its image (None: not read)."""
+    from parserx.ir.enums import ImageRoute
+    from parserx.ir.relation import Relation
+    from parserx.ir.state import ImageRecord
+
+    inside = AssetAnchor(asset=ASSET.id, bbox=(0, 0, 40, 10), image_size=(40, 30))
+    blocks = [_block("p", BlockKind.TEXT, 0, text="正文"),
+              _figure("f", 1, semantic=FigureNote(type=kind, caption="某公司营业执照（副本）")),
+              _block("q", BlockKind.TEXT, 4, text="后文")]
+    if children:
+        blocks[2:2] = [Block(id="f-r1", kind=BlockKind.TITLE, order=2, level=2, anchors=[inside], text="营业执照"),
+                       Block(id="f-r2", kind=BlockKind.TABLE, order=3, anchors=[inside], cells=_PLAIN)]
+    state = _state(blocks, pages=1)
+    if children:
+        state.relations = [Relation(id=f"r-contains-f-{c}", kind=RelationKind.CONTAINS, src="f", dst=c)
+                           for c in ("f-r1", "f-r2")]
+    state.images = [ImageRecord(id=ASSET.id, route=ImageRoute.MIXED, shown=True, reading=None if reading is None else
+                                [ReadLine(bbox=(1, 1 + 2 * i, 39, 2 + 2 * i), text=t, score=0.9)
+                                 for i, t in enumerate(reading)])]
+    return state
+
+
+def test_a_content_image_read_in_full_is_its_text_in_a_labelled_quote():
+    # the image is not shown: its text is quoted under 〔图片识别〕 with the note and a link to the original;
+    # a title read in it is bold, not a heading of the document; comments tell a program where it came from
+    image = ASSET.path.split("/")[-1]
+    md = render_markdown(_read_image())
+    assert f"![" not in md
+    assert (f'正文\n\n<!-- parserx:image-text src="images/{image}" page=1 -->\n'
+            f"> **〔图片识别〕** 某公司营业执照（副本）　[原图](images/{image})\n>\n> **营业执照**\n>\n"
+            f"> | 名称 | 数值 |\n> | --- | --- |\n> | 甲 | 10 |\n<!-- /parserx:image-text -->\n\n后文") in md
+    english = render_markdown(_read_image(), lang="en")
+    assert f"> **[Text from image]** 某公司营业执照（副本）　[original](images/{image})" in english
+    canonical = canonicalize(md)  # the evaluator reads the transcription as text, without the label
+    assert "营业执照" in canonical.text and "甲 10" in canonical.text and "副本" not in canonical.text
+
+
+def test_a_content_image_whose_reading_the_text_lacks_is_shown_too():
+    # the local reading of the image has a line the transcription does not: the image stays, above its text
+    image = ASSET.path.split("/")[-1]
+    for state in (_read_image(reading=("营业执照", "统一社会信用代码 91510000")), _read_image(reading=None)):
+        md = render_markdown(state)
+        assert md.index(f"![图片](images/{image})") < md.index("<!-- parserx:image-text") < md.index("**〔图片识别〕**")
+        assert "[原图]" not in md and "> 图片说明" not in md  # the note is on the label line
+        assert "甲 10" in canonicalize(md).text  # not taken for a description
+
+
+def test_text_read_in_a_picture_follows_its_note():
+    # a picture (no description said content) whose text was read, e.g. by its route: image, note, then the text
+    md = render_markdown(_read_image(kind="screenshot"))
+    assert md.index("![截图]") < md.index("> 图片说明：某公司营业执照（副本）") < md.index("> **〔图片识别〕**\n>\n> **营业执照**")
+
+
+def test_a_scanned_page_is_marked():
+    state = _state([_block("s", BlockKind.TEXT, 0, text="扫描出的文字"), _block("n", BlockKind.TEXT, 1, page=2,
+                                                                          text="原生文字")])
+    state.ledger = [LedgerEntry(item="i-s", unit="ocr_block", chars=6, disposition="output", block="s",
+                                source=PdfAnchor(page=1, bbox=(0, 0, 10, 10), coord_space="image_px",
+                                                  image_size=(100, 100))),
+                    LedgerEntry(item="i-n", unit="native_line", chars=4, disposition="output", block="n",
+                                source=_pdf(2))]
+    md = render_markdown(state)
+    assert "<!-- PAGE 1 scanned -->" in md and "<!-- PAGE 2 -->" in md
+    assert "扫描出的文字" in canonicalize(md).text
+
+
+def test_a_content_image_text_the_transcription_lacks_is_open_work():
+    from parserx.tools.envelope import UnresolvedKind
+    from parserx.tools.views import unresolved_items
+
+    lacking = [u for u in unresolved_items(_read_image(reading=("营业执照", "统一社会信用代码 91510000")))
+               if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+    assert [(u.target, [q.doc_text for q in u.quotes]) for u in lacking] == [("f", ["统一社会信用代码 91510000"])]
+    assert not [u for u in unresolved_items(_read_image()) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+
+
+def test_a_formula_read_in_an_image_keeps_the_image():
+    # the local reader does not read formulas: the transcription cannot be checked, so the image stays above it;
+    # a formula the engine labelled a title is not set in bold
+    from parserx.tools.envelope import UnresolvedKind
+    from parserx.tools.views import unresolved_items
+
+    state = _read_image(reading=("[6a]=[F]",))
+    title = next(b for b in state.blocks if b.id == "f-r1")
+    title.text = "$ [\\delta_{a}]=[F] $"
+    md = render_markdown(state)
+    assert md.index("![图片]") < md.index("**〔图片识别〕**") < md.index("> $ [\\delta_{a}]=[F] $")
+    assert "**$" not in md and "[原图]" not in md
+    assert not [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+
+
+def test_text_in_a_seal_or_excluded_as_furniture_is_not_lacking():
+    # compared as a page is: a seal the layout detector found in the image, or a footer the scan engine read and
+    # excluded, is not text the transcription lacks
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation
+    from parserx.ir.relation import Relation
+    from parserx.reading.compare import lacking_in_transcription
+
+    state = _read_image(reading=("营业执照", "发票专用章", "国家市场监督管理总局监制"))
+    figure = next(b for b in state.blocks if b.id == "f")
+    assert lacking_in_transcription(state, figure) == ["发票专用章", "国家市场监督管理总局监制"]
+    figure.observations.append(Observation(
+        id="o-f-layout-1", engine="layout", engine_version="d", task=TaskKind.LAYOUT, label="seal",
+        status=ObservationStatus.OK, anchor=AssetAnchor(asset=ASSET.id, bbox=(0, 2, 40, 4), image_size=(40, 30))))
+    footer = Block(id="f-r3", kind=BlockKind.FOOTER, order=3, status=BlockStatus.EXCLUDED, text="国家市场监督管理总局监制",
+                   anchors=[AssetAnchor(asset=ASSET.id, bbox=(0, 25, 40, 30), image_size=(40, 30))])
+    state.blocks.append(footer)
+    state.relations.append(Relation(id="r-contains-f-f-r3", kind=RelationKind.CONTAINS, src="f", dst="f-r3"))
+    assert lacking_in_transcription(state, figure) == []

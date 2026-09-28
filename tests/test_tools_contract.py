@@ -842,7 +842,8 @@ def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
     markdown = (tmp_path / "out" / "doc.md").read_text()
     image_line = next(line for line in markdown.splitlines() if line.startswith("![") and figure.anchors[-1].asset in line)
     after = markdown[markdown.index(image_line):]
-    assert after.index("<!-- 以下转录自上图 -->") < after.index("SENTINEL-OCR 扫描文字")
+    assert after.index("<!-- parserx:image-text") < after.index("> **〔图片识别〕**") < after.index("SENTINEL-OCR 扫描文字") \
+        < after.index("<!-- /parserx:image-text -->")  # not described: a picture, shown above its text (IO6-5)
     again, _ = _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
     assert again.cost.requests == {} and again.failures and "already" in again.failures[0].message
 
@@ -873,6 +874,8 @@ def test_the_pipeline_describes_first_and_transcribes_only_content(ws, kind, rea
     state = Workspace.open(ws).load()
     assert next(b for b in state.blocks if b.id == figure.id).semantic.type == kind
     assert any(r.kind == "contains" and r.src == figure.id for r in state.relations) is read
+    record = next(r for r in state.images if r.id == figure.anchors[-1].asset)
+    assert (record.reading is not None) is read  # a content image's local reading checks its text (IO6-5)
 
 
 @pytest.mark.parametrize("route, read", [("SCAN", True), ("MIXED", True), ("UNCERTAIN", False)])
@@ -959,7 +962,7 @@ def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     assert env.ok and env.cost.requests == {"ocr": 1}
     env, _ = _call("export", tmp_path / "wsd", {"out": str(tmp_path / "outd")}, context=context)
     markdown = (tmp_path / "outd" / "scan.md").read_text()
-    assert markdown.index("正文在图片之前") < markdown.index("<!-- 以下转录自上图 -->") < \
+    assert markdown.index("正文在图片之前") < markdown.index("<!-- parserx:image-text src=") < \
         markdown.index("SENTINEL-OCR 扫描文字") < markdown.index("正文在图片之后")
 
 

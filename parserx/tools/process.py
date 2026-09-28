@@ -40,7 +40,7 @@ from parserx.hierarchy.typography_titles import ACTOR as TYPOGRAPHY_ACTOR, REASO
 from parserx.ir.base import IRModel
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus
-from parserx.ir.state import AccountingSummary, DocumentState
+from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
@@ -147,6 +147,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         failures += out.failures
         steps.append(StepSummary(step="transcribe_images",
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
+    if _read_content_images(ctx):
+        steps.append(StepSummary(step="image_reading", detail="content images read locally to check their text"))
 
     ctx.report(Step("process", "structure"))
     if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):
@@ -181,6 +183,35 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
 
 def _image_asset(state: DocumentState, block) -> str | None:
     return next((a.asset for a in block.anchors if isinstance(a, AssetAnchor)), None)
+
+
+def _read_content_images(ctx: ToolContext) -> int:
+    """The local reading of each image transcribed as content, kept on its record: its text is checked against it
+    before the image is left out of the Markdown (IO6-5).  An image the reader cannot decode is not read."""
+    from parserx.reading.local import read_cached
+
+    state = ctx.ws.load()
+    done = transcribed(state)
+    records = {r.id: r for r in state.images}
+    assets = {a.id: a for a in state.assets}
+    readings: dict[str, list[str]] = {}
+    for block in ordered(state):
+        asset = _image_asset(state, block)
+        record = records.get(asset)
+        if block.id not in done or getattr(block.semantic, "type", None) != "content" or record is None \
+                or record.reading is not None or asset not in assets or asset in readings:
+            continue
+        try:
+            lines = read_cached(ctx.reader(), (ctx.ws.root / assets[asset].path).read_bytes(), ctx.cache)
+        except Exception:  # noqa: BLE001 - no reading: the image stays shown above its text
+            continue
+        readings[asset] = [ReadLine(bbox=box, text=text, score=score) for box, text, score in lines]
+    if readings:
+        with ctx.ws.txn("tool:process:image_reading") as state:
+            for record in state.images:
+                if record.id in readings:
+                    record.reading = readings[record.id]
+    return len(readings)
 
 
 def _textual_images(state: DocumentState) -> list[str]:

@@ -7,8 +7,12 @@
 - figures: ``![<type>](images/<file>)`` followed by the note ``> 图片说明：…`` (one or two sentences, Q121) — the
   layout the evaluator strips
   as a description; the label never repeats the description;
-- ``<!-- PAGE n -->`` for every PDF page; DOCX only has ``<!-- PAGE-BREAK -->``
-  and ``<!-- SECTION k -->`` (no physical pages without a layout engine);
+- text read inside an image (IO6-5): a quote opening with ``**〔图片识别〕**``, between the comments
+  ``<!-- parserx:image-text src="images/<file>" page=n -->`` and ``<!-- /parserx:image-text -->`` (for programs).
+  An image whose words are its content (described as content) and whose local reading the text has in full is not
+  shown: the label line carries its note and a link to the original; any other image stays above its text;
+- ``<!-- PAGE n -->`` for every PDF page, ``<!-- PAGE n scanned -->`` for one read by the scan engine; DOCX only
+  has ``<!-- PAGE-BREAK -->`` and ``<!-- SECTION k -->`` (no physical pages without a layout engine);
 - hidden blocks (excluded, merged, duplicate) and failed blocks are not
   rendered; they stay in the sidecar.  A scan image whose recognition failed
   stays visible.
@@ -20,12 +24,13 @@ import re
 from pathlib import PurePosixPath
 
 from parserx.content.text import join_wrapped
-from parserx.ir.anchor import AssetAnchor
+from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
 from parserx.ir.semantic import note_of
 from parserx.ir.state import DocumentState
+from parserx.reading.compare import has_math, lacking_in_transcription, read_inside
 from parserx.workspace.queries import JOINABLE, block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
@@ -43,7 +48,12 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     missing = {m.block: _missing_note(state, m, lang) for m in state.missing}  # Q117: said where it is missing
     joined = _continuations(state)  # a paragraph continued in later blocks is rendered once, at its start
     skipped = {b.id for chain in joined.values() for b in chain[1:]}
+    inside = read_inside(state)  # rendered with their image, not where they stand
+    skipped |= {b.id for blocks in inside.values() for b in blocks}
+    images = {figure: _image_text(state, figure, blocks, assets, image_dir, missing, lang)
+              for figure, blocks in inside.items()}
     transcribed = _transcription_starts(state)
+    scanned = _scanned_pages(state)
     by_unit: dict[int | None, list[Block]] = {}
     for block in ordered(state):
         if block.id in skipped:
@@ -56,15 +66,15 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     body = body_face(state)
     for page in state.pages:
         if state.format == "pdf":
-            parts.append(f"<!-- PAGE {page.n} -->")
+            parts.append(f"<!-- PAGE {page.n} scanned -->" if page.n in scanned else f"<!-- PAGE {page.n} -->")
         elif page.starts_with == "page_break":
             parts.append("<!-- PAGE-BREAK -->")
         elif page.starts_with == "section_break":
             section += 1
             parts.append(f"<!-- SECTION {section} -->")
-        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body, missing, lang))
+        parts.extend(_render_all(by_unit.pop(page.n, []), assets, image_dir, transcribed, body, missing, lang, images))
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
-        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing, lang))
+        parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing, lang, images))
     return "\n\n".join(parts) + "\n"
 
 
@@ -92,13 +102,56 @@ def _continuations(state: DocumentState) -> dict[str, list[Block]]:
     return chains
 
 
-TRANSCRIBED_FROM_IMAGE = "<!-- 以下转录自上图 -->"
 PICTURES_FROM_ABOVE = "<!-- 以下是上方〔图 n〕处的图片 -->"
+IMAGE_TEXT_LABEL = {"zh": "〔图片识别〕", "en": "[Text from image]"}
+ORIGINAL = {"zh": "原图", "en": "original"}
+
+
+def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: dict[str, Asset], image_dir: str,
+                missing: dict[str, str], lang: str) -> str:
+    """An image and the text read inside it (IO6-5): the text quoted under a label, between comments naming the
+    image; the image itself left out when its words are its content and the text has all its local reading."""
+    block = next(b for b in state.blocks if b.id == figure)
+    asset = next((assets.get(a.asset) for a in block.anchors if isinstance(a, AssetAnchor)), None)
+    src = f"{image_dir}/{image_file(asset)}" if asset is not None else None
+    note = note_of(block.semantic)
+    content = note is not None and note.type == "content"
+    hidden = content and src is not None and lacking_in_transcription(state, block) == []
+    label = f"**{IMAGE_TEXT_LABEL[lang]}**" + (f" {note.caption}" if content and note.caption else "") \
+        + (f"　[{ORIGINAL[lang]}]({src})" if hidden else "")
+    pieces = [label]
+    for child in inside:
+        text = join_wrapped((child.text or "").split("\n"))
+        if child.kind == BlockKind.TITLE and text and not has_math(text):  # the image's title, not the document's
+            rendered = f"**{text}**"
+        elif child.kind == BlockKind.TITLE:
+            rendered = _MARKUP_START.sub(r"\1\\\2", text)
+        else:
+            rendered = _render(child, assets, image_dir, lang)
+        if rendered:
+            pieces.append(rendered)
+        if child.id in missing:
+            pieces.append(missing[child.id])
+    quoted = "\n".join(f"> {line}" if line else ">" for line in "\n\n".join(pieces).split("\n"))
+    page = next((a.page for a in block.anchors if isinstance(a, PdfAnchor)), None) if state.format == "pdf" else None
+    opening = "<!-- parserx:image-text" + (f' src="{src}"' if src else "") + (f" page={page}" if page else "") + " -->"
+    text = f"{opening}\n{quoted}\n<!-- /parserx:image-text -->"
+    if hidden:
+        return text
+    shown = f"![{_label(block, lang)}]({src})" if content else _render(block, assets, image_dir, lang)
+    return f"{shown}\n\n{text}" if shown else text
+
+
+def _scanned_pages(state: DocumentState) -> set[int]:
+    """PDF pages whose content the scan engine read (ledger items of the page itself, not of an image in it)."""
+    inside = {r.dst for r in state.relations if r.kind == RelationKind.CONTAINS}
+    return {e.source.page for e in state.ledger if e.unit == "ocr_block" and e.block not in inside
+            and isinstance(e.source, PdfAnchor) and e.disposition in ("output", "merged")}
 
 
 def _transcription_starts(state: DocumentState) -> dict[str, str]:
-    """The note before the first shown block contained by a shown block: the text read inside an image (Q42), or
-    the pictures cut from a table cell or a paragraph (marked 〔图n〕 there)."""
+    """The note before the first shown block contained by a shown block that is not an image: the pictures cut
+    from a table cell or a paragraph (marked 〔图n〕 there).  Text read inside an image is rendered with it."""
     blocks = {b.id: b for b in state.blocks}
     children: dict[str, list[Block]] = {}
     for relation in state.relations:
@@ -106,14 +159,14 @@ def _transcription_starts(state: DocumentState) -> dict[str, str]:
         if relation.kind == RelationKind.CONTAINS and src is not None and dst is not None \
                 and src.status in _VISIBLE and dst.status in _VISIBLE:
             children.setdefault(src.id, []).append(dst)
-    return {min(kids, key=lambda b: (b.order, b.id)).id:
-            TRANSCRIBED_FROM_IMAGE if blocks[src].kind == BlockKind.FIGURE else PICTURES_FROM_ABOVE
-            for src, kids in children.items()}
+    return {min(kids, key=lambda b: (b.order, b.id)).id: PICTURES_FROM_ABOVE
+            for src, kids in children.items() if blocks[src].kind != BlockKind.FIGURE}
 
 
 def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
                 notes: dict[str, str] | None = None, body: str | None = None,
-                missing: dict[str, str] | None = None, lang: str = "zh") -> list[str]:
+                missing: dict[str, str] | None = None, lang: str = "zh",
+                images: dict[str, str] | None = None) -> list[str]:
     out = []
     code: list[str] = []  # lines of the code block being collected
     face: str | None = None
@@ -138,7 +191,7 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
         if this is not None:  # code in another face starts right away
             code, face = [(block.text or "").strip("\n")], this
             continue
-        rendered = _render(block, assets, image_dir, lang)
+        rendered = images[block.id] if images and block.id in images else _render(block, assets, image_dir, lang)
         if rendered:
             if notes and block.id in notes:
                 out.append(notes[block.id])

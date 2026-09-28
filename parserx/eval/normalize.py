@@ -5,6 +5,8 @@ processors use that module for their own thresholds, so changing it would change
 
 Both sides of every comparison go through the same steps:
 
+0. Text read inside an image (``<!-- parserx:image-text … -->`` … ``<!-- /parserx:image-text -->``, IO6-5) is
+   text: its label line is dropped, its quote marks and the bold of a title read in it are removed.
 1. HTML comments (page anchors etc.) are removed.
 2. Tables — GFM or HTML — are replaced by their cell text in row-major order,
    so the table *format* never affects text scores (structure is scored by
@@ -29,6 +31,10 @@ from dataclasses import dataclass
 from parserx.tables import TableGrid, find_tables
 
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_IMAGE_TEXT_RE = re.compile(r"<!-- parserx:image-text[^\n]*?-->\n(.*?)\n<!-- /parserx:image-text -->", re.DOTALL)
+_IMAGE_TEXT_LABEL_RE = re.compile(r"^>\s*\*\*(〔图片识别〕|\[Text from image\])\*\*")
+_QUOTE_MARK_RE = re.compile(r"^> ?", re.MULTILINE)
+_BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$", re.MULTILINE)
 _IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _IMAGE_LINE_RE = re.compile(r"^\s*!\[[^\]]*\]\([^)]*\)\s*$")
 _PLACEHOLDER_LINE_RE = re.compile(r"^\s*>\s*(\[图片\]|〔未识别〕|〔Not recognised〕)")  # + notes on missing content (Q117)
@@ -47,10 +53,19 @@ class CanonicalDoc:
 
 
 def canonicalize(markdown: str) -> CanonicalDoc:
-    text = _COMMENT_RE.sub("", markdown)
+    text = _IMAGE_TEXT_RE.sub(_unquote_image_text, markdown)
+    text = _COMMENT_RE.sub("", text)
     text = _flatten_tables(text)
     text, image_count = _strip_images(text)
     return CanonicalDoc(text=text, image_count=image_count)
+
+
+def _unquote_image_text(match: re.Match) -> str:
+    lines = match.group(1).split("\n")
+    if lines and _IMAGE_TEXT_LABEL_RE.match(lines[0]):
+        lines = lines[1:]
+    body = _BOLD_LINE_RE.sub(r"\1", _QUOTE_MARK_RE.sub("", "\n".join(lines)))
+    return f"\n\n{body}\n\n"
 
 
 def char_sequence(text: str) -> str:
