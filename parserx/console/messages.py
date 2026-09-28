@@ -43,6 +43,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "kind.table_arithmetic": {"zh": "表格算术不一致", "en": "table arithmetic"},
     "kind.text_suspicious": {"zh": "可疑字符", "en": "suspicious characters"},
     "kind.text_unaccounted": {"zh": "页面上有而输出里没有的文字", "en": "text on the page but not in the output"},
+    "kind.title_level_unclear": {"zh": "两种编号谁在外层不确定", "en": "unclear nesting of two numbering styles"},
     "kind.text_added": {"zh": "程序从页面补入的文字", "en": "text the program added from the page"},
     "kind.text_not_seen": {"zh": "输出里有而页面上读不到的文字", "en": "output text not seen on the page"},
     "kind.formula_candidate": {"zh": "公式读数待定", "en": "formula readings to decide"},

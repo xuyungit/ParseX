@@ -18,7 +18,7 @@ from parserx.tables.merge import merge_candidates
 from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
 from parserx.hierarchy.layout_titles import layout_titles
-from parserx.hierarchy.numbering_gaps import numbering_gaps
+from parserx.hierarchy.numbering_gaps import numbering_gaps, series_successors, unclear_nesting
 from parserx.reading.compare import added_from_reading, unaccounted_lines, unseen_segments, within_tables
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
@@ -252,6 +252,21 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                 target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
                 detail=f"the numbered titles around it miss the number this paragraph starts with "
                        f"({evidence['numbering']}); if it is a title, set its role and level (proposed level {level})"))
+    listed = {u.target for u in items if u.kind == UnresolvedKind.TITLE_CANDIDATE}
+    for block_id, text, level, evidence in series_successors(state):  # the next number of a title's series
+        if block_id not in listed:
+            items.append(Unresolved(
+                target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
+                detail=f"this paragraph starts with {evidence['numbering']} in the same style; look at the page and, "
+                       f"if it is a title set like that one, set its role and level (proposed level {level})"))
+    for block_id, text, above in unclear_nesting(state):  # which of two numbering styles is the outer one
+        items.append(Unresolved(
+            target=block_id, kind=UnresolvedKind.TITLE_LEVEL_UNCLEAR, quotes=_quotes([text, above]),
+            detail="this title's numbering style begins here, right after a title of another style, and not at its "
+                   "first number: either the text began inside a section of this style (a page cut from a document; "
+                   "then the titles of the other style belong one level below this one) or its list's earlier items "
+                   "were not found and it nests one level below the title above. Look at the page — how the two "
+                   "styles are set (bold, italic, size, indentation) — and set the levels of both series"))
     for candidate in merge_candidates(state):
         items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,
                                 detail=f"may continue {candidate.first}: "

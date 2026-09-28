@@ -28,7 +28,7 @@ import unicodedata
 from collections import Counter
 
 from parserx.hierarchy.legality import NUMBERING_RE, numbering_signature
-from parserx.hierarchy.levels import leading_number
+from parserx.hierarchy.levels import leading_number, number_value
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, TaskKind
@@ -62,6 +62,7 @@ def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(), tit
         evidence = title_evidence(block, style, body)
         if len(evidence) >= 2 and (_one_line(block) or {"typography", "layout"} <= set(evidence)):
             found.append((block, style, evidence))
+    found = _without_list_items(found, paragraphs)
     found = _nested(paragraphs, found, body)
     found = _without_contents_entries(found, paragraphs)
     first_other = min((i for i, b in enumerate(ordered(state)) if b.id in others), default=None)
@@ -71,6 +72,28 @@ def typography_titles(state: DocumentState, *, skip: set[str] = frozenset(), tit
     levels = _typographic_levels([(b.id, s) for b, s, _ in found], None if title is None else title[0].id,
                                  titled=titled or bool(others))
     return [(b.id, b.text, levels[b.id], {**ev, "kinds": ", ".join(sorted(ev))}) for b, _s, ev in found]
+
+
+def _without_list_items(found: list[tuple[Block, TextStyle, dict]],
+                        paragraphs: list[tuple[Block, TextStyle]]) -> list[tuple[Block, TextStyle, dict]]:
+    """Leave out a numbered paragraph set like the body whose neighbour in its numbered series is a plain paragraph
+    set like it (P6: ``1. 暂停…`` labelled a title by the layout detector, ``2. 停止…`` … ``13. …`` body text): the
+    number marks a step of a list, not a section.  Only candidates without typographic evidence: a section title set
+    apart from the body stands whatever its list-shaped neighbours."""
+    chosen = {b.id for b, _, _ in found}
+    series: dict[str, dict[int, list[TextStyle]]] = {}
+    for block, style in paragraphs:
+        signature, value = numbering_signature((block.text or "").strip()), number_value(block.text or "")
+        if block.id not in chosen and signature is not None and value is not None:
+            series.setdefault(signature, {}).setdefault(value, []).append(style)
+    kept = []
+    for block, style, evidence in found:
+        signature, value = numbering_signature((block.text or "").strip()), number_value(block.text or "")
+        plain = series.get(signature, {}) if "numbering" in evidence and "typography" not in evidence else {}
+        neighbours = [s for v in (value - 1, value + 1) for s in plain.get(v, [])] if value is not None else []
+        if not any(_typography(s) == _typography(style) for s in neighbours):
+            kept.append((block, style, evidence))
+    return kept
 
 
 def _nested(paragraphs, found, body) -> list[tuple[Block, TextStyle, dict]]:

@@ -75,6 +75,7 @@ class UnresolvedKind(StrEnum):
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it
     CAPTION_NUMBER_UNSEEN = "caption_number_unseen"  # a number a picture's description quotes, not read in it (IO6)
+    TITLE_LEVEL_UNCLEAR = "title_level_unclear"  # two numbering styles whose nesting the numbers cannot tell (P7)
     TITLE_CANDIDATE = "title_candidate"  # the layout detector sees a section title set apart from the body (D4)
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"

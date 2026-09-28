@@ -109,3 +109,15 @@ def test_faces_are_compared_within_one_script():
     found = _titles(_block("step", "2. 停止 docker stop ceph_osd_6", code_face),
                     _block("section", "二、企业基本情况", heading_face))
     assert set(found) == {"section"}
+
+
+def test_a_numbered_step_labelled_a_title_is_not_one_when_its_series_is_body_text():
+    # P6: the layout detector marks step 1 a title; steps 2 and 3, set like it, are body text — a list of steps
+    found = _titles(
+        _block("step1", "1. 暂停ceph自平衡和自修复", BODY, "paragraph_title"),
+        _block("step2", "2. 停止osd容器", BODY),
+        _block("step3", "3. 定位故障盘在服务器上的位置", BODY),
+        _block("section", "二、主要标准", BOLD, "paragraph_title"),  # set apart: a section, whatever its neighbours
+        _block("section3", "三、产品结构", BODY),
+    )
+    assert set(found) == {"section"}

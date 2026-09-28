@@ -2,7 +2,7 @@
 numbered title sequence points at the paragraph that fills it."""
 
 from parserx.hierarchy.levels import unify_levels
-from parserx.hierarchy.numbering_gaps import numbering_gaps
+from parserx.hierarchy.numbering_gaps import numbering_gaps, series_successors, unclear_nesting
 from parserx.ir.anchor import DocxAnchor
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, DocumentStatus, PageStatus
@@ -82,3 +82,20 @@ def test_gap_fillers_are_listed_for_the_agent():
     items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TITLE_CANDIDATE]
     assert [(u.target, [q.doc_text for q in u.quotes]) for u in items] == [("b-d00001", ["5.2支座加工："])]
     assert "between 5.1 and 5.3" in items[0].detail
+
+
+def test_the_next_number_of_a_title_series_is_a_candidate():
+    # P7: a scan engine labels "C. …" body text; the title "B. …" before it says what it is
+    state = _doc([("B. Self-Regulatory Organization's Statement on Burden on Competition", 2), ("Body text.", None),
+                  ("C. Self-Regulatory Organization's Statement on Comments", None), ("More body text.", None),
+                  ("III. Date of Effectiveness", 2), ("第二章 供应商须知 10", 1), ("第三章 技术规格书 15", None)])
+    found = {bid: (text[:2], level) for bid, text, level, _ in series_successors(state)}
+    assert found == {"b-d00002": ("C.", 2)}  # not the contents entry "第三章 … 15"
+
+
+def test_two_numbering_styles_of_a_text_cut_from_a_document_are_flagged():
+    # P7: a page opening with "B." and then "III.": which is outer the numbers cannot tell
+    cut = _doc([("B. Statement on Burden", 2), ("C. Statement on Comments", 2), ("III. Date of Effectiveness", 2)])
+    assert [(bid, above[:2]) for bid, _t, above in unclear_nesting(cut)] == [("b-d00002", "C.")]
+    whole = _doc([("一、总则", 2), ("（一）范围", 3), ("3.1 应用系统", 3), ("五、经费", 2), ("（五）预算说明", 3)])
+    assert unclear_nesting(whole) == []  # started at the first number, or the same numerals, or a dotted number
