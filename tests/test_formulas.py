@@ -8,6 +8,7 @@ import pymupdf
 
 from parserx.layout.detector import Region
 from parserx.tools import call_tool, workspace_init
+from parserx.reading.compare import normalize
 from parserx.tools.formulas import _symbols
 from parserx.tools.views import unresolved_items
 from parserx.workspace import Workspace
@@ -16,6 +17,11 @@ from tests.test_tools_contract import _config, _context
 
 def test_greek_commands_read_as_their_letters():
     assert _symbols(r"\delta_{a}+\Delta q") == "δ_{a}+Δ q"
+
+
+def test_command_names_are_not_characters_of_the_text():
+    # "\left" carries no l: a reading that turned the superscript l into 1 loses it
+    assert normalize(_symbols(r"\left(\begin{array}{cc}\Delta^{1}&\mathbf{0}\end{array}\right)")) == "δ10"
 
 
 def _page_pdf(tmp_path):
@@ -62,9 +68,13 @@ def _run(tmp_path, entries, editor_answer=None, pdf=_page_pdf, formula=(70, 118,
 
     class Editor:
         calls = 0
+        contexts: list[str] = []
 
         def describe_image(self, image_path, prompt, **kw):
             Editor.calls += 1
+            Editor.contexts.append(kw.get("context") or "")
+            if isinstance(editor_answer, list):  # one answer per round
+                return editor_answer[min(Editor.calls, len(editor_answer)) - 1]
             return editor_answer or ""
 
     class Context(base):
@@ -81,6 +91,7 @@ def _run(tmp_path, entries, editor_answer=None, pdf=_page_pdf, formula=(70, 118,
     assert envelope.ok, envelope.failures
     call_tool("export", tmp_path / "ws", {"out": str(tmp_path / "out"), "name": "f"}, config=config,
               context_factory=Context)
+    _run.contexts = Editor.contexts
     return Workspace.open(tmp_path / "ws").load(), (tmp_path / "out" / "f.md").read_text(), Editor.calls
 
 
@@ -113,6 +124,17 @@ def test_an_editor_merges_when_the_reading_loses_characters(tmp_path):
         PROSE,
     ], editor_answer="[0068] $F=ma$ (5)")
     assert calls == 1 and "[0068] $F=ma$ (5)" in md
+    assert "0×2、6×1、8×1、5×1" in _run.contexts[-1]  # the editor is told what the reading lacks
+
+
+def test_an_editor_version_that_still_loses_characters_gets_a_second_round(tmp_path):
+    state, md, calls = _run(tmp_path, [
+        _entry("text", "Here $ E=mc^{2} $", (72, 120, 140, 133)),
+        _entry("display_formula", "$$ F=ma $$", (110, 190, 170, 203)),
+        PROSE,
+    ], editor_answer=["[0068] $F=ma$", "[0068] $F=ma$ (5)"])
+    assert calls == 2 and "[0068] $F=ma$ (5)" in md
+    assert "B：\n[0068] $F=ma$" in _run.contexts[-1] and "5×1" in _run.contexts[-1]
 
 
 def test_without_a_conserving_version_the_text_layer_stays_and_the_agent_is_asked(tmp_path):
@@ -120,7 +142,7 @@ def test_without_a_conserving_version_the_text_layer_stays_and_the_agent_is_aske
         _entry("display_formula", "$$ F=ma $$", (110, 190, 170, 203)),
         PROSE,
     ], editor_answer="$F=ma$")
-    assert calls == 1 and "[0068] F = ma" in md
+    assert calls == 2 and "[0068] F = ma" in md
     items = [u for u in unresolved_items(state) if u.kind.value == "formula_candidate"]
     assert len(items) == 1 and items[0].quotes[0].doc_text == "$F=ma$"
 

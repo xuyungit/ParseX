@@ -18,10 +18,11 @@ text layer has, so it is adopted passage by passage.
    prose stays the text layer's.
 4. **Choice**, per passage (the selection step's rule: two readings, conservation):
    - the reading carries every letter and digit of the text layer (a character neither the reading nor the
-     local page reading sees — a mis-mapped glyph — does not count) → the reading's blocks replace the native
-     ones (``duplicate_of``; their text stays in the sidecar);
+     local page reading sees — a mis-mapped glyph — does not count; LaTeX command names are not characters) →
+     the reading's blocks replace the native ones (``duplicate_of``; their text stays in the sidecar);
    - otherwise an **editor** — the VLM, shown the passage's image and both readings, characters from the text
-     layer and structure from the reading — writes one version; adopted when it conserves the characters;
+     layer and structure from the reading, and told which letters and digits the two do not share (the reading
+     takes a superscript l for 1) — writes one version; adopted when it conserves the characters;
    - otherwise the text layer stays, both readings are kept as evidence, and the passage is a review item
      (``formula_candidate``) for the agent, the final editor in the hybrid runtime.
 """
@@ -60,13 +61,16 @@ DONE = "formula_page"  # decision choice: the passage was decided (adopted or ke
 CANDIDATE = "formula_reading"  # observation label: the reading (or the editor's version) not adopted
 PAD = 2.0  # pt: a block's centre may lie this far outside the other block (box rounding, measurement tolerance)
 EDITOR_DPI = 200
+EDITOR_ROUNDS = 2  # the editor's tries per passage (the service model does not always follow the differences)
+DIFFERENCES = 12  # characters the editor is told the two readings disagree on, the most frequent first
 CARRIED = 8  # letters and digits a native block needs before a reading may carry it (a shorter one matches by chance)
 CARRIED_MATCH = 90  # rapidfuzz partial ratio of that block's text inside the reading's
 _PASSAGE_KINDS = frozenset({BlockKind.TEXT, BlockKind.FORMULA})
 _EDITOR_PROMPT = (
     "你是编辑。图中是文档的一段。给你两份读数：A 是 PDF 文字层（字符准确，但公式的上下标、分式等结构丢失，个别字形可能是乱码），"
     "B 是 OCR（有 LaTeX 结构，个别字符可能认错、可能漏掉公式编号）。请以图为准，输出这段的最终文字：正文照抄，公式用 LaTeX（行内 "
-    "$…$，行间 $$…$$），字符以 A 为准、结构以 B 为准，公式编号保留。只输出结果，不加解释。")
+    "$…$，行间 $$…$$），字符以 A 为准、结构以 B 为准，公式编号保留。图的边上可能露出相邻的内容，只输出 A 这一段。"
+    "只输出结果，不加解释。")
 
 
 def formula_pages(state: DocumentState) -> list[int]:
@@ -138,17 +142,23 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
         write_once(path, png)
         need_editor.append((index, path, native_text, reading_text))
     edited: dict[int, str] = {}
-    if need_editor:
-        vlm = ctx.vlm(ctx.config.tools.ask_reasoning_effort)
+    vlm = ctx.vlm(ctx.config.tools.ask_reasoning_effort) if need_editor else None
+    for _ in range(EDITOR_ROUNDS):  # a version that still loses characters is the next round's B
         outcomes = run_ordered(need_editor, lambda t: vlm.call(
-            "describe_image", t[1], _EDITOR_PROMPT, context=f"A：\n{t[2]}\n\nB：\n{t[3]}", temperature=0.0,
-            max_tokens=4096, structured_output_mode="off", json_schema_name="parserx_formula_editor"),
+            "describe_image", t[1], _EDITOR_PROMPT, context=f"A：\n{t[2]}\n\nB：\n{t[3]}{_differences(t[2], t[3])}",
+            temperature=0.0, max_tokens=4096, structured_output_mode="off", json_schema_name="parserx_formula_editor"),
             max_workers=ctx.config.services.vlm.max_concurrent)
+        again = []
         for outcome in outcomes:
+            index, path, native_text, _ = outcome.task
+            n, natives, _ = plans[index]
             if outcome.exception is not None:
-                failures.append(service_failure(outcome.exception, [plans[outcome.task[0]][1][0]]))
+                failures.append(service_failure(outcome.exception, [natives[0]]))
             elif str(outcome.value or "").strip():
-                edited[outcome.task[0]] = str(outcome.value).strip()
+                edited[index] = str(outcome.value).strip()
+                if _lost(state, n, natives, blocks, native_text, edited[index]):
+                    again.append((index, path, native_text, edited[index]))
+        need_editor = again
 
     with ctx.ws.txn("tool:process:formulas") as state:
         blocks = {b.id: b for b in state.blocks}
@@ -234,10 +244,15 @@ def _carries(passage: tuple[list[str], list[Block]], natives: list[Block], nativ
 
 
 def _lost(state: DocumentState, n: int, natives: list[str], blocks: dict, native_text: str, other: str) -> bool:
-    """Whether *other* lacks letters or digits of the text layer that the local page reading also sees."""
+    """Whether *other* lacks letters or digits of the text layer: a Latin or Greek letter or a digit always counts
+    (the text layer holds them exactly; both readings may take a superscript l for 1); another character counts
+    when the local page reading also sees it — one no one else sees is a mis-mapped glyph (an overline drawn with
+    a CJK character)."""
     missing = Counter(normalize(native_text)) - Counter(normalize(_symbols(other)))
     if not missing:
         return False
+    if any(_EXACT.fullmatch(ch) for ch in missing):
+        return True
     seen = text_at(state, n, _union([blocks[b].anchors[0].bbox for b in natives]))
     if seen is None:
         return True
@@ -346,11 +361,27 @@ _GREEK = {name: chr(code) for name, code in (
     ("omega", 0x3C9), ("Gamma", 0x393), ("Delta", 0x394), ("Theta", 0x398), ("Lambda", 0x39B), ("Xi", 0x39E),
     ("Pi", 0x3A0), ("Sigma", 0x3A3), ("Phi", 0x3A6), ("Psi", 0x3A8), ("Omega", 0x3A9))}
 _COMMAND = re.compile(r"\\([A-Za-z]+)")
+_EXACT = re.compile(r"[a-z0-9\u03b1-\u03c9]")  # normalized: lower case Latin, digits, Greek
+_ENVIRONMENT = re.compile(r"\\begin\{(?:array|tabular)\}\{[^{}]*\}|\\(?:begin|end)\{[^{}]*\}")
 
 
 def _symbols(latex: str) -> str:
-    """LaTeX with Greek-letter commands as their letters (LaTeX's own definitions), for comparing characters."""
-    return _COMMAND.sub(lambda m: _GREEK.get(m.group(1), m.group(0)), latex)
+    """LaTeX's characters, for comparing them with the text layer's: Greek-letter commands as their letters (LaTeX's
+    own definitions); other command names, environments and an array's column spec are markup, not characters
+    (``\\left`` carries no l) — the arguments stay."""
+    return _COMMAND.sub(lambda m: _GREEK.get(m.group(1), ""), _ENVIRONMENT.sub(" ", latex))
+
+
+def _differences(native_text: str, other: str) -> str:
+    """The letters and digits the two readings do not share, told to the editor: it checks each against the image
+    (the page reading takes a superscript l for 1)."""
+    ours, theirs = Counter(normalize(native_text)), Counter(normalize(_symbols(other)))
+    lacks, adds = ours - theirs, theirs - ours
+    if not lacks:
+        return ""
+    listed = lambda c: "、".join(f"{ch}×{k}" for ch, k in c.most_common(DIFFERENCES)) or "无"
+    return (f"\n\nB 与 A 的字母和数字不一致：A 有、B 没有的是 {listed(lacks)}；B 有、A 没有的是 {listed(adds)}。"
+            "请看图逐个核对这些字符，按图改正。")
 
 
 def _touch(a, b) -> bool:
