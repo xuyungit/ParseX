@@ -10,7 +10,7 @@ from parserx.ir.base import Affine, IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
-from parserx.ir.state import DocumentState
+from parserx.ir.state import ClosedItem, DocumentState
 from parserx.tables.grid import TableGrid
 from parserx.content.text_audit import suspicious_characters
 from parserx.tables.arithmetic import arithmetic_issues
@@ -281,7 +281,7 @@ def _places(lines: list) -> str:
 
 
 def _quotes(texts: list[str]) -> list[DocText]:
-    return [DocText(doc_text=t if len(t) <= 80 else t[:79] + "…") for t in texts[:_QUOTES]]
+    return [DocText(doc_text=t) for t in ClosedItem.quoted(texts)]
 
 
 def _all_text(block: Block) -> str:

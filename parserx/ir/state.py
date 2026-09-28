@@ -121,6 +121,11 @@ class ClosedItem(IRModel):
     image: str  # the evidence it was checked on (an evidence id, or an image id of earlier workspaces)
     occluded: bool = False  # text the page draws under another element: content, kept, and named in the summary (Q71)
 
+    @staticmethod
+    def quoted(texts: list[str]) -> list[str]:
+        """The texts an item quotes: the first five, each at most 80 characters (what a closed item is matched on)."""
+        return [t if len(t) <= 80 else t[:79] + "…" for t in texts[:5]]
+
 
 class Note(IRModel):
     """The agent's understanding of the document, written down (Q87): a revisable interpretation — what a part is,

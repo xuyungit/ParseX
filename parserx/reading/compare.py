@@ -35,7 +35,7 @@ from parserx.ir.base import BBox
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, RelationKind, TaskKind
 from parserx.layout.labels import NOT_PROSE
-from parserx.ir.state import DocumentState, ReadLine
+from parserx.ir.state import ClosedItem, DocumentState, ReadLine
 from parserx.content.text import normalize_fullwidth_ascii
 
 NEAR = 0.5  # share of a text's adjacent-character pairs the other reading has at the text's place
@@ -190,6 +190,17 @@ def lacking_in_transcription(state: DocumentState, figure: Block) -> list[str] |
     return [line.text for line in record.reading
             if not any(_inside(_centre(line.bbox), box) for box in pictures)
             and len(norm := normalize(line.text)) >= 2 and (not text or fuzz.partial_ratio(norm, text) < SOMEWHERE)]
+
+
+def text_stands_for_image(state: DocumentState, figure: Block) -> bool:
+    """Whether the text read inside *figure*'s image can stand in its place: the local reading finds nothing it
+    lacks, or what it found was checked against the image and closed (the item for exactly these lines)."""
+    lacking = lacking_in_transcription(state, figure)
+    if lacking is None:
+        return False
+    quotes = ClosedItem.quoted(lacking)
+    return not lacking or any(c.target == figure.id and c.kind == "text_unaccounted" and c.quotes == quotes
+                              for c in state.closed)
 
 
 def _places(state: DocumentState) -> dict[int, list[tuple[Block, BBox]]]:

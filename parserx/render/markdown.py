@@ -30,7 +30,7 @@ from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
 from parserx.ir.semantic import note_of
 from parserx.ir.state import DocumentState
-from parserx.reading.compare import has_math, lacking_in_transcription, read_inside
+from parserx.reading.compare import has_math, read_inside, text_stands_for_image
 from parserx.workspace.queries import JOINABLE, block_unit, ordered
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
@@ -116,7 +116,7 @@ def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: 
     src = f"{image_dir}/{image_file(asset)}" if asset is not None else None
     note = note_of(block.semantic)
     content = note is not None and note.type == "content"
-    hidden = content and src is not None and lacking_in_transcription(state, block) == []
+    hidden = content and src is not None and text_stands_for_image(state, block)
     label = f"**{IMAGE_TEXT_LABEL[lang]}**" + (f" {note.caption}" if content and note.caption else "") \
         + (f"　[{ORIGINAL[lang]}]({src})" if hidden else "")
     pieces = [label]

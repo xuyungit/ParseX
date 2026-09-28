@@ -350,3 +350,18 @@ def test_text_in_a_seal_or_excluded_as_furniture_is_not_lacking():
     state.blocks.append(footer)
     state.relations.append(Relation(id="r-contains-f-f-r3", kind=RelationKind.CONTAINS, src="f", dst="f-r3"))
     assert lacking_in_transcription(state, figure) == []
+
+
+def test_lines_checked_against_the_image_and_closed_leave_the_image_out():
+    # the agent looked: the lines the local reading found are a seal misread, not missing text — the item is closed
+    # for exactly these lines, and the text stands for the image
+    from parserx.ir.state import ClosedItem
+
+    state = _read_image(reading=("营业执照", "%81"))
+    assert "![图片]" in render_markdown(state)
+    state.closed.append(ClosedItem(target="f", kind="text_unaccounted", quotes=["%81"], reason="印章的误读",
+                                   actor="agent", image="e-1"))
+    assert "![图片]" not in render_markdown(state) and "[原图]" in render_markdown(state)
+    state.images[0].reading.append(ReadLine(bbox=(1, 20, 39, 22), text="统一社会信用代码", score=0.99))
+    assert "![图片]" in render_markdown(state)  # a new line: not what was checked
+
