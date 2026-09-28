@@ -73,6 +73,7 @@ class UnresolvedKind(StrEnum):
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it
+    CAPTION_NUMBER_UNSEEN = "caption_number_unseen"  # a number a picture's description quotes, not read in it (IO6)
     TITLE_CANDIDATE = "title_candidate"  # the layout detector sees a section title set apart from the body (D4)
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"

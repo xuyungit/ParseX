@@ -208,6 +208,17 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
             detail="this image is shown without a description and without transcribed text after it; look at it: "
                    "describe it if it carries information, or close the item with the reason (a code, a logo …)"))
+    from parserx.tools.describe_figure import unseen_in_description
+
+    for block in ordered(state):  # a picture's description quotes a number its image's reading lacks (IO6-4)
+        numbers = unseen_in_description(block) if block.kind == BlockKind.FIGURE and block.status not in HIDDEN \
+            and block.semantic is not None else []
+        if numbers:
+            items.append(Unresolved(
+                target=block.id, kind=UnresolvedKind.CAPTION_NUMBER_UNSEEN, quotes=_quotes(numbers),
+                detail="the description quotes these numbers, but the local reading of the image does not have them: "
+                       "the model may have misread a digit (or the local reader a blurred or styled one); look at the "
+                       "image and describe it again (view_source as description, then adopt), or close the item"))
     for block_id, text, level, evidence in layout_titles(state):  # the page image shows a title the outline lacks
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),

@@ -64,6 +64,7 @@ class FakeVLM:
         self.calls = []
         self.schemas = []
         self.figure_type = "photo"  # what a description says the image is (IO6: content is transcribed)
+        self.caption = VLM_TEXT
 
     def describe_image(self, image_path, prompt, *, context="", temperature=0.1, max_tokens=8192,
                        structured_output_mode="off", json_schema=None, json_schema_name="x"):
@@ -78,7 +79,7 @@ class FakeVLM:
             return json.dumps({"table_html": "<table><tr><td>项目</td><td>数值</td></tr>"
                                              "<tr><td>SENTINEL-OCR 甲</td><td>8</td></tr></table>",
                                "undetermined": []})
-        return json.dumps({"type": self.figure_type, "caption": VLM_TEXT})
+        return json.dumps({"type": self.figure_type, "caption": self.caption})
 
 
 class FakeReader:
@@ -1019,3 +1020,47 @@ def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):
     assert result["pages"] == {"done": 1, "failed": 1} and result["check"]["exportable"]
     assert result["check"]["document_status"] == "partial"
     assert any("scan engine not configured" in f.message for f in env.failures)
+
+
+def test_numbers_are_compared_with_the_reading_as_a_recognizer_confuses_them():
+    from parserx.tools.describe_figure import unseen_numbers
+
+    caption = "激光切割机，机身标有“LMN6000H”，额定 1,200 W，约 12 台，编号 7"
+    assert unseen_numbers(caption, ["LMN6000H", "1200W"]) == []
+    assert unseen_numbers(caption, ["LMN6O00H", "1 200 W"]) == []  # O read for 0, a space in a number
+    assert unseen_numbers(caption, ["LMN60 0H"]) == ["6000", "1,200"]  # "约 12" is an estimate; 7 is one digit
+
+
+@pytest.mark.parametrize("kind, seen, listed", [("photo", "型号 LMN6000H", False), ("photo", "型号 LMN60 0H", True),
+                                                 ("content", "", False)])
+def test_a_number_the_image_reading_lacks_is_open_work(ws, kind, seen, listed):
+    # IO6-4: a picture's description quoting a number the local reading of the image does not have — the model may
+    # have misread a digit — is listed until the description changes; a content image's text is transcribed instead
+    from parserx.tools.describe_figure import Described, apply
+    from parserx.tools.views import unresolved_items
+
+    class Sees:
+        name, version = "reading", "sees-1"
+
+        def read(self, png):
+            return [((0, 0, 10, 10), seen, 0.9)] if seen else []
+
+    class Context(_context()):
+        def _new_reader(self):
+            return Sees()
+
+    Context.fake_vlm.figure_type = kind
+    Context.fake_vlm.caption = "激光切割机，机身标有“LMN6000H”，约 12 台"
+    config = _config()
+    config.runtime.layout_shadow = config.runtime.page_reading = False
+    _call("run_pipeline", ws, {}, config=config, context=Context)
+    state = Workspace.open(ws).load()
+    items = [u for u in unresolved_items(state) if u.kind == "caption_number_unseen"]
+    assert bool(items) is listed
+    if listed:
+        assert all([q.doc_text for q in u.quotes] == ["6000"] for u in items)
+        for item in items:  # described again: the new description is what the item was about
+            figure = next(b for b in state.blocks if b.id == item.target)
+            apply(state, Described(figure.id, figure.anchors[-1], figure.semantic, None, ""), "vlm")
+        assert not [u for u in unresolved_items(state) if u.kind == "caption_number_unseen"]
+

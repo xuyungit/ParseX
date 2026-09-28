@@ -12,6 +12,8 @@ document text); the typed semantic is on the block in the sidecar.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -21,7 +23,8 @@ from pydantic import Field, model_validator
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.base import IRModel
-from parserx.ir.enums import BlockKind, ObservationStatus, TaskKind
+from parserx.ir.decision import Decision
+from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, TaskKind
 from parserx.ir.observation import Observation
 from parserx.prompts import load_prompt
 from parserx.render.markdown import semantic_block
@@ -165,6 +168,68 @@ def apply(state, item: Described, engine_version: str) -> bool:
     return item.semantic is not None
 
 
+# ── Numbers a picture's description quotes, checked against the local reading of the image (IO6-4, Q127) ──
+
+UNSEEN = "caption_numbers_unseen"
+_NUMBER = re.compile(r"\d+(?:[.,:/-]\d+)*")
+_ESTIMATE = re.compile(r"(约为?|大约|近|~|≈|about|approximately|around|roughly)\s*$", re.IGNORECASE)
+_CONFUSED = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1"})  # letters a recognizer reads for digits
+
+
+def unseen_numbers(caption: str, lines: list[str]) -> list[str]:
+    """Numbers of two or more digits in *caption* that the local reading *lines* does not have — compared without
+    spaces and thousands separators, with the letters a recognizer confuses with digits read as digits.  A number
+    marked as an estimate ("约 12", read off a chart's axis) quotes nothing and is left out."""
+    seen = re.sub(r"[\s,]", "", unicodedata.normalize("NFKC", "".join(lines)).translate(_CONFUSED))
+    caption = unicodedata.normalize("NFKC", caption)
+    out: list[str] = []
+    for match in _NUMBER.finditer(caption):
+        number = match.group()
+        digits = number.replace(",", "")
+        if sum(c.isdigit() for c in digits) < 2 or _ESTIMATE.search(caption[:match.start()]) or number in out:
+            continue
+        if digits not in seen:
+            out.append(number)
+    return out
+
+
+def _numbers_unseen(ctx: ToolContext, item: "Described") -> list[str]:
+    """The numbers of a picture's new description its image's local reading lacks; none for a content image (its
+    words are transcribed) or when the image cannot be read."""
+    from parserx.reading.local import read_cached
+
+    note = item.semantic
+    if note is None or getattr(note, "type", "content") == "content" or not any(
+            sum(c.isdigit() for c in n) >= 2 for n in _NUMBER.findall(getattr(note, "caption", ""))):
+        return []
+    state = ctx.ws.load()
+    asset = next((a for a in state.assets if a.id == item.anchor.asset), None)
+    try:
+        lines = read_cached(ctx.reader(), (ctx.ws.root / asset.path).read_bytes(), ctx.cache)
+    except Exception:  # noqa: BLE001 - an image the reader cannot decode gives no evidence
+        return []
+    return unseen_numbers(note.caption, [text for _, text, _ in lines])
+
+
+def note_unseen_numbers(block, numbers: list[str]) -> None:
+    """Record, for the description just made, the numbers its image's reading lacks (a signal for the worklist)."""
+    latest = [o.id for o in block.observations if o.task == TaskKind.DESCRIBE][-1]
+    block.decisions.append(Decision(
+        stage=DecisionStage.REVIEW_ACCEPT, choice=UNSEEN, actor="program:describe_figure",
+        reason="the description quotes numbers the local reading of the image does not have",
+        evidence={"numbers": " ".join(numbers)}, refs=[latest]))
+
+
+def unseen_in_description(block) -> list[str]:
+    """The numbers noted for the block's current description; none once it is described again."""
+    described = [o.id for o in block.observations if o.task == TaskKind.DESCRIBE]
+    for decision in reversed(block.decisions):
+        if decision.choice == UNSEEN:
+            return str(decision.evidence.get("numbers", "")).split() if described and \
+                decision.refs == [described[-1]] else []
+    return []
+
+
 def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigureResult]:
     """Describe the figures not described yet and record the descriptions (the pipeline's step)."""
     single = req.block is not None
@@ -181,11 +246,14 @@ def run(ctx: ToolContext, req: DescribeFigureRequest) -> ToolOutput[DescribeFigu
     if single and failures and not described:
         raise ToolFailure(failures[0].code, failures[0].message, targets=failures[0].targets)
     if described:
+        unseen = {item.block: numbers for item in described if (numbers := _numbers_unseen(ctx, item))}
         with ctx.ws.txn("tool:describe_figure") as state:
             state.prompt_hashes[PROMPT] = prompt_hash
             for item in described:
                 if apply(state, item, ctx.config.services.vlm.model):
                     block = next(b for b in state.blocks if b.id == item.block)
+                    if item.block in unseen:
+                        note_unseen_numbers(block, unseen[item.block])
                     items[item.block] = DescribeItem(block=item.block, type=block.semantic.type,
                                                      semantic=DocText(doc_text=semantic_block(block)))
                 else:
