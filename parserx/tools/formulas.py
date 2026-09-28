@@ -12,8 +12,10 @@ text layer has, so it is adopted passage by passage.
    whole anyway.
 2. **Reading**: those pages, batched, through the scan engine (the scanned-page path, ``scan.page_blocks``).
 3. **Passages**: the native text blocks and the reading's text and formula blocks over the same place form
-   passages (a block belongs to a passage when its centre lies in a block of the other reading).  Only passages
-   where the reading has mathematics are considered: prose stays the text layer's.
+   passages (a block belongs to a passage when its centre lies in a block of the other reading).  The engine reads
+   a paragraph cut by a column break whole, at the place before the cut: the native block after the cut joins the
+   passage when the reading carries its text.  Only passages where the reading has mathematics are considered:
+   prose stays the text layer's.
 4. **Choice**, per passage (the selection step's rule: two readings, conservation):
    - the reading carries every letter and digit of the text layer (a character neither the reading nor the
      local page reading sees — a mis-mapped glyph — does not count) → the reading's blocks replace the native
@@ -30,6 +32,7 @@ import re
 from collections import Counter
 
 import pymupdf
+from rapidfuzz import fuzz
 
 from parserx.content import scan
 from parserx.content.text import join_wrapped
@@ -57,6 +60,8 @@ DONE = "formula_page"  # decision choice: the passage was decided (adopted or ke
 CANDIDATE = "formula_reading"  # observation label: the reading (or the editor's version) not adopted
 PAD = 2.0  # pt: a block's centre may lie this far outside the other block (box rounding, measurement tolerance)
 EDITOR_DPI = 200
+CARRIED = 8  # letters and digits a native block needs before a reading may carry it (a shorter one matches by chance)
+CARRIED_MATCH = 90  # rapidfuzz partial ratio of that block's text inside the reading's
 _PASSAGE_KINDS = frozenset({BlockKind.TEXT, BlockKind.FORMULA})
 _EDITOR_PROMPT = (
     "你是编辑。图中是文档的一段。给你两份读数：A 是 PDF 文字层（字符准确，但公式的上下标、分式等结构丢失，个别字形可能是乱码），"
@@ -194,8 +199,38 @@ def _passages(state: DocumentState, n: int, reading: list[Block]) -> list[tuple[
         groups.setdefault(find(i), ([], []))[0].append(a.id)
     for j, b in enumerate(reading):
         groups.setdefault(find(len(natives) + j), ([], []))[1].append(b)
-    return [(native_ids, blocks) for native_ids, blocks in groups.values()
-            if native_ids and blocks and any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in blocks)]
+    passages = [(native_ids, blocks) for native_ids, blocks in groups.values()
+                if native_ids and blocks and any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in blocks)]
+    return _continued(sorted(natives, key=lambda b: b.order), passages)
+
+
+def _continued(natives: list[Block], passages: list[tuple[list[str], list[Block]]]
+               ) -> list[tuple[list[str], list[Block]]]:
+    """*passages* with the native blocks their reading carries beyond its place: the engine reads a paragraph cut
+    by a column break whole, in the block before the cut, so the native block just after it (or just before it)
+    lies under no reading block although its text is there.  Such a block joins the passage when every letter and
+    digit it has is in the reading's surplus over the passage's text layer, in the same order."""
+    grouped = {native_id for native_ids, _ in passages for native_id in native_ids}
+    for i, native in enumerate(natives):
+        if native.id in grouped:
+            continue
+        for neighbour in (natives[i - 1] if i else None, natives[i + 1] if i + 1 < len(natives) else None):
+            passage = next((p for p in passages if neighbour is not None and neighbour.id in p[0]), None)
+            if passage is not None and _carries(passage, natives, native):
+                passage[0].append(native.id)
+                grouped.add(native.id)
+                break
+    return passages
+
+
+def _carries(passage: tuple[list[str], list[Block]], natives: list[Block], native: Block) -> bool:
+    own = normalize(native.text or "")
+    if len(own) < CARRIED:
+        return False
+    reading = normalize(_symbols("\n".join(b.text or "" for b in passage[1])))
+    layer = normalize("\n".join(b.text or "" for b in natives if b.id in passage[0]))
+    surplus = Counter(reading) - Counter(layer)
+    return not Counter(own) - surplus and fuzz.partial_ratio(own, reading) >= CARRIED_MATCH
 
 
 def _lost(state: DocumentState, n: int, natives: list[str], blocks: dict, native_text: str, other: str) -> bool:

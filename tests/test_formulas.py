@@ -31,15 +31,29 @@ def _page_pdf(tmp_path):
     return path
 
 
-def _run(tmp_path, entries, editor_answer=None):
-    path = _page_pdf(tmp_path)
+def _columns_pdf(tmp_path):
+    """Two columns; the paragraph at the foot of the first goes on at the head of the second."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 90), "Opening prose of the first column, plainly set.", fontsize=10)
+    page.insert_text((72, 780), "Here E = mc", fontsize=10)
+    page.insert_text((128, 775), "2", fontsize=6)
+    page.insert_text((140, 780), "gives the energy which", fontsize=10)
+    page.insert_text((320, 90), "the second column goes on to explain fully.", fontsize=10)
+    path = tmp_path / "f.pdf"
+    doc.save(path)
+    return path
+
+
+def _run(tmp_path, entries, editor_answer=None, pdf=_page_pdf, formula=(70, 118, 140, 134)):
+    path = pdf(tmp_path)
     k = 100 / 72  # the layout step renders pages at 100 dpi
 
     class Detector:
         name, version = "layout", "fake-formula-detector"
 
         def detect(self, png):
-            return [Region(bbox=(70 * k, 118 * k, 140 * k, 134 * k), label="inline_formula", score=0.9)]
+            return [Region(bbox=tuple(v * k for v in formula), label="inline_formula", score=0.9)]
 
     def ocr_page():
         return {"prunedResult": {"width": 595, "height": 842, "parsing_res_list": entries}}
@@ -118,3 +132,14 @@ def test_a_paragraph_the_engine_returns_line_by_line_stays_one_paragraph(tmp_pat
         PROSE,
     ])
     assert "Here $ E=mc^{2} $ holds." in md
+
+
+def test_a_paragraph_the_engine_joins_across_the_column_break_is_not_repeated(tmp_path):
+    # the engine reads the paragraph whole at the foot of the first column; the head of the second is its end
+    state, md, _ = _run(tmp_path, [
+        _entry("text", "Opening prose of the first column, plainly set.", (72, 80, 300, 92)),
+        _entry("text", "Here $ E=mc^{2} $ gives the energy which the second column goes on to explain fully.",
+               (72, 770, 260, 782)),
+    ], pdf=_columns_pdf, formula=(70, 768, 140, 784))
+    assert "Here $ E=mc^{2} $ gives the energy which the second column goes on to explain fully." in md
+    assert md.count("the second column goes on to explain fully") == 1

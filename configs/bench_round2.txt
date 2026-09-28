@@ -1,0 +1,9 @@
+# Benchmark round 2 (docs/v2_benchmark_plan.md §4.1): 4–9 pages — scans, papers, tables across pages, Word.
+ocr01                                 # 9 p, scanned report: tables, numbered headings
+ocr_scan_jtg3362                      # 4 p, scanned standard with a partial text layer: tables
+paper_chn01                           # 7 p, Chinese paper: figures, footnotes, two columns
+paper_chn02                           # 7 p, Chinese paper: 6 tables, formulas
+pdf_text01_tables                     # 5 p, native: one table running over pages
+unseen_pdf_tables01                   # 6 p, native: 13 tables, headings
+text_report01                         # Word, 4 p: tables, headings
+val_word_template01                   # Word excerpt: template headings, tables drawn as diagrams
