@@ -1,0 +1,191 @@
+{
+  "metadata": {
+    "at": "2026-09-27T11:58:56.624260+08:00",
+    "head": "3bbae74012c6f5746e9aa135fff7057c2432839b",
+    "files_sha256": {
+      "parserx/content/select.py": "e1ff1673fa885c7bd3e6611ec8de3b35509cb1d070581ae06ccc339a28e22517",
+      "parserx/tools/edit.py": "ffe2dafb27f599e19b60376527b4528356e6a76d1f64a8df212a083aa893b911",
+      "parserx/tools/evidence.py": "69aa7f0ac8b4c83ad134e99225cfd47c619b48f71944545e4b963673dd93e2d7",
+      "parserx/accounting/check.py": "276bcd9e1852bba4e12544ca17e660c3e1b09e331038d7ac2d81bf56d3be7f9c",
+      "parserx/reading/compare.py": "703f3e61f1693916774cf2785a398965cce3a9cd76065b045b36f876389c7156",
+      "parserx/scheduling/budget.py": "b36fbbd11de48400ccf9bf9c9201f74ae37324ff98c2bb2cd5d3ed93d59070ef",
+      "parserx/runtimes/hybrid.py": "94422baaca89568c4798fee5297753b8c6433618130769266d6a716da9d130c8",
+      "parserx/hierarchy/legality.py": "770cfa4ca25b7d03ee5a272023ade742a20ca47d02d769187338fbd506a2df11"
+    },
+    "scope": "Synthetic offline probes on the working tree; no live services; not corpus quality scores"
+  },
+  "tools": {
+    "direct_native_number_edit": {
+      "exit_code": 0,
+      "ok": true,
+      "result": {
+        "outcomes": [
+          {
+            "index": 0,
+            "op": "replace_text",
+            "accepted": false,
+            "rule": "numeric_consistency",
+            "detail": "numeric_consistency: numbers removed ['100'], added ['999']; no local reading of this place",
+            "block": null,
+            "target": null
+          }
+        ],
+        "issues_opened": [],
+        "issues_closed": []
+      },
+      "text_after": "采购金额为100万元，不允许延期。"
+    },
+    "native_protection_after_accepted_edit": {
+      "first": {
+        "exit_code": 0,
+        "ok": true,
+        "result": {
+          "outcomes": [
+            {
+              "index": 0,
+              "op": "replace_text",
+              "accepted": true,
+              "rule": null,
+              "detail": "image_evidence: e-fixture shows page 1; numeric_consistency: numbers unchanged (native evidence); structure_valid: content kept",
+              "block": null,
+              "target": null
+            }
+          ],
+          "issues_opened": [],
+          "issues_closed": []
+        },
+        "text_after": "采购金额：100万元，不允许延期。"
+      },
+      "second": {
+        "exit_code": 0,
+        "ok": true,
+        "result": {
+          "outcomes": [
+            {
+              "index": 0,
+              "op": "replace_text",
+              "accepted": true,
+              "rule": null,
+              "detail": "image_evidence: e-fixture shows page 1; numeric_consistency: edits confined to the named spans; structure_valid: content kept",
+              "block": null,
+              "target": null
+            }
+          ],
+          "issues_opened": [],
+          "issues_closed": []
+        },
+        "text_after": "采购金额：999万元，不允许延期。"
+      }
+    },
+    "negation_removed": {
+      "exit_code": 0,
+      "ok": true,
+      "result": {
+        "outcomes": [
+          {
+            "index": 0,
+            "op": "replace_text",
+            "accepted": true,
+            "rule": null,
+            "detail": "image_evidence: e-fixture shows page 1; numeric_consistency: numbers unchanged (native evidence); structure_valid: content kept",
+            "block": null,
+            "target": null
+          }
+        ],
+        "issues_opened": [],
+        "issues_closed": []
+      },
+      "text_after": "采购金额为100万元，允许延期。"
+    },
+    "exclude_without_evidence": {
+      "edit": {
+        "outcomes": [
+          {
+            "index": 0,
+            "op": "exclude",
+            "accepted": true,
+            "rule": null,
+            "detail": null,
+            "block": null,
+            "target": null
+          }
+        ],
+        "issues_opened": [],
+        "issues_closed": []
+      },
+      "submit": {
+        "accepted": true,
+        "status": "complete",
+        "blockers": [],
+        "open_issues": {},
+        "markdown": null,
+        "sidecar": null,
+        "summary": null
+      }
+    }
+  },
+  "swapped_native_cells": {
+    "adopted": true,
+    "gate": [
+      {
+        "name": "image_evidence",
+        "passed": true,
+        "detail": "candidate read from the region image"
+      },
+      {
+        "name": "numeric_consistency",
+        "passed": true,
+        "detail": "numbers unchanged (native evidence)"
+      },
+      {
+        "name": "structure_valid",
+        "passed": true,
+        "detail": "all cell content kept"
+      }
+    ],
+    "after": [
+      [
+        "项目",
+        "数值"
+      ],
+      [
+        "甲",
+        "20"
+      ],
+      [
+        "乙",
+        "3"
+      ]
+    ]
+  },
+  "evidence_scope": {
+    "e-seam": {
+      "name": "image_evidence",
+      "passed": true,
+      "detail": "e-seam shows page 1"
+    },
+    "e-tiny": {
+      "name": "image_evidence",
+      "passed": true,
+      "detail": "e-tiny shows the region of page 1 this block is in"
+    }
+  },
+  "budget": {
+    "configured_cap": 0.02,
+    "settled_single_request": 0.2,
+    "left": {
+      "requests": {},
+      "usd": 0.0,
+      "seconds": null
+    },
+    "interpretation": "reservation is an estimate, not a bound on actual request cost"
+  },
+  "repeated_missing_body": {
+    "single_page_missing_detected": {
+      "1": [
+        "必须在加载前锁紧安全装置"
+      ]
+    },
+    "same_missing_body_on_two_pages": {}
+  }
+}
