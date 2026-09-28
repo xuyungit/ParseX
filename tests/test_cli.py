@@ -145,3 +145,26 @@ def test_every_parse_option_is_read():
                                                                                                 fromlist=["x"])))
     unread = sorted(d for d in options if not re.search(rf'args\.{d}\b|getattr\(args, "{d}"', code))
     assert unread == []
+
+
+def test_parse_chooses_the_agent_and_the_service_model(tmp_path, monkeypatch, capsys):
+    # R2: --agent codex | <model>, --no-agent, --vlm <model>; a name the config does not have is refused
+    from parserx.cli import _cmd_parse, _collect_flag_overrides
+    from parserx.config.schema import apply_overrides, load_config
+
+    monkeypatch.chdir(tmp_path)
+    base = load_config()
+
+    def chosen(**flags):
+        args = argparse.Namespace(no_vlm=False, no_ocr=False, vlm=None, agent=None, no_agent=False, runtime=None)
+        vars(args).update(flags)
+        return apply_overrides(base, _collect_flag_overrides(args))
+
+    loop = chosen(agent="deepseek-flash", vlm="glm-5.3-flashx")
+    assert (loop.runtime.agent.engine, loop.runtime.agent.model, loop.runtime.agent.api) == ("loop", "deepseek-flash", "chat")
+    assert loop.services.vlm.model == "glm-5.3-flashx" and loop.runtime.mode == "hybrid"
+    assert chosen(agent="codex").runtime.agent.engine == "codex"
+    assert chosen(no_agent=True).runtime.mode == "fixed"
+    args = argparse.Namespace(input=[tmp_path / "a.pdf"], config=None, overrides=[], no_vlm=False, no_ocr=False,
+                              vlm="nope", agent=None, no_agent=False, runtime=None)
+    assert _cmd_parse(args) == 2 and "no model 'nope'" in capsys.readouterr().err

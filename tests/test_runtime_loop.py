@@ -241,3 +241,14 @@ def test_the_loop_sends_its_effort_as_the_nearest_the_model_accepts():
     assert model(["low", "high", "max"], "chat").effort == "high"
     assert model(["low", "high", "max"], "responses").effort == "high"
     assert model([], "chat").effort is None
+
+
+def test_the_loop_says_when_its_model_has_no_key():
+    from parserx.config.schema import ParserXConfig
+
+    def available(entry):
+        config = ParserXConfig.model_validate({"models": {"g": entry}, "runtime": {"agent": {"engine": "loop", "use": "g"}}})
+        return LoopAgent("g", "medium", config=config).available()
+
+    assert available({"endpoint": "https://g/v4", "model": "g"}) == (False, "loop_no_key")
+    assert available({"endpoint": "https://g/v4", "model": "g", "api_key": "k"}) == (True, None)

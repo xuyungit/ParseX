@@ -75,3 +75,14 @@ scheduling:
     gpt-6-sol:    {input: 2.00, cached_input: 0.20, output: 10.00}
     deepseek-flash: {input: 0.30, cached_input: 0.006, output: 1.20}  # peak hours (off-peak half), api-docs.deepseek.com, 2026-09-27
     glm-5.3-flashx: {input: 0.30, cached_input: 0.084, output: 1.04}  # CNY 2.0 / 0.57 / 7.0 at 6.75 (2026-09-24), bigmodel.cn, 2026-09-28
+
+# The agent (recommended; Q13, Q106, Q112): the standard processing first, then an agent on documents with open
+# review items.  engine codex: Codex on this machine (`codex login`, its model and effort below); engine loop: our own
+# loop with a model of `models` (use:, billed by that model's API).  mode fixed: the standard processing only.
+# On the command line: --agent codex | --agent <model> | --no-agent.
+runtime:
+  mode: hybrid
+  agent:
+    engine: codex
+    model: gpt-6-sol
+    effort: medium

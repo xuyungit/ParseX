@@ -65,8 +65,11 @@ class LoopAgent:
         if self.model_factory != self._model:
             return True, None
         service = self.config.services.vlm  # the agent model is reached where the service models are, by default
-        reachable = self.agent.endpoint or self.agent.api_key or service.endpoint or service.api_key
-        return (True, None) if reachable else (False, "loop_not_configured")
+        endpoint, key = (self.agent.endpoint, self.agent.api_key) if self.agent.endpoint else (service.endpoint,
+                                                                                               service.api_key)
+        if not endpoint:
+            return False, "loop_not_configured"
+        return (True, None) if key else (False, "loop_no_key")
 
     def run(self, work_dir: Path, deadline_s: float, log_dir: Path,
             on_event: Callable[[dict], None] | None = None) -> AgentOutcome:

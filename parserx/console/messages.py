@@ -86,8 +86,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     # why the agent did not run or its work was not used
     "skip.no_review_items": {"zh": "待核对 0 项，跳过", "en": "nothing to review, skipped"},
     "skip.mode_fixed": {"zh": "只用固定流水线（--runtime fixed），跳过", "en": "fixed runtime only (--runtime fixed), skipped"},
-    "why.codex_not_found": {"zh": "Agent 未运行：未找到 Codex CLI（安装并运行 `codex login` 后可用）",
-                            "en": "Agent not run: Codex CLI not found (install it and run `codex login`)"},
+    "why.codex_not_found": {"zh": "Agent 未运行：未找到 Codex CLI（安装并运行 `codex login` 后可用；也可以用 --agent <模型> 改用自己的循环）",
+                            "en": "Agent not run: Codex CLI not found (install it and run `codex login`; or use our own "
+                                  "loop with --agent <model>)"},
+    "why.loop_not_configured": {"zh": "Agent 未运行：没有指定循环用的模型（--agent <模型>，或配置 runtime.agent.use）",
+                                "en": "Agent not run: no model for the loop (--agent <model>, or runtime.agent.use)"},
+    "why.loop_no_key": {"zh": "Agent 未运行：循环用的模型没有 key（写进个人配置 ~/.config/parserx/config.yaml 的 models 下）",
+                        "en": "Agent not run: the loop's model has no key (put it under models in "
+                              "~/.config/parserx/config.yaml)"},
     "why.codex_not_logged_in": {"zh": "Agent 未运行：Codex CLI 未登录（运行 `codex login` 后可用）",
                                 "en": "Agent not run: Codex CLI is not logged in (run `codex login`)"},
     "why.codex_not_working": {"zh": "Agent 未运行：Codex CLI 无法启动", "en": "Agent not run: Codex CLI does not start"},

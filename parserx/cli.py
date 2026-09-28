@@ -60,7 +60,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-ocr", action="store_true",
         help="Disable the scan engine (native text only; scanned pages stay unrecognised)",
     )
-    parse_cmd.add_argument("--vlm-model", help="Override VLM model name")
+    parse_cmd.add_argument("--vlm", metavar="MODEL",
+                           help="the service model (figure descriptions, formula and table review): an entry of the "
+                                "config's models; `parserx check` lists them")
+    parse_cmd.add_argument("--agent", metavar="AGENT",
+                           help="the agent that reviews what the program left open: codex (Codex on this machine) "
+                                "or an entry of the config's models (our own loop with that model, billed by its API)")
+    parse_cmd.add_argument("--no-agent", action="store_true",
+                           help="the standard processing only (the same as --runtime fixed)")
 
     # parserx eval
     eval_cmd = sub.add_parser("eval", help="Evaluate parsing against ground truth")
@@ -271,9 +278,14 @@ def _cmd_parse(args: argparse.Namespace) -> int:
     all_overrides = flag_overrides + list(args.overrides)
 
     loaded = load_config_with_result(args.config)
-    config = apply_overrides(loaded.config, all_overrides)
-    if getattr(args, "runtime", None):
-        config.runtime.mode = args.runtime
+    if getattr(args, "agent", None) and getattr(args, "no_agent", False):
+        print("parserx: --agent and --no-agent contradict each other", file=sys.stderr)
+        return 2
+    try:
+        config = apply_overrides(loaded.config, all_overrides)
+    except ValueError as exc:  # a model name the config does not have
+        print(f"parserx: {exc}", file=sys.stderr)
+        return 2
     from parserx.console.cli import parse_v2
 
     return parse_v2(args, config, loaded)
@@ -286,8 +298,17 @@ def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:
         overrides.append("services.vlm.endpoint=")
     if getattr(args, "no_ocr", False):
         overrides.append("builders.ocr.engine=none")
-    if getattr(args, "vlm_model", None):
-        overrides.append(f"services.vlm.model={args.vlm_model}")
+    if getattr(args, "vlm", None):
+        overrides.append(f"services.vlm.use={args.vlm}")
+    agent = getattr(args, "agent", None)
+    if agent == "codex":
+        overrides.append("runtime.agent.engine=codex")
+    elif agent:
+        overrides += ["runtime.agent.engine=loop", f"runtime.agent.use={agent}"]
+    if agent or getattr(args, "runtime", None) == "hybrid":
+        overrides.append("runtime.mode=hybrid")
+    if getattr(args, "no_agent", False) or getattr(args, "runtime", None) == "fixed":
+        overrides.append("runtime.mode=fixed")
     return overrides
 
 
