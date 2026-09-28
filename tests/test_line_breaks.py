@@ -84,3 +84,39 @@ def test_a_native_block_is_split_where_the_page_ends_a_line_and_its_wraps_are_jo
                           pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE, size_pt=(595, 842))])
     restore_line_breaks(state)
     assert [b.text for b in sorted(state.blocks, key=lambda b: b.order)] == ["第一段的第一行一直写到了右边。", "第二段从这里开始。"]
+
+
+def test_a_footnote_cut_at_a_column_break_continues_in_the_next_note_block():
+    # R2: "…settle on the Monday of the" at the foot of one column, "following week. …" at the foot of the next
+    from parserx.content.continuation import propose_continuations
+
+    def note(bid, text, bbox, order):
+        anchor = PdfAnchor(page=1, bbox=bbox, coord_space="page_pt")
+        return Block(id=bid, kind=BlockKind.FOOTNOTE, order=order, anchors=[anchor], text=text)
+
+    body = Block(id="b-body", kind=BlockKind.TEXT, order=1, anchors=[PdfAnchor(page=1, bbox=(220, 60, 380, 700),
+                                                                                 coord_space="page_pt")],
+                 text="The proposed change also is consistent with Commission Rule 15c6-1.")
+    blocks = [note("b-n4", "4 Rule 823 also demonstrates it by stating that it will settle on the Monday of the",
+                   (42, 716, 212, 742), 0), body,
+              note("b-n4b", "following week. This language will be changed.", (220, 723, 383, 742), 2),
+              note("b-n5", "5 A note of its own.", (400, 723, 560, 742), 3)]
+    state = DocumentState(id="d", source="x.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS, blocks=blocks,
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE, size_pt=(595, 842))])
+    assert [(c["first"], c["second"]) for c in propose_continuations(state)] == [("b-n4", "b-n4b")]
+
+
+def test_notes_of_their_own_are_not_joined():
+    from parserx.content.continuation import propose_continuations
+
+    def note(bid, text, order):
+        return Block(id=bid, kind=BlockKind.FOOTNOTE, order=order, text=text,
+                     anchors=[PdfAnchor(page=1, bbox=(42, 700 + 10 * order, 300, 708 + 10 * order), coord_space="page_pt")])
+
+    state = DocumentState(id="d", source="x.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS,
+                          blocks=[note("a", "基金项目：山东建筑大学博士科研基金项目（XNBS1205）", 0),
+                                  note("b", "作者简介：王某（1981-），男，讲师", 1)],
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE, size_pt=(595, 842))])
+    assert propose_continuations(state) == []
