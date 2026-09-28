@@ -49,6 +49,7 @@
 - [v2_model_config.md](v2_model_config.md)：模型接入与配置文件（Q100；决定一已实施，决定二以后做，Q101）。
 - [v2_model_comparison_plan.md](v2_model_comparison_plan.md)：模型能力比较（M1–M6，Q101–Q105）。
 - [v2_release_plan.md](v2_release_plan.md)：独立发布（R1–R7，Q107–Q115）。
+- [v2_io_plan.md](v2_io_plan.md)：输入与输出（IO1–IO5，Q116–Q124，待确认）。
 - [v2_phase1_plan.md](v2_phase1_plan.md)：阶段一工作分解（事实、设计修订 R1–R8、P1-1 至 P1-11、退出条件、待决问题）。
 - [v2_phase2_plan.md](v2_phase2_plan.md)：阶段二工作分解（探索设计、探索集与未见集、P2-1 至 P2-9、退出条件、待决问题 Q35–Q39）。
 - [v2_phase5_plan.md](v2_phase5_plan.md)：阶段五工作分解（已完成：adapter:v1 退役、删除 v1、依赖、README；Q72–Q78）。
@@ -930,6 +931,10 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q113 | 分发方式 | ✅ 用户按建议决定（2026-09-28）：先用 `uv tool install`（wheel 或 git）；PyPI、Docker 镜像以后再做；Linux 暂不验证 |
 | Q114 | 开发命令与评测代码 | ✅ 用户按建议决定（2026-09-28）：收进 `parserx dev`，仍随包发布 |
 | Q115 | `psx` 别名 | ✅ 用户按建议决定（2026-09-28）：删去，只留 `parserx` |
+| Q116 | 默认写出哪些文件 | ✅ 用户按建议决定（2026-09-28）：默认只写 Markdown 与它引用的图片；摘要 JSON（`--report`）、块级 sidecar（`--sidecar`）按需；`--json` 照旧把摘要打到 stdout。取代 Q42 的"输出包"默认 |
+| Q117 | 识别失败的内容在 Markdown 里怎样体现 | ✅ 用户按建议决定（2026-09-28）：在原位置留一行可见的说明 |
+| Q118 | Markdown 里的内部写法 | ✅ 用户按建议决定（2026-09-28）：图片描述块改成读者看得懂的格式，去掉类型代码与证据等级；替代文字用一句话；`<!-- PAGE n -->` 保留 |
+| Q119 | 输入扩展 | ✅ 用户按建议决定（2026-09-28）：加网址、递归目录（`-r`）、图片文件（当作扫描页）；PPTX、XLSX、HTML 暂不做 |
 
 ## 15. 变更记录
 
