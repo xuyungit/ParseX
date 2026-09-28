@@ -57,7 +57,7 @@ from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationS
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
-from parserx.reading.compare import holders_of, text_at, text_near
+from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.describe_figure import Described
@@ -373,26 +373,52 @@ def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
     gate = add_gate(op.text, image=image_evidence_at(state, op.page, op.bbox, op.evidence),
                     seen=text_at(state, op.page, op.bbox), holders=holders_of(state, op.page, op.bbox, op.text))
     detail = _gated(gate)
-    block_id = ids.block_id_pdf(op.page, _next_block_seq(state, op.page))
-    anchor = PdfAnchor(page=op.page, bbox=op.bbox, coord_space="page_pt")
-    observation = Observation(id=ids.observation_id(block_id, "agent", 1), engine="agent", engine_version=ACTOR,
-                              task=TaskKind.CORRECT, anchor=anchor, text=op.text, status=ObservationStatus.OK)
+    decision = Decision(stage=DecisionStage.REVIEW_ACCEPT, choice="added", actor=ACTOR,
+                        reason=f"text the page shows where no block had it; {op.reason}",
+                        evidence={"evidence": op.evidence, **{g.name: g.detail for g in gate}})
+    block_id = _add_text_block(state, op.page, op.bbox, op.text, engine="agent", engine_version=ACTOR,
+                               task=TaskKind.CORRECT, decision=decision, unit="agent_text", after=op.after)
+    return block_id, detail
+
+
+def add_missed_text(state: DocumentState) -> list[str]:
+    """The lines the local page reading sees where the output has nothing (``reading.compare.missed_lines``, Q133),
+    added as text blocks at their places: the fixed pipeline does not lose them; the worklist lists each for review
+    (``text_added``).  The new block ids."""
+    engines = {r.n: r.engine for r in state.readings}
+    made = []
+    for n, lines in missed_lines(state).items():
+        for line in sorted(lines, key=lambda ln: (ln.bbox[1], ln.bbox[0])):
+            decision = Decision(stage=DecisionStage.CONTENT_SOURCE, choice="added", actor=READING_ACTOR,
+                                reason="text the local page reading sees where the output had nothing (Q133)",
+                                evidence={"reading": engines[n], "score": round(line.score, 3)})
+            made.append(_add_text_block(state, n, line.bbox, line.text, engine="page_reading",
+                                        engine_version=engines[n], task=TaskKind.RECOGNIZE, decision=decision,
+                                        unit="read_text"))
+    return made
+
+
+def _add_text_block(state: DocumentState, page: int, bbox, text: str, *, engine: str, engine_version: str,
+                    task: TaskKind, decision: Decision, unit, after: str | None = None) -> str:
+    """A text block at *bbox* on *page*, in reading order (after *after*, else by position), with its ledger item."""
+    block_id = ids.block_id_pdf(page, _next_block_seq(state, page))
+    anchor = PdfAnchor(page=page, bbox=bbox, coord_space="page_pt")
+    observation = Observation(id=ids.observation_id(block_id, engine, 1), engine=engine,
+                              engine_version=engine_version, task=task, anchor=anchor, text=text,
+                              status=ObservationStatus.OK)
     block = Block(id=block_id, kind=BlockKind.TEXT, order=0, anchors=[anchor], observations=[observation],
-                  chosen_observation=observation.id, text=op.text, decisions=[Decision(
-                      stage=DecisionStage.REVIEW_ACCEPT, choice="added", actor=ACTOR,
-                      reason=f"text the page shows where no block had it; {op.reason}",
-                      evidence={"evidence": op.evidence, **{g.name: g.detail for g in gate}})])
+                  chosen_observation=observation.id, text=text, decisions=[decision])
     sequence = ordered(state)
-    at = (next(i for i, b in enumerate(sequence) if b.id == op.after) + 1 if op.after
-          else _place(state, sequence, op.page, op.bbox))
+    at = (next(i for i, b in enumerate(sequence) if b.id == after) + 1 if after
+          else _place(state, sequence, page, bbox))
     sequence.insert(at, block)
     for order, item in enumerate(sequence):
         item.order = order
     state.blocks.append(block)
-    state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(op.page, _next_item(state, op.page)), unit="agent_text",
-                                    source=anchor, chars=len("".join(op.text.split())), disposition="output",
+    state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(page, _next_item(state, page)), unit=unit,
+                                    source=anchor, chars=len("".join(text.split())), disposition="output",
                                     block=block_id))
-    return block_id, detail
+    return block_id
 
 
 def _place(state: DocumentState, sequence: list, page: int, bbox) -> int:

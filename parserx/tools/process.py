@@ -17,6 +17,8 @@ The fixed sequence of the pipeline runtime; the program runs it before the agent
    text (``hierarchy.typography_titles``) and the scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
    other source is sent again once both are in place);
 6. paragraphs cut by a page break (``content.continuation``, PDF): the two parts joined;
+6a. text the local page reading sees where the output has nothing at all (``reading.compare.missed_lines``, Q133):
+    added at its place and listed for review, not lost;
 7. ``check``.
 
 It returns a compact summary and the worklist — what is left for judgment (unresolved items: pending pages, failed
@@ -47,6 +49,7 @@ from parserx.tables.merge import propose_merges
 from parserx.tools import describe_figure, recognize, structure
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
+from parserx.tools.edit import add_missed_text
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.layout_shadow import layout_todo
 from parserx.tools.formulas import formula_pages, read_formula_pages
@@ -173,6 +176,12 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                                           + (f", {len(merges)} table continuations" if merges else "")
                                                           + (f", {len(continuations)} paragraph continuations"
                                                              if continuations else "")))
+
+    if ctx.ws.load().readings:  # text the page shows where the output has nothing: added, not lost (Q133)
+        with ctx.ws.txn("tool:process:missed_text") as state:
+            added = add_missed_text(state)
+        if added:
+            steps.append(StepSummary(step="missed_text", detail=f"{len(added)} lines the local reading sees added"))
 
     ctx.report(Step("process", "check"))
     checked = check_accounts(ctx)

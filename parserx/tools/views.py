@@ -19,7 +19,7 @@ from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
 from parserx.hierarchy.layout_titles import layout_titles
 from parserx.hierarchy.numbering_gaps import numbering_gaps
-from parserx.reading.compare import unaccounted_lines, unseen_segments, within_tables
+from parserx.reading.compare import added_from_reading, unaccounted_lines, unseen_segments, within_tables
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
@@ -171,6 +171,14 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                 and _chosen_engine(block) not in NATIVE_ENGINES:
             items += [Unresolved(target=block.id, kind=UnresolvedKind.TABLE_ARITHMETIC, detail=issue)
                       for issue in arithmetic_issues(block.cells)]
+    for block in shown:  # text the program added from the local page reading where the output had none (Q133)
+        if added_from_reading(block):
+            items.append(Unresolved(
+                target=block.id, kind=UnresolvedKind.TEXT_ADDED, quotes=_quotes([block.text or ""]),
+                detail="the program added this line from its local reading of the page image, where the output had "
+                       "nothing; look at the page: correct its text (replace_text), set its role (a title, part of a "
+                       "neighbouring paragraph: join), exclude it if the local reading took a drawing or a mark for "
+                       "text, or close the item if it is right as it stands"))
     in_tables, on_pages = within_tables(state, unaccounted_lines(state))
     for n, lines in on_pages.items():  # the local page reading sees text no block has (Q56)
         items.append(Unresolved(

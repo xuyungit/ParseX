@@ -34,6 +34,7 @@ LedgerUnit = Literal[
     "docx_note",         # a footnote or endnote (output as a Markdown footnote, Q9)
     "docx_comment",      # a reviewer's comment (excluded, Q9)
     "agent_text",        # text the agent read from a page image where no block had it, backed by the local reading (Q56)
+    "read_text",         # text the local page reading sees where the output had nothing, added by the program (Q133)
 ]
 
 

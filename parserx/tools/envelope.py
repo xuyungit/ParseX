@@ -70,6 +70,7 @@ class UnresolvedKind(StrEnum):
     TABLE_ARITHMETIC = "table_arithmetic"  # a product or total that holds in most rows fails in one (P2-7)
     TEXT_SUSPICIOUS = "text_suspicious"  # unreadable characters, or a script found nowhere else (P2-7)
     TEXT_UNACCOUNTED = "text_unaccounted"  # the local page reading sees text no block accounts for (Q56)
+    TEXT_ADDED = "text_added"  # text the program added from the local page reading, where the output had none (Q133)
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it

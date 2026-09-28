@@ -1,7 +1,7 @@
 """Two-way comparison of the output with an independent local reading of each page (guide §9.5, Q56).
 
 A signal, not a verdict: a place where the output and the page image disagree is listed for review; nothing is
-changed.
+changed — with one exception, text the output lacks altogether (``missed_lines``, below).
 
 - **Seen on the page, accounted for by no block** (``unaccounted_lines``): a line of the local reading that the
   blocks at its place do not contain and that is nowhere else on its page either.  Blocks account for text
@@ -14,6 +14,13 @@ changed.
   anywhere on those pages.
 - **Inside a table** (``within_tables``): unaccounted lines whose place is a shown table's region are what the table
   lacks — a head row, a row, part of a cell — and are listed on the table rather than on the page.
+- **Added by the program** (``missed_lines``, Q133): an unaccounted line outside every table, where no shown block
+  lies at all — the scan engine or the text layer gave nothing there — read with confidence ``ADD_SCORE`` or more.
+  The fixed pipeline adds it to the output rather than lose it, and lists it for review (``text_added``).  A line
+  that disagrees with a block at its place (formula notation, a misreading of that block's text) is only listed:
+  adding it would repeat the block.  Measured on the corpus (2026-09-28, 47 unaccounted lines): the rule keeps the
+  three lines lost from the output and none of the rest (formula passages 0.82–0.99 lie on their blocks; readings
+  of a QR code or a watermark score 0.60–0.78).
 
 The readings are compared on letters and digits only (NFKC, full width folded, markup dropped): punctuation,
 spacing and LaTeX commands are not differences.  The two tolerances are measurement tolerances between two
@@ -40,6 +47,8 @@ from parserx.content.text import normalize_fullwidth_ascii
 
 NEAR = 0.5  # share of a text's adjacent-character pairs the other reading has at the text's place
 SOMEWHERE = 80  # rapidfuzz partial_ratio of the text against all of its page(s): a contiguous near match
+ADD_SCORE = 0.9  # the local recognizer's own confidence for a line the program adds by itself (Q133)
+READING_ACTOR = "program:page_reading"  # the Decision actor of text added from the local reading
 
 _ACCOUNTS = frozenset({BlockStatus.OK, BlockStatus.DEGRADED, BlockStatus.EXCLUDED, BlockStatus.MERGED})
 _SHOWN = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
@@ -110,6 +119,25 @@ def within_tables(state: DocumentState, found: dict[int, list[ReadLine]]
             entry.sharing += [t for t in holders[1:] if t not in entry.sharing]
     order = {t.id: i for i, t in enumerate(tables)}
     return sorted(by_table.values(), key=lambda e: order[e.table]), rest
+
+
+def missed_lines(state: DocumentState) -> dict[int, list[ReadLine]]:
+    """Page → the unaccounted lines the program adds to the output by itself (Q133, see the module docstring)."""
+    _, rest = within_tables(state, unaccounted_lines(state))
+    places = _places(state)
+    out: dict[int, list[ReadLine]] = {}
+    for n, lines in rest.items():
+        shown = [box for b, box in places.get(n, []) if b.status in _SHOWN]
+        kept = [ln for ln in lines if ln.score >= ADD_SCORE
+                and not any(_inside(_centre(ln.bbox), box) or _overlap(ln.bbox, box) for box in shown)]
+        if kept:
+            out[n] = kept
+    return out
+
+
+def added_from_reading(block: Block) -> bool:
+    """Whether the program added *block* from the local page reading (``missed_lines``)."""
+    return any(d.actor == READING_ACTOR and d.choice == "added" for d in block.decisions)
 
 
 def unseen_segments(state: DocumentState) -> dict[str, list[str]]:

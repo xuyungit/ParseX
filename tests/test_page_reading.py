@@ -190,8 +190,39 @@ def test_process_reads_every_page_and_lists_what_only_the_image_shows(tmp_path):
     assert state.readings[0].lines[1].bbox == (72.0, 288.0, 336.0, 302.4)  # pixels at 150 dpi → points
     x0, y0, x1, y1 = state.readings[1].lines[0].bbox  # the turned page: back in unrotated page space
     assert x1 - x0 == pytest.approx(24.0) and y1 - y0 == pytest.approx(14.4)
-    items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
-    assert [u.target for u in items] == ["p1"]
-    assert [q.doc_text for q in items[0].quotes] == ["A printed line the text layer lacks"]
+    # the line the text layer lacks, where the output has nothing, is added and listed for review (Q133)
+    assert not [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_UNACCOUNTED]
+    items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_ADDED]
+    assert [q.doc_text for u in items for q in u.quotes] == ["A printed line the text layer lacks"]
     again, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=lambda ws, c: Context(ws, c))
     assert reader.calls == 2  # read once
+
+
+def test_only_a_confident_line_where_the_output_has_nothing_is_added():
+    from parserx.reading.compare import missed_lines
+
+    title = _block("b-1", 1, (100, 60, 400, 80), "二〇二五年九月，评审组听取了汇报")
+    lost = _line("专家评审组名单", (200, 20, 330, 40), score=0.99)
+    blurred = _line("闷王王", (450, 20, 500, 40), score=0.69)  # a QR code read as text
+    on_a_block = _line("连线斜率为C（m十3x）", (110, 62, 390, 78), score=0.99)  # notation that differs from its block
+    in_table = _line("（2）采用橡胶与钢板硫化成一体。", (110, 260, 300, 275), score=0.99)
+    table = _block("b-t", 1, _TABLE_BOX, kind=BlockKind.TABLE, cells=[["1、核心技术"]])
+    state = _state([title, table], [PageReading(n=1, engine="local", dpi=150,
+                                                lines=[lost, blurred, on_a_block, in_table])])
+    assert missed_lines(state) == {1: [lost]}
+
+
+def test_the_fixed_pipeline_adds_a_lost_line_once_and_lists_it_for_review():
+    from parserx.tools.edit import add_missed_text
+
+    body = _block("b-p001-0001", 1, (100, 60, 400, 80), "正文第一段")
+    lost = _line("2023年4月27日", (100, 20, 220, 40), score=1.0)
+    state = _state([body], [PageReading(n=1, engine="local", dpi=150, lines=[lost])])
+    made = add_missed_text(state)
+    assert len(made) == 1 and add_missed_text(state) == []
+    added = next(b for b in state.blocks if b.id == made[0])
+    assert added.text == "2023年4月27日" and added.kind == BlockKind.TEXT and added.order < body.order
+    assert [e.unit for e in state.ledger if e.block == added.id] == ["read_text"]
+    kinds = {(u.target, u.kind) for u in unresolved_items(state)}
+    assert (added.id, UnresolvedKind.TEXT_ADDED) in kinds
+    assert not any(k == UnresolvedKind.TEXT_UNACCOUNTED for _, k in kinds)
