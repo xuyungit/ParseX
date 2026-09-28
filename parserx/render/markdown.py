@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
+from parserx.content.lists import bulleted, strip_bullet
 from parserx.content.text import escape_strikethrough, join_wrapped, literal_breaks
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
@@ -230,6 +231,8 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
     if kind == BlockKind.TITLE and block.level is not None:
         return f"{'#' * block.level} {escape_strikethrough(text)}"
+    if bulleted(block):  # a bulleted item: "- " in place of the page's bullet
+        return "- " + escape_strikethrough(strip_bullet(text))
     # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart
     paragraphs = [join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)]
     return "\n\n".join(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part))

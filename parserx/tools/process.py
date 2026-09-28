@@ -18,7 +18,8 @@ The fixed sequence of the pipeline runtime; the program runs it before the agent
    other source is sent again once both are in place);
 6. paragraphs cut by a page break (``content.continuation``, PDF): the two parts joined;
 6a. line breaks of scanned text the engine read as one run, put back from the local reading (P4);
-6b. text the local page reading sees where the output has nothing at all (``reading.compare.missed_lines``, Q133):
+6b. paragraphs the page marks with a bullet become list items (R1);
+6c. text the local page reading sees where the output has nothing at all (``reading.compare.missed_lines``, Q133):
     added at its place and listed for review, not lost;
 7. ``check``.
 
@@ -37,6 +38,7 @@ from parserx.config.schema import ParserXConfig
 from parserx.content.continuation import ACTOR as CONTINUATION_ACTOR, propose_continuations
 from parserx.content.furniture import mark_scan_furniture
 from parserx.content.line_breaks import restore_line_breaks
+from parserx.content.lists import mark_list_items
 from parserx.content.select import transcribed
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
@@ -190,6 +192,10 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             broken = restore_line_breaks(state)
         if broken:
             steps.append(StepSummary(step="line_breaks", detail=f"line breaks put back in {len(broken)} blocks"))
+    with ctx.ws.txn("tool:process:lists") as state:  # paragraphs the page marks with a bullet (R1)
+        items = mark_list_items(state, ctx.ws.source_path)
+    if items:
+        steps.append(StepSummary(step="lists", detail=f"{len(items)} bulleted list items"))
     if ctx.ws.load().readings:  # text the page shows where the output has nothing: added, not lost (Q133)
         with ctx.ws.txn("tool:process:missed_text") as state:
             added = add_missed_text(state)
