@@ -22,6 +22,7 @@ def test_greek_commands_read_as_their_letters():
 def test_command_names_are_not_characters_of_the_text():
     # "\left" carries no l: a reading that turned the superscript l into 1 loses it
     assert normalize(_symbols(r"\left(\begin{array}{cc}\Delta^{1}&\mathbf{0}\end{array}\right)")) == "δ10"
+    assert normalize(_symbols(r"\Delta^{\ell}")) == "δl"  # ℓ is the letter l
 
 
 def _page_pdf(tmp_path):
