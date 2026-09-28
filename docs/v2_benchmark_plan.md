@@ -4,7 +4,7 @@
 - 我们的质量在同类工具里处在什么位置；
 - 哪些地方别人做得更好、值得改进。改进本身另立分解，不在这里做。
 
-**进展**（2026-09-28）：B1–B3、B5 完成；第一轮 10 篇跑完（含 ParserX 混合方案，Codex）。用户反馈与比较发现的问题逐条查到代码原因，见 [eval_reports/2026-09-28_bench_round1.md](../eval_reports/2026-09-28_bench_round1.md)（P1–P11，Q133–Q136）。
+**进展**（2026-09-28）：B1–B3、B5 完成；第一轮 10 篇跑完（含 ParserX 混合方案，Codex）。用户反馈与比较发现的问题逐条查到代码原因，见 [eval_reports/2026-09-28_bench_round1.md](../eval_reports/2026-09-28_bench_round1.md)（P1–P11，Q133–Q136）。第二轮 8 篇（4–9 页，`configs/bench_round2.txt`）跑完，七个来源；结果与发现见 [eval_reports/2026-09-28_bench_round2.md](../eval_reports/2026-09-28_bench_round2.md)。
 
 **第一批**（用户确认，2026-09-28）：LlamaParse、MinerU、marker（Datalab 托管）、PaddleOCR-VL 整套流程。四个都走在线接口，不在本机部署。测试文档可以上传云端（用户确认；类似招标的那份已脱敏）。
 
