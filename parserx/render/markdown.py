@@ -143,10 +143,14 @@ def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: 
 
 
 def _scanned_pages(state: DocumentState) -> set[int]:
-    """PDF pages whose content the scan engine read (ledger items of the page itself, not of an image in it)."""
+    """PDF pages whose content the scan engine read: its items of the page itself (not of an image in it) are
+    output, and none of the native text layer's is (a native page with formulas read from its image is not)."""
     inside = {r.dst for r in state.relations if r.kind == RelationKind.CONTAINS}
-    return {e.source.page for e in state.ledger if e.unit == "ocr_block" and e.block not in inside
-            and isinstance(e.source, PdfAnchor) and e.disposition in ("output", "merged")}
+    kept = ("output", "merged")
+    scanned = {e.source.page for e in state.ledger if e.unit == "ocr_block" and e.block not in inside
+               and isinstance(e.source, PdfAnchor) and e.disposition in kept}
+    return scanned - {e.source.page for e in state.ledger if e.unit == "native_line"
+                      and isinstance(e.source, PdfAnchor) and e.disposition in kept}
 
 
 def _transcription_starts(state: DocumentState) -> dict[str, str]:

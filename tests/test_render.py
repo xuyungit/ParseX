@@ -300,6 +300,10 @@ def test_a_scanned_page_is_marked():
     md = render_markdown(state)
     assert "<!-- PAGE 1 scanned -->" in md and "<!-- PAGE 2 -->" in md
     assert "扫描出的文字" in canonicalize(md).text
+    state.ledger.append(LedgerEntry(item="i-f", unit="ocr_block", chars=4, disposition="output", block="n",
+                                    source=PdfAnchor(page=2, bbox=(0, 0, 10, 10), coord_space="image_px",
+                                                     image_size=(100, 100))))  # a formula read from page 2's image
+    assert "<!-- PAGE 2 -->" in render_markdown(state)  # its text layer is still output: a native page
 
 
 def test_a_content_image_text_the_transcription_lacks_is_open_work():
