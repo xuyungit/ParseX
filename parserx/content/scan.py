@@ -173,7 +173,7 @@ def page_blocks(
                                  transform=transform)
         content, pictures = take_pictures(str(entry.get("block_content") or ""))
         grid, status = None, BlockStatus.OK
-        content = engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n")
+        content = fill_in_lines(engine_text(content, line_break="<br>" if kind == BlockKind.TABLE else "\n"))
         if kind == BlockKind.TABLE:
             try:
                 grid = TableGrid.from_html(content)
@@ -327,6 +327,28 @@ def engine_text(content: str, *, line_break: str = "\n") -> str:
         return content
     parts = _MATH.split(content)
     return "".join(part if i % 2 else part.replace("\\n", line_break) for i, part in enumerate(parts))
+
+
+_UNDERLINED = re.compile(r"\$\s*\\underline\{\s*(?:\\text\{([^{}$\\]*)\}|([^{}$\\]*))\s*\}\s*\$")
+_LEADING_BLANK = re.compile(r"(?<=[\u4e00-\u9fff][：:])[ \t]*[_＿]{2,}[ \t]*(?=[^\s_＿])")
+_VALUE = re.compile(r".*?[^\W\d_]{2}")  # a word of two letters or more: a value, not a template ("年 月 日")
+_TRAILING_BLANK = re.compile(r"(?<=[：:])([^\n_＿<]*[^\s_＿<])[ \t]*[_＿]{2,}(?=[ \t]*(?:\n|<|$))")
+
+
+def fill_in_lines(content: str) -> str:
+    """A form's filled-in blank as the value it holds (P2): the engine writes the line under a filled-in field as
+    underscores next to the value ("项目负责人：___ 邹贻军") or as LaTeX ("$\\underline{\\text{桥梁…}}$"); either is
+    drawing, not text.  An underline around plain text becomes the text; underscores between a label's colon and
+    its value, or after the value to the line's end, are dropped.  A blank left empty ("日期：____"), or followed only
+by a template's single characters ("签字：____ 年 月 日"), stays."""
+    content = _UNDERLINED.sub(lambda m: (m.group(1) if m.group(1) is not None else m.group(2)).strip(), content)
+    content = _LEADING_BLANK.sub(lambda m: "" if _VALUE.match(_line_after(content, m.end())) else m.group(0), content)
+    return _TRAILING_BLANK.sub(r"\1", content)
+
+
+def _line_after(text: str, at: int) -> str:
+    end = min((i for i in (text.find("\n", at), text.find("<", at)) if i >= 0), default=len(text))
+    return text[at:end]
 
 
 def _add(out: PageScanResult, asset: Asset, data: bytes) -> Asset:

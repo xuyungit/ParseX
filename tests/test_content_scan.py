@@ -206,3 +206,15 @@ def test_pictures_inside_a_table_cell_become_figures_after_the_table():
         ("contains", "b-p002-0001", "b-p002-0001-p01"), ("contains", "b-p002-0002", "b-p002-0002-p01")]
     assert [b.order for b in result.blocks] == [0, 1, 2, 3]
     assert {e.block for e in result.ledger} == set(ids)
+
+
+def test_a_filled_in_blank_is_its_value_and_an_empty_one_stays():
+    # P2: the line under a filled-in field is drawing, whether the engine writes it as underscores or as LaTeX
+    from parserx.content.scan import fill_in_lines
+
+    assert fill_in_lines("项目负责人：___ 邹贻军") == "项目负责人：邹贻军"
+    assert fill_in_lines("负责人：邹贻军____") == "负责人：邹贻军"
+    assert fill_in_lines(r"项目名称： $ \underline{\text{某型支座研究与应用}} $") == "项目名称： 某型支座研究与应用"
+    assert fill_in_lines("<td>负责人：___ 张三</td>") == "<td>负责人：张三</td>"
+    for kept in ("日期：______", "签字：____ 年 月 日", "var_name = a__b", "$a_{1}$"):
+        assert fill_in_lines(kept) == kept
