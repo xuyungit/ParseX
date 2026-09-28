@@ -1,4 +1,5 @@
-"""Write the output package (guide §4.5, Q42): ``<name>.md``, ``images/``, ``<name>.json``, ``<name>.blocks.json``.
+"""Write the output package (guide §4.5, Q42, Q116): ``<name>.md``, ``images/`` (the images it links), ``<name>.json``,
+``<name>.blocks.json`` — the last two handed to the user only on request.
 
 ``images/`` holds every extracted image — shown or not (a decorative icon is kept, not linked); the Markdown
 links only the images it shows.  Every runtime writes the same package.
@@ -6,6 +7,7 @@ links only the images it shows.  Every runtime writes the same package.
 
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,13 +32,15 @@ def write_export(state: DocumentState, ws_root: Path | str, out_dir: Path | str,
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     images = out / IMAGE_DIR
+    markdown = render_markdown(state, image_dir=IMAGE_DIR)
+    linked = set(re.findall(rf"\]\({re.escape(IMAGE_DIR)}/([^)\s]+)\)", markdown))  # Q116: only what the text links
     for asset in package_images(state):
         target = images / image_file(asset)
-        if not target.exists():
+        if image_file(asset) in linked and not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(Path(ws_root) / asset.path, target)
     md_path = out / f"{name}.md"
-    md_path.write_text(render_markdown(state, image_dir=IMAGE_DIR), encoding="utf-8")
+    md_path.write_text(markdown, encoding="utf-8")
     sidecar_path = out / f"{name}.blocks.json"
     sidecar_path.write_text(sidecar_json(state), encoding="utf-8")
     summary_path = out / f"{name}.json"

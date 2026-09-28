@@ -97,7 +97,7 @@ ParserX · 专利说明书.pdf（14 页，其中 5 页扫描）
 完成  {md}
       状态 complete · 14 页 · 表格 2 · 图片 3 · 标题 9 · 待核对 0 项
       用时 3 分 01 秒 · 费用约 $0.27（服务 $0.01 + Agent 按标价 $0.26）
-      其余文件：专利说明书.json（摘要）· 专利说明书.blocks.json · images/
+      其余文件：images/ · 专利说明书.json · 专利说明书.blocks.json
 """
 
 

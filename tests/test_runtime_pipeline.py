@@ -215,7 +215,11 @@ def test_parse_to_a_directory_writes_the_package(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         parserx.cli.main()
     assert exit_info.value.code == 0
-    assert sorted(p.name for p in out.iterdir()) == ["report.blocks.json", "report.json", "report.md"]
+    assert sorted(p.name for p in out.iterdir()) == ["report.md"]  # Q116: what the user gets
     assert (out / "report.md").read_text() == "# Background\n\nBody text.\n"
+    monkeypatch.setattr(sys, "argv", ["parserx", "parse", str(path), "-o", str(out), "--report", "--sidecar"])
+    with pytest.raises(SystemExit) as exit_info:
+        parserx.cli.main()
+    assert sorted(p.name for p in out.iterdir()) == ["report.blocks.json", "report.json", "report.md"]
     summary = json.loads((out / "report.json").read_text())
     assert summary["status"] == "complete" and summary["outline"][0]["text"] == "Background"

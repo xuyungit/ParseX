@@ -219,6 +219,16 @@ class RuntimeConfig(BaseModel):
     workspace_root: str | None = None  # keep each document's workspace here; None = a temporary directory
 
 
+class OutputConfig(BaseModel):
+    """What the user gets (Q116, Q120): the Markdown and the images it links, always; the summary (``report``) and the
+    block-level sidecar (``sidecar``) on request.  ``lang``: the language of the text ParserX adds to the Markdown
+    (figure notes, notes on missing content) and of the console."""
+
+    report: bool = False
+    sidecar: bool = False
+    lang: Literal["zh", "en"] = "zh"
+
+
 class ServicesConfig(BaseModel):
     vlm: ServiceConfig = Field(default_factory=ServiceConfig)  # the tools' VLM tasks (Q40: economy model)
 
@@ -239,7 +249,7 @@ class CacheConfig(BaseModel):
 
 class ParserXConfig(BaseModel):
     """Top-level ParserX configuration.  Keys of earlier versions (``pipeline``, ``providers``, ``processors``,
-    ``verification``, ``output``, ``services.llm`` …) are ignored."""
+    ``verification``, ``services.llm``, v1's ``output.format`` …) are ignored."""
 
     models: dict[str, ModelProfile] = Field(default_factory=dict)  # by name, chosen with ``use`` (Q100)
     builders: BuildersConfig = Field(default_factory=BuildersConfig)
@@ -250,6 +260,7 @@ class ParserXConfig(BaseModel):
     layout: LayoutConfig = Field(default_factory=LayoutConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
 
     @model_validator(mode="before")
     @classmethod

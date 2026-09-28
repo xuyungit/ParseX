@@ -35,8 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     parse_cmd.add_argument("--runtime", choices=("hybrid", "fixed"),
                            help="hybrid (default) hands documents with open review items to the agent; "
                                 "fixed runs the standard processing only")
-    parse_cmd.add_argument("--lang", choices=("zh", "en"), default=os.environ.get("PARSERX_LANG", "zh"),
-                           help="Interface language of the console (default: zh)")
+    parse_cmd.add_argument("--lang", choices=("zh", "en"), default=os.environ.get("PARSERX_LANG"),
+                           help="language of the console and of the text ParserX adds to the Markdown (figure notes, "
+                                "notes on missing content); default zh (output.lang)")
+    parse_cmd.add_argument("--report", action="store_true",
+                           help="also write the summary <name>.json (status, what is missing, outline, cost …)")
+    parse_cmd.add_argument("--sidecar", action="store_true",
+                           help="also write the block-level record <name>.blocks.json (for development and audit)")
     parse_cmd.add_argument("--json", action="store_true",
                            help="write the result summary as JSON to stdout at the end")
     parse_cmd.add_argument("-q", "--quiet", action="store_true", help="only errors and the result")
@@ -228,7 +233,7 @@ def main() -> None:
         _cmd_tool_eval(args)
 
 
-_RETIRED = ("providers", "processors", "output", "verification", "pipeline")  # sections of the v1 config
+_RETIRED = ("providers", "processors", "verification", "pipeline")  # sections of the v1 config
 
 
 def personal_template(values: dict[str, str] | None = None) -> str:
@@ -311,6 +316,7 @@ def _cmd_parse(args: argparse.Namespace) -> int:
     except ValueError as exc:  # a model name the config does not have
         print(f"parserx: {exc}", file=sys.stderr)
         return 2
+    args.lang = config.output.lang  # the console speaks the output's language (Q120)
     from parserx.console.cli import parse_v2
 
     return parse_v2(args, config, loaded)
@@ -334,6 +340,12 @@ def _collect_flag_overrides(args: argparse.Namespace) -> list[str]:
         overrides.append("runtime.mode=hybrid")
     if getattr(args, "no_agent", False) or getattr(args, "runtime", None) == "fixed":
         overrides.append("runtime.mode=fixed")
+    if getattr(args, "report", False):
+        overrides.append("output.report=true")
+    if getattr(args, "sidecar", False):
+        overrides.append("output.sidecar=true")
+    if getattr(args, "lang", None):
+        overrides.append(f"output.lang={args.lang}")
     return overrides
 
 

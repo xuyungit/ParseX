@@ -128,6 +128,7 @@ def _config(**budget):
     config.scheduling.retry.backoff_s = 0.0
     config.scheduling.budget.requests = budget
     config.scheduling.prices = {"gpt-6-luna": PriceConfig(input=0.10, cached_input=0.01, output=0.50)}
+    config.output.report = config.output.sidecar = True  # the tests read the whole package
     return config
 
 

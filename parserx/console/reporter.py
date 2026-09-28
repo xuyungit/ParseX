@@ -368,9 +368,10 @@ class ConsoleReporter:
             self.line(INDENT + self._msg("missing_line", n=len(o.missing), items=items))
         self.line(INDENT + self._msg("time_cost", seconds=duration(self.lang, o.wall_s), cost=self._cost(o)))
         if not self.quiet:
-            images = " · images/" if o.images or (Path(o.out_dir) / "images").is_dir() else ""
-            self.line(INDENT + self._msg("other_files", summary=Path(o.summary).name, blocks=Path(o.blocks).name,
-                                         images=images))
+            files = (["images/"] if o.images or (Path(o.out_dir) / "images").is_dir() else []) + \
+                [Path(f).name for f in (o.summary, o.blocks) if f]
+            if files:
+                self.line(INDENT + self._msg("other_files", files=" · ".join(files)))
 
     def _cost(self, o) -> str:
         agent = o.agent.usd_at_list_price if o.agent is not None else None

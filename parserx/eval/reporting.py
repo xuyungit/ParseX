@@ -94,7 +94,8 @@ def redacted_config(config: ParserXConfig) -> dict[str, Any]:
 # price table only affect how requests are sent and what they cost; the model
 # entries and the names that choose them (Q100) are already expanded into the
 # places that use them, which is what the processing sees.
-_NOT_PROCESSING = {"scheduling": ("retry", "prices"), "layout": ("model_path", "model_dir")}  # where a file lives
+_NOT_PROCESSING = {"scheduling": ("retry", "prices"), "layout": ("model_path", "model_dir"),  # where a file lives
+                   "output": ("report", "sidecar")}  # which files are handed over, not what they hold
 _NAMES = (("services", "vlm"), ("runtime", "agent"))
 
 

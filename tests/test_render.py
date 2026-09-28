@@ -155,8 +155,8 @@ def test_export_writes_the_package(tmp_path):
     state.assets = [ASSET, decorative]
     paths = write_export(state, ws, tmp_path / "out", "doc")
     assert paths.markdown.read_text() == render_markdown(state)
-    assert sorted(p.name for p in (tmp_path / "out" / "images").iterdir()) == sorted(
-        [ASSET.path.split("/")[-1], decorative.path.split("/")[-1]])
+    # Q116: images/ holds what the Markdown links; the excluded icon stays in the work package only
+    assert sorted(p.name for p in (tmp_path / "out" / "images").iterdir()) == [ASSET.path.split("/")[-1]]
     assert decorative.path.split("/")[-1] not in paths.markdown.read_text()
     assert validate_sidecar(json.loads(paths.sidecar.read_text())) == []
     summary = json.loads(paths.summary.read_text())

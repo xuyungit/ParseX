@@ -146,7 +146,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "cost_split": {"zh": "{total}（服务 {service} + Agent 按标价 {agent}）",
                    "en": "{total} (services {service} + agent at list price {agent})"},
     "cost_service": {"zh": "{total}（服务）", "en": "{total} (services)"},
-    "other_files": {"zh": "其余文件：{summary}（摘要）· {blocks}{images}", "en": "other files: {summary} (summary) · {blocks}{images}"},
+    "other_files": {"zh": "其余文件：{files}", "en": "other files: {files}"},
     "interrupted": {"zh": "已中断，工作区保留在 {work}；再次运行同一命令会从中断处继续",
                     "en": "Interrupted; the workspace is kept in {work}; run the same command again to continue"},
     "error.unreadable": {"zh": "无法读取：{message}", "en": "cannot be read: {message}"},

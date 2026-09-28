@@ -76,8 +76,8 @@ class ParseOutcome(IRModel):
     format: str  # pdf · docx
     out_dir: str
     markdown: str
-    summary: str
-    blocks: str
+    summary: str | None  # the summary file, when written (--report, Q116)
+    blocks: str | None  # the block-level sidecar, when written (--sidecar)
     status: DocumentStatus
     runtime: str  # fixed · hybrid:agent · hybrid:fallback
     runtime_note: str | None = None  # why: a notice code (no_review_items, mode_fixed, codex_not_logged_in …)
@@ -173,6 +173,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         _clear_package(out_dir, name)
         _install(fixed, out_dir, name)
     summary = _record_runtime(out_dir, name, runtime, note, detail, record)
+    written = _hand_over(out_dir, name, config)
     reporter(StageEnd("export", round(time.monotonic() - t, 1)))
     if keep_work or keep_always:
         _write_run(work, key, "agent_pending" if keep_work else "done")
@@ -180,7 +181,7 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         shutil.rmtree(work, ignore_errors=True)
     outcome = ParseOutcome(
         name=name, source=source.name, format=summary.format, out_dir=str(out_dir), markdown=str(out_dir / f"{name}.md"),
-        summary=str(out_dir / f"{name}.json"), blocks=str(out_dir / f"{name}.blocks.json"), status=summary.status,
+        summary=written.get("summary"), blocks=written.get("blocks"), status=summary.status,
         runtime=runtime, runtime_note=note, runtime_detail=detail, pages=summary.pages, tables=summary.tables,
         images=sum(1 for i in summary.images if i.shown), titles=len(summary.outline),
         review_open=summary.review.open, review_by_kind=summary.review.by_kind, missing=summary.missing,
@@ -401,6 +402,20 @@ def _export(ws_dir: Path, out: Path, name: str, config: ParserXConfig, context=N
 
 def _summary(package: Path, name: str) -> DocumentSummary:
     return DocumentSummary.model_validate_json((package / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def _hand_over(out_dir: Path, name: str, config: ParserXConfig) -> dict[str, str]:
+    """What the user gets (Q116): the Markdown and the images it links; the summary and the sidecar only when asked
+    for.  The work directory keeps the whole package while the run needs it."""
+    written = {}
+    for key, suffix, wanted in (("summary", ".json", config.output.report), ("blocks", ".blocks.json",
+                                                                            config.output.sidecar)):
+        path = out_dir / f"{name}{suffix}"
+        if wanted:
+            written[key] = str(path)
+        else:
+            path.unlink(missing_ok=True)
+    return written
 
 
 def _clear_package(out_dir: Path, name: str) -> None:
