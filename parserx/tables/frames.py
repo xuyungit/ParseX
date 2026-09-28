@@ -12,7 +12,9 @@ rows) or a closing row of it ("增值税税率为 %"), and stays in it.  Once a 
 is the title step's and the agent's to judge, Q89), and each part keeps only the column lines it uses.
 
 A table that is not cut may still open with full-width rows: a title drawn inside the frame ("（二）考核指标、考核
-方式/方法", "一、基本信息").  They become paragraphs before it; full-width rows at its end stay (a closing row).
+方式/方法", "一、基本信息").  One or two short rows become paragraphs before it; full-width rows at its end stay (a
+closing row).  More opening rows, or long ones, are the table's own content — a form whose sections and answers
+run across the frame, continued from the page before (P3) — and the table stays whole.
 
 Like ``split`` of a text block, the table block keeps the first part and its ledger (the content is only divided,
 never rewritten); the other parts become new blocks right after it, on the same anchors.
@@ -72,7 +74,7 @@ def frame_parts(grid: TableGrid) -> list[TableGrid | str] | None:
         else:
             tables.append(list(band))
     if len(tables) == 1:  # one table: its full-width rows are group or closing rows, a title above it is not
-        if bands[0][0] == 0:
+        if bands[0][0] == 0 or not _titles(grid, range(bands[0][0])):
             return None
         tables[0] += list(range(bands[-1][-1] + 1, grid.n_rows))
     inside = {r for rows in tables for r in rows}
@@ -86,6 +88,18 @@ def frame_parts(grid: TableGrid) -> list[TableGrid | str] | None:
         row = rows[-1] + 1
     out += [_text(grid, r) for r in range(row, grid.n_rows)]
     return [p for p in out if not (isinstance(p, str) and not p.strip())]
+
+
+MAX_TITLE_ROWS = 2  # opening full-width rows a frame may hold as its title
+MAX_TITLE_CHARS = 40  # a title row is short (a heading, not an answer)
+_SENTENCE_END = re.compile(r"[。！？；!?;]\s*$")
+
+
+def _titles(grid: TableGrid, rows) -> bool:
+    """The opening full-width rows read as a title drawn in the frame: one or two short rows, no sentence."""
+    texts = [" ".join(c.content.split()) for c in grid.cells if c.row in set(rows)]
+    return 0 < len(texts) <= MAX_TITLE_ROWS and all(len(t) <= MAX_TITLE_CHARS and not _SENTENCE_END.search(t)
+                                                    for t in texts)
 
 
 def _restarts(grid: TableGrid, head: int, row: int) -> bool:

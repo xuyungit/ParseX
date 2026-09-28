@@ -226,3 +226,26 @@ def test_the_fixed_pipeline_adds_a_lost_line_once_and_lists_it_for_review():
     kinds = {(u.target, u.kind) for u in unresolved_items(state)}
     assert (added.id, UnresolvedKind.TEXT_ADDED) in kinds
     assert not any(k == UnresolvedKind.TEXT_UNACCOUNTED for _, k in kinds)
+
+
+def test_a_mark_repeated_in_the_margin_of_scanned_pages_is_furniture():
+    from parserx.content.furniture import mark_scan_furniture
+    from parserx.ir.observation import Observation
+    from parserx.ir.enums import ObservationStatus, TaskKind
+
+    def scanned(bid, page, bbox, text="", kind=BlockKind.TEXT):
+        block = _block(bid, page, bbox, text, kind=kind)
+        block.observations = [Observation(id=f"o-{bid}", engine="paddleocr", engine_version="v",
+                                          task=TaskKind.RECOGNIZE, anchor=block.anchors[0], text=text,
+                                          status=ObservationStatus.OK)]
+        return block
+
+    blocks = [scanned("w1", 1, (563, 18, 579, 118), "扫描全能王 创建"), scanned("w2", 2, (562, 19, 580, 117), "扫描全能王 创建"),
+              scanned("q1", 1, (557, 122, 585, 149), kind=BlockKind.FIGURE),
+              scanned("q2", 2, (556, 122, 585, 149), kind=BlockKind.FIGURE),
+              scanned("s1", 2, (500, 700, 560, 760), kind=BlockKind.FIGURE),  # a stamp on one page only
+              scanned("b1", 1, (72, 100, 500, 120), "正文"), scanned("b2", 2, (72, 100, 500, 120), "正文")]
+    state = _state(blocks, [], pages=2)
+    assert sorted(mark_scan_furniture(state)) == ["q1", "q2", "w1", "w2"]
+    assert {b.id: b.kind for b in state.blocks if b.id in ("w1", "q1")} == {"w1": BlockKind.WATERMARK,
+                                                                         "q1": BlockKind.FIGURE}

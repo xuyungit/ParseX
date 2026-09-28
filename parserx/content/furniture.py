@@ -14,8 +14,12 @@ stamp, a rotated margin label) is a watermark when the same text shape sits
 on another page; it becomes a WATERMARK block, excluded the same way.  One
 page alone is no evidence: such text stays.
 
-Only pages whose native layer passed the quality check are considered: the
-scan engine labels the furniture of the pages it reads.
+Only pages whose native layer passed the quality check are considered here: the
+scan engine labels the furniture of the pages it reads.  Its labels are not
+always consistent (a scanning app's mark in the margin is a header on one page,
+side text on the next), so ``mark_scan_furniture`` adds the same evidence for
+scanned pages: a text or an image in a margin band (the outer tenth of the page
+on any side) repeated at about the same place on another page (P3).
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from parserx.content.extraction import Extraction
 from parserx.ir.anchor import PdfAnchor
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, PageStatus
+from parserx.ir.state import DocumentState
 
 ACTOR = "program:content.furniture"
 MARGIN_BAND = 0.1  # share of the page height at the top and at the bottom
@@ -105,6 +110,48 @@ def mark_watermarks(ext: Extraction, off_direction: dict[str, str]) -> None:
     for entry in ext.ledger:
         if entry.block in marked and entry.disposition == "output":
             entry.disposition = "excluded"
+
+
+_SCAN_ENGINES = frozenset({"paddleocr"})
+
+
+def mark_scan_furniture(state: DocumentState) -> list[str]:
+    """Exclude text and images of scanned pages that repeat in a margin band at the same place (in place); the ids."""
+    sizes = {p.n: p.size_pt for p in state.pages if p.size_pt}
+    found: dict[tuple, list[tuple]] = defaultdict(list)  # (band, what) → (block, page, centre x, centre y)
+    for block in state.blocks:
+        anchor = block.anchors[0] if block.anchors else None
+        if block.kind not in (BlockKind.TEXT, BlockKind.FIGURE) or block.status not in (BlockStatus.OK,
+                BlockStatus.DEGRADED) or not isinstance(anchor, PdfAnchor) or anchor.page not in sizes \
+                or not any(o.engine in _SCAN_ENGINES for o in block.observations):
+            continue
+        width, height = sizes[anchor.page]
+        x0, y0, x1, y1 = anchor.bbox
+        band = ("top" if y1 <= MARGIN_BAND * height else "bottom" if y0 >= (1 - MARGIN_BAND) * height
+                else "left" if x1 <= MARGIN_BAND * width else "right" if x0 >= (1 - MARGIN_BAND) * width else None)
+        what = _shape(block.text or "") if block.kind == BlockKind.TEXT else \
+            ("image", round((x1 - x0) / width, 2), round((y1 - y0) / height, 2))
+        if band is not None and what:
+            found[(band, what)].append((block, anchor.page, (x0 + x1) / 2 / width, (y0 + y1) / 2 / height))
+    marked: list[str] = []
+    for (band, what), places in sorted(found.items(), key=lambda kv: str(kv[0])):
+        for block, page, cx, cy in places:
+            pages = {p for _, p, x, y in places if abs(x - cx) <= SAME_HEIGHT and abs(y - cy) <= SAME_HEIGHT}
+            if len(pages) < 2:
+                continue
+            if block.kind == BlockKind.TEXT:
+                block.kind = {"top": BlockKind.HEADER, "bottom": BlockKind.FOOTER}.get(band, BlockKind.WATERMARK)
+            block.status = BlockStatus.EXCLUDED
+            block.decisions.append(Decision(
+                stage=DecisionStage.EXCLUDE, choice=block.kind.value, actor=ACTOR,
+                reason=f"page furniture: the same {'text' if isinstance(what, str) else 'image'} in the {band} "
+                       f"margin of {len(pages)} scanned pages",
+                evidence={"band": band, "pages": len(pages)}))
+            marked.append(block.id)
+    for entry in state.ledger:
+        if entry.block in marked and entry.disposition == "output":
+            entry.disposition = "excluded"
+    return marked
 
 
 def _is_number(shape: str) -> bool:

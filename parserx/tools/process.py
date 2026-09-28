@@ -34,6 +34,7 @@ from pathlib import Path
 
 from parserx.config.schema import ParserXConfig
 from parserx.content.continuation import ACTOR as CONTINUATION_ACTOR, propose_continuations
+from parserx.content.furniture import mark_scan_furniture
 from parserx.content.select import transcribed
 from parserx.hierarchy.docx_styles import ACTOR as DOCX_ACTOR, propose_docx_structure
 from parserx.hierarchy.engine_titles import ACTOR as ENGINE_ACTOR, REASON as ENGINE_REASON, engine_titles
@@ -105,6 +106,11 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         failures += out.failures
         steps.append(StepSummary(step="recognize", detail=f"scan engine on {len(pending)} pages, "
                                                           f"{len(out.failures)} failures"))
+
+    with ctx.ws.txn("tool:process:scan_furniture") as state:  # a scanning app's mark on every page (P3)
+        furniture = mark_scan_furniture(state)
+    if furniture:
+        steps.append(StepSummary(step="scan_furniture", detail=f"{len(furniture)} repeated margin blocks excluded"))
 
     state = ctx.ws.load()
     if ctx.config.runtime.layout_shadow:

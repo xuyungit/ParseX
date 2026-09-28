@@ -93,3 +93,11 @@ def test_parts_cut_from_a_table_read_in_an_image_stay_in_the_image():
     contained = [r.dst for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == figure.id]
     assert sorted(contained) == sorted(b.id for b in state.blocks if b.id != figure.id)
     assert len({r.id for r in state.relations}) == len(state.relations)
+
+
+def test_a_form_opening_with_its_sections_and_answers_stays_one_table():
+    # P3: the page continues a form: its sections and answers run across the frame above the signature rows
+    form = _grid([[("四、项目进度安排", 2)], [("2022.01~2022.03：市场调研，资料准备；2022.04~2022.12：产品试制；", 2)],
+                  [("五、项目的预期研究成果", 2)], [("600万", 2)],
+                  [("项目负责人（签字）", 1), ("邹贻军", 1)], [("部门意见", 1), ("同意", 1)]])
+    assert frame_parts(form) is None
