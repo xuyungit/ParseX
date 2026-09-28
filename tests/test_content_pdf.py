@@ -527,19 +527,21 @@ def test_gaps_between_glyphs_are_word_spaces_except_between_ideographs():
 
 
 def test_a_lines_face_is_the_face_of_its_main_script(tmp_path):
-    # a CJK line with a little inline code is set in its CJK face; a line mostly of code, in the code's face
+    # a CJK line with inline code is set in its CJK face, however long the code (P8: a step with a command at its
+    # end is prose); a line wholly in the code's face is in that face
     doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
     page.insert_htmlbox(pymupdf.Rect(72, 72, 500, 90), "<p>删除故障的逻辑卷 <code>ab</code></p>")
     page.insert_htmlbox(pymupdf.Rect(72, 200, 500, 218), "<p>停止 <code>docker stop ceph_osd_6 now</code></p>")
     page.insert_htmlbox(pymupdf.Rect(72, 300, 500, 318), "<p>4.&nbsp;&nbsp;&nbsp;&nbsp;换盘</p>")  # number and spaces in Latin
+    page.insert_htmlbox(pymupdf.Rect(72, 400, 500, 418), "<p><code>ceph osd set nobackfill</code></p>")
     path = tmp_path / "mixed.pdf"
     doc.save(path)
-    fonts = {b.text.split()[0]: b.observations[0].style.font for b in extract_pdf(path).blocks
-             if b.kind == BlockKind.TEXT}
-    cjk_face, code_face = fonts["删除故障的逻辑卷"], fonts["停止"]
-    assert cjk_face != code_face and "Mono" in code_face
-    assert fonts["4."] == cjk_face  # the number and the spaces do not outvote the words
+    blocks = {b.text.split()[0]: b.observations[0].style for b in extract_pdf(path).blocks if b.kind == BlockKind.TEXT}
+    cjk_face = blocks["删除故障的逻辑卷"].font
+    assert blocks["停止"].font == cjk_face and not blocks["停止"].monospace  # prose with a command in it
+    assert blocks["4."].font == cjk_face  # the number and the spaces do not outvote the words
+    assert "Mono" in blocks["ceph"].font and blocks["ceph"].monospace == blocks["ceph"].font
 
 
 def test_a_merged_cell_keeps_its_span(tmp_path):
@@ -638,3 +640,22 @@ def test_a_radical_between_ideographs_is_no_word_gap():
     # a justified line spaces its glyphs apart; the radical is read as the ideograph first, so no space appears
     span = {"size": 8.0, "chars": [{"c": c, "bbox": (x, 0, x + 8, 10)} for c, x in [("填", 0), ("⼊", 13), ("与", 26)]]}
     assert _reconstruct_line_from_chars([span]) == "填入与"
+
+
+def test_a_command_the_renderer_wrapped_is_joined_back_and_real_lines_are_not(tmp_path):
+    # P9: a renderer wraps a long command at a space; in a shell the two halves would be two commands
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 90), "The deploy step runs the following commands in order:", fontsize=11, fontname="helv")
+    page.insert_text((72, 130), "kolla-ansible -i multinode --configdir . --passwords \npasswords.yml --tag ceph deploy\n"
+                                "ceph osd set noout\nceph osd set norebalance", fontsize=10, fontname="cour")
+    page.insert_text((72, 300), "| name       | value     | \n| properties | cpu_arch  | \n| ram        | 65536     | ",
+                     fontsize=10, fontname="cour")
+    path = tmp_path / "wrapped.pdf"
+    doc.save(path)
+    texts = [b.text for b in extract_pdf(path).blocks if b.text]
+    command = next(t for t in texts if t.startswith("kolla-ansible"))
+    assert command.split("\n") == ["kolla-ansible -i multinode --configdir . --passwords passwords.yml --tag ceph deploy",
+                                   "ceph osd set noout", "ceph osd set norebalance"]
+    table = next(t for t in texts if t.startswith("| name"))
+    assert len(table.split("\n")) == 3  # rows of a table drawn in characters stay rows

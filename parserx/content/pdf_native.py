@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import io
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,7 +85,9 @@ class _Line:
     glyphs: tuple[tuple[str, float, float, float, float], ...] = ()  # (char, x0, y0, x1, y1)
     origins: tuple[tuple[str, float, float], ...] = ()  # (char, origin in PDF space): the key of PyMuPDF's table chars
     item: str = ""
-    mono: bool | None = None  # set in a monospaced face (glyph widths); None: no span measurable
+    mono: bool | None = None  # code: set in a monospaced face (``_line_mono``); None: no letter or digit to tell
+    mono_face: str = ""  # that face
+    trailing_space: bool = False  # the text layer ends the line with a space: a renderer's wrap point (code)
 
 
 @dataclass
@@ -193,6 +195,8 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
 def _lines(page: pymupdf.Page) -> list[_Line]:
     raw = page.get_text("rawdict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)
     ctm = page.transformation_matrix
+    faces = _face_verdicts(span for block in raw.get("blocks", []) if block.get("type") == 0
+                           for line in block.get("lines", []) for span in line.get("spans", []))
     out: list[_Line] = []
     for index, block in enumerate(raw.get("blocks", [])):
         if block.get("type") != 0:
@@ -202,15 +206,15 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
             text = normalize_fullwidth_ascii(_reconstruct_line_from_chars(spans))
             if not text.strip():
                 continue
-            (size, bold, font) = _line_typography(spans)
+            (size, bold, font) = _line_typography(spans, faces)
             chars = [ch for span in spans for ch in span.get("chars", ())]
             origins = tuple(_origin_key(ch["c"], pymupdf.Point(ch["origin"]) * ctm) for ch in chars)
-            measured = [m for m in (_monospaced(span) for span in spans) if m is not None]
+            mono, mono_face = _line_mono(spans, faces)
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
                              chars=len("".join(text.split())), size=size, bold=bold, font=font,
                              direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
                              glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins,
-                             mono=all(measured) if measured else None))
+                             mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip()))
     return out
 
 
@@ -218,13 +222,18 @@ MONO_LETTERS = 5  # distinct ASCII letters a span needs before its glyph widths 
 MONO_SPREAD = 1.01  # widest / narrowest letter advance of a monospaced face: measurement tolerance of glyph boxes
 
 
-def _line_typography(spans: list[dict]) -> tuple[float, bool, str]:
+def _line_typography(spans: list[dict], faces: dict[str, bool] | None = None) -> tuple[float, bool, str]:
     """(size, bold, face) of a line: those of most of the letters and digits of its main script — wide (CJK) or
     not.  Spaces, punctuation and a leading number in a Latin face do not outvote the words (``4.  换盘``); a
-    Chinese line with a little inline code keeps its Chinese face."""
+    Chinese line with inline code keeps its Chinese face, however long the code (a monospaced face — ``faces`` —
+    votes only when the whole line is set in such faces)."""
     def key(span: dict) -> tuple[float, bool, str]:
         return round(span.get("size", 0.0), 1), bool(span.get("flags", 0) & 16), span.get("font", "")
 
+    faces = faces or {}
+    words = [span for span in spans if not faces.get(span.get("font", ""))]
+    if any(ch.get("c", "").isalnum() for span in words for ch in span.get("chars", ())):
+        spans = words  # inline code does not set the line's typography
     counts: dict[bool, Counter] = {True: Counter(), False: Counter()}
     for span in spans:
         for ch in span.get("chars", ()):
@@ -240,18 +249,57 @@ def _line_typography(spans: list[dict]) -> tuple[float, bool, str]:
     return fallback.most_common(1)[0][0]
 
 
-def _monospaced(span: dict) -> bool | None:
-    """Whether a span is set in a monospaced face, from its glyphs: every ASCII letter advances by the same width
-    (P4-6: the code of a manual; the font's own fixed-pitch flag is often missing).  Letters only: digits are
-    equal-width in most proportional faces too.  None when the span has too few distinct letters to tell."""
-    chars = span.get("chars", ())
-    if any(_wide(ch["c"]) for ch in chars):  # a CJK face draws ASCII at one width: no evidence of code
-        return None
-    letters = [ch for ch in chars if ch["c"].isascii() and ch["c"].isalpha()]
-    if len({ch["c"] for ch in letters}) < MONO_LETTERS:
-        return None
-    widths = [ch["bbox"][2] - ch["bbox"][0] for ch in letters]
-    return min(widths) > 0 and max(widths) / min(widths) <= MONO_SPREAD
+def _face_verdicts(spans) -> dict[str, bool]:
+    """Face → whether it is monospaced, from all its glyphs on the page: every ASCII letter advances by the same width
+    relative to the size (P4-6: the code of a manual; the font's own fixed-pitch flag is often missing).  A face that
+    also draws CJK characters gets no verdict (it draws ASCII at one width whatever it is), nor does a face with fewer
+    than ``MONO_LETTERS`` distinct letters on the page (too small a sample).  Letters only: digits are equal-width in
+    most proportional faces too."""
+    advances: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    cjk: set[str] = set()
+    for span in spans:
+        face, size, chars = span.get("font", ""), span.get("size") or 0.0, span.get("chars", ())
+        if any(_wide(ch["c"]) for ch in chars):
+            cjk.add(face)
+            continue
+        for ch in chars:
+            width = ch["bbox"][2] - ch["bbox"][0]
+            if size > 0 and width > 0 and ch["c"].isascii() and ch["c"].isalpha():
+                advances[face][ch["c"]].append(width / size)
+    verdicts = {}
+    for face, letters in advances.items():
+        if face in cjk or len(letters) < MONO_LETTERS:
+            continue
+        widths = [sorted(v)[len(v) // 2] for v in letters.values()]
+        verdicts[face] = max(widths) / min(widths) <= MONO_SPREAD
+    return verdicts
+
+
+def _line_mono(spans: list[dict], faces: dict[str, bool]) -> tuple[bool | None, str]:
+    """Whether a line is code, and in which face: every letter and digit votes by the verdict on its own face, and
+    the line starts in a monospaced face — a step whose words are set in the body's faces with a command at its end
+    is prose (text_code_block, P8).  A line in faces without a verdict (a CJK comment) does not vote: None."""
+    votes: Counter[str] = Counter()
+    proportional = False
+    first: bool | None = None
+    seen_first = False
+    for span in spans:
+        face = span.get("font", "")
+        verdict = faces.get(face)
+        for ch in span.get("chars", ()):
+            c = ch["c"]
+            if not seen_first and not c.isspace():
+                first, seen_first = verdict, True
+            if c.isascii() and c.isalnum() and verdict is not None:
+                if verdict:
+                    votes[face] += 1
+                else:
+                    proportional = True
+    if not votes and not proportional:
+        return None, ""
+    if proportional or first is not True:
+        return False, ""
+    return True, votes.most_common(1)[0][0]
 
 
 def _wide(ch: str) -> bool:
@@ -628,10 +676,12 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
             task=TaskKind.EXTRACT, anchor=anchors[0], cells=region.grid, status=ObservationStatus.OK))
     else:
-        text = _join_block_lines([(ln.text, ln.bbox) for ln in region.lines])
+        style = _style(region.lines)
+        entries = _unwrap_code(region.lines) if style.monospace else [(ln.text, ln.bbox) for ln in region.lines]
+        text = _join_block_lines(entries)
         observations.append(Observation(
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
-            task=TaskKind.EXTRACT, anchor=anchors[0], text=text, style=_style(region.lines),
+            task=TaskKind.EXTRACT, anchor=anchors[0], text=text, style=style,
             status=ObservationStatus.OK))
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
@@ -654,7 +704,7 @@ def _style(lines: list[_Line]) -> TextStyle:
     if measured and all(ln.mono for ln in measured):
         faces: Counter[str] = Counter()
         for ln in measured:
-            faces[ln.font] += ln.chars
+            faces[ln.mono_face] += ln.chars
         mono = faces.most_common(1)[0][0] or None
     return TextStyle(font_size=sizes.most_common(1)[0][0], bold=bold * 2 > total, font=fonts.most_common(1)[0][0] or None,
                      monospace=mono)
@@ -684,6 +734,37 @@ def _is_cjk_or_fullwidth_punct(ch: str) -> bool:
         or 0xFE30 <= cp <= 0xFE4F  # CJK Compatibility Forms
         or 0x2E80 <= cp <= 0x2FDF  # CJK Radicals Supplement, Kangxi Radicals (one without an equivalent: ⺀)
     )
+
+
+def _unwrap_code(lines: list[_Line]) -> list[tuple[str, tuple]]:
+    """A code block's lines, a line the renderer wrapped joined back to the line it continues (P9): a wrapped
+    command broken over two lines is two commands in a shell.  A line is wrapped when the text layer ends it with a
+    space — where the renderer broke it — and the next line's first word would not fit in the room left on it (the
+    block's right edge).  A line ending without a space, or with room for the next word, is a line of its own; so is
+    a line followed by a "word" as wide as half the block (the rule of a table drawn in characters), or by a line
+    that starts with the same punctuation mark (rows of such a table, comment lines, list items)."""
+    right = max(ln.bbox[2] for ln in lines)
+    left = min(ln.bbox[0] for ln in lines)
+    out: list[tuple[str, tuple, _Line]] = []
+    for ln in lines:
+        if out and _wrapped(out[-1][2], ln, left, right):
+            text, box, _ = out[-1]
+            out[-1] = (f"{text} {ln.text}", _union([box, ln.bbox]), ln)
+        else:
+            out.append((ln.text, ln.bbox, ln))
+    return [(text, box) for text, box, _ in out]
+
+
+def _wrapped(line: _Line, following: _Line, left: float, right: float) -> bool:
+    words = following.text.split()
+    if not line.trailing_space or not words or not line.text:
+        return False
+    advance = (line.bbox[2] - line.bbox[0]) / len(line.text)  # a monospaced face: one width per character
+    word = advance * len(words[0])
+    lead, next_lead = line.text.lstrip()[:1], following.text.lstrip()[:1]
+    if lead == next_lead and not lead.isalnum():
+        return False
+    return right - line.bbox[2] < word + advance and word <= (right - left) / 2
 
 
 def _join_block_lines(line_entries: list[tuple[str, tuple]]) -> str:
