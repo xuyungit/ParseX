@@ -73,6 +73,9 @@ main { flex: 1; min-height: 0; }
 .body blockquote { margin: 8px 0; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); color: var(--ink); }
 .body pre, .body code { background: var(--code); border-radius: 4px; font-size: 12px; }
 .body pre { padding: 8px; overflow-x: auto; }
+.body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+/* an equation number (\tag) follows a formula wider than the column instead of covering it */
+.body .katex-display > .katex > .katex-html > .tag { position: static; margin-left: 1.2em; }
 .body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { line-height: 1.35; margin: 14px 0 6px; }
 .body h1 { font-size: 20px; } .body h2 { font-size: 17px; } .body h3 { font-size: 15px; }
 .body h4, .body h5, .body h6 { font-size: 14px; }
