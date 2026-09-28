@@ -100,3 +100,14 @@
 | text_pic02 | 删去写进正文的两行图片描述：原 253 行（中文，"这是一个'节点详情'页面的截图…"）、338 行（英文，"A web UI table shows an action dropdown menu…"） | 这两行不是原文，是标注生成时写进去的图片描述；评测不计输出里的图片说明，这两行无论怎样输出都会扣分 |
 
 改后 text_pic02 的分数见 v2_io_plan.md §7.8（IO6-7）。
+
+## 2026-09-28（对标第一轮，见 eval_reports/2026-09-28_bench_round1.md §3）
+
+用户同意（2026-09-28）。改前的文件备份在会话临时目录，不入库；改动以本表为准。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| omnidoc_academic_literature_en_table_01（public） | `## $ \mathrm {III}. $ Date …`、`## $ \mathrm {IV}. $ Solicitation …` → `## III. …`、`## IV. …`；`B. Self-Regulatory …`、`C. Self-Regulatory …` 由正文改为 `###` | 公开数据集把罗马数字写成了 LaTeX，使所有工具的标题都对不上。页面上 B、C 是斜体小节标题（整页从 II 节中间开始，B、C 属于 II），比粗体的 III、IV 低一级；用户的判断相同 |
+| omnidoc_research_report_zh_table_01（public） | 在资料栏开头（"公司简介"之前）补上"2023年4月27日""推荐/维持" | 页面右上角印着报告日期和评级，标注漏了；按标注自己的阅读顺序（资料栏在正文之后）放在资料栏最前面 |
+| unseen_scan_form01 | 第 2 页的"项目名称…项目负责人"、二、三两节，与第 3 页的四至七节和签字栏合成一张跨页的表：节名与内容为整行格，格内按原件分行（`<br>`）；"一、基本信息"仍是表前的标题；格内文字未改 | 原件是一张画在外框里、跨两页的表单（用户意见，Q134）；原标注把它拆成标题、段落和两张小表 |
+| receipt | 三处字面 `\n` 改为分段：`…more information.` / `2. Subject to credit approval.` / `Apple Payments Services …` | 邮件模板把换行符印成了两个字符；按 Q136，正文里的字面 `\n` 作为换行 |
