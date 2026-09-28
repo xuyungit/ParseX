@@ -69,28 +69,6 @@ def test_a_cut_frame_keeps_its_content_and_accounts():
         < markdown.index("| 科目 | 财政 | 自筹 | 小计 |") < markdown.index("表后正文")
 
 
-def test_a_table_read_in_a_drawing_is_its_labels():
-    # tables T5: the VLM describes the figure as a diagram; what the scan engine laid out as a table in it is text
-    from parserx.ir.relation import Relation
-    from parserx.ir.semantic import DiagramSemantic
-    from parserx.tables.drawings import tables_in_drawings
-
-    anchor = PdfAnchor(page=1, bbox=(50, 100, 550, 400), coord_space="page_pt")
-    figure = Block(id="b-p001-0001", kind=BlockKind.FIGURE, order=0, anchors=[anchor],
-                   semantic=DiagramSemantic(diagram_type={"value": "流程图", "level": "visible"}))
-    labels = Block(id="b-p001-0001-r001", kind=BlockKind.TABLE, order=1, anchors=[anchor],
-                   cells=_grid([[("坡度 0.1", 1), ("系数 9.8", 1)], [("开始", 1), ("", 1)]]))
-    photo = Block(id="b-p001-0002-r001", kind=BlockKind.TABLE, order=2, anchors=[anchor],
-                  cells=_grid([[("项目", 1), ("数值", 1)], [("甲", 1), ("3", 1)]]))  # read in an undescribed scan
-    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status=DocumentStatus.IN_PROGRESS,
-                          blocks=[figure, labels, photo],
-                          relations=[Relation(id="r1", kind="contains", src="b-p001-0001", dst="b-p001-0001-r001"),
-                                     Relation(id="r2", kind="contains", src="b-p001-0002", dst="b-p001-0002-r001")])
-    assert tables_in_drawings(state) == ["b-p001-0001-r001"]
-    assert (labels.kind, labels.text, labels.cells) == (BlockKind.TEXT, "坡度 0.1 系数 9.8 开始", None)
-    assert photo.kind == BlockKind.TABLE
-
-
 def test_a_title_drawn_at_the_top_of_a_table_is_a_paragraph_and_a_closing_row_stays():
     table = _grid([[("（二）考核指标", 2)], [("指标", 1), ("数值", 1)], [("量程", 1), ("1000KN", 1)], [("注：实测", 2)]])
     assert _shapes(frame_parts(table)) == ["（二）考核指标", "3x2"]

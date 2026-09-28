@@ -6,9 +6,12 @@ The fixed sequence of the pipeline runtime; the program runs it before the agent
 2. ``recognize`` (layout) — shadow detection of pages, routing of figures;
 2a. the local page reading (``tools/page_reading.py``, PDF): evidence for the two-way comparison of the output
     with each page image, listed in the worklist (guide §9.5, Q56);
-2b. ``recognize`` (paddleocr) on embedded images routed SCAN or MIXED (Q42): their text and tables follow them;
-3. ``describe_figure`` — every shown figure without a description, in one concurrent batch, except images
-   routed SCAN whose content was transcribed;
+3. ``describe_figure`` — every shown figure without a description, in one concurrent batch: its type says what the
+   image is for (IO6);
+3a. ``recognize`` (paddleocr) on the embedded images whose words are their content (Q42, IO6): an invoice, a
+   certificate, a page, a table, a formula — their text and tables follow them.  A picture (a screenshot, a chart,
+   a diagram, a photo) is shown with its note and not transcribed: the image is where its words are.  An image
+   without a description (the service model off or failing) is transcribed by its route, SCAN or MIXED, as before;
 4. confirmed cross-page table continuations (``tables.merge``);
 5. titles through ``apply_structure``: DOCX styles and outline levels, then titles by agreeing evidence on native
    text (``hierarchy.typography_titles``) and the scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
@@ -36,10 +39,9 @@ from parserx.hierarchy.levels import title_changes, unify_levels
 from parserx.hierarchy.typography_titles import ACTOR as TYPOGRAPHY_ACTOR, REASON as TYPOGRAPHY_REASON, typography_titles
 from parserx.ir.base import IRModel
 from parserx.ir.anchor import AssetAnchor
-from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus, RelationKind
+from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus
 from parserx.ir.state import AccountingSummary, DocumentState
 from parserx.runtimes.events import Step
-from parserx.tables.drawings import tables_in_drawings
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
 from parserx.tools import describe_figure, recognize, structure
@@ -125,21 +127,10 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="formulas", detail=f"{len(pages)} pages read; passages: " + ", ".join(
                 f"{k} {v}" for k, v in sorted(counts.items()))))
 
-    state = ctx.ws.load()
-    candidates = _textual_images(ctx, state)
-    if candidates:
-        ctx.report(Step("process", "transcribe", total=len(candidates)))
-        out = _unless_unconfigured(failures, lambda: recognize.run(
-            ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr")), _NOTHING_READ)
-        failures += out.failures
-        steps.append(StepSummary(step="transcribe_images",
-                                 detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
-
     if ctx.config.runtime.describe_figures and req.describe_figures:
         state = ctx.ws.load()
-        read_as_text = _transcribed_scans(state)
         todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
-                and b.semantic is None and b.id not in read_as_text]
+                and b.semantic is None]
         if todo:
             ctx.report(Step("process", "describe", total=len(todo)))
             out = _unless_unconfigured(failures, lambda: describe_figure.run(
@@ -148,24 +139,19 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
                                                                     "figures described"))
 
-    state = ctx.ws.load()  # text an uncertain image shows that its description does not carry (P4-6)
-    candidates = _textual_images(ctx, state, uncarried=True)
-    candidates = [c for c in candidates if routes_of(state).get(c) == ImageRoute.UNCERTAIN]
+    candidates = _textual_images(ctx.ws.load())
     if candidates:
         ctx.report(Step("process", "transcribe", total=len(candidates)))
         out = _unless_unconfigured(failures, lambda: recognize.run(
             ctx, recognize.RecognizeRequest(blocks=candidates, engine="paddleocr")), _NOTHING_READ)
         failures += out.failures
-        steps.append(StepSummary(step="transcribe_uncarried",
+        steps.append(StepSummary(step="transcribe_images",
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
 
     ctx.report(Step("process", "structure"))
     if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):
         with ctx.ws.txn("tool:process:frames") as state:
-            labels = tables_in_drawings(state)  # a drawing's labels read as a table are text
             frames = split_frames(state)  # several tables in one frame, before continuations are looked for
-        if labels:
-            steps.append(StepSummary(step="tables_in_drawings", detail=f"{len(labels)} tables read in drawings: text"))
         if frames:
             steps.append(StepSummary(step="split_frames", detail=f"{len(frames)} frames holding several tables"))
     state = ctx.ws.load()
@@ -197,10 +183,9 @@ def _image_asset(state: DocumentState, block) -> str | None:
     return next((a.asset for a in block.anchors if isinstance(a, AssetAnchor)), None)
 
 
-def _textual_images(ctx: ToolContext, state: DocumentState, *, uncarried: bool = False) -> list[str]:
-    """Shown embedded images (not crops of scanned pages) not yet transcribed (Q42): routed SCAN or MIXED; with
-    *uncarried* (after the descriptions), routed UNCERTAIN when the local reading of the image has text its
-    description does not carry (P4-6, conservation: the small print of a screenshotted form, an equation)."""
+def _textual_images(state: DocumentState) -> list[str]:
+    """Shown embedded images (not crops of scanned pages) not yet transcribed whose words are their content: those
+    described as content; without a description, those routed SCAN or MIXED (IO6)."""
     routes = {r.id: r.route for r in state.images}
     assets = {a.id: a for a in state.assets}
     done = transcribed(state)
@@ -210,42 +195,13 @@ def _textual_images(ctx: ToolContext, state: DocumentState, *, uncarried: bool =
         if block.kind != BlockKind.FIGURE or block.status in HIDDEN or block.id in done or asset is None \
                 or asset.role != "original":
             continue
-        route = routes.get(asset.id)
-        if route in (ImageRoute.SCAN, ImageRoute.MIXED) or (uncarried and route == ImageRoute.UNCERTAIN
-                                                            and _text_not_carried(ctx, block, asset)):
+        if block.semantic is None:
+            wanted = routes.get(asset.id) in (ImageRoute.SCAN, ImageRoute.MIXED)
+        else:
+            wanted = getattr(block.semantic, "type", None) == "content"
+        if wanted:
             out.append(block.id)
     return out
-
-
-def _text_not_carried(ctx: ToolContext, block, asset) -> bool:
-    """Whether the local reading of an image has a line its description does not carry, measured as the page
-    comparison measures an unaccounted line (``reading/compare.py``: two letters or digits, its tolerance)."""
-    from rapidfuzz import fuzz
-
-    from parserx.reading.compare import SOMEWHERE, normalize
-    from parserx.reading.local import read_cached
-    from parserx.render.markdown import semantic_block
-
-    try:
-        lines = read_cached(ctx.reader(), (ctx.ws.root / asset.path).read_bytes(), ctx.cache)
-    except Exception:  # noqa: BLE001 - an image the reader cannot decode (e.g. EMF) gives no evidence
-        return False
-    carried = normalize(semantic_block(block))
-    return any(len(text := normalize(line)) >= 2 and (not carried or fuzz.partial_ratio(text, carried) < SOMEWHERE)
-               for _, line, _ in lines)
-
-
-def routes_of(state: DocumentState) -> dict[str, ImageRoute]:
-    """Figure block id → its image's route."""
-    routes = {r.id: r.route for r in state.images}
-    return {b.id: routes.get(_image_asset(state, b)) for b in state.blocks if b.kind == BlockKind.FIGURE}
-
-
-def _transcribed_scans(state: DocumentState) -> set[str]:
-    """Images routed SCAN whose content now follows them as text: a description would repeat it."""
-    routes = {r.id: r.route for r in state.images}
-    done = {r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
-    return {b.id for b in state.blocks if b.id in done and routes.get(_image_asset(state, b)) == ImageRoute.SCAN}
 
 
 def _apply(ctx: ToolContext, batches: list[tuple[str, list[dict]]], failures: list[Failure], *,

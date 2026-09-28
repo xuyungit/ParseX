@@ -40,7 +40,8 @@ _CONTEXT_CHARS = 300
 class DescribeFigureRequest(IRModel):
     block: str | None = None
     blocks: list[str] = []  # a batch (P2-5); exactly one of block / blocks
-    schema_: Literal["auto", "chart", "diagram", "photo", "seal", "other"] = Field("auto", alias="schema")
+    schema_: Literal["auto", "content", "screenshot", "chart", "diagram", "photo", "seal", "other"] = Field(
+        "auto", alias="schema")
 
     model_config = {**IRModel.model_config, "populate_by_name": True}
 
@@ -59,7 +60,7 @@ class DescribeItem(IRModel):
 
 
 class DescribeFigureResult(IRModel):
-    type: str | None  # single block: chart / diagram / photo / seal / other; None when no description was made
+    type: str | None  # single block: one of FIGURE_TYPES; None when no description was made
     semantic: DocText | None  # the rendered note ("> 图片说明：…")
     table_block: str | None = None  # figures that are tables become table blocks in Phase 4
     cached: bool = False  # single block: described before; no request was made

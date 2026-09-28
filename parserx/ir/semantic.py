@@ -51,13 +51,15 @@ class GenericSemantic(IRModel):
     visible_text: list[Evidenced] = []
 
 
-FIGURE_TYPES = ("chart", "diagram", "photo", "screenshot", "seal", "other")
+# content: the words on the image are what it conveys (an invoice, a certificate, a page, a table, a formula) — its
+# text is transcribed; the others are pictures, shown with their note (IO6)
+FIGURE_TYPES = ("content", "screenshot", "chart", "diagram", "photo", "seal", "other")
 
 
 class FigureNote(IRModel):
     """A figure in one or two sentences, typically at most 50 characters, at most 100 (Q121)."""
 
-    type: Literal["chart", "diagram", "photo", "screenshot", "seal", "other"]
+    type: Literal["content", "screenshot", "chart", "diagram", "photo", "seal", "other"]
     caption: str
 
 

@@ -228,9 +228,9 @@ def _missing_note(state: DocumentState, missing, lang: str) -> str:
 
 # ── Figure notes (Q118, Q121) ───────────────────────────────────────────
 
-TYPE_NAMES = {"zh": {"chart": "图表", "diagram": "示意图", "photo": "照片", "screenshot": "截图", "seal": "印章或标志",
+TYPE_NAMES = {"zh": {"content": "图片", "chart": "图表", "diagram": "示意图", "photo": "照片", "screenshot": "截图", "seal": "印章或标志",
                      "other": "图片"},
-              "en": {"chart": "Chart", "diagram": "Diagram", "photo": "Photo", "screenshot": "Screenshot",
+              "en": {"content": "Image", "chart": "Chart", "diagram": "Diagram", "photo": "Photo", "screenshot": "Screenshot",
                      "seal": "Seal or logo", "other": "Image"}}
 NOTE_LABEL = {"zh": "图片说明：", "en": "Image description: "}
 SCAN_LABEL = {"zh": "扫描图像", "en": "Scanned page"}

@@ -63,6 +63,7 @@ class FakeVLM:
         self.usage_hook = None
         self.calls = []
         self.schemas = []
+        self.figure_type = "photo"  # what a description says the image is (IO6: content is transcribed)
 
     def describe_image(self, image_path, prompt, *, context="", temperature=0.1, max_tokens=8192,
                        structured_output_mode="off", json_schema=None, json_schema_name="x"):
@@ -77,7 +78,7 @@ class FakeVLM:
             return json.dumps({"table_html": "<table><tr><td>项目</td><td>数值</td></tr>"
                                              "<tr><td>SENTINEL-OCR 甲</td><td>8</td></tr></table>",
                                "undetermined": []})
-        return json.dumps({"type": "photo", "caption": VLM_TEXT})
+        return json.dumps({"type": self.figure_type, "caption": VLM_TEXT})
 
 
 class FakeReader:
@@ -845,24 +846,47 @@ def test_recognize_transcribes_an_embedded_image(ws, tmp_path):
     assert again.cost.requests == {} and again.failures and "already" in again.failures[0].message
 
 
-def test_the_pipeline_transcribes_scan_and_mixed_images_and_does_not_describe_scans(ws):
-    from parserx.ir.enums import ImageRoute
+def _routed(ws, route):
     from parserx.ir.state import ImageRecord
+
+    workspace = Workspace.open(ws)
+    figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
+    with workspace.txn("test:route") as state:  # as the layout step would have routed it
+        state.images = [ImageRecord(id=figure.anchors[-1].asset, route=route, shown=True, t=0.8, f=0.0, regions=3)]
+    return figure
+
+
+@pytest.mark.parametrize("kind, read", [("content", True), ("screenshot", False), ("photo", False)])
+def test_the_pipeline_describes_first_and_transcribes_only_content(ws, kind, read):
+    # IO6: the description says what the image is for; only an image whose words are its content is transcribed —
+    # a picture is shown with its note, whatever its route
+    from parserx.ir.enums import ImageRoute
 
     config = _config()
     config.runtime.layout_shadow = False
     context = _context()
-    workspace = Workspace.open(ws)
-    figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
-    asset = figure.anchors[-1].asset
-    with workspace.txn("test:route") as state:  # as the layout step would have routed it
-        state.images = [ImageRecord(id=asset, route=ImageRoute.SCAN, shown=True, t=0.8, f=0.0, regions=3)]
+    context.fake_vlm.figure_type = kind
+    figure = _routed(ws, ImageRoute.SCAN)
     env, _ = _call("run_pipeline", ws, {}, config=config, context=context)
-    assert env.ok and "transcribe_images" in [s.step for s in env.result.steps]
+    assert env.ok and ("transcribe_images" in [s.step for s in env.result.steps]) is read
     state = Workspace.open(ws).load()
-    assert any(r.kind == "contains" and r.src == figure.id for r in state.relations)
-    assert next(b for b in state.blocks if b.id == figure.id).semantic is None  # its content is the transcription
-    assert next(r for r in state.images if r.id == asset).complete is True
+    assert next(b for b in state.blocks if b.id == figure.id).semantic.type == kind
+    assert any(r.kind == "contains" and r.src == figure.id for r in state.relations) is read
+
+
+@pytest.mark.parametrize("route, read", [("SCAN", True), ("MIXED", True), ("UNCERTAIN", False)])
+def test_without_descriptions_images_are_transcribed_by_their_route(ws, route, read):
+    # the service model off (or failing): the route decides, so no words are lost
+    from parserx.ir.enums import ImageRoute
+
+    config = _config()
+    config.runtime.layout_shadow = False
+    config.runtime.describe_figures = False
+    figure = _routed(ws, ImageRoute(route))
+    env, _ = _call("run_pipeline", ws, {}, config=config, context=_context())
+    state = Workspace.open(ws).load()
+    assert any(r.kind == "contains" and r.src == figure.id for r in state.relations) is read
+    assert next(b for b in state.blocks if b.id == figure.id).semantic is None
 
 
 def test_an_image_with_nothing_to_read_is_not_read_again(ws):
@@ -877,6 +901,7 @@ def test_an_image_with_nothing_to_read_is_not_read_again(ws):
     config = _config()
     config.runtime.layout_shadow = False
     context = _context(page=photo)
+    context.fake_vlm.figure_type = "content"
     workspace = Workspace.open(ws)
     figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
     with workspace.txn("test:route") as state:
@@ -900,6 +925,7 @@ def test_text_read_inside_an_image_can_be_looked_at_and_corrected(ws):
     config = _config()
     config.runtime.layout_shadow = False
     context = _context()
+    context.fake_vlm.figure_type = "content"
     workspace = Workspace.open(ws)
     figure = next(b for b in workspace.load().blocks if b.kind == BlockKind.FIGURE)
     with workspace.txn("test:route") as state:
@@ -993,32 +1019,3 @@ def test_without_a_scan_engine_the_document_still_exports_as_partial(ws):
     assert result["pages"] == {"done": 1, "failed": 1} and result["check"]["exportable"]
     assert result["check"]["document_status"] == "partial"
     assert any("scan engine not configured" in f.message for f in env.failures)
-
-
-def test_an_uncertain_image_is_transcribed_only_for_text_its_description_does_not_carry(tmp_path):
-    # P4-6 (conservation): the local reading of the image is compared with its description
-    from types import SimpleNamespace
-
-    from parserx.ir.semantic import FigureNote
-    from parserx.tools.process import _text_not_carried
-
-    class Reader:
-        version = "fake"
-
-        def __init__(self, lines):
-            self.lines = lines
-
-        def read(self, png):
-            return [((0, 0, 10, 10), text, 0.9) for text in self.lines]
-
-    (tmp_path / "img.png").write_bytes(b"png")
-    asset = SimpleNamespace(path="img.png")
-    described = SimpleNamespace(semantic=FigureNote(type="screenshot", caption="配置 ipmi_address 的表单截图"))
-
-    def ctx(lines):
-        return SimpleNamespace(reader=lambda: Reader(lines), ws=SimpleNamespace(root=tmp_path), cache=None)
-
-    assert not _text_not_carried(ctx(["ipmi_address"]), described, asset)
-    assert _text_not_carried(ctx(["ipmi_address", "Kg key for IPMIv2 authentication."]), described, asset)
-    assert not _text_not_carried(ctx(["|", "·"]), described, asset)  # no letters or digits: no evidence
-

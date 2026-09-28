@@ -34,7 +34,7 @@ class ImageEntry(IRModel):
     file: str  # path inside the package
     block: str | None
     page: int | None
-    type: str | None  # chart / diagram / photo / seal / other, when described
+    type: str | None  # one of FIGURE_TYPES (content, screenshot, chart …), when described
     route: str | None  # image route (SCAN / FIGURE / MIXED / UNCERTAIN / DECORATIVE), when routed
     shown: bool  # linked from the Markdown
     summary: str | None
