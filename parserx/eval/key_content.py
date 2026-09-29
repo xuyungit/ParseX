@@ -1,11 +1,12 @@
-"""Key-content error counts (metric version 2.5, guide §9.2 item 4; R5 of the vision-first review).
+"""Key-content error counts (metric version 2.6, guide §9.2 item 4; R5 of the vision-first review).
 
 Tokens whose corruption changes meaning even when character scores barely move.  Each kind is extracted in reading
 order from both sides; the token sequences are aligned by LCS and the unaligned tokens are reported as missing
 (expected only) or extra (output only):
 
-- ``number``, ``unit`` (a number with its unit, the unit's exponent and a compound unit: ``25 m²``, ``3 m/s``),
-  ``negation``, ``date``;
+- ``number``, ``unit`` (a number with its unit, the unit's exponent and a compound unit: ``25 m²``, ``3 m/s``; in
+  math as LaTeX writes units — upright text is a unit, a bare letter a variable, spacing not writing), ``negation``,
+  ``date``;
 - ``sign``: a number written with a sign (``-10``, ``+5``, ``±0.5``) — a sign directly before the digits, itself
   not after a Latin letter, a digit or a closing bracket (``2019-2020``, ``x-1`` are not signs); the spellings of
   the minus sign are one sign.  Numbers inside a script are left to ``script``;
@@ -184,6 +185,27 @@ def _marked(text: str, scripts: list[_Script], *, drop: bool = False) -> str:
     return "".join(parts)
 
 
+# ── Units in math ───────────────────────────────────────────────────────
+
+_UPRIGHT_RE = re.compile(r"\\(?:text|mathrm|textrm|rm|mbox|operatorname)\s*\{([^{}]*)\}")
+_DEGREE_RE = re.compile(r"\^\s*\{?\s*\\circ\s*\}?")
+
+
+def _unit_view(math: str) -> str:
+    """Math as its units read: upright text (``\\text{m}``, ``\\mathrm{kN}``, ``\\%``, ``^\\circ``) is written text, a
+    bare letter is a variable (``12 m x`` is a product, not a unit), spacing is not writing."""
+    upright: list[str] = []
+
+    def keep(match: re.Match) -> str:
+        upright.append(match.group(1).strip())
+        return f"\0{len(upright) - 1}\0"
+
+    view = _DEGREE_RE.sub("°", _UPRIGHT_RE.sub(keep, math)).replace("\\%", "%")
+    view = re.sub(r"[A-Za-z]", "·", _COMMAND_RE.sub(" ", view))
+    view = re.sub(r"\0(\d+)\0", lambda m: " " + upright[int(m.group(1))], view)
+    return re.sub(r"\s+", " ", view.replace("{", "").replace("}", ""))
+
+
 # ── Signs, attribution ──────────────────────────────────────────────────
 
 _SIGNED_RE = re.compile(rf"(?P<s>[-+±∓{_MINUS}])(?P<space>\s*)(?P<n>{_NUMBER})")
@@ -255,11 +277,15 @@ def extract_key_tokens(markdown: str) -> dict[str, list]:
         return " " * len(match.group(0))
 
     text = _DATE_RE.sub(take_date, text)
+    # units: math read as LaTeX writes units (``_unit_view``)
+    prose = _MATH_RE.sub(lambda m: " " + _unit_view(next(g for g in m.groups() if g is not None)) + " ", raw)
+    prose = _DATE_RE.sub(lambda m: " " * len(m.group(0)),
+                         unicodedata.normalize("NFKC", _marked(prose, _scripts(prose))).translate(minus))
     without_scripts = _DATE_RE.sub(lambda m: " " * len(m.group(0)),
                                    unicodedata.normalize("NFKC", _marked(raw, scripts, drop=True)))
     return {
         "number": [_plain(m.group(0)) for m in _NUMBER_RE.finditer(text)],
-        "unit": [_plain(m.group("n")) + re.sub(r"[{}\s]", "", m.group("u")) for m in _UNIT_RE.finditer(text)],
+        "unit": [_plain(m.group("n")) + re.sub(r"[{}\s]", "", m.group("u")) for m in _UNIT_RE.finditer(prose)],
         "negation": [m.group(0).lower() for m in _NEGATION_RE.finditer(text)],
         "date": dates,
         "sign": _signed(without_scripts),

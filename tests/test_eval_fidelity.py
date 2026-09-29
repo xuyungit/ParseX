@@ -51,6 +51,27 @@ def test_notations_of_one_unit_exponent_are_equal():
     assert compute_key_content_errors("面积 25 m<sup>2</sup>", "面积 25 m²").missing["unit"] == 0
 
 
+@pytest.mark.parametrize("expected, output", [
+    ("$F = 12 m x' + 3 l m$", "$F=12mx'+3lm$"),  # spacing in math is not writing
+    ("$$\\Delta = 4 m^{2} z$$", "$$\\Delta=4m^2z$$"),
+])
+def test_products_in_math_are_not_units(expected, output):
+    errors = compute_key_content_errors(output, expected)
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
+
+
+def test_a_unit_written_in_math_and_in_prose_is_one_unit():
+    errors = compute_key_content_errors("其刚度 k9 = 30 MN/m²，按", "其刚度 $k_9 = 30\\text{ MN}/\\text{m}^2$，按")
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
+    errors = compute_key_content_errors("其刚度 $k_9 = 30\\,\\mathrm{kN}$", "其刚度 $k_9 = 30\\text{ MN}$")
+    assert errors.missing["unit"] == 1 and errors.extra["unit"] == 1
+
+
+def test_a_unit_in_prose_beside_math_is_still_counted():
+    errors = compute_key_content_errors("取 $k_1$ 为 6 kN，长 10 m", "取 $k_1$ 为 6 MN，长 10 m")
+    assert errors.missing["unit"] == 1 and errors.extra["unit"] == 1
+
+
 # ── Super- and subscripts (not folded by NFKC) ──────────────────────────
 
 
@@ -163,6 +184,22 @@ def test_notations_of_one_formula_are_not_omissions():
     output = "由式可得 αᵢ + β² = γᵢⱼ，其中各量均为无量纲的系数。"
     omission = compute_omission(output, expected)
     assert (omission.lost_runs, omission.added_runs) == (0, 0)
+
+
+def test_notations_of_one_prime_are_not_omissions():
+    formula = "24 m^{2} z_{1}' z_{2}' - 6 m l z_{1}' z_{2}' + 24 m x' z_{1}' z_{2}' (12 l z_{1}' z_{2}' E I \\delta_{11})^{-1}"
+    expected = f"由此得到 $$ {formula} $$ 其余各式同理可以求得。"
+    output = "由此得到 $$ " + formula.replace("'", "^{\\prime}").replace(" ", "") + " $$ 其余各式同理可以求得。"
+    omission = compute_omission(output, expected)
+    assert (omission.lost_runs, omission.added_runs) == (0, 0)
+
+
+def test_a_letter_after_a_line_break_in_math_is_read():
+    expected = "$$\\begin{aligned}f_{ij}&=w_{j}-e_{j}\\\\f_{ij}&=0\\end{aligned}$$"
+    output = "$$\\begin{aligned}f_{ij}&=w_{j}-e_{j}\\\\ij&=0\\end{aligned}$$"  # the second f lost
+    assert compute_omission(output, expected).lost_runs == 0  # a single letter is no run …
+    from parserx.eval.formulas import characters
+    assert "f" in characters("\\\\f_{ij}")  # … but it is a character, not the command \\f
 
 
 def test_invented_text_is_an_added_run():

@@ -28,7 +28,7 @@ from rapidfuzz import fuzz
 
 from parserx.content.text import normalize_fullwidth_ascii
 
-_COMMAND = re.compile(r"\\([A-Za-z]+)")
+_COMMAND = re.compile(r"\\\\|\\([A-Za-z]+)")  # a line break (\\) first: in "\\f" the f is a letter, not \f
 
 # The evaluation reads LaTeX by its own tables, not the pipeline's (``content/latex.py``): a change to how the
 # pipeline compares its readings must not change the measure of its output.  Both follow LaTeX's own definitions.
@@ -56,7 +56,19 @@ def characters(latex: str) -> str:
     """The characters a reader sees in LaTeX: letter commands as their letters, operator commands as their names;
     other command names, environments, an array's column spec and lengths are markup (their arguments stay)."""
     latex = _LENGTH.sub(" ", _ENVIRONMENT.sub(" ", latex))
-    return _COMMAND.sub(lambda m: _LETTERS.get(m.group(1), m.group(1) if m.group(1) in _OPERATORS else ""), latex)
+    return _COMMAND.sub(_character, latex)
+
+
+def _character(match: re.Match) -> str:
+    name = match.group(1)
+    if name is None:  # a line break
+        return " "
+    return _LETTERS.get(name, name if name in _OPERATORS else "")
+
+
+def one_prime(text: str) -> str:
+    """Primes in one notation (``x^{\\prime}``, ``x^\\prime``, ``x′`` are ``x'``)."""
+    return _PRIME.sub("'", text)
 
 
 def symbols(text: str) -> Counter[str]:

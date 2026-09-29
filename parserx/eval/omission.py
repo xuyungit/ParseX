@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from parserx.eval.formulas import characters
+from parserx.eval.formulas import characters, one_prime
 from parserx.eval.normalize import canonicalize, char_sequence
 from parserx.eval.order import ANCHOR_LEN
 
@@ -50,9 +50,10 @@ def compute_omission(output: str, expected: str) -> OmissionMetrics:
 
 
 def folded(text: str) -> str:
-    """The characters a reader sees, in one notation: LaTeX commands as their letters (``\\alpha`` is α), markup
-    (HTML tags, ``$ { } ^ _ & * \\``) dropped, sub- and superscripts as plain characters (NFKC)."""
-    return char_sequence(_MARKUP_RE.sub("", characters(text)))
+    """The characters a reader sees, in one notation: LaTeX commands as their letters (``\\alpha`` is α), primes as
+    ``'`` (``x^{\\prime}`` is ``x'``), markup (HTML tags, ``$ { } ^ _ & * \\``) dropped, sub- and superscripts as plain
+    characters (NFKC)."""
+    return char_sequence(_MARKUP_RE.sub("", characters(one_prime(text))))
 
 
 def grams(seq: str) -> set[str]:

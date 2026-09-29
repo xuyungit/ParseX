@@ -27,7 +27,7 @@ from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.5"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.6"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 # 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
 # 2.4 (2026-09-28, R3): inline emphasis (**, <u>, <b>, <strong>) is not text: dropped from both sides before the
@@ -35,6 +35,9 @@ METRIC_VERSION = "2.5"  # 2.1 (2026-09-24, Q28): merged cells against annotation
 # 2.5 (2026-09-29, vision-first E0, review R5): key content adds signs, super- and subscripts read without NFKC,
 #     attribution of numbers, glyphs without a character, units with their exponent; lost and added content
 #     (``eval/omission.py``)
+# 2.6 (2026-09-29, vision-first P0, Q141): units are read in prose only (in math ``12 m x`` is a product and spacing
+#     is not writing); the omission check reads primes in one notation (``x^{\prime}`` is ``x'``); a letter right
+#     after a LaTeX line break (``\\f``) is a letter, not the command ``\f``
 
 __all__ = [
     "METRIC_VERSION",
