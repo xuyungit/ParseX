@@ -51,6 +51,7 @@ from parserx.workspace import Workspace
 from parserx.workspace.queries import HIDDEN, block_unit
 
 ACTOR = "program:vision_first.v"
+CANDIDATE_LABEL = "formula_reading"  # tools/formulas.CANDIDATE: a reading not adopted, listed for the agent
 FORMULA_DONE = "formula_page"  # tools/formulas.DONE: a page whose formulas are decided
 ENGINE = "vision_allocation"
 CHOICE = "vision_allocation"
@@ -84,7 +85,11 @@ def _unicode_scripts(scripted: str) -> str:
     return re.sub(r"<(sup|sub)>(.*?)</\1>", form, scripted)
 
 
-def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model: str, dpi: int) -> dict:
+def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model: str, dpi: int,
+          defaults: bool = True, repeated: set[str] | None = None) -> dict:
+    """*repeated*: the furniture keys of the document's other pages (``p0_score.furniture_key``): with the defaults,
+    a line put aside as excluded that no other page repeats stays in the output (information first) as a review
+    item."""
     """Put *data* (a checked allocation of page *n*) into the workspace; returns counts."""
     lines = page["lines"]
     text_of = {f"L{k}": line["text"] for k, line in enumerate(lines, 1)}
@@ -94,12 +99,13 @@ def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model:
         render = pdf_page.get_pixmap(dpi=dpi).tobytes("png")
         counts: Counter = Counter()
         with ws.txn("tool:vision_first:allocate") as state:
-            _apply(ws, state, n, page, data, text_of, scripted_of, pdf_page, render, dpi, model, counts)
+            _apply(ws, state, n, page, data, text_of, scripted_of, pdf_page, render, dpi, model, counts, defaults,
+                   repeated)
     return dict(counts)
 
 
 def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, scripted_of, pdf_page, render: bytes,
-           dpi: int, model: str, counts: Counter) -> None:
+           dpi: int, model: str, counts: Counter, use_defaults: bool = True, repeated: set[str] | None = None) -> None:
     items = {e.item: e for e in state.ledger}
     line_entry = {f"L{k}": items[ids.ledger_item_pdf(n, k)] for k in range(1, len(page["lines"]) + 1)}
     blocks = {b.id: b for b in state.blocks}
@@ -165,6 +171,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                         table = tables[tid]
                         if part.get("scripts"):
                             _script_cells(table, refs, page)
+                        for cell in table.cells.cells if table.cells is not None else []:
+                            cell.content = contract.visible(cell.content)  # an unmapped glyph: the visible mark
                         if table not in placed:
                             placed.append(table)
                         for name in refs:
@@ -197,16 +205,33 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                     counts["table_written"] += 1
             continue
         # text-like and formula blocks
-        pieces, copied_only = [], True
+        pieces, copied_only, candidates, degraded, defaults = [], True, [], False, Counter()
         for part in parts:
             names = [x for ref in part["lines"] for x in contract._names(ref) if x in text_of]
             if part["kind"] == "copy":
                 source = scripted_of if part.get("scripts") else text_of
                 pieces.append(join_wrapped([_unicode_scripts(source[x]) if part.get("scripts") else source[x]
                                             for x in names]))
-            else:
-                pieces.append(part["text"].strip())
+                continue
+            written = part["text"].strip()
+            original = "\n".join(text_of[x] for x in names)
+            if not names or not use_defaults or not _numbers_differ(written, original):
+                pieces.append(written)
                 copied_only = False
+            elif kind != "formula":  # prose: the text layer's lines stay; the written text waits for review
+                pieces.append(join_wrapped([text_of[x] for x in names]))
+                candidates.append(written)
+                defaults["text_layer_kept"] += 1
+            else:  # a formula: the engine reading whose numbers agree, else the version that disagrees least
+                options = [("service model", written)] + [("engine", t) for t in _engine_versions(page, names)]
+                best = min(options, key=lambda o: _number_mismatch(o[1], original))
+                pieces.append(best[1])
+                candidates += [t for _w, t in options if t != best[1]]
+                copied_only = False
+                degraded = degraded or _number_mismatch(best[1], original) > 0
+                defaults["formula_engine" if best[0] == "engine" else "formula_kept"] += 1
+                defaults["formula_degraded"] += int(_number_mismatch(best[1], original) > 0)
+        counts.update(defaults)
         text = contract.visible("\n".join(p for p in pieces if p))
         if kind == "formula":
             body = text.strip()
@@ -222,6 +247,17 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                                 title=kind == "title",
                                 layer_text="\n".join(text_of[x] for x in names_all) if names_all else None,
                                 marks=marks))
+        for candidate in candidates:  # a review item for the agent (the formula step's candidate kind)
+            block.observations.append(Observation(
+                id=ids.observation_id(block.id, "vlm", 10 + len(block.observations)), engine="vlm",
+                engine_version=model, task=TaskKind.RECOGNIZE, anchor=block.anchors[0], label=CANDIDATE_LABEL,
+                text=contract.visible(candidate), status=ObservationStatus.OK))
+        if degraded:
+            block.status = BlockStatus.DEGRADED
+        if defaults:
+            block.decisions.append(decision("conservative default without the agent (common plan §3.4): "
+                                            + ", ".join(f"{k} {v}" for k, v in sorted(defaults.items())),
+                                            **{k: v for k, v in defaults.items()}))
         for name in names_all:
             line_block[name] = block.id
         if not names_all:  # content no text line holds: its own ledger item, read from the page image
@@ -232,10 +268,35 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
 
     for k, item in enumerate(data.get("aside", []), 1):
         names = [x for ref in item["lines"] for x in contract._names(ref) if x in text_of]
+        if use_defaults and repeated is not None and item["to"] == contract.EXCLUDED:
+            from p0_score import furniture_key
+
+            kept = [x for x in names if furniture_key(text_of[x]) and furniture_key(text_of[x]) not in repeated]
+            if kept:  # not page furniture by the document's own evidence: output, and listed for review
+                kept = sorted(kept, key=lambda x: (page["lines"][int(x[1:]) - 1]["box"][1] // 4,
+                                                  page["lines"][int(x[1:]) - 1]["box"][0]))
+                block = _text_block(new_id(), n, BlockKind.TEXT, contract.visible(join_wrapped(
+                    [text_of[x] for x in kept])), box_of(kept, None), _style_of(blocks, owner, kept),
+                    decision("put aside as excluded, but no other page repeats it: kept (conservative default)",
+                             lines=len(kept)), engine="native_pdf", model=model)
+                block.decisions.append(done)
+                block.observations.append(Observation(
+                    id=ids.observation_id(block.id, "vlm", 10), engine="vlm", engine_version=model,
+                    task=TaskKind.RECOGNIZE, anchor=block.anchors[0], label=CANDIDATE_LABEL,
+                    text=f"（服务模型把这几行排除了：{item['reason'][:80]}）", status=ObservationStatus.OK))
+                state.blocks.append(block)
+                placed.append(block)
+                for name in kept:
+                    line_block[name] = block.id
+                counts["aside_kept"] += len(kept)
+                names = [x for x in names if x not in kept]
         if not names:
             continue
         target = None if item["to"] == contract.EXCLUDED else _placed_id(placed, data, item["to"])
         if target is None:  # excluded, or aside into a block that is not there: excluded, with the reason
+            # in the order the page shows them (the PDF may hold a page number "81" as the lines "1", "8")
+            names = sorted(names, key=lambda x: (page["lines"][int(x[1:]) - 1]["box"][1] // 4,
+                                                 page["lines"][int(x[1:]) - 1]["box"][0]))
             bid = new_id()
             anchor = PdfAnchor(page=n, bbox=box_of(names, None), coord_space="page_pt")
             text = "\n".join(text_of[x] for x in names)
@@ -282,6 +343,47 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
     for i, block in enumerate(placed + [f for f in figures if f.id not in used_figures]):
         block.order = base + i
     renumber(state)
+
+
+_DECIMAL = re.compile(r"(\d)\s*([.．])\s*(\d)")  # "0. 60": the text layer spaces a decimal point
+_TAG = re.compile(r"<[^<>]+>")
+_SPACED = re.compile(r"(\\(?!begin|end)[a-zA-Z]+)(?![a-zA-Z])")
+
+
+def _numbers(text: str) -> Counter:
+    """Digit runs as the characters show them (LaTeX markup and HTML tags aside, NFKC)."""
+    import unicodedata
+
+    from parserx.content.latex import characters
+
+    shown = characters(_SPACED.sub(r"\1 ", _TAG.sub(" ", text)))
+    shown = _DECIMAL.sub(r"\1.\3", unicodedata.normalize("NFKC", shown))
+    return Counter(re.findall(r"\d+(?:\.\d+)?", shown))
+
+
+def _number_mismatch(text: str, original: str) -> int:
+    a, b = _numbers(text), _numbers(original)
+    return sum(((a - b) + (b - a)).values())
+
+
+def _numbers_differ(text: str, original: str) -> bool:
+    return _number_mismatch(text, original) > 0
+
+
+def _engine_versions(page: dict, names: list[str]) -> list[str]:
+    """The engine's formula readings over these lines (with the equation number it reads beside them)."""
+    boxes = [page["lines"][int(x[1:]) - 1]["box"] for x in names]
+    area = _union(boxes)
+    over = [e for e in page.get("engine") or [] if _overlaps(e["box"], area)]
+    formulas = [e["text"].strip() for e in over if e["label"] in ("display_formula", "formula")]
+    numbers = [e["text"].strip().strip("()（）") for e in over if e["label"] == "formula_number"]
+    out = []
+    for text in formulas:
+        body = text[2:-2].strip() if text.startswith("$$") and text.endswith("$$") else text
+        out.append(body + (f" \\tag{{{numbers[0]}}}" if numbers and "\\tag" not in body else ""))
+    if len(formulas) > 1:
+        out.append(" \\\\ ".join(o for o in out))
+    return out
 
 
 def _placed_id(placed: list[Block], data: dict, to: str) -> str | None:

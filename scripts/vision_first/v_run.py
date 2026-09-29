@@ -52,6 +52,7 @@ from parserx.workspace import Workspace  # noqa: E402
 
 DOCS = ("paper_chn01", "paper_chn02", "ocr01", "receipt")  # the tuning set (common plan §6.2)
 M_RUN = REPO_ROOT / "eval_runs" / "2026-09-29_bench2f_fixed_full"
+DEFAULTS = True  # the conservative defaults without the agent (common plan §3.4); --no-defaults turns them off
 ROUTING_KINDS = frozenset({"text_suspicious", "text_unaccounted", "text_not_seen", "formula_candidate"})
 FORMULA_LABELS = frozenset({"display_formula", "inline_formula", "formula"})
 FIGURE_LABELS = frozenset({"image", "figure", "chart"})
@@ -185,6 +186,9 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
     if missing:
         p0_inputs.build(run_dir, pages=missing)
     caller, run = callers(run_dir, [config_name], offline=False)[config_name]
+    from p0_score import furniture_keys
+
+    keys = furniture_keys(p0_inputs.document(doc))
     allocations, applied = {}, {}
     for n in sorted(pages):
         pid = p0_inputs.page_id(doc, n)
@@ -202,7 +206,8 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
                 applied[n] = {"left_to_pipeline": 1}
             else:
                 applied[n] = v_adapter.apply(ws, p0_inputs.document(doc), n, page, result["final"]["data"],
-                                             model=caller.config.model, dpi=p0_inputs.DPI)
+                                             model=caller.config.model, dpi=p0_inputs.DPI, defaults=DEFAULTS,
+                                             repeated=set().union(*(k for i, k in enumerate(keys, 1) if i != n)))
         allocations[n] = {"status": result["final"]["status"], "usd": result["usd"], "seconds": result["seconds"]}
     typography_from_text_layer()
     session = _Session()
@@ -235,10 +240,14 @@ def main() -> None:
     parser.add_argument("--docs", default=",".join(DOCS))
     parser.add_argument("--all", action="store_true", help="send every native page (V-all)")
     parser.add_argument("--free", action="store_true", help="V-a: the service model writes the pages freely")
+    parser.add_argument("--no-defaults", action="store_true",
+                        help="put written parts in as they are (without the conservative defaults of plan §3.4)")
     parser.add_argument("--prepare", action="store_true",
                         help="routing, page inputs and the pipeline cache only (before configurations run in parallel)")
     parser.add_argument("--allocation-cache", type=Path, help="a P0 run directory whose cache the allocations reuse")
     args = parser.parse_args()
+    global DEFAULTS
+    DEFAULTS = not args.no_defaults
     run_dir = args.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     if args.allocation_cache and not (run_dir / "cache").exists():
