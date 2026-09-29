@@ -46,17 +46,10 @@ _TAG = re.compile(r"<[^<>]+>")
 _SPACED = re.compile(r"(\\(?!begin|end)[a-zA-Z]+)(?![a-zA-Z])")  # a command, other than an environment's
 
 
-# LaTeX's operator names typeset their names in upright letters (\min is "min"); every other command name is markup.
-_OPERATORS = re.compile(r"\\(arccos|arcsin|arctan|arg|cos|cosh|cot|coth|csc|deg|det|dim|exp|gcd|hom|inf|ker|lg|lim|"
-                        r"liminf|limsup|ln|log|max|min|Pr|sec|sin|sinh|sup|tan|tanh)(?![a-zA-Z])")
-
-
 def _shown(text: str) -> str:
-    """The characters a LaTeX text shows (``content/latex.characters``), operator names as their letters, and a
-    space where a command stood, so ``3.886\\times10`` stays two numbers."""
-    text = _TAG.sub(" ", text)  # a written HTML table: its tags and attributes (colspan="2") are markup
-    text = text.replace("\\\\", " \n ")  # LaTeX's line break: in "\\\\f_{ij}" the f is a letter, not a command \\f
-    return characters(_SPACED.sub(r"\1 ", _OPERATORS.sub(r" \1 ", text)))
+    """The characters a LaTeX text shows (``content/latex.characters``), with a space where a command stood, so
+    ``3.886\\times10`` stays two numbers; a written HTML table's tags and attributes (``colspan="2"``) are markup."""
+    return characters(_SPACED.sub(r"\1 ", _TAG.sub(" ", text)))
 
 
 def numbers(text: str) -> Counter:

@@ -15,12 +15,26 @@ _LETTERS = {name: chr(code) for name, code in (
     # letter-like symbols (ℓ is the letter l, NFKC)
     ("ell", 0x2113), ("imath", 0x131), ("jmath", 0x237), ("hbar", 0x127), ("aleph", 0x2135), ("Re", 0x211C),
     ("Im", 0x2111))}
-_COMMAND = re.compile(r"\\([A-Za-z]+)")
+# Operator names LaTeX prints as their own upright letters (\min is "min"): LaTeX's and amsmath's predefined ones.
+_OPERATORS = frozenset({
+    "arccos", "arcsin", "arctan", "arg", "cos", "cosh", "cot", "coth", "csc", "deg", "det", "dim", "exp", "gcd", "hom",
+    "inf", "ker", "lg", "lim", "liminf", "limsup", "ln", "log", "max", "min", "Pr", "sec", "sin", "sinh", "sup", "tan",
+    "tanh"})
+# A line break (\\) first: in "\\f_{ij}" the f is a letter, not the command \f.
+_COMMAND = re.compile(r"\\\\|\\([A-Za-z]+)")
 _ENVIRONMENT = re.compile(r"\\begin\{(?:array|tabular)\}\{[^{}]*\}|\\(?:begin|end)\{[^{}]*\}")
 
 
 def characters(latex: str) -> str:
     """LaTeX's characters, for comparing them with a text layer's: letter commands (Greek, ``\\ell`` …) as their
     letters (LaTeX's own definitions); other command names, environments and an array's column spec are markup,
-    not characters (``\\left`` carries no l) — the arguments stay."""
-    return _COMMAND.sub(lambda m: _LETTERS.get(m.group(1), ""), _ENVIRONMENT.sub(" ", latex))
+    not characters (``\\left`` carries no l) — the arguments stay.  Operator names (``\\min``) print their letters; a
+    line break (``\\\\``) is none."""
+    return _COMMAND.sub(_character, _ENVIRONMENT.sub(" ", latex))
+
+
+def _character(match: re.Match) -> str:
+    name = match.group(1)
+    if name is None:  # a line break
+        return " "
+    return f" {name} " if name in _OPERATORS else _LETTERS.get(name, "")

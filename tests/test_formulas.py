@@ -25,6 +25,14 @@ def test_command_names_are_not_characters_of_the_text():
     assert normalize(_symbols(r"\Delta^{\ell}")) == "δl"  # ℓ is the letter l
 
 
+def test_a_line_break_is_no_character_and_the_letter_after_it_is_one():
+    assert normalize(_symbols(r"\begin{aligned}f_{ij}&=1\\f_{ij}&=0\end{aligned}")) == "fij1fij0"
+
+
+def test_operator_names_print_their_letters():
+    assert normalize(_symbols(r"\min\|Ax-b\|+\sin x")) == "minaxbsinx"
+
+
 def _page_pdf(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)
