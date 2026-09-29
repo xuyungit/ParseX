@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "kind": "review_preparation_source_manifest",
+  "created_utc": "2026-09-29T07:30:55.686381+00:00",
+  "base_commit": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b",
+  "original_worktree_creation_commit": "340fef7fd25b51aaa3cac4e60b284abd8eea0358",
+  "baseline_update_reason": "Fast-forwarded the plan-only clarification ce2d75c to match the common plan.",
+  "common_plan_path": "docs/v2_vision_first_plan.md",
+  "common_plan_sha256": "639b5f57e8d9cd93b503738a5693121d12fb074d5a2388289b70672774f92d95",
+  "worktree": "/Users/xuyun/.codex/worktrees/vision-agent-comparison/ParserX",
+  "branch": "codex/vision-agent-comparison",
+  "status": "planning_ready_implementation_and_online_runs_not_started",
+  "shared_acceptance_protocol": "C0_draft_not_confirmed_by_external_team",
+  "not_a_run_manifest": true,
+  "not_a_corpus_manifest": true,
+  "sources": [
+    {
+      "path": "docs/v2_vision_first_plan.md",
+      "sha256": "639b5f57e8d9cd93b503738a5693121d12fb074d5a2388289b70672774f92d95",
+      "bytes": 29796,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "docs/redesign_guide.md",
+      "sha256": "5238f1115aa6b3fff515cd5aa4999eef7de1e5ae73c33d07ea20b5a2893d6648",
+      "bytes": 252791,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "parserx/eval/key_content.py",
+      "sha256": "c52e2074d410f011470a13f9e8a79e2e378853ecf5d9ae83de83815a0b373d0b",
+      "bytes": 3141,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "parserx/tool_eval/runner.py",
+      "sha256": "4ffb5f76f0949a516b11129dc108f1bba860ff08c48daf76ccc8da035aaefdc2",
+      "bytes": 11477,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "parserx/tools/edit.py",
+      "sha256": "1943058c67df1e26cc7835d4828273940727576d73b2cb4d3d0aa52350390712",
+      "bytes": 38995,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "parserx/runtimes/agent_task.md",
+      "sha256": "e7507b8ed1d855dfdc292ff5c0a75696c924f09e17d6274f63e07523bf9ddb99",
+      "bytes": 5682,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "scripts/agent_explore.py",
+      "sha256": "45044d3c71fa757c26166c512f50b4d4707f05299f0e3f115e9d0666c81f97ba",
+      "bytes": 20899,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "779719acaac35b3c08043b3286c203522bca32b059be987bd86a3d3f2e715e7b",
+      "bytes": 434892,
+      "tracked_at_review": true,
+      "available_in_new_worktree": true,
+      "git_ref": "ce2d75c68d2b3ecbcba2fae74b81cf5f884ad69b"
+    },
+    {
+      "path": "eval_reports/2026-09-29_content_by_region.md",
+      "sha256": "8a289ff615c2d0b03c57245e66c831b613711103ce2d53b33e6ff3714a26df97",
+      "bytes": 29299,
+      "tracked_at_review": false,
+      "available_in_new_worktree": false,
+      "source_root_at_review": "/Users/xuyun/Projects/ParserX"
+    },
+    {
+      "path": "eval_runs/bench/report.md",
+      "sha256": "4a986f345a5d2869b36274af0bcebbe660c5e60210a17b206755f9676850dd5f",
+      "bytes": 13727,
+      "tracked_at_review": false,
+      "available_in_new_worktree": false,
+      "source_root_at_review": "/Users/xuyun/Projects/ParserX"
+    }
+  ],
+  "local_data_notes": [
+    "Some tracked expected.md files are present; most inputs and recent reports are absent.",
+    "No .venv or .parserx_cache at setup.",
+    "No secrets copied or shared writable cache configured.",
+    "Strict evaluation requires read isolation beyond a Git worktree."
+  ],
+  "metric_counterexample_checks": {
+    "function": "parserx.eval.key_content.compute_key_content_errors",
+    "run_date": "2026-09-29",
+    "cases": [
+      {
+        "output": "数值为 -10",
+        "expected": "数值为 10",
+        "total": 0
+      },
+      {
+        "output": "$x_2$",
+        "expected": "$x^2$",
+        "total": 0
+      },
+      {
+        "output": "甲为 10，乙为 20",
+        "expected": "乙为 10，甲为 20",
+        "total": 0
+      }
+    ],
+    "scope": "key_content only, not all metrics"
+  }
+}

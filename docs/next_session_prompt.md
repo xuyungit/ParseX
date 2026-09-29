@@ -2,7 +2,9 @@
 
 （2026-09-26 生成，阶段五之后；Q79–Q86 之后更新，2026-09-27）
 
-> **2026-09-29 更新**：本轮主题已定为内容获取的整体设计（原生页按区域、Word 页面层与矢量图、Agent 看图对比），计划与新会话的启动清单在 [v2_content_plan.md](v2_content_plan.md) §0，先读它；下面的通用清单仍适用。
+> **2026-09-29 再更新**：两个团队按同一共同计划 [v2_vision_first_plan.md](v2_vision_first_plan.md)（ce2d75c）独立推进，本方的执行计划与对第二轮审核的处理在 [v2_vision_first_execution.md](v2_vision_first_execution.md)，先读它；另一团队的审核与计划存档在 `docs/audits/2026-09-29/`。
+>
+> **2026-09-29 更新（已被上面取代）**：本轮主题已定为内容获取的整体设计（原生页按区域、Word 页面层与矢量图、Agent 看图对比），计划与新会话的启动清单在 [v2_content_plan.md](v2_content_plan.md) §0，先读它；下面的通用清单仍适用。
 
 复制下面整段作为新会话的第一条消息。
 
