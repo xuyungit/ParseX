@@ -35,9 +35,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pymupdf  # noqa: E402
 
+import p0_contract as contract  # noqa: E402
 import p0_inputs  # noqa: E402
 import v_adapter  # noqa: E402
-from p0_run import callers, run_page  # noqa: E402
+import va_free  # noqa: E402
+from p0_run import MAX_TOKENS, callers, run_page  # noqa: E402
 
 from parserx.config.schema import apply_overrides, load_config  # noqa: E402
 from parserx.eval.metrics import evaluate_markdown  # noqa: E402
@@ -138,15 +140,42 @@ def route(doc: str, m: dict, all_pages: bool) -> dict[int, list[str]]:
     return reasons
 
 
-def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]]) -> dict:
-    out_dir = run_dir / "docs" / config_name / doc
-    ws_dir = run_dir / "work" / config_name / doc
+def free_page(caller, run: int, run_dir: Path, pid: str) -> dict:
+    """V-a: the page written freely (``va_free``), one retry with the problems; stored beside the allocations."""
+    page = p0_inputs.load(run_dir, pid)
+    image = run_dir / "inputs" / page["image"]["file"]
+    prompt, context = va_free.prompt(page), contract.context(page)
+    rounds, feedback, final = [], "", None
+    for round_ in (1, 2):
+        record = caller.ask(image, prompt, context, schema=va_free.SCHEMA, max_tokens=MAX_TOKENS, run=run,
+                            round_=round_, feedback=feedback)
+        checked = va_free.check(record.get("text", ""))
+        rounds.append({"round": round_, **record, "level": checked.level, "problems": checked.problems})
+        if checked.level == "valid" or (round_ == 2 and checked.data):
+            final = {"status": "valid" if checked.level == "valid" else checked.level,
+                     "markdown": checked.data["markdown"]}
+            break
+        feedback = contract.feedback(checked.problems, record.get("text", ""))
+    if final is None:
+        final = {"status": "failed", "markdown": ""}
+    result = {"configuration": caller.name + "-free", "page_id": pid, "rounds": rounds, "final": final,
+              "usd": sum(r.get("usd") or 0 for r in rounds), "seconds": round(sum(r.get("seconds", 0) for r in rounds), 2)}
+    out = run_dir / "results" / f"{caller.name}-free"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{pid}.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    return result
+
+
+def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]], *, free: bool = False) -> dict:
+    label = config_name + ("-free" if free else "")
+    out_dir = run_dir / "docs" / label / doc
+    ws_dir = run_dir / "work" / label / doc
     shutil.rmtree(ws_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     cache = run_dir / "pipeline_cache"
     if not cache.exists():  # the pipeline's own requests start from M's recorded ones
         shutil.copytree(M_RUN / "cache", cache)
-    config = pipeline_config(cache, "read_write", formulas=False)
+    config = pipeline_config(cache, "read_write")  # its formula step takes only pages left to it (a failed allocation)
     started = time.monotonic()
     envelope, _ = workspace_init(p0_inputs.document(doc), ws_dir, config=config)
     if not envelope.ok:
@@ -159,10 +188,21 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
     allocations, applied = {}, {}
     for n in sorted(pages):
         pid = p0_inputs.page_id(doc, n)
-        result = run_page(caller, run, run_dir, pid)
         page = p0_inputs.load(run_dir, pid)
-        applied[n] = v_adapter.apply(ws, p0_inputs.document(doc), n, page, result["final"]["data"],
-                                     model=caller.config.model, dpi=p0_inputs.DPI)
+        if free:
+            result = free_page(caller, run, run_dir, pid)
+            if result["final"]["status"] == "failed":
+                applied[n] = {"left_to_pipeline": 1}
+            else:
+                applied[n] = va_free.apply(ws, p0_inputs.document(doc), n, page, result["final"]["markdown"],
+                                           model=caller.config.model)
+        else:
+            result = run_page(caller, run, run_dir, pid)
+            if result["final"]["status"] == "failed":  # no allocation: the page stays with the pipeline, as in M
+                applied[n] = {"left_to_pipeline": 1}
+            else:
+                applied[n] = v_adapter.apply(ws, p0_inputs.document(doc), n, page, result["final"]["data"],
+                                             model=caller.config.model, dpi=p0_inputs.DPI)
         allocations[n] = {"status": result["final"]["status"], "usd": result["usd"], "seconds": result["seconds"]}
     typography_from_text_layer()
     session = _Session()
@@ -174,7 +214,7 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
         raise RuntimeError(f"{doc}: export refused: {export.failures[:1] or export.result.blockers}")
     markdown = Path(export.result.markdown).read_text(encoding="utf-8")
     cost = session.context.cost(time.monotonic() - started) if session.context else None
-    record = {"document": doc, "configuration": config_name, "routed": {str(n): why for n, why in pages.items()},
+    record = {"document": doc, "configuration": label, "routed": {str(n): why for n, why in pages.items()},
               "allocations": {str(n): a for n, a in allocations.items()}, "applied": {str(n): a for n, a in applied.items()},
               "allocation_usd": _sum(a["usd"] for a in allocations.values()),
               "pipeline_usd": cost.usd if cost else None, "pipeline_requests": cost.requests if cost else None,
@@ -194,6 +234,9 @@ def main() -> None:
     parser.add_argument("--configs", required=True)
     parser.add_argument("--docs", default=",".join(DOCS))
     parser.add_argument("--all", action="store_true", help="send every native page (V-all)")
+    parser.add_argument("--free", action="store_true", help="V-a: the service model writes the pages freely")
+    parser.add_argument("--prepare", action="store_true",
+                        help="routing, page inputs and the pipeline cache only (before configurations run in parallel)")
     parser.add_argument("--allocation-cache", type=Path, help="a P0 run directory whose cache the allocations reuse")
     args = parser.parse_args()
     run_dir = args.run_dir
@@ -210,8 +253,15 @@ def main() -> None:
             routing_path.write_text(json.dumps(routing, ensure_ascii=False, indent=1), encoding="utf-8")
         pages = {int(n): why for n, why in routing[doc]["sent"].items()}
         print(f"{doc}: {len(routing[doc]['native'])} native pages, sent {sorted(pages)}", flush=True)
+        if args.prepare:
+            missing = [(doc, n) for n in pages if not (run_dir / "inputs" / f"{p0_inputs.page_id(doc, n)}.json").exists()]
+            if missing:
+                p0_inputs.build(run_dir, pages=missing)
+            if not (run_dir / "pipeline_cache").exists():
+                shutil.copytree(M_RUN / "cache", run_dir / "pipeline_cache")
+            continue
         for name in args.configs.split(","):
-            record = v_pass(doc, name, run_dir, pages)
+            record = v_pass(doc, name, run_dir, pages, free=args.free)
             expected = (p0_inputs.document(doc).parent / "expected.md").read_text(encoding="utf-8")
             scores = _scores_of(evaluate_markdown(record["markdown"], expected, name=doc))
             print(f"  {name}: {record['status']}, key errors {scores['key_errors']}, char_f1 {scores['char_f1']:.3f}, "

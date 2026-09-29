@@ -51,6 +51,7 @@ from parserx.workspace import Workspace
 from parserx.workspace.queries import HIDDEN, block_unit
 
 ACTOR = "program:vision_first.v"
+FORMULA_DONE = "formula_page"  # tools/formulas.DONE: a page whose formulas are decided
 ENGINE = "vision_allocation"
 CHOICE = "vision_allocation"
 _KINDS = {"title": BlockKind.TEXT, "text": BlockKind.TEXT, "list": BlockKind.TEXT, "other": BlockKind.TEXT,
@@ -116,6 +117,9 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
     decision = lambda reason, **evidence: Decision(  # noqa: E731
         stage=DecisionStage.CONTENT_SOURCE, choice=CHOICE, reason=reason, actor=ACTOR,
         evidence={"model": model, **evidence})
+    # the page is decided: the pipeline's formula step (Q70) leaves it alone (it takes a page whose allocation failed)
+    done = Decision(stage=DecisionStage.CONTENT_SOURCE, choice=FORMULA_DONE, actor=ACTOR, evidence={"by": CHOICE},
+                    reason="the page's formulas are the service model's allocation (vision-first V)")
 
     def new_id() -> str:
         return ids.block_id_pdf(n, _next_block_seq(state, n))
@@ -127,6 +131,7 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
         return _union(boxes) if boxes else (0.0, 0.0, 1.0, 1.0)
 
     def add(block: Block) -> Block:
+        block.decisions.append(done)
         state.blocks.append(block)
         placed.append(block)
         return block

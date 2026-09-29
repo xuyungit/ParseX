@@ -44,9 +44,13 @@ CONFIGS: tuple[tuple[str, str, str, int], ...] = (
     ("deepseek-medium-r2", "deepseek-flash", "medium", 2),  # the second candidate runs twice from contract v2 on
     ("glm-low", "glm-5.3-flashx", "low", 1), ("glm-high", "glm-5.3-flashx", "high", 1),
 )
-MAX_TOKENS = 32768  # the answer's budget, reasoning included: a whole page of blocks
-TIMEOUT_S = 600  # a whole page at medium effort: minutes, not the default 180 s
-STREAM_IDLE_S = 300  # no events while a Responses model reasons: the default 60 s would cut it off
+# The answer's budget, reasoning included (an output cap, not the context window).  P0 used 32 768; DeepSeek at medium
+# spent all of it thinking on formula pages, twice (paper_chn01 p5), and the page failed.  From V on (2026-09-29, user):
+# 131 072 — the largest glm-5.3-flashx accepts ("max_tokens … [1,131072]"); luna, sol and deepseek-flash accept at least
+# 393 216 (probed); about twice the most an answer has needed (65 536 of thinking).  Billed per token generated.
+MAX_TOKENS = 131072
+TIMEOUT_S = 1800  # Chat answers (DeepSeek, GLM) are not streamed: a long thinking run takes many minutes
+STREAM_IDLE_S = 1200  # a Responses model sends no events while it reasons
 PER_MODEL = 4  # concurrent requests per model
 
 
