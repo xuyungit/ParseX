@@ -224,10 +224,10 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_4():
+def test_metric_version_is_2_5():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.4"
+    assert METRIC_VERSION == "2.5"
 
 
 def test_inline_emphasis_is_not_text_and_is_scored_apart():

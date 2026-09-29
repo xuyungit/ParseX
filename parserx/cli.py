@@ -156,6 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
     te_run.add_argument("--force", action="store_true", help="redo results already on disk (requests again)")
     te_run.add_argument("--parserx-run", type=Path, default=Path("eval_runs/2026-09-29_bench2f_fixed_full"),
                         help="frozen run whose cache replays ParserX's fixed pipeline (no requests)")
+    te_run.add_argument("--parserx-name", default=None,
+                        help="result name for that frozen run (default parserx-fixed), e.g. parserx-fixed-R")
     te_score = tool_eval_sub.add_parser("score", help="Score every result and write scores.json and report.md")
     te_view = tool_eval_sub.add_parser("view", help="Serve the comparison page")
     te_view.add_argument("--port", type=int, default=8765)
@@ -420,7 +422,7 @@ def _cmd_tool_eval(args: argparse.Namespace) -> None:
     from parserx.tool_eval import adapters
 
     makers = {
-        "parserx": lambda: adapters.ParserXFixedAdapter(args.parserx_run),
+        "parserx": lambda: adapters.ParserXFixedAdapter(args.parserx_run, name=args.parserx_name),
         "parserx-hybrid": lambda: adapters.ParserXHybridAdapter(),
         "parserx-agent": lambda: adapters.ParserXHybridAdapter(always=True),
         "llamaparse": lambda: adapters.LlamaParseAdapter("agentic"),

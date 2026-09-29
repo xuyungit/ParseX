@@ -56,6 +56,11 @@ def document_scores(result: EvalResult) -> dict:
         "formula_similarity": result.formulas.similarity,
         "key_missing": dict(result.key_content.missing),
         "key_extra": dict(result.key_content.extra),
+        "lost_blocks": result.omission.lost_blocks,
+        "lost_runs": result.omission.lost_runs,
+        "lost_chars": result.omission.lost_chars,
+        "added_runs": result.omission.added_runs,
+        "added_chars": result.omission.added_chars,
         "requests": {
             "ocr": result.cost.ocr_calls,
             "vlm": result.cost.vlm_calls,

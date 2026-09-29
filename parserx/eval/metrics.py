@@ -20,17 +20,21 @@ from parserx.eval.formulas import FormulaMetrics, compute_formula_metrics
 from parserx.eval.key_content import KeyContentMetrics, compute_key_content_errors
 from parserx.eval.formatting import FormatMetrics, compute_format_metrics
 from parserx.eval.normalize import canonicalize, char_sequence
+from parserx.eval.omission import OmissionMetrics, compute_omission
 from parserx.eval.order import OrderMetrics, compute_order_metrics
 from parserx.eval.tables import TableMetrics, compute_table_metrics
 from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.4"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.5"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 # 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
 # 2.4 (2026-09-28, R3): inline emphasis (**, <u>, <b>, <strong>) is not text: dropped from both sides before the
 #     text and table metrics; bold and underline spans are scored apart (``eval/formatting.py``, report only)
+# 2.5 (2026-09-29, vision-first E0, review R5): key content adds signs, super- and subscripts read without NFKC,
+#     attribution of numbers, glyphs without a character, units with their exponent; lost and added content
+#     (``eval/omission.py``)
 
 __all__ = [
     "METRIC_VERSION",
@@ -134,6 +138,7 @@ class EvalResult:
     residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
     formatting: FormatMetrics = field(default_factory=FormatMetrics)  # bold and underline spans (report only)
     formulas: FormulaMetrics = field(default_factory=FormulaMetrics)  # display formulas (report only, Q70 v3 E1)
+    omission: OmissionMetrics = field(default_factory=OmissionMetrics)  # lost and added content (2.5)
     outline: bool = True  # heading scores count in averages and checks (``eval/outline.py``, Q79)
 
 
@@ -389,6 +394,7 @@ def evaluate_markdown(
         residuals=compute_residual_diagnostics(output_md, expected_md),
         formatting=compute_format_metrics(output_md, expected_md),
         formulas=compute_formula_metrics(output_md, expected_md),
+        omission=compute_omission(output_md, expected_md),
     )
 
 

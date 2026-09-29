@@ -395,9 +395,12 @@ class ParserXFixedAdapter(ToolAdapter):
     name = "parserx-fixed"
     label = "ParserX 固定流水线"
 
-    def __init__(self, frozen_run: Path, config_path: Path = REPO_ROOT / "configs" / "regression.yaml"):
+    def __init__(self, frozen_run: Path, config_path: Path = REPO_ROOT / "configs" / "regression.yaml",
+                 name: str | None = None):
         self.frozen_run = Path(frozen_run)
         self.config_path = config_path
+        if name:  # a second arm from another frozen run (e.g. parserx-fixed-R)
+            self.name, self.label = name, f"{self.label}（{self.frozen_run.name}）"
 
     def parse(self, input_path: Path, out_dir: Path) -> ToolRun:
         import re
