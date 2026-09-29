@@ -92,9 +92,9 @@ Fig. 2 Relationship of force and displacement of slab
 
 第 4 期 周正茂,等:预制装配式板梁桥的模型修正方法 625
 
-$$ \left. \begin{aligned} \delta_{ik}^1 &= -\left( \frac{w_i}{\beta_i} - \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i = 1, 2, \cdots, n-1, \\ \delta_{ik}^1 &= \left( \frac{w_i}{\beta_i} + \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i - 1 = 1, 2, \cdots, n-1, \\ \delta_{ik}^1 &= 0, \quad \text{其他情况}; \end{aligned} \right\} \eqno(3) $$
+$$ \left. \begin{aligned} \delta_{ik}^l &= -\left( \frac{w_i}{\beta_i} - \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i = 1, 2, \cdots, n-1, \\ \delta_{ik}^l &= \left( \frac{w_i}{\beta_i} + \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i - 1 = 1, 2, \cdots, n-1, \\ \delta_{ik}^l &= 0, \quad \text{其他情况}; \end{aligned} \right\} \eqno(3) $$
 
-$$ \left. \begin{aligned} f_{ij}^1 &= \left( \frac{w_j}{\beta_j} - e_j \frac{\varphi_j}{\alpha_j} \right), \quad j = i = 1, 2, \cdots, n, \\ f_{ij}^1 &= 0, \quad \text{其他情况}, \end{aligned} \right\} \eqno(4) $$
+$$ \left. \begin{aligned} f_{ij}^l &= \left( \frac{w_j}{\beta_j} - e_j \frac{\varphi_j}{\alpha_j} \right), \quad j = i = 1, 2, \cdots, n, \\ f_{ij}^l &= 0, \quad \text{其他情况}, \end{aligned} \right\} \eqno(4) $$
 
 式中:$w_i$ 为板中心单位竖向荷载作用下的跨中挠度;$\varphi_i$ 为 $b_i/2$ 扭矩作用下的扭转角;$b_i$ 为第 $i$ 块板的宽度;$\beta_i$ 为第 $i$ 块板抗弯刚度修正系数,$\beta_i > 1$ 表示实际刚度比设计刚度大;$\alpha_i$ 为第 $i$ 块板的抗扭刚度修正系数,$\alpha_i > 1$ 表示板实际刚度比设计刚度大.
 
@@ -108,7 +108,7 @@ $w_i$ 和 $\varphi_i$ 的计算可参见文献[19].
 
 铰缝相对位移与铰缝剪力成正比,与铰缝刚度 $k_i$ 成反比,即存在以下关系:
 
-$$ -\frac{g_i}{k_i} = \Delta_{i+1}^1 - \Delta_i^r, \quad i = 1, 2, \cdots, n-1. \eqno(5) $$
+$$ -\frac{g_i}{k_i} = \Delta_{i+1}^l - \Delta_i^r, \quad i = 1, 2, \cdots, n-1. \eqno(5) $$
 
 将 $\delta_{ik}$ 和 $f_{ij}$ 的表达式代入式(1)和式(2),并考虑式(5),整理可得关于 $k_i, \beta_i$ 及 $\alpha_i$ 的表达式.
 
@@ -117,9 +117,9 @@ $$ \boldsymbol{A}_m = \begin{pmatrix} \boldsymbol{A}_{11,m} & \boldsymbol{A}_{12
 
 式中:$m$ 表示试验工况,$m = 1, 2, \cdots, M$,
 
-$$ \begin{aligned} \boldsymbol{A}_{11,m} &= \begin{pmatrix} b_1 \varphi_1 (\Delta_{2,m}^1 - \Delta_{1,m}^r) & & & \boldsymbol{0} \\ b_2 \varphi_2 (\Delta_{2,m}^1 - \Delta_{1,m}^r) & b_2 \varphi_2 (\Delta_{3,m}^1 - \Delta_{2,m}^r) & & \\ & \ddots & \ddots & \\ \boldsymbol{0} & & b_{n-1} \varphi_{n-1} (\Delta_{n-1,m}^1 - \Delta_{n-2,m}^r) & b_{n-1} \varphi_{n-1} (\Delta_{n,m}^1 - \Delta_{n-1,m}^r) \\ & & & b_n \varphi_n (\Delta_{n,m}^1 - \Delta_{n-1,m}^r) \end{pmatrix}, \\ \boldsymbol{A}_{21,m} &= \begin{pmatrix} -2w_1 (\Delta_{2,m}^1 - \Delta_{1,m}^r) & & & \boldsymbol{0} \\ 2w_2 (\Delta_{2,m}^1 - \Delta_{1,m}^r) & -2w_2 (\Delta_{3,m}^1 - \Delta_{2,m}^r) & & \\ & \ddots & \ddots & \\ \boldsymbol{0} & & 2w_{n-1} (\Delta_{n-1,m}^1 - \Delta_{n-2,m}^r) & -2w_{n-1} (\Delta_{n,m}^1 - \Delta_{n-1,m}^r) \\ & & & 2w_n (\Delta_{n,m}^1 - \Delta_{n-1,m}^r) \end{pmatrix}, \end{aligned} $$
+$$ \begin{aligned} \boldsymbol{A}_{11,m} &= \begin{pmatrix} b_1 \varphi_1 (\Delta_{2,m}^l - \Delta_{1,m}^r) & & & \boldsymbol{0} \\ b_2 \varphi_2 (\Delta_{2,m}^l - \Delta_{1,m}^r) & b_2 \varphi_2 (\Delta_{3,m}^l - \Delta_{2,m}^r) & & \\ & \ddots & \ddots & \\ \boldsymbol{0} & & b_{n-1} \varphi_{n-1} (\Delta_{n-1,m}^l - \Delta_{n-2,m}^r) & b_{n-1} \varphi_{n-1} (\Delta_{n,m}^l - \Delta_{n-1,m}^r) \\ & & & b_n \varphi_n (\Delta_{n,m}^l - \Delta_{n-1,m}^r) \end{pmatrix}, \\ \boldsymbol{A}_{21,m} &= \begin{pmatrix} -2w_1 (\Delta_{2,m}^l - \Delta_{1,m}^r) & & & \boldsymbol{0} \\ 2w_2 (\Delta_{2,m}^l - \Delta_{1,m}^r) & -2w_2 (\Delta_{3,m}^l - \Delta_{2,m}^r) & & \\ & \ddots & \ddots & \\ \boldsymbol{0} & & 2w_{n-1} (\Delta_{n-1,m}^l - \Delta_{n-2,m}^r) & -2w_{n-1} (\Delta_{n,m}^l - \Delta_{n-1,m}^r) \\ & & & 2w_n (\Delta_{n,m}^l - \Delta_{n-1,m}^r) \end{pmatrix}, \end{aligned} $$
 
-$$ \begin{aligned} \boldsymbol{A}_{12,m} &= \text{diag}(\Delta_{1,m}^1 - \Delta_{1,m}^r, \Delta_{2,m}^1 - \Delta_{2,m}^r, \cdots, \Delta_{n,m}^1 - \Delta_{n,m}^r), \\ \boldsymbol{A}_{23,m} &= \text{diag}(\Delta_{1,m}^1 + \Delta_{1,m}^r, \Delta_{2,m}^1 + \Delta_{2,m}^r, \cdots, \Delta_{n,m}^1 + \Delta_{n,m}^r), \end{aligned} $$
+$$ \begin{aligned} \boldsymbol{A}_{12,m} &= \text{diag}(\Delta_{1,m}^l - \Delta_{1,m}^r, \Delta_{2,m}^l - \Delta_{2,m}^r, \cdots, \Delta_{n,m}^l - \Delta_{n,m}^r), \\ \boldsymbol{A}_{23,m} &= \text{diag}(\Delta_{1,m}^l + \Delta_{1,m}^r, \Delta_{2,m}^l + \Delta_{2,m}^r, \cdots, \Delta_{n,m}^l + \Delta_{n,m}^r), \end{aligned} $$
 
 并令
 

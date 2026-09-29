@@ -16,6 +16,7 @@ from typing import Iterable
 
 from rapidfuzz.distance import LCSseq, Levenshtein
 
+from parserx.eval.formulas import FormulaMetrics, compute_formula_metrics
 from parserx.eval.key_content import KeyContentMetrics, compute_key_content_errors
 from parserx.eval.formatting import FormatMetrics, compute_format_metrics
 from parserx.eval.normalize import canonicalize, char_sequence
@@ -132,6 +133,7 @@ class EvalResult:
     warnings: list[str] = field(default_factory=list)
     residuals: ResidualDiagnostics = field(default_factory=ResidualDiagnostics)
     formatting: FormatMetrics = field(default_factory=FormatMetrics)  # bold and underline spans (report only)
+    formulas: FormulaMetrics = field(default_factory=FormulaMetrics)  # display formulas (report only, Q70 v3 E1)
     outline: bool = True  # heading scores count in averages and checks (``eval/outline.py``, Q79)
 
 
@@ -386,6 +388,7 @@ def evaluate_markdown(
         warnings=list(warnings or []),
         residuals=compute_residual_diagnostics(output_md, expected_md),
         formatting=compute_format_metrics(output_md, expected_md),
+        formulas=compute_formula_metrics(output_md, expected_md),
     )
 
 

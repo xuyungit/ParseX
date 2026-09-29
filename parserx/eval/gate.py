@@ -51,6 +51,9 @@ def document_scores(result: EvalResult) -> dict:
         "heading_f1": result.headings.f1,
         "outline": result.outline,
         "key_errors": result.key_content.total,
+        "formulas_expected": result.formulas.expected,
+        "formula_pairing": result.formulas.pairing,
+        "formula_similarity": result.formulas.similarity,
         "key_missing": dict(result.key_content.missing),
         "key_extra": dict(result.key_content.extra),
         "requests": {

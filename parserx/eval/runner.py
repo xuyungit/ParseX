@@ -286,6 +286,15 @@ class EvalRunner:
                 f"| **{total_time:.1f}s** | **{total_cost}** |"
             )
 
+        with_formulas = [r for r in results if r.formulas.expected]
+        if with_formulas:  # report only (Q70 v3 E1): not a regression check yet
+            lines.extend(["", "## Display Formulas", "",
+                          "Annotated display formulas paired with the output's by their characters, compared in one "
+                          "notation (`eval/formulas.py`).", "",
+                          "| Document | Formulas | Paired | Similarity |", "|---|---|---|---|"])
+            lines.extend(f"| {r.document_name} | {r.formulas.expected} | {r.formulas.paired} "
+                         f"| {fmt_metric(r.formulas.similarity)} |" for r in with_formulas)
+
         _append_diagnostics(lines, results)
 
         if failed_docs:
