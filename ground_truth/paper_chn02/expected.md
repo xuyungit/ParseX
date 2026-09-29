@@ -1,3 +1,6 @@
+第 50 卷 第 4 期 西 南 交 通 大 学 学 报 Vol. 50 No. 4
+2015 年 8 月 JOURNAL OF SOUTHWEST JIAOTONG UNIVERSITY Aug. 2015
+
 **文章编号**: 0258-2724(2015)04-0623-07　　**DOI**: 10.3969/j.issn.0258-2724.2015.04.008
 
 # 预制装配式板梁桥的模型修正方法
@@ -351,15 +354,15 @@ Tab. 3 Error of hinge joint stiffness in different load cases %
         <th colspan="9">铰缝刚度</th>
     </tr>
 <tr>
-        <th>k1</th>
-        <th>k2</th>
-        <th>k3</th>
-        <th>k4</th>
-        <th>k5</th>
-        <th>k6</th>
-        <th>k7</th>
-        <th>k8</th>
-        <th>k9</th>
+        <th>k₁</th>
+        <th>k₂</th>
+        <th>k₃</th>
+        <th>k₄</th>
+        <th>k₅</th>
+        <th>k₆</th>
+        <th>k₇</th>
+        <th>k₈</th>
+        <th>k₉</th>
     </tr>
   </thead>
   <tbody>
@@ -421,16 +424,16 @@ Tab. 4 Errors of the correction factors of slab stiffness in different load case
   <thead>
     <tr>
         <th>工况</th>
-        <th>β1</th>
-        <th>β2</th>
-        <th>β3</th>
-        <th>β4</th>
-        <th>β5</th>
-        <th>β6</th>
-        <th>β7</th>
-        <th>β8</th>
-        <th>β9</th>
-        <th>β10</th>
+        <th>β₁</th>
+        <th>β₂</th>
+        <th>β₃</th>
+        <th>β₄</th>
+        <th>β₅</th>
+        <th>β₆</th>
+        <th>β₇</th>
+        <th>β₈</th>
+        <th>β₉</th>
+        <th>β₁₀</th>
     </tr>
   </thead>
   <tbody>
@@ -488,16 +491,16 @@ Tab. 4 Errors of the correction factors of slab stiffness in different load case
     </tr>
 <tr>
         <th>工况</th>
-        <th>α1</th>
-        <th>α2</th>
-        <th>α3</th>
-        <th>α4</th>
-        <th>α5</th>
-        <th>α6</th>
-        <th>α7</th>
-        <th>α8</th>
-        <th>α9</th>
-        <th>α10</th>
+        <th>α₁</th>
+        <th>α₂</th>
+        <th>α₃</th>
+        <th>α₄</th>
+        <th>α₅</th>
+        <th>α₆</th>
+        <th>α₇</th>
+        <th>α₈</th>
+        <th>α₉</th>
+        <th>α₁₀</th>
     </tr>
 <tr>
         <td>工况 1 + 2</td>
@@ -592,15 +595,15 @@ Tab. 5 Error of hinge joint stiffness vs. damage degree %
         <th colspan="9">铰缝刚度</th>
     </tr>
 <tr>
-        <th>k1</th>
-        <th>k2</th>
-        <th>k3</th>
-        <th>k4</th>
-        <th>k5</th>
-        <th>k6</th>
-        <th>k7</th>
-        <th>k8</th>
-        <th>k9</th>
+        <th>k₁</th>
+        <th>k₂</th>
+        <th>k₃</th>
+        <th>k₄</th>
+        <th>k₅</th>
+        <th>k₆</th>
+        <th>k₇</th>
+        <th>k₈</th>
+        <th>k₉</th>
     </tr>
   </thead>
   <tbody>
@@ -727,16 +730,16 @@ Tab. 6 Errors of the correction factors of slab stiffness vs. damage degree %
   <thead>
     <tr>
         <th>损伤程度</th>
-        <th>β1</th>
-        <th>β2</th>
-        <th>β3</th>
-        <th>β4</th>
-        <th>β5</th>
-        <th>β6</th>
-        <th>β7</th>
-        <th>β8</th>
-        <th>β9</th>
-        <th>β10</th>
+        <th>β₁</th>
+        <th>β₂</th>
+        <th>β₃</th>
+        <th>β₄</th>
+        <th>β₅</th>
+        <th>β₆</th>
+        <th>β₇</th>
+        <th>β₈</th>
+        <th>β₉</th>
+        <th>β₁₀</th>
     </tr>
   </thead>
   <tbody>
@@ -781,16 +784,16 @@ Tab. 6 Errors of the correction factors of slab stiffness vs. damage degree %
     </tr>
 <tr>
         <th>损伤程度</th>
-        <th>α1</th>
-        <th>α2</th>
-        <th>α3</th>
-        <th>α4</th>
-        <th>α5</th>
-        <th>α6</th>
-        <th>α7</th>
-        <th>α8</th>
-        <th>α9</th>
-        <th>α10</th>
+        <th>α₁</th>
+        <th>α₂</th>
+        <th>α₃</th>
+        <th>α₄</th>
+        <th>α₅</th>
+        <th>α₆</th>
+        <th>α₇</th>
+        <th>α₈</th>
+        <th>α₉</th>
+        <th>α₁₀</th>
     </tr>
 <tr>
         <td>大损伤</td>

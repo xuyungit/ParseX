@@ -32,7 +32,7 @@ from parserx.content.text import join_wrapped
 BLOCK_TYPES = ("title", "text", "list", "formula", "table", "figure", "caption", "footnote", "other")
 PART_KINDS = ("copy", "write", "table")
 EXCLUDED = "excluded"
-CONTRACT_VERSION = 2  # 1: P0 (508693c); 2: before V — scripts on copy/table, write holds only its lines, Q141
+CONTRACT_VERSION = 3  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142)
 UNREADABLE = "〔?〕"  # the visible mark of a glyph no one could read (execution plan §1: never deleted, never guessed)
 
 _NULLABLE = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
@@ -94,7 +94,7 @@ INSTRUCTIONS = """你在整理文档的一页，写成供大模型阅读的 Mark
 输出一个 JSON 对象：
 - blocks：按阅读顺序排列的块。每块有 id（B1、B2……）、type（title 标题、text 正文段落、list 列表项、formula 行间公式、table 表格、figure 图、caption 图表标题或图注、footnote 脚注、other 其他）、level（标题按版面估计的层级 1–6，不是标题填 null）、region（图，以及没有文字行可引用的内容，给出它在页面图上的框；其他填 null）、parts（块的内容，按顺序相接）。
 - parts 的每一项有 kind、lines、text、engine、scripts（write 的 scripts 填 false）：
-  - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序原样放入这些行的文字，同一块里的行按换行接起来。scripts 为 true 时，程序把这些行的上下标候选（各行的 scripts 栏）写成上下标；只在这些候选与图上一致时用 true，有错的候选就用 false，需要时改用 write。
+  - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序原样放入这些行的文字，同一块里的行按换行接起来。scripts 为 true 时，程序把这些行的上下标候选（各行的 scripts 栏）写成上下标；只用于引用角标、单位的指数（m²）这类单独的上下标，且候选与图上一致时才用 true。行里有斜体的变量或式子（x、b_i、3n−1 这类数学符号）就用 write 照图把整行写成行内公式 $…$，不要用 scripts 照抄。
   - write：text 是你照图写的内容，lines 是它替换的行，engine 是参考了的引擎条目（没有就填空列表）。text 只写 lines 里这些行的内容：这些行的内容都要写进去，不能丢；它前后已经 copy 的字不要再写一遍。只在复制不了时写：含公式或上下标的行整行重写（行内公式写成 $…$；行间公式的块 type 为 formula，text 只写 LaTeX，不加 $$，公式编号保留，可写 \\tag{{n}}；每个带编号的行间公式单独成一块）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，式子的写法也照图（图上是 (…)^{{-1}} 就不要改写成分式），不总结、不翻译、不补全；看不清的地方写 〔?〕 并记入 unresolved，不要猜——浅得读不出、模糊的文字不要写成内容。
   - table：lines 是整张表的行，表格由程序从文字层建出。scripts 为 true 时，只由一行组成的格子按该行的上下标候选写上下标。表里有候选也表达不了的上下标或公式时，可以改用 write 写出 HTML 表格，lines 仍是整张表的行。
 - aside：不放进正文的行。每项给 lines、reason（页眉、页脚、页码、图内文字等）、to（去处：excluded 表示不输出；或接收它的块 id，例如图内文字给那张图的块）。只有各页重复出现的页眉、页脚、页码、装饰线用 excluded；首页的刊名、卷期、日期、文章编号、DOI 等只出现一次的信息是正文内容，要输出。
