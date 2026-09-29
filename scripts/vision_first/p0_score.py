@@ -79,8 +79,40 @@ class Pages:
                 out = BENCH / tool / doc / "output.md"
                 if out.exists():
                     arms[arm] = split_pages(out.read_text(encoding="utf-8"), texts)
-            self._docs[doc] = {"texts": texts, "expected": split_pages(expected_of(doc), texts), "arms": arms}
+            self._docs[doc] = {"texts": texts, "expected": split_pages(expected_of(doc), texts), "arms": arms,
+                               "local": local_texts(document(doc)), "keys": furniture_keys(document(doc))}
         return self._docs[doc]
+
+
+def local_texts(source: Path) -> list[str]:
+    """Each page's local reading alone (RapidOCR at the evaluation's resolution; derived cache)."""
+    import pymupdf
+
+    from parserx.content.scan import render_page_at
+    from parserx.eval.pages import READING_DPI
+    from parserx.reading.local import LocalReader, read_cached
+
+    reader, out = LocalReader(), []
+    with pymupdf.open(source) as doc:
+        for n in range(1, doc.page_count + 1):
+            png, _, _ = render_page_at(doc, n, READING_DPI)
+            out.append("\n".join(text for _, text, _ in read_cached(reader, png, _derived_cache())))
+    return out
+
+
+def furniture_key(text: str) -> str:
+    """A line as it repeats from page to page: digits (page numbers, dates), spaces and unmapped glyphs dropped."""
+    return "".join(ch for ch in unicodedata.normalize("NFKC", text) if not (ch.isdigit() or ch.isspace() or contract.unmapped(ch)))
+
+
+def furniture_keys(source: Path) -> list[set[str]]:
+    """Per page, the keys of its text-layer lines."""
+    import pymupdf
+
+    from parserx.content.pdf_native import _lines
+
+    with pymupdf.open(source) as doc:
+        return [{furniture_key(line.text) for line in _lines(page)} for page in doc]
 
 
 BAG_KINDS = ("number", "unit", "sign", "script")
@@ -97,10 +129,16 @@ def score(md: str, expected: str, name: str) -> dict:
     return scores
 
 
-def written_checks(data: dict, page: dict, seen_text: str) -> list[dict]:
-    """Every write part against the lines it replaces (and, with none, against the page's local reading)."""
+_EXACT = re.compile(r"[a-z0-9\u03b1-\u03c9]")  # normalized Latin, digits, Greek: the text layer holds them exactly
+
+
+def written_checks(data: dict, page: dict, seen_text: str, local_text: str = "") -> list[dict]:
+    """Every write part against the lines it replaces (and, with none, against the page's local reading).  A missing
+    character other than a Latin or Greek letter or a digit counts only when the local reading also sees it: one no
+    one else sees is a mis-mapped glyph of the text layer (Q70, ``tools/formulas._lost``), listed apart."""
     text_of = {f"L{k}": line["text"] for k, line in enumerate(page["lines"], 1)}
     seen = Counter(normalize(seen_text))
+    local = Counter(normalize(local_text))
     seen_numbers = numbers(seen_text)
     out = []
     for block in data["blocks"]:
@@ -115,12 +153,53 @@ def written_checks(data: dict, page: dict, seen_text: str) -> list[dict]:
                 original = "\n".join(text_of.get(n, "") for n in names)
                 item["numbers_missing"] = dict(numbers(original) - numbers(written))
                 item["numbers_added"] = dict(numbers(written) - numbers(original))
-                item["chars_missing"] = "".join(sorted((letters(original) - letters(written)).elements()))
+                missing = sorted((letters(original) - letters(written)).elements())
+                item["chars_missing"] = "".join(ch for ch in missing if _EXACT.fullmatch(ch) or local[ch])
+                item["glyphs_unseen"] = "".join(ch for ch in missing if not (_EXACT.fullmatch(ch) or local[ch]))
                 item["chars_added"] = "".join(sorted((letters(written) - letters(original)).elements()))
             else:  # content no text line holds: is it on the page (local reading)?
                 item["numbers_unseen"] = dict(numbers(written) - seen_numbers)
                 item["chars_unseen"] = "".join(sorted((letters(written) - seen).elements()))
             out.append(item)
+    return out
+
+
+def signals(data: dict, page: dict, keys: list[set[str]], n: int) -> dict[str, list[str]]:
+    """Review items the program can raise from the allocation (only pointers, the output is not changed; Q56):
+
+    - ``aside_unrepeated``: a line excluded as page furniture that no other page of the document repeats (running
+      heads, feet and page numbers repeat; digits are not compared);
+    - ``copied_scripts``: a line copied (or in a table) without its script candidates, or with glyphs the text layer
+      does not map — what the model may have needed to write;
+    - ``possible_duplicate``: a written part whose added letters and digits are all in the copied lines next to the
+      lines it replaces."""
+    lines = page["lines"]
+    others = set().union(*(k for i, k in enumerate(keys, 1) if i != n)) if len(keys) > 1 else set()
+    out: dict[str, list[str]] = {"aside_unrepeated": [], "copied_scripts": [], "possible_duplicate": []}
+    for item in data.get("aside", []):
+        if item["to"] != contract.EXCLUDED:
+            continue
+        for name in (x for ref in item["lines"] for x in contract._names(ref)):
+            key = furniture_key(lines[int(name[1:]) - 1]["text"])
+            if key and key not in others:
+                out["aside_unrepeated"].append(name)
+    where = contract.destinations(data, page)
+    for block in data["blocks"]:
+        for part in block["parts"]:
+            names = [x for ref in part["lines"] for x in contract._names(ref) if 1 <= int(x[1:]) <= len(lines)]
+            if part["kind"] in ("copy", "table"):
+                out["copied_scripts"] += [x for x in names if lines[int(x[1:]) - 1].get("odd")
+                                          or (lines[int(x[1:]) - 1].get("scripts") and not part.get("scripts"))]
+            elif names:
+                original = "\n".join(lines[int(x[1:]) - 1]["text"] for x in names)
+                added = letters(part["text"]) - letters(original)
+                if sum(added.values()) < 2:
+                    continue
+                nums = sorted(int(x[1:]) for x in names)
+                near = [k for k in (nums[0] - 2, nums[0] - 1, nums[-1] + 1, nums[-1] + 2)
+                        if 1 <= k <= len(lines) and where.get(f"L{k}", "").startswith("copy:")]
+                if near and not added - letters("\n".join(lines[k - 1]["text"] for k in near)):
+                    out["possible_duplicate"].append(f"{block['id']}:{','.join(contract.compress(nums))}")
     return out
 
 
@@ -175,7 +254,8 @@ def run_score(run_dir: Path) -> dict:
                 "first_allocation": allocation_of(first.data if first.level in ("invariants", "valid") else None, page),
                 "repairs": result["final"]["repairs"],
                 "destinations": destination_shares(result, page),
-                "written": written_checks(result["final"]["data"], page, info["texts"][n - 1]),
+                "written": written_checks(result["final"]["data"], page, info["texts"][n - 1], info["local"][n - 1]),
+                "signals": signals(result["final"]["data"], page, info["keys"], n),
                 "unresolved": result["final"]["data"].get("unresolved", []),
                 "score": score(result["markdown"], expected, f"{pid}:{name}"),
                 "tokens": result["tokens"], "seconds": result["seconds"], "usd": result["usd"],
@@ -268,6 +348,15 @@ def summary(table: dict) -> str:
                    f"{sum(bool(w['numbers_missing'] or w['numbers_added']) for w in over)} | "
                    f"{sum(bool(w['chars_missing'] or w['chars_added']) for w in over)} | {len(free)} | "
                    f"{sum(bool(w['numbers_unseen']) for w in free)} |")
+    out += ["", "## Review signals raised from the allocation (summed over pages)", "",
+            "| configuration | excluded, not repeated | copied with candidates or odd glyphs | possible duplicate | "
+            "text-layer glyphs no reading sees |", "|---|---|---|---|---|"]
+    for name in names:
+        rows = [p["configs"][name] for p in table["pages"].values() if name in p["configs"]]
+        sig = lambda k: sum(len(r["signals"][k]) for r in rows)  # noqa: E731
+        unseen = sum(bool(w.get("glyphs_unseen")) for r in rows for w in r["written"])
+        out.append(f"| {name} | {sig('aside_unrepeated')} | {sig('copied_scripts')} | {sig('possible_duplicate')} | "
+                   f"{unseen} parts |")
     out += ["", "## Tokens, seconds, cost per page (mean over the ten pages)", "",
             "| configuration | input | cached | output | reasoning | seconds | $ / page |", "|---|---|---|---|---|---|---|"]
     for name in names:

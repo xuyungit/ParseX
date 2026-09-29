@@ -16,8 +16,8 @@ def _page(n=6, engine=None, tables=None):
             "engine": engine or [], "tables": tables or []}
 
 
-def _part(kind, lines, text=""):
-    return {"kind": kind, "lines": lines, "text": text, "engine": []}
+def _part(kind, lines, text="", scripts=False):
+    return {"kind": kind, "lines": lines, "text": text, "engine": [], "scripts": scripts}
 
 
 def _answer(**over):
@@ -102,3 +102,15 @@ def test_a_grid_holding_two_tables_the_model_split_is_rendered_once():
         {"id": "B2", "type": "table", "level": None, "region": None, "parts": [_part("table", ["L3-L4"])]}])
     md = c.render(answer, page)
     assert md.count("<table>") == 1 and "接着第二行" not in md
+
+
+def test_scripts_write_the_candidates_in_copied_lines_and_single_line_cells():
+    page = _page(tables=[{"block": "t1", "lines": ["L4", "L5"], "html": "<table><tr><td>x2 +  y = 1</td><td>(1)</td></tr></table>"}])
+    page["lines"][3]["_scripted"] = "x<sup>2</sup> + y = 1"
+    answer = _answer(blocks=[
+        {"id": "B1", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4"], scripts=True)]},
+        {"id": "B2", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4"])]},
+        {"id": "B3", "type": "table", "level": None, "region": None, "parts": [_part("table", ["L4-L5"], scripts=True)]}])
+    md = c.render(answer, page)
+    assert md.count("x<sup>2</sup> + y = 1") == 2  # the copy with scripts and the cell
+    assert "\n\nx2 + y = 1\n\n" in md  # the copy without

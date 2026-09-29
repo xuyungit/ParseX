@@ -19,6 +19,7 @@ its place by line order), every repair listed.  ``render`` turns an allocation i
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass, field
@@ -31,14 +32,15 @@ from parserx.content.text import join_wrapped
 BLOCK_TYPES = ("title", "text", "list", "formula", "table", "figure", "caption", "footnote", "other")
 PART_KINDS = ("copy", "write", "table")
 EXCLUDED = "excluded"
+CONTRACT_VERSION = 2  # 1: P0 (508693c); 2: before V — scripts on copy/table, write holds only its lines, Q141
 UNREADABLE = "〔?〕"  # the visible mark of a glyph no one could read (execution plan §1: never deleted, never guessed)
 
 _NULLABLE = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
 _STRINGS = {"type": "array", "items": {"type": "string"}}
 PART_SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["kind", "lines", "text", "engine"],
+    "type": "object", "additionalProperties": False, "required": ["kind", "lines", "text", "engine", "scripts"],
     "properties": {"kind": {"type": "string", "enum": list(PART_KINDS)}, "lines": _STRINGS, "text": {"type": "string"},
-                   "engine": _STRINGS},
+                   "engine": _STRINGS, "scripts": {"type": "boolean"}},
 }
 BLOCK_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["id", "type", "level", "region", "parts"],
@@ -64,18 +66,18 @@ _VALIDATOR = Draft202012Validator(SCHEMA)
 SAMPLE = {
     "blocks": [
         {"id": "B1", "type": "title", "level": 2, "region": None,
-         "parts": [{"kind": "copy", "lines": ["L5"], "text": "", "engine": []}]},
+         "parts": [{"kind": "copy", "lines": ["L5"], "text": "", "engine": [], "scripts": False}]},
         {"id": "B2", "type": "text", "level": None, "region": None, "parts": [
-            {"kind": "copy", "lines": ["L6-L9"], "text": "", "engine": []},
-            {"kind": "write", "lines": ["L10", "L11"], "text": "其中 $x_{i}^{2}$ 为第 $i$ 个测点的位移，", "engine": ["E2"]},
-            {"kind": "copy", "lines": ["L12-L14"], "text": "", "engine": []}]},
+            {"kind": "copy", "lines": ["L6-L9"], "text": "", "engine": [], "scripts": False},
+            {"kind": "write", "lines": ["L10", "L11"], "text": "其中 $x_{i}^{2}$ 为第 $i$ 个测点的位移，", "engine": ["E2"], "scripts": False},
+            {"kind": "copy", "lines": ["L12-L14"], "text": "", "engine": [], "scripts": True}]},
         {"id": "B3", "type": "formula", "level": None, "region": None,
-         "parts": [{"kind": "write", "lines": ["L15-L31"], "text": "\\Delta = \\frac{a}{b} \\tag{3}", "engine": ["E3"]}]},
+         "parts": [{"kind": "write", "lines": ["L15-L31"], "text": "\\Delta = \\frac{a}{b} \\tag{3}", "engine": ["E3"], "scripts": False}]},
         {"id": "B4", "type": "figure", "level": None, "region": [120, 800, 1100, 1250], "parts": []},
         {"id": "B5", "type": "caption", "level": None, "region": None,
-         "parts": [{"kind": "copy", "lines": ["L40"], "text": "", "engine": []}]},
+         "parts": [{"kind": "copy", "lines": ["L40"], "text": "", "engine": [], "scripts": False}]},
         {"id": "B6", "type": "table", "level": None, "region": None,
-         "parts": [{"kind": "table", "lines": ["L41-L80"], "text": "", "engine": []}]},
+         "parts": [{"kind": "table", "lines": ["L41-L80"], "text": "", "engine": [], "scripts": False}]},
     ],
     "aside": [{"lines": ["L1-L4"], "reason": "页眉", "to": "excluded"},
               {"lines": ["L32-L39"], "reason": "图内文字", "to": "B4"}],
@@ -91,11 +93,11 @@ INSTRUCTIONS = """你在整理文档的一页，写成供大模型阅读的 Mark
 
 输出一个 JSON 对象：
 - blocks：按阅读顺序排列的块。每块有 id（B1、B2……）、type（title 标题、text 正文段落、list 列表项、formula 行间公式、table 表格、figure 图、caption 图表标题或图注、footnote 脚注、other 其他）、level（标题按版面估计的层级 1–6，不是标题填 null）、region（图，以及没有文字行可引用的内容，给出它在页面图上的框；其他填 null）、parts（块的内容，按顺序相接）。
-- parts 的每一项有 kind、lines、text、engine：
-  - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序原样放入这些行的文字，同一块里的行按换行接起来。
-  - write：text 是你照图写的内容，lines 是它替换的行（这些行的内容都要写进 text，不能丢），engine 是参考了的引擎条目（没有就填空列表）。只在复制不了时写：含公式或上下标的行整行重写（行内公式写成 $…$；行间公式的块 type 为 formula，text 只写 LaTeX，不加 $$，公式编号保留，可写 \\tag{{n}}）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，不改写、不总结、不翻译、不补全；看不清的地方写 〔?〕 并记入 unresolved。
-  - table：lines 是整张表的行，表格由程序从文字层建出。表里有文字层表达不了的上下标或公式时，可以改用 write 写出 HTML 表格，lines 仍是整张表的行。
-- aside：不放进正文的行。每项给 lines、reason（页眉、页脚、页码、图内文字等）、to（去处：excluded 表示不输出；或接收它的块 id，例如图内文字给那张图的块）。
+- parts 的每一项有 kind、lines、text、engine、scripts（write 的 scripts 填 false）：
+  - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序原样放入这些行的文字，同一块里的行按换行接起来。scripts 为 true 时，程序把这些行的上下标候选（各行的 scripts 栏）写成上下标；只在这些候选与图上一致时用 true，有错的候选就用 false，需要时改用 write。
+  - write：text 是你照图写的内容，lines 是它替换的行，engine 是参考了的引擎条目（没有就填空列表）。text 只写 lines 里这些行的内容：这些行的内容都要写进去，不能丢；它前后已经 copy 的字不要再写一遍。只在复制不了时写：含公式或上下标的行整行重写（行内公式写成 $…$；行间公式的块 type 为 formula，text 只写 LaTeX，不加 $$，公式编号保留，可写 \\tag{{n}}；每个带编号的行间公式单独成一块）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，式子的写法也照图（图上是 (…)^{{-1}} 就不要改写成分式），不总结、不翻译、不补全；看不清的地方写 〔?〕 并记入 unresolved，不要猜——浅得读不出、模糊的文字不要写成内容。
+  - table：lines 是整张表的行，表格由程序从文字层建出。scripts 为 true 时，只由一行组成的格子按该行的上下标候选写上下标。表里有候选也表达不了的上下标或公式时，可以改用 write 写出 HTML 表格，lines 仍是整张表的行。
+- aside：不放进正文的行。每项给 lines、reason（页眉、页脚、页码、图内文字等）、to（去处：excluded 表示不输出；或接收它的块 id，例如图内文字给那张图的块）。只有各页重复出现的页眉、页脚、页码、装饰线用 excluded；首页的刊名、卷期、日期、文章编号、DOI 等只出现一次的信息是正文内容，要输出。
 - unresolved：看不清、定不下的地方，每项给 where（行号或块 id）与 what。
 
 硬性要求：文字层的每一行恰好出现一次——在某个 copy、write 或 table 的 lines 里，或在 aside 的 lines 里。引用的行号、引擎条目、块 id 都必须存在。只输出 JSON。
@@ -334,7 +336,7 @@ def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
     for run in _runs(missing):
         after = _holder(data, run[0])
         block = {"id": _free_id(data), "type": "text", "level": None, "region": None, "repaired": True,
-                 "parts": [{"kind": "copy", "lines": [f"L{n}" for n in run], "text": "", "engine": []}]}
+                 "parts": [{"kind": "copy", "lines": [f"L{n}" for n in run], "text": "", "engine": [], "scripts": False}]}
         data["blocks"].insert(after + 1, block)
         done.append(f"补回没有分配的 {', '.join(compress(run))}：复制为 {block['id']}，放在 "
                     + (data['blocks'][after]['id'] + " 之后" if after >= 0 else "最前"))
@@ -378,7 +380,7 @@ def fallback(page: dict) -> dict:
     for k, line in enumerate(page["lines"], 1):
         if line.get("_blk") != previous or not blocks:
             blocks.append({"id": f"B{len(blocks) + 1}", "type": "text", "level": None, "region": None,
-                           "repaired": True, "parts": [{"kind": "copy", "lines": [], "text": "", "engine": []}]})
+                           "repaired": True, "parts": [{"kind": "copy", "lines": [], "text": "", "engine": [], "scripts": False}]})
             previous = line.get("_blk")
         blocks[-1]["parts"][0]["lines"].append(f"L{k}")
     return {"blocks": blocks, "aside": [], "unresolved": []}
@@ -395,6 +397,7 @@ def visible(text: str) -> str:
 def render(data: dict, page: dict) -> str:
     """The page's Markdown."""
     lines = {f"L{k}": line["text"] for k, line in enumerate(page["lines"], 1)}
+    scripted = {f"L{k}": line.get("_scripted", line["text"]) for k, line in enumerate(page["lines"], 1)}
     tables = page.get("tables") or []
     used_tables: set[str] = set()
     out: list[str] = []
@@ -411,8 +414,9 @@ def render(data: dict, page: dict) -> str:
             continue
         pieces: list[str] = []
         for part in block["parts"]:
-            if part["kind"] == "copy":
-                pieces.append(join_wrapped([lines[r] for ref in part["lines"] for r in _names(ref) if r in lines]))
+            if part["kind"] == "copy":  # with "scripts", the lines as the program's script candidates write them
+                source = scripted if part.get("scripts") else lines
+                pieces.append(join_wrapped([source[r] for ref in part["lines"] for r in _names(ref) if r in source]))
             elif part["kind"] == "write":
                 pieces.append(part["text"].strip())
             else:
@@ -421,7 +425,7 @@ def render(data: dict, page: dict) -> str:
                 for t in grids:
                     if t["block"] not in used_tables:
                         used_tables.add(t["block"])
-                        out.append(t["html"])
+                        out.append(_scripted_cells(t["html"], refs, page) if part.get("scripts") else t["html"])
                 rest = sorted(refs - {r for t in grids for r in t["lines"]}, key=lambda r: int(r[1:]))
                 if rest and grids:  # lines the model put in the table that the extraction's grid does not hold
                     out.append(join_wrapped([lines[r] for r in rest if r in lines]))
@@ -439,6 +443,26 @@ def render(data: dict, page: dict) -> str:
         else:
             out.append(text)
     return "\n\n".join(out) + "\n"
+
+
+_CELL = re.compile(r"(<t[dh][^>]*>)([^<]*)(</t[dh]>)")
+
+
+def _scripted_cells(table_html: str, names: set[str], page: dict) -> str:
+    """The grid with each cell that is exactly one of *names*' lines (spacing aside: the grid spaces a cell's glyphs
+    its own way) written with that line's script candidates."""
+    todo = {}
+    for k, line in enumerate(page["lines"], 1):
+        if f"L{k}" in names and "_scripted" in line:
+            todo.setdefault("".join(line["text"].split()), []).append(
+                "".join(part if part.startswith("<") else html.escape(part, quote=False)
+                        for part in re.split(r"(</?su[pb]>)", line["_scripted"])))
+
+    def cell(match: re.Match) -> str:
+        key = "".join(html.unescape(match.group(2)).split())
+        return match.group(1) + todo[key].pop(0) + match.group(3) if todo.get(key) else match.group(0)
+
+    return _CELL.sub(cell, table_html)
 
 
 def _names(ref: str) -> list[str]:

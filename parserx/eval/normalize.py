@@ -116,7 +116,31 @@ def grid_text(grid: TableGrid) -> str:
     return "\n".join(lines)
 
 
+_SCRIPT_FORMS: dict[str, dict[str, str]] = {"sup": {}, "sub": {}}  # base character → its super- / subscript form
+for _cp in range(0x80, 0x10000):
+    _decomposition = unicodedata.decomposition(chr(_cp))
+    for _kind, _mark in (("sup", "<super>"), ("sub", "<sub>")):
+        if _decomposition.startswith(_mark):
+            _SCRIPT_FORMS[_kind].setdefault(unicodedata.normalize("NFKC", chr(_cp)), chr(_cp))
+_HTML_TABLE_RE = re.compile(r"<table\b.*?</table>", re.IGNORECASE | re.DOTALL)
+_HTML_SCRIPT_RE = re.compile(r"<(sup|sub)>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
+
+
+def _cell_scripts(table: str) -> str:
+    """HTML super- and subscripts of a table written so the cell text keeps them (the grid keeps text, not tags):
+    their Unicode forms where every character has one (NFKC folds them back for the text metrics), else LaTeX."""
+    def written(match: re.Match) -> str:
+        kind, body = match.group(1).lower(), _TAG_RE.sub("", match.group(2))
+        forms = _SCRIPT_FORMS[kind]
+        if body and all(ch in forms for ch in body):
+            return "".join(forms[ch] for ch in body)
+        return f"${'^' if kind == 'sup' else '_'}{{{body}}}$"
+
+    return _HTML_SCRIPT_RE.sub(written, table)
+
+
 def _flatten_tables(text: str) -> str:
+    text = _HTML_TABLE_RE.sub(lambda m: _cell_scripts(m.group(0)), text)
     parts: list[str] = []
     cursor = 0
     for span in find_tables(text):

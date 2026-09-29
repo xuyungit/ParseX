@@ -41,6 +41,7 @@ CONFIGS: tuple[tuple[str, str, str, int], ...] = (
     ("luna-medium-r1", "gpt-6-luna", "medium", 1), ("luna-medium-r2", "gpt-6-luna", "medium", 2),
     ("sol-low", "gpt-6-sol", "low", 1), ("sol-medium", "gpt-6-sol", "medium", 1),
     ("deepseek-low", "deepseek-flash", "low", 1), ("deepseek-medium", "deepseek-flash", "medium", 1),
+    ("deepseek-medium-r2", "deepseek-flash", "medium", 2),  # the second candidate runs twice from contract v2 on
     ("glm-low", "glm-5.3-flashx", "low", 1), ("glm-high", "glm-5.3-flashx", "high", 1),
 )
 MAX_TOKENS = 32768  # the answer's budget, reasoning included: a whole page of blocks
@@ -105,7 +106,8 @@ def run_page(caller: Caller, run: int, run_dir: Path, pid: str) -> dict:
             final = {"status": "failed", "data": contract.fallback(page), "repairs": ["整页按文字层复制（回答不能用）"],
                      "from_round": None}
     markdown = contract.render(final["data"], page)
-    result = {"configuration": caller.name, "page_id": pid, "model": caller.config.model,
+    result = {"configuration": caller.name, "contract": contract.CONTRACT_VERSION, "page_id": pid,
+              "model": caller.config.model,
               "identity": caller.identity(), "run": run, "rounds": rounds, "final": final,
               "destinations": contract.destinations(final["data"], page), "markdown": markdown,
               "usd": _sum(r.get("usd") for r in rounds),
@@ -180,7 +182,7 @@ def manifest(run_dir: Path) -> Path:
         gt_dirs=[REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public"], docs=sorted({d for d, _ in PAGES}),
         models={"service": models, "agent": None}, tools=[], cache={"mode": "read_write", "dir": str(run_dir / "cache")},
         prompts=prompts, outputs=outputs,
-        notes=["pages: " + ", ".join(pids),
+        notes=[f"contract version {contract.CONTRACT_VERSION} (p0_contract.CONTRACT_VERSION)", "pages: " + ", ".join(pids),
                "inputs: <run-dir>/inputs (page render 150 dpi, text-layer lines, script candidates, engine entries of "
                "the frozen run 2026-09-29_contentA_fixed_full's cache, detector regions)",
                "outputs are keyed <configuration>/<page>; results/<configuration>/<page>.json holds every round"])

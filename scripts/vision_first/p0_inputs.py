@@ -40,7 +40,8 @@ import pymupdf  # noqa: E402
 from parserx.cache import ResponseCache  # noqa: E402
 from parserx.config.schema import load_config  # noqa: E402
 from parserx.content import scan  # noqa: E402
-from parserx.content.pdf_native import _line_typography, _lines, extract_pdf  # noqa: E402
+from parserx.content.pdf_native import _is_cjk_or_fullwidth_punct, _line_typography, _lines, extract_pdf  # noqa: E402
+from parserx.content.text import normalize_fullwidth_ascii, unify_radicals  # noqa: E402
 from parserx.ir.enums import BlockKind, PageStatus  # noqa: E402
 from parserx.ir.state import PageState  # noqa: E402
 from parserx.layout.detector import RapidLayoutDetector, detect_cached  # noqa: E402
@@ -161,9 +162,11 @@ def line_records(page: pymupdf.Page, scale: float) -> list[dict]:
         if glyphs_odd:
             record["odd"] = glyphs_odd
         records.append(record)
-    for record, found in zip(records, script_candidates(raws)):
+    found_runs, glyph_kinds = script_candidates(raws)
+    for record, raw, found, kinds in zip(records, raws, found_runs, glyph_kinds):
         if found:
             record["scripts"] = found
+            record["_scripted"] = scripted_text(raw, kinds)  # what copy with "scripts": true places
     return records
 
 
@@ -171,12 +174,13 @@ def _px(rect: pymupdf.Rect, scale: float) -> list[int]:
     return [round(rect.x0 * scale), round(rect.y0 * scale), round(rect.x1 * scale), round(rect.y1 * scale)]
 
 
-def script_candidates(raws: list[RawLine]) -> list[list[dict]]:
+def script_candidates(raws: list[RawLine]) -> tuple[list[list[dict]], list[list[str]]]:
     """Per line: its runs of glyphs set smaller than the glyph they are attached to, with their baseline shifted
     ({"base": that glyph, "t": the run, "kind": "sup" | "sub"}), judged in the visual row — the horizontal lines
     overlapping it whose main baseline is within ``ROW_SHIFT`` — because the text layer often keeps a raised or
-    lowered glyph as a line of its own."""
+    lowered glyph as a line of its own.  Also, per line, the kind of each of its glyphs ("sup", "sub" or "")."""
     glyphs, mains = [], []  # per line: [(char, x0, x1, size, baseline)], (main baseline, main size)
+    glyph_kinds: list[list[str]] = []
     for raw in raws:
         horizontal = abs(raw.direction[0] - 1.0) < 0.01 and abs(raw.direction[1]) < 0.01
         gs = [(ch.get("c", ""), ch["bbox"][0], ch["bbox"][2], span.get("size", 0.0), ch["origin"][1],
@@ -195,13 +199,17 @@ def script_candidates(raws: list[RawLine]) -> list[list[dict]]:
     for i, own in enumerate(glyphs):
         if not own:
             out.append([])
+            glyph_kinds.append([])
             continue
-        row = sorted(((g[:5], j == i) for j, gs in enumerate(glyphs) if gs and same_row(i, j) for g in gs),
-                     key=lambda item: (item[0][1], item[0][2]))
-        kinds = _kinds([g for g, _ in row])
+        row = sorted(((g[:5], j == i, k) for j, gs in enumerate(glyphs) if gs and same_row(i, j)
+                      for k, g in enumerate(gs)), key=lambda item: (item[0][1], item[0][2]))
+        kinds = _kinds([g for g, _, _ in row])
         found: list[dict] = []
+        own_kinds = [""] * len(own)
         previous = None
-        for (g, mine), (kind, base) in zip(row, kinds):
+        for (g, mine, k), (kind, base) in zip(row, kinds):
+            if mine:
+                own_kinds[k] = kind
             if not mine or not kind:
                 previous = None
                 continue
@@ -211,7 +219,35 @@ def script_candidates(raws: list[RawLine]) -> list[list[dict]]:
                 found.append({"base": base, "t": g[0], "kind": kind})
             previous = (kind, base)
         out.append([f for f in found if f["t"].strip()])
-    return out
+        glyph_kinds.append(own_kinds)
+    return out, glyph_kinds
+
+
+def scripted_text(raw: RawLine, kinds: list[str]) -> str:
+    """The line as the pipeline reads it (``pdf_native._reconstruct_line_from_chars``: spaces at gaps, none between
+    wide characters; radicals unified, full width folded), its candidate scripts written ``<sup>…</sup>`` /
+    ``<sub>…</sub>`` — what a ``copy`` part taking the candidates places."""
+    chars = [(unify_radicals(ch.get("c", "")), ch["bbox"][0], ch["bbox"][2], span.get("size", 12.0), kind)
+             for (span, ch), kind in zip(((span, ch) for span in raw.spans for ch in span.get("chars", ())), kinds)]
+    chars = [c for c in chars if c[0]]
+    pieces: list[tuple[str, str]] = []
+    for n, (c, x0, _x1, size, kind) in enumerate(chars):
+        if n:
+            prev = chars[n - 1]
+            if x0 - prev[2] > (prev[3] + size) * 0.125 and not (_is_cjk_or_fullwidth_punct(prev[0])
+                                                                and _is_cjk_or_fullwidth_punct(c)):
+                pieces.append((" ", kind if kind and kind == prev[4] else ""))
+        pieces.append((c, kind))
+    out, n = [], 0
+    while n < len(pieces):
+        kind = pieces[n][1]
+        m = n
+        while m < len(pieces) and pieces[m][1] == kind:
+            m += 1
+        text = normalize_fullwidth_ascii("".join(p[0] for p in pieces[n:m]))
+        out.append(f"<{kind}>{text.strip()}</{kind}>" if kind else text)
+        n = m
+    return "".join(out).strip()
 
 
 def _kinds(glyphs: list[tuple]) -> list[tuple[str, str]]:

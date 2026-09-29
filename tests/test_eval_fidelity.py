@@ -114,6 +114,13 @@ def test_notations_of_one_script_are_not_errors(expected, output):
     assert errors.missing["script"] == 0 and errors.extra["script"] == 0
 
 
+@pytest.mark.parametrize("cell", ["β<sub>1</sub>", "β₁", "$\\beta_{1}$"])
+def test_notations_of_one_script_in_a_table_cell_are_equal(cell):
+    table = "<table><tr><th>{}</th><th>x</th></tr><tr><td>1.50</td><td>2</td></tr></table>"
+    errors = compute_key_content_errors(table.format(cell), table.format("β₁"))
+    assert errors.missing["script"] == 0 and errors.extra["script"] == 0
+
+
 def test_prices_are_not_math():
     # between two prices "$…$" is not math: its underscore is no subscript
     assert compute_key_content_errors("costs $12 or $15_2 each", "costs $12 or $15 2 each").total == 0

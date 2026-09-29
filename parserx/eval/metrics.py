@@ -37,7 +37,8 @@ METRIC_VERSION = "2.6"  # 2.1 (2026-09-24, Q28): merged cells against annotation
 #     (``eval/omission.py``)
 # 2.6 (2026-09-29, vision-first P0, Q141): units are read in prose only (in math ``12 m x`` is a product and spacing
 #     is not writing); the omission check reads primes in one notation (``x^{\prime}`` is ``x'``); a letter right
-#     after a LaTeX line break (``\\f``) is a letter, not the command ``\f``
+#     after a LaTeX line break (``\\f``) is a letter, not the command ``\f``; an HTML super- or subscript in a table
+#     cell stays a script (the cell text kept only its characters)
 
 __all__ = [
     "METRIC_VERSION",
