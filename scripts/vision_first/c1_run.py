@@ -72,9 +72,10 @@ def main() -> int:
     agent_dir.mkdir(parents=True)
     shutil.copytree(v_run / "work" / args.configuration / args.doc, ws_dir)
     _claim_allocations(ws_dir)
-    source = doc_dir / "input.pdf"
-    shutil.copyfile(next(p for root in ("ground_truth", "ground_truth_public")
-                         if (p := REPO_ROOT / root / args.doc / "input.pdf").exists()), source)
+    original = next(p for suffix in ("pdf", "docx", "doc") for root in ("ground_truth", "ground_truth_public")
+                    if (p := REPO_ROOT / root / args.doc / f"input.{suffix}").exists())
+    source = doc_dir / original.name
+    shutil.copyfile(original, source)
     config = apply_overrides(load_config(REPO_ROOT / "configs" / "regression.yaml"), [
         f"cache.dir={doc_dir / '.cache'}", "cache.mode=read_write", "runtime.mode=hybrid",
         "runtime.agent.engine=codex", f"runtime.agent.model={MODEL}", f"runtime.agent.effort={args.effort}",

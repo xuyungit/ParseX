@@ -111,7 +111,9 @@ def m_pass(doc: str, work: Path) -> dict:
 
 
 def route(doc: str, m: dict, all_pages: bool) -> dict[int, list[str]]:
-    """Page → why it is sent."""
+    """Page → why it is sent (a Word document: none, it has no pages to show)."""
+    if p0_inputs.document(doc).suffix.lower() != ".pdf":
+        return {}
     config = load_config(REPO_ROOT / "configs" / "regression.yaml")
     from parserx.cache import ResponseCache
 

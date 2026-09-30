@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from p0_inputs import document  # noqa: E402
 from p0_score import Pages, expected_of, score  # noqa: E402
 
 from parserx.eval.pages import split_pages  # noqa: E402
@@ -37,7 +38,7 @@ def run_scores(runs: Path, out: Path) -> dict:
             continue
         run_dir = record_path.parent
         doc = record["doc"]
-        info = pages.of(doc)
+        info = pages.of(doc) if document(doc).suffix.lower() == ".pdf" else None
         expected = expected_of(doc)
         entry = {"record": record}
         for side, path in (("before", run_dir / "work" / "fixed" / f"{doc}.md"), ("after", run_dir / "out" / f"{doc}.md")):
@@ -45,7 +46,8 @@ def run_scores(runs: Path, out: Path) -> dict:
                 markdown = path.read_text(encoding="utf-8")
                 entry[side] = {"whole": score(markdown, expected, doc),
                                "pages": [score(o, e, f"{doc}#{n}")["key_errors"] for n, (e, o) in
-                                         enumerate(zip(info["expected"], split_pages(markdown, info["texts"])), 1)]}
+                                         enumerate(zip(info["expected"], split_pages(markdown, info["texts"])), 1)]
+                                         if info else []}
         summary = run_dir / "out" / f"{doc}.json"
         if summary.is_file():
             review = json.loads(summary.read_text(encoding="utf-8"))["review"]

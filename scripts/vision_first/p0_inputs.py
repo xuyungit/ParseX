@@ -82,9 +82,12 @@ PRIMES = frozenset("′″‴⁗'")
 
 
 def document(name: str) -> Path:
-    for root in GT_DIRS:
-        if (root / name / "input.pdf").exists():
-            return root / name / "input.pdf"
+    """The document's source: its PDF, else its Word file (V sends only PDF pages; a Word file goes through the
+    pipeline alone)."""
+    for suffix in ("pdf", "docx", "doc"):
+        for root in GT_DIRS:
+            if (root / name / f"input.{suffix}").exists():
+                return root / name / f"input.{suffix}"
     raise FileNotFoundError(name)
 
 
