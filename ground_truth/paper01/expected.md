@@ -21,7 +21,7 @@ The Google Brain project started in 2011 to explore the use of very-large-scale 
 
 *Corresponding authors: Jeffrey <sup>Dean</sup> @google.com and Rajat <sup>Monga:</sup>
 {<sup>jeff,rajatmonga</sup>}@google.com
-1
+<!-- PAGE 1 · page number: 1 -->
 
 
 ---
@@ -48,7 +48,7 @@ An *operation* has a name and represents an abstract computation (e.g., “matri
 
 Clients programs interact with the TensorFlow system by creating a *Session*. To create a computation graph, the Session interface supports an *Extend* method to augment the current graph managed by the session with additional nodes and edges (the initial graph when a session is created is empty). The other primary operation supported
 
-2
+<!-- PAGE 2 · page number: 2 -->
 
 
 ---
@@ -134,7 +134,7 @@ by the session interface is *Run*, which takes a set of output names that need t
 
 arrange to execute the appropriate nodes in an order that respects their dependencies (as described in more detail in 3.1). Most of our uses of TensorFlow set up a Session with a graph once, and then execute the full graph or a few distinct subgraphs thousands or millions of times via *Run* calls.
 
-3
+<!-- PAGE 3 · page number: 3 -->
 
 
 ---
@@ -168,7 +168,7 @@ Once a system has multiple devices, there are two main complications: deciding w
 Given a computation graph, one of the main responsibilities of the TensorFlow implementation is to map the computation onto the set of available devices. A simplified version of this algorithm is presented here. See Section 4.3 for extensions supported by this algorithm.
 One input to the placement algorithm is a cost model, which contains estimates of the sizes (in bytes) of the
 
-4
+<!-- PAGE 4 · page number: 4 -->
 
 
 ---
@@ -197,7 +197,7 @@ When we insert *Send* and *Receive* nodes, we canonicalize all users of a partic
 
 By handling communication in this manner, we also allow the scheduling of individual nodes of the graph on different devices to be decentralized into the workers: the *Send* and *Receive* nodes impart the necessary
 
-5
+<!-- PAGE 5 · page number: 5 -->
 
 
 ---
@@ -262,7 +262,7 @@ In general an operation may have multiple outputs, and $C$ may only depend on so
 
 Automatic gradient computation complicates optimization, particularly of memory usage. When executing "forward" computation subgraphs, i.e., those that are explicitly constructed by the user, a sensible heuristic breaks ties when deciding which node to execute next by observing the order in which the graph was constructed.
 
-6
+<!-- PAGE 6 · page number: 6 -->
 
 
 ---
@@ -317,7 +317,7 @@ TensorFlow clients can control the placement of nodes on devices by providing pa
 
 Supporting such constraints requires changes to the placement algorithm described in Section 3.2.1. We first compute the feasible set of devices for each node, and then use union-find on the graph of colocation constraints to compute the graph components that must be placed together. For each such component, we compute the intersection of the feasible device sets. The computed feasible device set per node fits easily into the placement algorithm's simulator.
 
-7
+<!-- PAGE 7 · page number: 7 -->
 
 
 ---
@@ -348,7 +348,7 @@ In addition to normal FIFO queues, we have also implemented a shuffling queue, w
 
 A *Container* is the mechanism within TensorFlow for managing longer-lived mutable state. The backing store for a *Variable* lives in a container. The default container is one that persists until the process terminates, but we also allow other named containers. A container
 
-8
+<!-- PAGE 8 · page number: 8 -->
 
 
 ---
@@ -383,7 +383,7 @@ We make fairly extensive use of the open-source Eigen linear algebra library [25
 
 Some machine learning algorithms, including those typically used for training neural networks, are tolerant of noise and reduced precision arithmetic. In a manner similar to the DistBelief system [14], we often use lossy compression of higher precision internal representations when sending data between devices (sometimes within the same machine but especially across machine boundaries). For example, we often insert special conversion nodes that convert 32-bit floating point representations into a 16-bit floating point representation (not the proposed IEEE 16-bit floating point standard, but rather just a 32-bit IEEE 754 float format, but with 16 bits less precision in the mantissa), and then convert back to a 32-bit representation on the other side of the communication channel (by just filling in zeroes for the lost portion
 
-9
+<!-- PAGE 9 · page number: 9 -->
 
 
 ---
@@ -414,7 +414,7 @@ After building all necessary mathematical operations in TensorFlow, assembling a
 
 6. *Analyze pieces of a network and understand the magnitude of numerical error.* Running subsections of a neural network in parallel on two machine learning systems provides a precise method to ensure that a numerical algorithm is identical across two systems. Given that such algorithms run with floating point precision, it is important to predict and understand the magnitude of expected numerical error in order to judge whether a given component is correctly implemented (e.g., distinguishing between “within 1e-2, great!” and “within 1e-2: why is it so incorrect?!”).
 
-10
+<!-- PAGE 10 · page number: 10 -->
 
 
 ---
@@ -437,7 +437,7 @@ The approaches in this subsection assume that the model is being trained using s
 
 This approach can also be made asynchronous, where the TensorFlow graph has many replicas of the portion of the graph that does the bulk of the model computation, and each one of these replicas also applies the parameter updates to the model parameters asynchronously. In this configuration, there is one client thread for each of the graph replicas. This is illustrated in the bottom portion of Figure 7. This asynchronous approach was also described in [14].
 
-11
+<!-- PAGE 11 · page number: 11 -->
 
 
 ---
@@ -498,7 +498,7 @@ The entire visualization is interactive: users can pan, zoom, and expand grouped
 
 When training machine learning models, users often want to be able to examine the state of various aspects of the model, and how this state changes over time. To this end, TensorFlow supports a collection of different Summary operations that can be inserted into the graph,
 
-12
+<!-- PAGE 12 · page number: 12 -->
 
 
 ---
@@ -590,7 +590,7 @@ records, and can display this summary information and how it changes over time (
 
 We also have an internal tool called EEG (not included in the initial open source release in November, 2015) that we use to collect and visualize very fine-grained information about the exact ordering and performance character-
 
-13
+<!-- PAGE 13 · page number: 13 -->
 
 
 ---
@@ -619,7 +619,7 @@ We also imagine that a significant area for future work will be in improving the
 
 There are many other systems that are comparable in various ways with TensorFlow. Theano [7], Torch [13], Caffe [26], Chainer [49] and the Computational Network Toolkit [54] are a few systems designed primarily for the training of neural networks. Each of these systems maps the computation onto a single machine, unlike the distributed TensorFlow implementation. Like Theano and Chainer, TensorFlow supports symbolic differentiation, thus making it easier to define and work with gradient-based optimization algorithms. Like Caffe, TensorFlow has a core written in C++, simplifying the deployment
 
-14
+<!-- PAGE 14 · page number: 14 -->
 
 
 ---
@@ -638,7 +638,7 @@ The TensorFlow system shares some design characteristics with its predecessor sy
 
 machine learning models using relatively high-level descriptions. Unlike DistBelief and Project Adam, though, the general-purpose dataflow graph model in TensorFlow is more flexible and more amenable to expressing a wider variety of machine learning models and optimization algorithms. It also permits a significant simplification by allowing the expression of stateful parameter nodes as variables, and variable update operations that are just additional nodes in the graph; in contrast, DistBelief, Project Adam and the Parameter Server systems all have
 
-15
+<!-- PAGE 15 · page number: 15 -->
 
 
 ---
@@ -659,7 +659,7 @@ that the system uses a single, optimized dataflow graph to represent the entire 
 
 We have described TensorFlow, a flexible data flow-based programming model, as well as single machine and distributed implementations of this programming model. The system is borne from real-world experience in conducting research and deploying more than one hundred machine learning projects throughout a wide range of Google products and services. We have open sourced a version of TensorFlow, and hope that a vibrant shared community develops around the use of TensorFlow. We are excited to see how others outside of Google make use of TensorFlow in their own work.
 
-16
+<!-- PAGE 16 · page number: 16 -->
 
 
 ---
@@ -702,7 +702,7 @@ Dataflow Architectures, pages 225–253. 1986. www.dtic.mil/cgi-bin/GetTRDoc?Loc
 
 [14] Jeffrey Dean, Gregory S. Corrado, Rajat Monga, Kai Chen, Matthieu Devin, Quoc V. Le, Mark Z. Mao, Marc’Aurelio Ranzato, Andrew Senior, Paul Tucker,
 
-17
+<!-- PAGE 17 · page number: 17 -->
 
 
 ---
@@ -757,7 +757,7 @@ Ke Yang, and Andrew Y. Ng. Large scale distributed deep networks. In *NIPS*, 201
 
 [37] Derek G. Murray, Malte Schwarzkopf, Christopher Smowton, Steven Smit, Anil Madhavapeddy, and Steven Hand. Ciel: a universal execution engine for distributed data-flow computing. In *Proceedings of the Ninth USENIX Symposium on Networked Systems Design and Implementation*, 2011. Usenix PDF.
 
-18
+<!-- PAGE 18 · page number: 18 -->
 
 
 ---
@@ -800,4 +800,4 @@ Ke Yang, and Andrew Y. Ng. Large scale distributed deep networks. In *NIPS*, 201
 
 [56] Matthew D. Zeiler, Marc’Aurelio Ranzato, Rajat Monga, Mark Mao, Ke Yang, Quoc Le, Patrick Nguyen, Andrew Senior, Vincent Vanhoucke, Jeff Dean, and Geoffrey E. Hinton. On rectified linear units for speech processing. In *ICASSP*, 2013. research.google.com/pubs/archive/40811.pdf.
 
-19
+<!-- PAGE 19 · page number: 19 -->

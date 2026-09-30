@@ -40,9 +40,7 @@ In order to reflect the real status of an existing bridge, a new model updating 
 ---
 
 
-624
-西 南 交 通 大 学 学 报
-第 50 卷
+<!-- PAGE 2 · 页码：624 · 页眉：西南交通大学学报 · 页眉：第 50 卷 -->
 
 T 梁桥或小箱梁桥中的横隔梁等对桥梁横向受力的分配起着重要作用; 另一方面, 这些构件均为易损构件, 它们的损坏将改变桥梁的受力状态, 使之与设计不符。因此, 连接构件设计参数的修正对于掌握预制装配式桥梁的受力状态至关重要。但连接构件不易模拟, 目前关于预制装配式桥梁模型修正的研究也非常少。
 
@@ -97,7 +95,7 @@ Fig. 2 Relationship of force and displacement of slab
 ---
 
 
-第 4 期 周正茂,等:预制装配式板梁桥的模型修正方法 625
+<!-- PAGE 3 · 页眉：第 4 期 · 页眉：周正茂，等：预制装配式板梁桥的模型修正方法 · 页码：625 -->
 
 $$ \left. \begin{aligned} \delta_{ik}^l &= -\left( \frac{w_i}{\beta_i} - \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i = 1, 2, \cdots, n-1, \\ \delta_{ik}^l &= \left( \frac{w_i}{\beta_i} + \frac{b_i}{2} \frac{\varphi_i}{\alpha_i} \right), \\ &k = i - 1 = 1, 2, \cdots, n-1, \\ \delta_{ik}^l &= 0, \quad \text{其他情况}; \end{aligned} \right\} \eqno(3) $$
 
@@ -154,9 +152,7 @@ $$ \min \| \boldsymbol{A} \boldsymbol{x} - \boldsymbol{b} \|. $$
 ---
 
 
-626
-西 南 交 通 大 学 学 报
-第 50 卷
+<!-- PAGE 4 · 页码：626 · 页眉：西南交通大学学报 · 页眉：第 50 卷 -->
 
 $$ \min \| \boldsymbol{Ax} - \boldsymbol{b} \| = \min \| \boldsymbol{QRx} - \boldsymbol{b} \| = \min \| \boldsymbol{Rx} - \boldsymbol{Q}^{-1} \boldsymbol{b} \| $$
 
@@ -344,9 +340,7 @@ Tab. 2 Equivalent load
 ---
 
 
-第 4 期
-周正茂, 等: 预制装配式板梁桥的模型修正方法
-627
+<!-- PAGE 5 · 页眉：第 4 期 · 页眉：周正茂，等：预制装配式板梁桥的模型修正方法 · 页码：627 -->
 
 表 3 不同工况下铰缝刚度的误差
 Tab. 3 Error of hinge joint stiffness in different load cases %
@@ -584,9 +578,7 @@ Tab. 4 Errors of the correction factors of slab stiffness in different load case
 ---
 
 
-628
-西南交通大学学报
-第 50 卷
+<!-- PAGE 6 · 页码：628 · 页眉：西南交通大学学报 · 页眉：第 50 卷 -->
 
 **表 5 不同损伤程度下铰缝刚度的误差**
 Tab. 5 Error of hinge joint stiffness vs. damage degree %
@@ -874,7 +866,7 @@ HUANG Minshui, ZHU Hongping. Model updating of bridge structures based on differ
 ---
 
 
-第 4 期 周正茂，等：预制装配式板梁桥的模型修正方法 629
+<!-- PAGE 7 · 页眉：第 4 期 · 页眉：周正茂，等：预制装配式板梁桥的模型修正方法 · 页码：629 -->
 
 梁静态模型修正研究 [J]. 公路工程, 2013, 38(1): 90-93, 102.
 

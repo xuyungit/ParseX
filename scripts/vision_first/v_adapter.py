@@ -20,7 +20,9 @@ it (review item IO of the audit: "P0 结果先独立存 JSON，通过后再定�
 - a formula whose LaTeX neither request gave → the engine reading whose numbers agree, else the lines (degraded);
 - a figure block → the native image placed there, kept; with no placed image under it (a drawn figure) → a FIGURE
   block cut from the page render;
-- ``aside`` lines excluded → one EXCLUDED block per aside item; into a block → merged into it;
+- ``aside`` lines excluded → one EXCLUDED block per aside item, except lines of a block the native extraction
+  already marked as page furniture (running head, foot, page number): that block stays as it is, so its text goes
+  into the page's marker like any other furniture (user 2026-09-30, plan B); into a block → merged into it;
 - written content no text line holds → a block with its own ledger item (``ocr_block``: read from the page image).
 
 Every native text line of the page gets its new block in the ledger; the native text blocks become duplicates of
@@ -291,8 +293,14 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                                             disposition="output", block=block.id))
         counts[f"block_{kind}"] += 1
 
+    furniture = {bid for bid, b in blocks.items() if b.kind in (BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER)
+                 and b.status == BlockStatus.EXCLUDED}
+    kept_furniture: set[str] = set()
     for k, item in enumerate(data.get("aside", []), 1):
         names = [x for ref in item["lines"] for x in contract._names(ref) if x in text_of]
+        if item["to"] == contract.EXCLUDED:  # the native extraction's furniture stays as it is (plan B)
+            kept_furniture |= {owner[x] for x in names if owner.get(x) in furniture}
+            names = [x for x in names if owner.get(x) not in furniture]
         if use_defaults and repeated is not None and item["to"] == contract.EXCLUDED:
             from p0_score import furniture_key
 
@@ -352,7 +360,7 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
     # native text blocks become duplicates of the block that now holds most of their lines
     for bid in {owner[name] for name in line_entry if owner.get(name)}:
         native = blocks.get(bid)
-        if native is None or native in placed:
+        if native is None or native in placed or bid in kept_furniture:
             continue
         heirs = Counter(line_block.get(x) or merged.get(x) or excluded.get(x) for x, o in owner.items() if o == bid)
         heir = next((h for h, _ in heirs.most_common() if h), None)

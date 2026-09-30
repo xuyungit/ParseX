@@ -372,3 +372,26 @@ def test_lines_checked_against_the_image_and_closed_leave_the_image_out():
     state.images[0].reading.append(ReadLine(bbox=(1, 20, 39, 22), text="统一社会信用代码", score=0.99))
     assert "![图片]" in render_markdown(state)  # a new line: not what was checked
 
+
+
+def test_page_furniture_goes_into_the_page_marker_between_blocks():
+    # the user, 2026-09-30 (plan B): running heads, feet and page numbers kept, in the page's marker; a paragraph
+    # continued across the page is not cut; "text" writes them as lines, "omit" leaves them to the sidecar
+    from parserx.ir.relation import Relation
+
+    blocks = [_block("a", BlockKind.TEXT, 0, page=1, text="跨页的句子前半"),
+              _block("h", BlockKind.HEADER, 1, page=2, text="第 50 卷 第 4 期 学报", status=BlockStatus.EXCLUDED),
+              _block("b", BlockKind.TEXT, 2, page=2, text="后半，完。"),
+              _block("n", BlockKind.PAGE_NUMBER, 3, page=2, text="624", status=BlockStatus.EXCLUDED,
+                     anchors=[_pdf(2, 700)])]
+    state = _state(blocks)
+    state.relations = [Relation(id="r-continues-a-b", kind="continues", src="a", dst="b")]
+    md = render_markdown(state)
+    assert "<!-- PAGE 2 · 页眉：第 50 卷 第 4 期 学报 · 页码：624 -->" in md and "跨页的句子前半后半，完。" in md
+    assert md.index("后半，完。") < md.index("<!-- PAGE 2 ·")
+    assert "<!-- PAGE 2 · header: 第 50 卷 第 4 期 学报 · page number: 624 -->" in render_markdown(state, lang="en")
+    shown = render_markdown(state, page_furniture="text")
+    assert "<!-- PAGE 2 -->\n\n第 50 卷 第 4 期 学报\n\n624" in shown
+    assert "第 50 卷" not in render_markdown(state, page_furniture="omit")
+    state.blocks[1] = state.blocks[1].model_copy(update={"text": "a --> b"})
+    assert "-->" not in render_markdown(state).split("<!-- PAGE 2 ·")[1].split("-->")[0]  # a comment stays one

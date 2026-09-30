@@ -237,6 +237,9 @@ class OutputConfig(BaseModel):
     report: bool = False
     sidecar: bool = False
     lang: Literal["zh", "en"] = "zh"
+    # running heads, feet and page numbers (user 2026-09-30): in the page's marker comment (kept, not in the reader's
+    # way), as lines of text, or left to the sidecar
+    page_furniture: Literal["comment", "text", "omit"] = "comment"
 
 
 class ServicesConfig(BaseModel):

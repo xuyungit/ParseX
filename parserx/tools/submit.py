@@ -81,7 +81,8 @@ def export(ctx: ToolContext, req: ExportRequest) -> ToolOutput[ExportResult]:
     exported = ExportResult(**_submitted(ctx).model_dump())
     if exported.accepted:
         state = ctx.ws.load()
-        paths = write_export(state, ctx.ws.root, Path(req.out), req.name or state.id, lang=ctx.config.output.lang)
+        paths = write_export(state, ctx.ws.root, Path(req.out), req.name or state.id, lang=ctx.config.output.lang,
+                             page_furniture=ctx.config.output.page_furniture)
         exported.markdown, exported.sidecar = str(paths.markdown.resolve()), str(paths.sidecar.resolve())
         exported.summary = str(paths.summary.resolve())
     return output(exported)

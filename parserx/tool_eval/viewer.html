@@ -277,7 +277,7 @@ function renderMarkdown(md, base) {
   const math = [];
   const keep = (m) => `@@MATH${math.push(m) - 1}@@`;
   let text = md.replace(/\$\$[\s\S]+?\$\$/g, keep).replace(/\$[^$\n]+?\$/g, keep);
-  text = text.replace(/<!--\s*PAGE\s+(\d+)\s*-->/g, (_, n) => `\n\n<div class="pagebreak">第 ${n} 页</div>\n\n`);
+  text = text.replace(/<!--\s*PAGE\s+(\d+)[^\n]*?-->/g, (_, n) => `\n\n<div class="pagebreak">第 ${n} 页</div>\n\n`);
   const div = document.createElement("div");
   div.innerHTML = window.marked ? marked.parse(text, {gfm: true}) : `<pre>${esc(text)}</pre>`;
   div.innerHTML = div.innerHTML.replace(/@@MATH(\d+)@@/g, (_, i) => esc(math[+i]));

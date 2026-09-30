@@ -10,7 +10,7 @@ _CHUNK_SIZE = 5000  # Max chars per Levenshtein call (keeps O(n^2) tractable)
 def normalize_for_comparison(text: str) -> str:
     """Normalize text for fair comparison: collapse whitespace, strip markup."""
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"<!-- PAGE \d+(?: scanned)? -->", "", text)
+    text = re.sub(r"<!-- PAGE \d+.*?-->", "", text)  # with the page's furniture in it
     text = re.sub(r"\s+", " ", text).strip()
     return text
 

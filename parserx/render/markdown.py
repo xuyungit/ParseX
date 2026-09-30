@@ -11,7 +11,11 @@
   ``<!-- parserx:image-text src="images/<file>" page=n -->`` and ``<!-- /parserx:image-text -->`` (for programs).
   An image whose words are its content (described as content) and whose local reading the text has in full is not
   shown: the label line carries its note and a link to the original; any other image stays above its text;
-- ``<!-- PAGE n -->`` for every PDF page, ``<!-- PAGE n scanned -->`` for one read by the scan engine; DOCX only
+- ``<!-- PAGE n -->`` for every PDF page, ``<!-- PAGE n scanned -->`` for one read by the scan engine, between blocks
+  (a paragraph or table continued across the page is written whole before it); the page's running heads, feet and
+  page numbers go into it (``<!-- PAGE 2 · 页眉：… · 页码：624 -->``; ``page_furniture``: "comment", the default —
+  kept, out of the reader's way, never cutting a paragraph; "text" writes them as lines after it; "omit" leaves
+  them to the sidecar, user 2026-09-30); DOCX only
   has ``<!-- PAGE-BREAK -->`` and ``<!-- SECTION k -->`` (no physical pages without a layout engine);
 - hidden blocks (excluded, merged, duplicate) and failed blocks are not
   rendered; they stay in the sidecar.  A scan image whose recognition failed
@@ -47,7 +51,8 @@ def image_file(asset: Asset) -> str:
     return PurePosixPath(asset.path).name
 
 
-def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: str = "zh") -> str:
+def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: str = "zh",
+                    page_furniture: str = "comment") -> str:
     assets = {a.id: a for a in state.assets}
     missing = {m.block: _missing_note(state, m, lang) for m in state.missing}  # Q117: said where it is missing
     joined = _continuations(state)  # a paragraph continued in later blocks is rendered once, at its start
@@ -71,9 +76,16 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     parts: list[str] = []
     section = 1
     body = body_face(state)
+    furniture = _furniture(state) if page_furniture != "omit" else {}
     for page in state.pages:
         if state.format == "pdf":
-            parts.append(f"<!-- PAGE {page.n} scanned -->" if page.n in scanned else f"<!-- PAGE {page.n} -->")
+            items = furniture.get(page.n, [])
+            head = f"PAGE {page.n}" + (" scanned" if page.n in scanned else "")
+            if items and page_furniture == "comment":
+                head += "".join(f" · {_FURNITURE_LABEL[lang][kind]}{_comment_safe(text)}" for kind, text in items)
+            parts.append(f"<!-- {head} -->")
+            if page_furniture == "text":
+                parts.extend(_MARKUP_START.sub(r"\1\\\2", text) for _kind, text in items)
         elif page.starts_with == "page_break":
             parts.append("<!-- PAGE-BREAK -->")
         elif page.starts_with == "section_break":
@@ -83,6 +95,30 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     for blocks in by_unit.values():  # content outside any page or segment (none in a well-formed state)
         parts.extend(_render_all(blocks, assets, image_dir, transcribed, body, missing, lang, images))
     return "\n\n".join(parts) + "\n"
+
+
+_FURNITURE_KINDS = (BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER)
+_FURNITURE_LABEL = {"zh": {BlockKind.HEADER: "页眉：", BlockKind.FOOTER: "页脚：", BlockKind.PAGE_NUMBER: "页码："},
+                    "en": {BlockKind.HEADER: "header: ", BlockKind.FOOTER: "footer: ",
+                           BlockKind.PAGE_NUMBER: "page number: "}}
+
+
+def _furniture(state: DocumentState) -> dict[int, list[tuple[BlockKind, str]]]:
+    """Page → its running heads, feet and page numbers (excluded from the flow), top to bottom."""
+    out: dict[int, list[tuple[float, float, BlockKind, str]]] = {}
+    for block in state.blocks:
+        text = " ".join(block.text.split())
+        if block.kind in _FURNITURE_KINDS and block.status == BlockStatus.EXCLUDED and text:
+            anchor = block.anchors[0] if block.anchors else None
+            y, x = (anchor.bbox[1], anchor.bbox[0]) if isinstance(anchor, PdfAnchor) else (0.0, 0.0)
+            out.setdefault(block_unit(state, block), []).append((y, x, block.kind, text))
+    return {n: [(kind, text) for _y, _x, kind, text in sorted(items, key=lambda i: (i[0], i[1]))]
+            for n, items in out.items() if n is not None}
+
+
+def _comment_safe(text: str) -> str:
+    """Text that cannot end an HTML comment early."""
+    return text.replace("--", "- -")
 
 
 def _continuations(state: DocumentState) -> dict[str, list[Block]]:

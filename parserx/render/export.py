@@ -29,11 +29,11 @@ class ExportPaths:
 
 
 def write_export(state: DocumentState, ws_root: Path | str, out_dir: Path | str, name: str,
-                 lang: str = "zh") -> ExportPaths:
+                 lang: str = "zh", page_furniture: str = "comment") -> ExportPaths:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     images = out / IMAGE_DIR
-    markdown = render_markdown(state, image_dir=IMAGE_DIR, lang=lang)
+    markdown = render_markdown(state, image_dir=IMAGE_DIR, lang=lang, page_furniture=page_furniture)
     linked = set(re.findall(rf"\]\({re.escape(IMAGE_DIR)}/([^)\s]+)\)", markdown))  # Q116: only what the text links
     for asset in package_images(state):
         target = images / image_file(asset)
