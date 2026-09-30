@@ -250,3 +250,31 @@ def test_decisions_reference_the_candidate():
     decision: Decision = block.decisions[-1]
     assert decision.refs == ["o-review", "o-base"] and decision.actor == "a"
     assert decision.evidence["numeric_consistency"] is True
+
+
+# ── The agent's correction (execution plan §3.4) ───────────────────────
+
+
+def test_the_agent_changes_a_native_number_on_the_image_and_the_change_is_a_signal():
+    from parserx.content.select import GateCheck, correct
+
+    def block():
+        return Block(id="b-n", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text="采购金额为 100 万元。",
+                     observations=[_obs("o-n", "native_pdf", text="采购金额为 100 万元。")], chosen_observation="o-n")
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+    changed = _obs("o-a", "agent", text="采购金额为 900 万元。", task=TaskKind.CORRECT)
+    b = block()
+    outcome = correct(b, changed, image=looked, actor="agent", seen=None)
+    assert outcome.adopted and b.text == "采购金额为 900 万元。"
+    assert b.decisions[-1].evidence["signal"] == "native_numbers_changed"
+    assert "no local reading" in b.decisions[-1].evidence["signal_detail"]
+    b = block()
+    assert correct(b, changed, image=looked, actor="agent", seen="采购金额为900万元").adopted
+    assert "as the local reading shows" in b.decisions[-1].evidence["signal_detail"]
+    b = block()
+    blind = GateCheck(name="image_evidence", passed=False, detail="not looked")
+    assert not correct(b, changed, image=blind, actor="agent").adopted and b.text == "采购金额为 100 万元。"
+    b = block()
+    same = _obs("o-b", "agent", text="采购金额为 100 万元整。", task=TaskKind.CORRECT)
+    assert correct(b, same, image=looked, actor="agent").adopted and "signal" not in b.decisions[-1].evidence

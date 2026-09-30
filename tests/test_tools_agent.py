@@ -406,10 +406,20 @@ def test_a_region_read_again_replaces_its_blocks_and_can_be_undone(tmp_path):
     assert undo["accepted"] and _markdown(ws) == before and _ok("submit_draft", ws, {}, _context())["accepted"]
 
 
-def test_a_region_reading_must_keep_the_native_numbers(tmp_path):
+def test_a_region_reading_that_changes_native_numbers_is_adopted_and_recorded(tmp_path):
+    # execution plan §3.4: the agent decides; the lost number is a signal on the record, and unadopt brings it back
+    from parserx.render.summary import document_summary
+    from parserx.workspace import Workspace
+
     ws = _rows_as_text(tmp_path)
+    before = _markdown(ws)
     region = {"page": 1, "bbox": [60, 80, 300, 190], "as": "text"}
     look = _ok("view_source", ws, {"looks": [region]}, _context(page=_table_reading(6)))["results"][0]  # 8 → 6
     outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 1, "evidence": look["evidence"],
-                                              "reason": "r"}]}, _context())["outcomes"][0]
-    assert not outcome["accepted"] and outcome["rule"] == "native_numbers" and "8" in outcome["detail"]
+                                              "reason": "原件是 6"}]}, _context())["outcomes"][0]
+    assert outcome["accepted"] and "native numbers" in outcome["detail"] and "8" in outcome["detail"]
+    listed = document_summary(Workspace.open(ws).load(), "doc").review.agent_overrides
+    assert len(listed) == 1 and "region_numbers_changed" in listed[0].signals and "原件是 6" in listed[0].reason
+    undo = _ok("edit_draft", ws, {"ops": [{"op": "unadopt", "evidence": look["evidence"], "reason": "撤回"}]},
+               _context())["outcomes"][0]
+    assert undo["accepted"] and _markdown(ws) == before

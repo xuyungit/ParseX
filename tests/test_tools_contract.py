@@ -573,19 +573,29 @@ def test_the_agent_corrects_ocr_text_it_has_seen(ws):
     assert verify_workspace(ws).ok
 
 
-def test_a_correction_needs_evidence_and_keeps_native_numbers(ws):
+def test_a_correction_needs_evidence_and_a_native_number_changed_is_recorded(ws):
+    # execution plan §3.4: the agent may change a native number on the image's evidence; recorded, summarised
+    from parserx.render.summary import document_summary
+
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
 
     def replace(find, to, evidence):
         return _edit(ws, context, {"op": "replace_text", "block": native.id, "find": find, "replace": to,
-                                   "reason": "r", "evidence": evidence})[0]
+                                   "reason": "图上是 900", "evidence": evidence})[0]
 
-    outcome = replace("采购", "采买", "e-000000000000")
-    assert not outcome.accepted and outcome.rule == "image_evidence"  # nothing was looked at
+    outcome = replace("100 万元", "900 万元", "e-000000000000")
+    assert not outcome.accepted and outcome.rule == "image_evidence"  # nothing was looked at: never
     evidence = _evidence(ws, context, block=native.id)
     outcome = replace("100 万元", "900 万元", evidence)
-    assert not outcome.accepted and outcome.rule == "numeric_consistency"
+    assert outcome.accepted and "native numbers" in outcome.detail
+    state = Workspace.open(ws).load()
+    record = next(b for b in state.blocks if b.id == native.id).decisions[-1].evidence
+    assert record["signal"] == "native_numbers_changed" and record["evidence"] == evidence
+    assert "100" in record["signal_detail"] and "900" in record["signal_detail"]
+    listed = document_summary(state, "doc").review.agent_overrides
+    assert [(o.target, o.signals) for o in listed] == [(native.id, ["native_numbers_changed"])]
+    assert "图上是 900" in listed[0].reason and listed[0].evidence == evidence
     assert replace("采购", "采买", evidence).accepted
     outcome = replace("不存在的字", "x", evidence)
     assert not outcome.accepted and outcome.rule == "find" and "exactly once" in outcome.detail
@@ -624,22 +634,25 @@ def test_the_agent_adds_text_the_page_shows_and_no_block_has(ws):
     assert entry.unit == "agent_text" and entry.disposition == "output"
     accounts = _accounts(ws).accounting  # the reading was given outside a tool: check, not verify
     assert accounts.unassigned == 0 and accounts.output == accounts.discovered
-    assert not insert("图上没有的一行", [72, 600, 200, 614], page).accepted  # the local reading does not show it
+    unseen = insert("图上没有的一行", [72, 600, 200, 614], page)  # §3.4: the local reading is a signal, not a gate
+    assert unseen.accepted and "independent_reading" in unseen.detail
+    added = next(b for b in Workspace.open(ws).load().blocks if b.id == unseen.block)
+    assert added.decisions[-1].evidence["signal"] == "text_not_in_reading"
     assert not insert(NATIVE, list(native.anchors[0].bbox), page).accepted  # a block already has it
     assert sum(1 for b in Workspace.open(ws).load().blocks if b.text == NATIVE) == 1
 
 
-def test_native_numbers_change_only_as_the_local_reading_shows(ws):
+def test_the_local_reading_of_a_native_number_is_told_not_obeyed(ws):
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
     evidence = _evidence(ws, context, block=native.id)
     edit = {"op": "replace_text", "block": native.id, "find": "100 万元", "replace": "900 万元", "reason": "图上是 900",
             "evidence": evidence}
     _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为100万元", native.anchors[0].bbox)])  # the page shows 100
-    assert not _edit(ws, context, edit)[0].accepted
-    _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为900万元", native.anchors[0].bbox)])  # the page shows 900
     outcome = _edit(ws, context, edit)[0]
-    assert outcome.accepted and "local reading" in outcome.detail
+    assert outcome.accepted and "does not show" in outcome.detail
+    detail = next(b for b in Workspace.open(ws).load().blocks if b.id == native.id).decisions[-1].evidence
+    assert "does not show" in detail["signal_detail"]
 
 
 # ── The worklist: an issue the evidence shows needs no change is dismissed ──

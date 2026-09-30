@@ -62,6 +62,17 @@ class GateCheck(IRModel):
     name: Literal["image_evidence", "numeric_consistency", "structure_valid", "independent_reading"]
     passed: bool
     detail: str
+    # a check that does not stop the agent but is recorded and listed in the summary (execution plan §3.4): the
+    # program's comparison is evidence, the agent's reading of the image decides
+    signal: str | None = None
+
+
+def signals(gate: list[GateCheck]) -> dict[str, str]:
+    """The signals of a gate as a decision's evidence: ``signal`` (their kinds) and ``signal_detail``."""
+    raised = [g for g in gate if g.signal]
+    if not raised:
+        return {}
+    return {"signal": ",".join(g.signal for g in raised), "signal_detail": "; ".join(g.detail for g in raised)}
 
 
 @dataclass
@@ -260,9 +271,10 @@ def review_text(block: Block, candidate: Observation, *, actor: str) -> ReviewOu
 def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: str,
             seen: str | None = None) -> ReviewOutcome:
     """Gate the agent's correction of the spans or cells it named (Q30): it must have looked at the image of the
-    block, and the result keeps content.  A native text layer's numbers do not change on the agent's word alone:
-    only as the local reading of the block's place (*seen*, Q56) shows them — every number the correction adds is
-    there, no number it removes is (edits of OCR text are confined to the named spans by construction)."""
+    block, and the result keeps content.  A native text layer's numbers change on the agent's reading of the image
+    (execution plan §3.4): the change is a signal — recorded with whether the local reading of the block's place
+    (*seen*, Q56) shows it — and the summary lists it (edits of OCR text are confined to the named spans by
+    construction)."""
     chosen = _chosen(block)
     native = chosen is not None and chosen.engine in NATIVE_ENGINES
     if candidate.cells is not None:
@@ -276,30 +288,34 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
         numbers = GateCheck(name="numeric_consistency", passed=True, detail="edits confined to the named spans")
     elif before == after:
         numbers = GateCheck(name="numeric_consistency", passed=True, detail=_number_diff(before, after, native=True))
-    elif seen is None:
-        numbers = GateCheck(name="numeric_consistency", passed=False,
-                            detail=_number_diff(before, after, native=True) + "; no local reading of this place")
     else:
-        shown = Counter(_numbers(seen))
-        backed = all(shown[k] >= after[k] for k in after - before) and all(shown[k] <= after[k] for k in before - after)
-        numbers = GateCheck(name="numeric_consistency", passed=backed, detail=_number_diff(before, after, native=True) + (
-            "; as the local reading of this place shows" if backed else
-            f"; the local reading of this place shows {sorted(shown.elements())[:10]}"))
+        if seen is None:
+            reading = "no local reading of this place"
+        else:
+            shown = Counter(_numbers(seen))
+            backed = (all(shown[k] >= after[k] for k in after - before)
+                      and all(shown[k] <= after[k] for k in before - after))
+            reading = ("as the local reading shows" if backed else
+                       f"the local reading of this place does not show it (it shows {sorted(shown.elements())[:10]})")
+        numbers = GateCheck(name="numeric_consistency", passed=True, signal="native_numbers_changed",
+                            detail=f"native numbers changed: {_number_diff(before, after, native=True)}; {reading}")
     gate = [image, numbers,
             GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result")]
     return _decide(block, candidate, gate, actor)
 
 
 def add_gate(text: str, *, image: GateCheck, seen: str | None, holders: list[str]) -> list[GateCheck]:
-    """Gate the agent's text for a place of a page no block accounts for (Q56): it looked at an image of the place,
-    the local reading of the place shows the text — two independent readings agree — and no block there has it
-    already.  The caller adds the block only when every check passes."""
+    """Gate the agent's text for a place of a page no block accounts for (Q56): it looked at an image of the place
+    and no block there has it already.  Whether the local reading of the place shows the text is a signal
+    (execution plan §3.4), recorded with the block.  The caller adds the block only when every check passes."""
     if seen is None:
-        reading = GateCheck(name="independent_reading", passed=False, detail="no local reading of this page")
+        reading = GateCheck(name="independent_reading", passed=True, detail="no local reading of this page",
+                            signal="text_not_in_reading")
     else:
         share = pairs_share(normalize(text), normalize(seen))
-        reading = GateCheck(name="independent_reading", passed=share >= NEAR,
-                            detail=f"{share:.0%} of the text is in the local reading of this place")
+        reading = GateCheck(name="independent_reading", passed=True,
+                            detail=f"{share:.0%} of the text is in the local reading of this place",
+                            signal=None if share >= NEAR else "text_not_in_reading")  # §3.4: evidence, not a gate
     fresh = GateCheck(name="structure_valid", passed=bool(normalize(text)) and not holders,
                       detail=f"already in {', '.join(holders)}" if holders else
                       "new text" if normalize(text) else "empty text")
@@ -320,7 +336,7 @@ def _decide(block: Block, candidate: Observation, gate: list[GateCheck], actor: 
     block.decisions.append(Decision(
         stage=DecisionStage.REVIEW_ACCEPT, choice="adopted" if adopted else "rejected",
         reason="all acceptance checks passed" if adopted else f"failed: {', '.join(failed)}",
-        evidence={c.name: c.passed for c in gate}, actor=actor,
+        evidence={**{c.name: c.passed for c in gate}, **signals(gate)}, actor=actor,
         refs=[candidate.id] + ([previous] if previous else [])))
     return ReviewOutcome(adopted=adopted, gate=gate)
 

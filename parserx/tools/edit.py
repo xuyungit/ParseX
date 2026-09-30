@@ -13,9 +13,12 @@ one that changes content cites the evidence it rests on (``evidence``, from ``vi
 - the worklist: ``dismiss`` an issue the evidence shows needs no change;
 - the understanding: ``note`` what the document is and which conventions hold where (Q87), revised, never removed.
 
-The program checks each operation: content must rest on evidence of its place, a native text layer's numbers change
-only as the local reading shows them, a table read again passes the acceptance gate, structure stays legal (no
-skipped level, one level per numbering pattern), and a proposal of the pipeline never overrides the agent.
+The program checks each operation: content must rest on evidence of its place, a table read again passes the
+acceptance gate, structure stays legal (no skipped level, one level per numbering pattern), and a proposal of the
+pipeline never overrides the agent.  Where the agent goes against a program's comparison — a native text layer's
+number changed, a region reading that drops characters or numbers, text the local reading does not show — the
+change stands on the image's evidence and the comparison is a signal, recorded and listed in the summary
+(execution plan §3.4).
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from parserx.content import scan
-from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, transcribed
+from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, signals, transcribed
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
@@ -92,8 +95,9 @@ class CellEdit(IRModel):
 
 class ReplaceText(IRModel):
     model_config = agent_doc("改正文：把块中恰好出现一次的片段 find 换成原件上的写法 replace；找不到或不止一处会被拒绝，"
-                             "给更长的片段再试。同一个错字在块内重复出现时用 all: true 一并替换。原生文字层中的数字，"
-                             "只有页面的本地读数（程序自己读的，与你看原件无关）在该处显示为新值时才采用。")
+                             "给更长的片段再试。同一个错字在块内重复出现时用 all: true 一并替换。原生文字层中的数字"
+                             "看图确认原件不同才改：程序记下原值、新值、证据与理由，并说明页面的本地读数（程序自己读的）"
+                             "是否显示新值，摘要里单列。")
 
     op: Literal["replace_text"]
     block: str = Field(description=BLOCK)
@@ -105,8 +109,8 @@ class ReplaceText(IRModel):
 
 
 class InsertText(IRModel):
-    model_config = agent_doc("补入原件上有、初稿里没有的文字（待办 text_unaccounted）：程序只在证据看得到该处、"
-                             "且本地读数在该处也有这段文字时才补入。结果的 block 是新块。")
+    model_config = agent_doc("补入原件上有、初稿里没有的文字（待办 text_unaccounted）：证据要看得到该处，已有块含这段文字时"
+                             "拒绝；本地读数在该处没有这段文字时照样补入，记为信号、摘要里单列。结果的 block 是新块。")
 
     op: Literal["insert_text"]
     page: int = Field(description="页")
@@ -131,8 +135,9 @@ class Adopt(IRModel):
     model_config = agent_doc("采用 view_source 读出的内容，采用的正是当时读到的：重读的表格（as=table）、图片描述（description）、"
                              "图片里的文字或一页的识别结果（text）。给出被读的 block 或 page 之一。"
                              "页面区域的读数（as=text 加 bbox）替换区域里的块，用于初稿把块分错的地方（表格被拆成文字、"
-                             "标题和正文连成一块等）：程序检查内容守恒（旧块的文字在读数里找得到、原生文字层的数字不变），"
-                             "区域里的图片不动，旧块保留，可用 unadopt 撤回。")
+                             "标题和正文连成一块等）：程序比对内容（旧块的文字在读数里找不全、原生文字层的数字变了，"
+                             "照样采用，记为信号、摘要里单列，所以只在看图确认读数对时采用），区域里的图片不动，"
+                             "旧块保留，可用 unadopt 撤回。")
 
     op: Literal["adopt"]
     block: str | None = Field(None, description="被读的块：表格、图片")
@@ -358,11 +363,11 @@ def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: 
 
 
 def _gated(gate) -> str:
-    """The checks' details; refused with the first failed check's name when any failed."""
+    """The checks' details (a signal marked as one); refused with the first failed check's name when any failed."""
     failed = [g for g in gate if not g.passed]
     if failed:
         raise _Refused(failed[0].name, "; ".join(f"{g.name}: {g.detail}" for g in failed))
-    return "; ".join(f"{g.name}: {g.detail}" for g in gate)
+    return "; ".join(f"{g.name}: {'signal ' + g.signal + ' — ' if g.signal else ''}{g.detail}" for g in gate)
 
 
 def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
@@ -375,7 +380,7 @@ def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
     detail = _gated(gate)
     decision = Decision(stage=DecisionStage.REVIEW_ACCEPT, choice="added", actor=ACTOR,
                         reason=f"text the page shows where no block had it; {op.reason}",
-                        evidence={"evidence": op.evidence, **{g.name: g.detail for g in gate}})
+                        evidence={"evidence": op.evidence, **{g.name: g.detail for g in gate}, **signals(gate)})
     block_id = _add_text_block(state, op.page, op.bbox, op.text, engine="agent", engine_version=ACTOR,
                                task=TaskKind.CORRECT, decision=decision, unit="agent_text", after=op.after)
     return block_id, detail
@@ -546,14 +551,16 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
     before, after = "".join(_content(b) for b in old), "".join(_content(b) for b in shown)
     native = [b for b in old if (c := _chosen_of(b)) is not None and c.engine in NATIVE_ENGINES]
     lost = _missing_numbers("".join(_content(b) for b in native), after)
-    if lost:
-        raise _Refused("native_numbers", f"the reading does not keep the native text layer's numbers {lost[:8]}: "
-                                         "the reading misread them; keep the draft here")
     recall = _recall(before, after)
+    # execution plan §3.4: the agent decides on the image; what the reading drops is a signal, recorded and listed
+    raised = {}
+    if lost:
+        raised["region_numbers_changed"] = (f"the reading does not keep the native text layer's numbers {lost[:8]} "
+                                            "(native numbers changed)")
     if old and recall < RECALL:
-        raise _Refused("content_lost", f"the reading has {recall:.0%} of the {len(before)} characters of "
-                                       f"{', '.join(b.id for b in old)} (needs {RECALL:.0%}): read a region that "
-                                       "covers them, or keep the draft")
+        raised["region_characters_lost"] = (f"the reading has {recall:.0%} of the {len(before)} characters of "
+                                            f"{', '.join(b.id for b in old)} (below {RECALL:.0%})")
+    recorded = ({"signal": ",".join(raised), "signal_detail": "; ".join(raised.values())} if raised else {})
     for block in old:
         block.status = BlockStatus.DUPLICATE
         target = best_overlap(block, shown)
@@ -569,7 +576,7 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
             entry.disposition = "duplicate"
     for block in new:
         block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice="region_reading", actor=ACTOR,
-                                        reason=op.reason, evidence={"evidence": op.evidence},
+                                        reason=op.reason, evidence={"evidence": op.evidence, **recorded},
                                         refs=[b.id for b in old[:20]]))
     sequence = ordered(state)
     at = sequence.index(old[0]) if old else _place(state, sequence, n, region)
@@ -579,7 +586,7 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
     state.blocks.extend(new)
     state.ledger.extend(e for e in read.ledger if e.block in kept)
     return (f"{len(old)} blocks replaced by {len(shown)} ({', '.join(b.kind.value for b in shown)}); "
-            f"characters kept {recall:.0%}")
+            f"characters kept {recall:.0%}" + "".join(f"; signal {k} — {v}" for k, v in raised.items()))
 
 
 def _unadopt(state: DocumentState, op: Unadopt) -> str:
