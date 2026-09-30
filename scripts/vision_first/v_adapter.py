@@ -544,10 +544,19 @@ def _drawn_figure(ws, state, n: int, bid: str, box, render: bytes, pdf_page, dpi
     region = image.crop(crop_box)
     buf = io.BytesIO()
     region.save(buf, "PNG")
+    # the crop is cut from the page render, which the workspace keeps too (an asset's provenance, ir/asset.py)
+    whole = pymupdf.Rect(pdf_page.rect) * pdf_page.derotation_matrix
+    page_render = ws.add_asset(render, media_type="image/png", width=image.width, height=image.height, role="render",
+                               source=PdfAnchor(page=n, bbox=(round(whole.x0, 2), round(whole.y0, 2),
+                                                              round(whole.x1, 2), round(whole.y1, 2)),
+                                                coord_space="page_pt"), dpi=float(dpi))
     asset = ws.add_asset(buf.getvalue(), media_type="image/png", width=region.width, height=region.height,
-                         role="crop", source=PdfAnchor(page=n, bbox=box, coord_space="page_pt"), dpi=float(dpi))
-    if all(a.id != asset.id for a in state.assets):
-        state.assets.append(asset)
+                         role="crop", derived_from=page_render.id,
+                         transform=(1.0, 0.0, 0.0, 1.0, float(crop_box[0]), float(crop_box[1])),
+                         source=PdfAnchor(page=n, bbox=box, coord_space="page_pt"))
+    for new in (page_render, asset):
+        if all(a.id != new.id for a in state.assets):
+            state.assets.append(new)
     anchors = [PdfAnchor(page=n, bbox=box, coord_space="page_pt"),
                AssetAnchor(asset=asset.id, bbox=(0, 0, region.width, region.height),
                            image_size=(region.width, region.height))]

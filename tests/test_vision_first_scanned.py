@@ -71,3 +71,16 @@ def test_text_copied_into_a_figure_is_its_in_image_text():
     data["blocks"][0]["region"] = [0, 0, 50, 50]
     md = c.render(data, _page())
     assert "![图](doc_p1-B4.png)" in md and "> 第一段，共 12 个测点。" in md
+
+
+def test_a_rewrite_is_signalled_only_where_no_reading_holds_it():
+    import s_adapter
+
+    engine_page = "第一段，共 12 个测点。\n第二段"
+    # a digit the local reading also sees: no signal; notation (spacing, LaTeX) is not compared
+    assert not any(s_adapter.disagreements("共 13 个测点，$x_{1}$", "共 12 个测点，x1", "共 13 个测点", engine_page,
+                                           "共 13 个测点，$x_{1}$").values())
+    # a number and a letter no reading holds: signalled; engine text the page no longer holds: lost
+    found = s_adapter.disagreements("No 为 N_0，共 18 个", "No 为 No，共 12 个测点", "No 为 No，共 12 个测点", engine_page,
+                                    "No 为 N_0，共 18 个")
+    assert found["numbers"] == ["0", "18"] and found["text"] and found["lost"] == ["测点"]

@@ -106,6 +106,80 @@ def local_lines(ws: Path, n: int, page: pymupdf.Page, scale: float) -> list[dict
             for line in reading["lines"]]
 
 
+def workspace_units(state, n: int, page: pymupdf.Page, scale: float) -> tuple[list, list]:
+    """V (scanned pages by signal): the page's scan-engine blocks as the workspace holds them after ``recognize``
+    — in their order, page furniture included — as allocation units; ``_block`` is the block each unit is."""
+    from parserx.ir.anchor import AssetAnchor
+    from parserx.ir.enums import BlockStatus, TaskKind
+    from parserx.workspace.queries import block_unit, ordered
+
+    def read(b):
+        return next((o for o in b.observations if o.engine == scan.ENGINE and o.task == TaskKind.RECOGNIZE), None)
+
+    blocks = [b for b in ordered(state) if block_unit(state, b) == n and b.status != BlockStatus.MERGED
+              and not isinstance(b.anchors[0], AssetAnchor) and read(b) is not None]
+    units, tables = [], []
+    for k, block in enumerate(blocks, 1):
+        uid = f"K{k}"
+        if block.cells is not None:
+            html = block.cells.to_html()
+            text, shown = html, None
+            tables.append({"block": uid, "lines": [uid], "html": html})
+        elif block.kind == BlockKind.FORMULA:
+            latex = (block.text or "").strip().strip("$").strip()
+            text, shown = f"$${latex}$$", latex
+        else:
+            text = shown = block.text or ""
+        units.append({"id": uid, "label": read(block).label, "kind": block.kind.value,
+                      "box": _px(pymupdf.Rect(block.anchors[0].bbox) * page.rotation_matrix, scale),
+                      "text": text, "shown": shown, "_blk": k, "_block": block.id})
+    return units, tables
+
+
+def local_reading(src: pymupdf.Document, n: int, config, derived) -> list[dict]:
+    """The local reading of page *n* (the pipeline's reader and resolution, its derived cache), boxes in the
+    pixels of the page image the model sees."""
+    from parserx.reading.local import LocalReader, read_cached
+
+    dpi = config.tools.reading_dpi
+    png, _, _ = scan.render_page_at(src, n, dpi)
+    k = DPI / dpi
+    return [{"box": [round(v * k) for v in box], "text": text} for box, text, _ in read_cached(LocalReader(), png, derived)]
+
+
+def from_workspace(run_dir: Path, doc: str, n: int, state, config, derived) -> dict:
+    """The input record of scanned page *n* built from the V workspace (after ``recognize``), written to the run's
+    inputs unless already there (configurations of one run read the same engine response)."""
+    out_dir = run_dir / "inputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pid = page_id(doc, n)
+    path = document(doc)
+    with pymupdf.open(path) as src:
+        page = src[n - 1]
+        png, width, height = scan.render_page_at(src, n, DPI)
+        scale = DPI / 72.0
+        units, tables = workspace_units(state, n, page, scale)
+        record = {
+            "page_id": pid, "document": doc, "page": n, "unit": "K", "input_sha256": _sha256(path.read_bytes()),
+            "image": {"file": f"{pid}.png", "dpi": DPI, "width": width, "height": height, "rotation": page.rotation,
+                      "size_pt": [round(page.rect.width, 2), round(page.rect.height, 2)]},
+            "lines": units, "tables": tables, "engine": None,
+            "engine_source": {"workspace": "V pass (recognize)", "engine": state.engines.get("ocr")},
+            "local": local_reading(src, n, config, derived),
+            "regions": detector_regions(page, config, derived),
+        }
+    target = out_dir / f"{pid}.json"
+    if target.exists():  # the same page from an earlier configuration: its record must be this one
+        if json.loads(target.read_text(encoding="utf-8"))["lines"] != record["lines"]:
+            raise RuntimeError(f"{pid}: the engine blocks differ from the stored input")
+        return json.loads(target.read_text(encoding="utf-8"))
+    (out_dir / record["image"]["file"]).write_bytes(png)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(target)
+    return record
+
+
 def build(run_dir: Path, pages=PAGES) -> list[dict]:
     config = load_config(REPO_ROOT / "configs" / "regression.yaml")
     derived = ResponseCache(Path(config.cache.dir) if Path(config.cache.dir).is_absolute()
