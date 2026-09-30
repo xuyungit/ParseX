@@ -108,10 +108,11 @@ def display_formulas(markdown: str) -> list[str]:
     return [f.strip() for f in found if f.strip()]
 
 
-def notation(latex: str) -> str:
-    """A formula in one notation (see the module)."""
+def notation(latex: str, *, numbers: bool = False) -> str:
+    """A formula in one notation (see the module); with *numbers*, its equation number stays (the text metrics,
+    where the number is content)."""
     text = unicodedata.normalize("NFKC", latex)
-    text = _NUMBER.sub("", text)
+    text = text if numbers else _NUMBER.sub("", text)
     text = _PRIME.sub("'", text)
     text = _COMMAND.sub(lambda m: _LETTERS.get(m.group(1), m.group(0)), text)
     return _DROP.sub("", text)

@@ -214,3 +214,14 @@ def test_invented_text_is_an_added_run():
     output = expected + "\n\n模型自己写出的一段原文里没有的内容，不能算作原文。"
     omission = compute_omission(output, expected)
     assert omission.added_runs == 1 and omission.lost_runs == 0
+
+
+def test_the_text_metrics_read_math_in_one_notation():
+    # 2.7: x^{\prime} is x', \left( is (, braces and font commands are markup; scripts and equation numbers stay
+    from parserx.eval.normalize import char_sequence
+
+    assert char_sequence(r"式 $x^{\prime}+\left(a_{1}\right)$ 与 $$\mathrm{d} y \tag{5}$$") == \
+        char_sequence(r"式 $x'+(a_1)$ 与 $$d y \tag{5}$$")
+    assert char_sequence("$x^{2}$") != char_sequence("$x_{2}$")
+    assert char_sequence(r"$$y \tag{5}$$") != char_sequence(r"$$y \tag{6}$$")
+    assert char_sequence("价格 $5 与 $6") == "价格$5与$6"  # two prices are not math

@@ -19,7 +19,9 @@ Both sides of every comparison go through the same steps:
    (guide §9.3); here they must not bias text scores toward one model's
    wording.
 4. For character-level comparison: NFKC (Kangxi radicals, full-width forms),
-   heading markers dropped, all whitespace dropped.
+   heading markers dropped, all whitespace dropped; math (``$…$``, ``$$…$$``, ``\\(…\\)``, ``\\[…\\]``) in the
+   formula metric's one notation, its equation number kept (2.7): ``x^{\\prime}`` and ``x'``, ``\\left(`` and
+   ``(``, ``a_{1}`` and ``a_1`` are one writing, not different characters.
 """
 
 from __future__ import annotations
@@ -73,8 +75,17 @@ def _unquote_image_text(match: re.Match) -> str:
     return f"\n\n{body}\n\n"
 
 
+# math as the evaluator's key content reads it: $$…$$, \[…\], \(…\), and $…$ paired within a paragraph, a closing
+# dollar not followed by a digit (between two prices is not math)
+_MATH_RE = re.compile(r"\$\$(.+?)\$\$|\\\[(.+?)\\\]|\\\((.+?)\\\)"
+                      r"|(?<![\\$])\$(?!\$)((?:[^$\n\\]|\\.|\n(?![ \t]*\n))+?)(?<!\\)\$(?![\d$])", re.DOTALL)
+
+
 def char_sequence(text: str) -> str:
     """Character sequence used by char_f1 / edit distance / order anchors."""
+    from parserx.eval.formulas import notation
+
+    text = _MATH_RE.sub(lambda m: notation(next(g for g in m.groups() if g is not None), numbers=True), text)
     text = unicodedata.normalize("NFKC", text)
     text = _HEADING_MARK_RE.sub("", text)
     return _WS_RE.sub("", text)
