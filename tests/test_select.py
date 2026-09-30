@@ -295,12 +295,15 @@ def test_the_agent_changes_native_letters_and_the_change_is_a_signal():
     assert correct(b, _obs("o-a", "agent", text="盆式支座 GPZ(2019)-4.0MN-ZX", task=TaskKind.CORRECT),
                    image=looked, actor="agent", seen="GPZ(2019)-4.0MM-ZX").adopted
     evidence = b.decisions[-1].evidence
-    assert evidence["signal"] == "native_text_changed" and "'m' → 'n'" in evidence["signal_detail"]
+    assert evidence["signal"] == "native_text_changed" and "lost 'm', added 'n'" in evidence["signal_detail"]
     assert "does not show" in evidence["signal_detail"]
     b = block("采购金额为 100 万元。")
     assert correct(b, _obs("o-b", "agent", text="采购金额为 100 万元整。", task=TaskKind.CORRECT),
                    image=looked, actor="agent").adopted
     assert b.decisions[-1].evidence["signal"] == "native_text_changed"
+    b = block("甲 管理平台 乙")  # text moved, no letter changed: no signal
+    assert correct(b, _obs("o-d", "agent", text="甲 乙 管理平台", task=TaskKind.CORRECT), image=looked,
+                   actor="agent").adopted and "signal" not in b.decisions[-1].evidence
     b = block("x\ue000 的值")  # a glyph the text layer does not map: writing it is what a correction is for
     assert correct(b, _obs("o-c", "agent", text="xβ 的值", task=TaskKind.CORRECT), image=looked,
                    actor="agent").adopted and "signal" not in b.decisions[-1].evidence

@@ -21,7 +21,6 @@ check.  A text candidate may not change the numbers of the evidence at all.
 
 from __future__ import annotations
 
-import difflib
 import re
 import unicodedata
 from collections import Counter
@@ -306,25 +305,27 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
     gate = [image, numbers]
     before_text = _run(block.cells, False) if candidate.cells is not None and block.cells is not None else block.text
     after_text = _run(candidate.cells, False) if candidate.cells is not None else candidate.text or ""
-    changed = _letters_changed(before_text, after_text) if native and not _unmapped(before_text) else []
+    changed = _letters_changed(before_text, after_text) if native and not _unmapped(before_text) else None
     if changed:
-        shown = normalize(seen) if seen is not None else None
+        lost, added = changed
+        shown = Counter(normalize(seen)) if seen is not None else None
         reading = ("no local reading of this place" if shown is None else "as the local reading shows"
-                   if all(new in shown for _old, new in changed if new) else "the local reading of this place does not show it")
+                   if not Counter(added) - shown else "the local reading of this place does not show it")
         gate.append(GateCheck(name="text_consistency", passed=True, signal="native_text_changed",
-                              detail="native letters changed: " + ", ".join(f"'{a}' → '{b}'" for a, b in changed[:10])
-                                     + f"; {reading}"))
+                              detail=f"native letters changed: lost '{lost[:40]}', added '{added[:40]}'; {reading}"))
     gate.append(GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result"))
     return _decide(block, candidate, gate, actor)
 
 
-def _letters_changed(before: str, after: str) -> list[tuple[str, str]]:
-    """The letters a correction changed, as (before, after) runs: letters only (the numbers check has the digits),
-    in one notation (``reading.compare.normalize``: NFKC, width, case and markup folded)."""
-    a = "".join(ch for ch in normalize(before) if not ch.isdigit())
-    b = "".join(ch for ch in normalize(after) if not ch.isdigit())
-    return [(a[i0:i1], b[j0:j1]) for op, i0, i1, j0, j1 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
-            if op != "equal"]
+def _letters_changed(before: str, after: str) -> tuple[str, str] | None:
+    """The letters a correction lost and added (letters only: the numbers check has the digits), counted — text
+    moved within the block or table is no change — in one notation (``reading.compare.normalize``: NFKC, width,
+    case and markup folded); None when there are none."""
+    a = Counter(ch for ch in normalize(before) if not ch.isdigit())
+    b = Counter(ch for ch in normalize(after) if not ch.isdigit())
+    if a == b:
+        return None
+    return "".join(sorted((a - b).elements())), "".join(sorted((b - a).elements()))
 
 
 def _unmapped(text: str) -> bool:

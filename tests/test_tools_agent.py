@@ -419,7 +419,7 @@ def test_a_region_reading_that_changes_native_letters_is_adopted_and_recorded(tm
     look = _ok("view_source", ws, {"looks": [region]}, _context(page=reading))["results"][0]
     outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 1, "evidence": look["evidence"],
                                               "reason": "原件是一张表"}]}, _context())["outcomes"][0]
-    assert outcome["accepted"] and "'甲' → '申'" in outcome["detail"]
+    assert outcome["accepted"] and "lost '甲', added '申'" in outcome["detail"]
     listed = document_summary(Workspace.open(ws).load(), "doc").review.agent_overrides
     assert len(listed) == 1 and "native_text_changed" in listed[0].signals
 
