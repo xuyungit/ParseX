@@ -149,7 +149,7 @@ def cmd_snapshot(args) -> int:
         "wheel": {"name": wheel.name, "sha256": _sha256(wheel)},
         "requirements_sha256": _sha256(toolkit / "requirements.txt"),
         "python": _run([str(python), "-c", "import platform;print(platform.python_version())"]).stdout.strip(),
-        "layout_models": sorted(m.name for m in there.glob("*.onnx")),
+        "layout_models": sorted(m.name for m in _layout_models(python).glob("*.onnx")),
         "codex_version": _codex_version(),
         "rules": args.rules,  # which {{#rN}} block of the task template this round uses (plan §2.3)
         "agent": {"runtime": "codex", "model": args.model, "reasoning_effort": args.effort},
@@ -168,6 +168,12 @@ def cmd_snapshot(args) -> int:
     return 0
 
 
+def _layout_models(python: Path) -> Path:
+    """Where the layout detector of *python*'s environment keeps its model files."""
+    return Path(_run([str(python), "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
+                .stdout.strip()) / "models"
+
+
 def _install(toolkit: Path, wheel: Path) -> Path:
     """The locked dependencies and the wheel in ``<toolkit>/venv``, the layout model copied in; its Python."""
     venv = toolkit / "venv"
@@ -178,10 +184,7 @@ def _install(toolkit: Path, wheel: Path) -> Path:
           str(toolkit / "requirements.txt")])
     _run(["uv", "pip", "install", "--python", str(python), "--compile-bytecode", "--no-deps", str(wheel)])
     # The layout model is downloaded into the package on first use; the sandbox cannot write there.
-    here = Path(_run([sys.executable, "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
-                .stdout.strip()) / "models"
-    there = Path(_run([str(python), "-c", "import rapid_layout,os;print(os.path.dirname(rapid_layout.__file__))"])
-                 .stdout.strip()) / "models"
+    here, there = _layout_models(Path(sys.executable)), _layout_models(python)
     there.mkdir(exist_ok=True)
     for model in sorted(here.glob("*.onnx")):
         shutil.copy2(model, there / model.name)
