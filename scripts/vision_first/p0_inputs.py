@@ -50,7 +50,7 @@ from parserx.scheduling.meter import RequestMeter  # noqa: E402
 from parserx.services.ocr import PaddleOCRService  # noqa: E402
 
 DPI = 150  # the page render the model sees: the tools' read resolution (``tools.read_dpi``)
-GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public")
+GT_DIRS = (REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public", REPO_ROOT / "ground_truth_unseen")  # unseen: new documents
 
 # The ten pages (Q140).
 PAGES: tuple[tuple[str, int], ...] = (

@@ -72,7 +72,7 @@ def main() -> int:
     agent_dir.mkdir(parents=True)
     shutil.copytree(v_run / "work" / args.configuration / args.doc, ws_dir)
     _claim_allocations(ws_dir)
-    original = next(p for suffix in ("pdf", "docx", "doc") for root in ("ground_truth", "ground_truth_public")
+    original = next(p for suffix in ("pdf", "docx", "doc") for root in ("ground_truth", "ground_truth_public", "ground_truth_unseen")
                     if (p := REPO_ROOT / root / args.doc / f"input.{suffix}").exists())
     source = doc_dir / original.name
     shutil.copyfile(original, source)

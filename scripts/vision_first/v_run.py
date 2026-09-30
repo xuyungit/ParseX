@@ -135,12 +135,13 @@ def pipeline_config(cache_dir: Path, mode: str, *, formulas: bool = True):
     return apply_overrides(config, overrides)
 
 
-def m_pass(doc: str, work: Path) -> dict:
-    """The fixed pipeline replayed from M's cache: its worklist by page, and which pages are native."""
+def m_pass(doc: str, work: Path, live_cache: Path | None = None) -> dict:
+    """The fixed pipeline replayed from M's cache — or, for a document M never read (*live_cache*), run with that
+    cache read-write —: its worklist by page, and which pages are native."""
     ws_dir, out = work / f"m-{doc}", work / f"m-{doc}-out"
     shutil.rmtree(ws_dir, ignore_errors=True)
-    outcome = pipeline_run(p0_inputs.document(doc), ws_dir, out, pipeline_config(M_RUN / "cache", "read_only"),
-                           name=doc)
+    cache = pipeline_config(live_cache, "read_write") if live_cache else pipeline_config(M_RUN / "cache", "read_only")
+    outcome = pipeline_run(p0_inputs.document(doc), ws_dir, out, cache, name=doc)
     state = Workspace.open(ws_dir).load()
     by_page: dict[int, list[str]] = {}
     blocks = {b.id: b for b in state.blocks}
@@ -155,7 +156,7 @@ def m_pass(doc: str, work: Path) -> dict:
     # reads for its formulas is still native)
     init_dir = work / f"init-{doc}"
     shutil.rmtree(init_dir, ignore_errors=True)
-    workspace_init(p0_inputs.document(doc), init_dir, config=pipeline_config(M_RUN / "cache", "read_only"))
+    workspace_init(p0_inputs.document(doc), init_dir, config=cache)
     native = [p.n for p in Workspace.open(init_dir).load().pages if p.status == PageStatus.DONE]
     short = {p.n: engine_short(state, p.n) for p in state.pages if p.n not in native}
     return {"worklist": by_page, "native": native, "markdown": outcome.markdown,
@@ -339,6 +340,8 @@ def main() -> None:
     parser.add_argument("--scanned-only", action="store_true", help="send scanned pages only; native pages stay "
                         "with the pipeline (implies --scanned)")
     parser.add_argument("--pipeline-cache", type=Path, help="a V run directory whose pipeline cache this run starts from")
+    parser.add_argument("--live-pipeline", action="store_true", help="documents the frozen M run never read (new "
+                        "documents): the routing pass runs the pipeline with the run's own cache, requesting what is missing")
     args = parser.parse_args()
     global DEFAULTS
     DEFAULTS = not args.no_defaults
@@ -352,7 +355,9 @@ def main() -> None:
     routing = json.loads(routing_path.read_text(encoding="utf-8")) if routing_path.exists() else {}
     for doc in args.docs.split(","):
         if doc not in routing:
-            m = m_pass(doc, run_dir / "work")
+            if args.live_pipeline and not (run_dir / "pipeline_cache").exists():
+                shutil.copytree(M_RUN / "cache", run_dir / "pipeline_cache")
+            m = m_pass(doc, run_dir / "work", run_dir / "pipeline_cache" if args.live_pipeline else None)
             routing[doc] = {"native": m["native"], "worklist": {str(k): v for k, v in m["worklist"].items()},
                             "short": {str(k): v for k, v in m.get("short", {}).items()},
                             "sent": {str(n): why for n, why in route(doc, m, args.all, args.scanned or args.scanned_only,
