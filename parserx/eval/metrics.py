@@ -43,7 +43,7 @@ METRIC_VERSION = "2.7"  # 2.1 (2026-09-24, Q28): merged cells against annotation
 #     formula metric's one notation, its equation number kept: ``x^{\prime}`` is ``x'``, ``\left(`` is ``(``, braces
 #     and font commands are markup, ``x^{'}`` is a prime too; key content reads a prime inside a script in one notation (``q^{x^{\prime}-m}`` is
 #     ``q^{x'-m}``); a mark raised in math (``$^{*}$``) no longer turns into ``$$`` and hides the numbers after it
-#     from the sign check; ``**`` inside math is not bold
+#     from the sign check; ``**`` inside math is not bold; a Chinese comma separates numbers (``90-93，102`` is not 93102)
 
 __all__ = [
     "METRIC_VERSION",

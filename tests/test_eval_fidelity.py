@@ -244,3 +244,11 @@ def test_a_mark_raised_in_math_does_not_hide_the_numbers_after_it():
     tokens = extract_key_tokens("| 方法 | k |\n|---|---|\n| 方法B$^{*}$ | -14.61 |\n| 方法B$^{**}$ | -4.18 |\n| 方法 A | -0.42 |\n")
     assert tokens["sign"] == ["-14.61", "-4.18", "-0.42"]
     assert "$^{**}$" in canonicalize("方法B$^{**}$ 与 **粗体**").text and "**粗体**" not in canonicalize("**粗体**").text
+
+
+def test_a_chinese_comma_separates_numbers_it_never_groups_digits():
+    # 2.7: "90-93，102" (pages 90-93 and 102) is not the number 93102
+    from parserx.eval.key_content import compute_key_content_errors, extract_key_tokens
+
+    assert compute_key_content_errors("公路工程，2013，38（1）：90-93，102.", "公路工程, 2013, 38(1): 90-93, 102.").total == 0
+    assert "1,000" in extract_key_tokens("共 1,000 元")["number"] or "1000" in extract_key_tokens("共 1,000 元")["number"]

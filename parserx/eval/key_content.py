@@ -263,7 +263,7 @@ class KeyContentMetrics:
 
 
 def extract_key_tokens(markdown: str) -> dict[str, list]:
-    raw = canonicalize(markdown).text
+    raw = canonicalize(markdown).text.replace("\uff0c", ", ")  # a Chinese comma separates, never groups digits
     scripts = _scripts(raw)
     minus = {ord(c): "-" for c in _MINUS}
     text = unicodedata.normalize("NFKC", _marked(raw, scripts)).translate(minus)
