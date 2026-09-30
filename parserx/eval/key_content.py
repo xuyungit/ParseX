@@ -191,6 +191,7 @@ _UPRIGHT_RE = re.compile(r"\\(?:text|mathrm|textrm|rm|mbox|operatorname)\s*\{([^
 _DEGREE_RE = re.compile(r"\^\s*\{?\s*\\circ\s*\}?")
 _NESTED_GROUP_RE = re.compile(r"\{\s*\{([^{}]*)\}\s*\}")
 _AFTER_COMMAND_RE = re.compile(r"(\\[A-Za-z]+)\s+")  # a command name ends at the space: ``\mu L`` is μL
+_CELL_SEP = " \u00a6 "  # between flattened table cells when units are read: a mark no unit pattern crosses
 _CELSIUS_RE = re.compile(r"°\s+(?=[CF](?![A-Za-z]))")  # ``43° C``: spacing between the degree and its scale
 
 
@@ -282,8 +283,9 @@ def extract_key_tokens(markdown: str) -> dict[str, list]:
         return " " * len(match.group(0))
 
     text = _DATE_RE.sub(take_date, text)
-    # units: math read as LaTeX writes units (``_unit_view``)
-    prose = _MATH_RE.sub(lambda m: " " + _unit_view(next(g for g in m.groups() if g is not None)) + " ", raw)
+    # units: math read as LaTeX writes units (``_unit_view``); a table's cells apart (no unit spans two cells)
+    cells = canonicalize(markdown, cell_sep=_CELL_SEP).text.replace("\uff0c", ", ")
+    prose = _MATH_RE.sub(lambda m: " " + _unit_view(next(g for g in m.groups() if g is not None)) + " ", cells)
     prose = _DATE_RE.sub(lambda m: " " * len(m.group(0)),
                          unicodedata.normalize("NFKC", _marked(prose, _scripts(prose))).translate(minus))
     # spacing is not writing: math set in its own spaces and a line break inside a paragraph are one space

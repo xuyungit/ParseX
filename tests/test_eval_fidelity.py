@@ -3,7 +3,7 @@ meaning-changing difference is counted, and each notation of the same content is
 
 import pytest
 
-from parserx.eval.key_content import compute_key_content_errors
+from parserx.eval.key_content import extract_key_tokens, compute_key_content_errors
 from parserx.eval.omission import compute_omission
 
 # ── Signs ───────────────────────────────────────────────────────────────
@@ -95,6 +95,15 @@ def test_a_letter_command_in_upright_math_is_its_letter():
 def test_a_word_in_math_is_a_variable_not_a_negation():
     errors = compute_key_content_errors("式中，$N_0$——为消毒前", "式中，$No$——为消毒前")
     assert errors.missing["negation"] == 0 and errors.extra["negation"] == 0
+
+
+@pytest.mark.parametrize("table", [
+    "| 钢筋种类 | 强度 | 钢筋种类 |\n|---|---|---|\n| HPB300 | 250 | HRB400 |",
+    "<table><tr><td>钢筋种类</td><td>强度</td><td>钢筋种类</td></tr><tr><td>HPB300</td><td>250</td><td>HRB400</td></tr></table>",
+])
+def test_a_number_and_the_next_cell_are_not_a_unit(table):
+    assert extract_key_tokens(table)["unit"] == []
+    assert extract_key_tokens(table.replace("250", "250 MPa"))["unit"] == ["250MPa"]  # a unit within its cell
 
 def test_a_unit_in_prose_beside_math_is_still_counted():
     errors = compute_key_content_errors("取 $k_1$ 为 6 kN，长 10 m", "取 $k_1$ 为 6 MN，长 10 m")

@@ -58,11 +58,13 @@ class CanonicalDoc:
     image_count: int
 
 
-def canonicalize(markdown: str) -> CanonicalDoc:
+def canonicalize(markdown: str, *, cell_sep: str = " ") -> CanonicalDoc:
+    """*cell_sep*: what stands between a flattened table's cells (and rows): a space for the text metrics; key
+    content reads units with a mark no unit crosses (a number in one cell and the letters of the next are no unit)."""
     text = _IMAGE_TEXT_RE.sub(_unquote_image_text, _TILDE_ESCAPE_RE.sub("~", markdown))
     text = _outside_math(text, lambda part: _STAR_ESCAPE_RE.sub("*", _EMPHASIS_RE.sub("", part)))  # $^{**}$ is no bold
     text = _COMMENT_RE.sub("", text)
-    text = _flatten_tables(text)
+    text = _flatten_tables(text, cell_sep)
     text, image_count = _strip_images(text)
     return CanonicalDoc(text=text, image_count=image_count)
 
@@ -111,8 +113,9 @@ def normalize_label(text: str) -> str:
     return _NON_WORD_RE.sub("", normalize_cell(text))
 
 
-def grid_text(grid: TableGrid) -> str:
-    """Cell contents in row-major order: cells joined by spaces, rows by newlines.
+def grid_text(grid: TableGrid, sep: str = " ") -> str:
+    """Cell contents in row-major order: cells joined by *sep* (a space), rows by newlines (after *sep* when it is
+    a mark).
 
     Positions repeating the content directly above or to the left are skipped,
     so merged cells count once in every notation.
@@ -132,8 +135,8 @@ def grid_text(grid: TableGrid) -> str:
                 continue
             parts.append(cell.content)
         if parts:
-            lines.append(" ".join(parts))
-    return "\n".join(lines)
+            lines.append(sep.join(parts))
+    return ("\n" if sep == " " else f"{sep}\n").join(lines)
 
 
 _SCRIPT_FORMS: dict[str, dict[str, str]] = {"sup": {}, "sub": {}}  # base character → its super- / subscript form
@@ -159,14 +162,17 @@ def _cell_scripts(table: str) -> str:
     return _HTML_SCRIPT_RE.sub(written, table)
 
 
-def _flatten_tables(text: str) -> str:
+def _flatten_tables(text: str, cell_sep: str = " ") -> str:
     text = _HTML_TABLE_RE.sub(lambda m: _cell_scripts(m.group(0)), text)
     parts: list[str] = []
     cursor = 0
     for span in find_tables(text):
         parts.append(text[cursor:span.start])
         raw = text[span.start:span.end]
-        body = grid_text(span.grid) if span.grid is not None else _TAG_RE.sub(" ", raw)
+        if span.grid is not None:
+            body = grid_text(span.grid, cell_sep)
+        else:  # HTML the grid does not take: its tags as spaces (and its cells' ends as the mark, when one is asked)
+            body = _TAG_RE.sub(" ", raw if cell_sep == " " else re.sub(r"</t[dh]>|</tr>", cell_sep, raw, flags=re.I))
         parts.append(f"\n\n{body}\n\n")
         cursor = span.end
     parts.append(text[cursor:])
