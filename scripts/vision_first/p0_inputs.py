@@ -75,6 +75,10 @@ SCRIPT_SIZE = 0.85
 SCRIPT_SHIFT = 0.12
 ROW_SHIFT = 0.6
 ATTACHED = 0.5
+# Candidates version 2 (2026-09-30, eval_reports/2026-09-30_script_candidates.md §4): two lines one over the other
+# are not a row; a glyph attached to a script is judged against that script's base; a prime is a character unless it
+# stands inside a script.  The frozen runs keep the inputs they were built with (``inputs/``).
+PRIMES = frozenset("′″‴⁗'")
 
 
 def document(name: str) -> Path:
@@ -193,7 +197,21 @@ def script_candidates(raws: list[RawLine]) -> tuple[list[list[dict]], list[list[
     def same_row(i: int, j: int) -> bool:
         a, b = mains[i], mains[j]
         return (a is not None and b is not None and min(a[3], b[3]) > max(a[2], b[2])
-                and abs(a[0] - b[0]) <= ROW_SHIFT * max(a[1], b[1]))
+                and abs(a[0] - b[0]) <= ROW_SHIFT * max(a[1], b[1]) and (i == j or not stacked(i, j)))
+
+    def stacked(i: int, j: int) -> bool:
+        """One line over the other: one line's extent holds a whole glyph of the other set larger than its own
+        glyphs (a caption's second language, an affiliation under the names, a table head's second line, the parts
+        of a fraction).  A script stands beside its base — kerned into it at most, never spanning a larger glyph —
+        and nominal sizes differ between fonts, so a size-based shift alone cannot tell."""
+        for a, b in ((i, j), (j, i)):
+            own = [g for g in glyphs[a] if g[0].strip()]
+            if not own:
+                continue
+            left, right, small = min(g[1] for g in own), max(g[2] for g in own), min(g[3] for g in own)
+            if any(h[0].strip() and h[3] * SCRIPT_SIZE >= small and left <= h[1] and h[2] <= right for h in glyphs[b]):
+                return True
+        return False
 
     out: list[list[dict]] = []
     for i, own in enumerate(glyphs):
@@ -201,13 +219,13 @@ def script_candidates(raws: list[RawLine]) -> tuple[list[list[dict]], list[list[
             out.append([])
             glyph_kinds.append([])
             continue
-        row = sorted(((g[:5], j == i, k) for j, gs in enumerate(glyphs) if gs and same_row(i, j)
+        row = sorted(((g[:5], j == i, k, j) for j, gs in enumerate(glyphs) if gs and same_row(i, j)
                       for k, g in enumerate(gs)), key=lambda item: (item[0][1], item[0][2]))
-        kinds = _kinds([g for g, _, _ in row])
+        kinds = _kinds([g for g, _, _, _ in row], [j for _, _, _, j in row], same_row)
         found: list[dict] = []
         own_kinds = [""] * len(own)
         previous = None
-        for (g, mine, k), (kind, base) in zip(row, kinds):
+        for (g, mine, k, _), (kind, base) in zip(row, kinds):
             if mine:
                 own_kinds[k] = kind
             if not mine or not kind:
@@ -250,12 +268,18 @@ def scripted_text(raw: RawLine, kinds: list[str]) -> str:
     return "".join(out).strip()
 
 
-def _kinds(glyphs: list[tuple]) -> list[tuple[str, str]]:
+def _kinds(glyphs: list[tuple], lines: list[int], same_row) -> list[tuple[str, str]]:
     """For each glyph (char, x0, x1, size, baseline) of a row, in order along it: ("sup" | "sub" | "", the glyph
     it is a script of).  Its base is the nearest glyph set larger (to its left, else to its right) with nothing
-    but smaller glyphs between them, at most ``ATTACHED`` of the base's size apart."""
+    but smaller glyphs between them, at most ``ATTACHED`` of the base's size apart, and those glyphs in the base's
+    row too (a line's row holds the lines beside it, which need not be beside each other: a reference in the right
+    column is not a script of a heading in the left one across the body line between); when that glyph is itself a
+    script, the glyph is judged against that script's base too: level with the script, it is part of it (the digits of
+    a citation beside its raised brackets); level with the base, it is none (the full stop after the citation);
+    shifted from both, a script of the script.  A prime is a script only beside one, and then part of it."""
     marks = [k for k, g in enumerate(glyphs) if g[0].strip()]
     out = [("", "")] * len(glyphs)
+    base_of: dict[int, int] = {}
     for at, i in enumerate(marks):
         ch, x0, x1, size, baseline = glyphs[i]
         base = None
@@ -268,16 +292,33 @@ def _kinds(glyphs: list[tuple]) -> list[tuple[str, str]]:
                 run = marks[min(at, k) + 1:max(at, k)] + [i]
                 near = min(glyphs[r][1] for r in run) if step < 0 else max(glyphs[r][2] for r in run)
                 gap = near - glyphs[j][2] if step < 0 else glyphs[j][1] - near
-                if gap <= ATTACHED * glyphs[j][3]:
+                if gap <= ATTACHED * glyphs[j][3] and all(same_row(lines[r], lines[j]) for r in run):
                     base = j
                     break
         if base is None:
             continue
-        bsize, bbase = glyphs[base][3], glyphs[base][4]
-        shift = (baseline - bbase) / bsize
-        if abs(shift) >= SCRIPT_SHIFT:
-            out[i] = ("sup" if shift < 0 else "sub", glyphs[base][0])
+        base_of[i] = base
+        out[i] = _shifted(glyphs[i], glyphs[base])
+    first = {i: out[i] for i in base_of}
+    for i, j in base_of.items():  # a glyph attached to a script, against that script's own base:
+        if not first.get(j, ("", ""))[0] or j not in base_of:
+            continue
+        if not _shifted(glyphs[i], glyphs[base_of[j]])[0]:
+            out[i] = ("", "")  # back on the base's line (the full stop after a raised citation)
+        elif not first[i][0]:
+            out[i] = first[j]  # level with the script: part of it (a citation's digits beside its brackets)
+        # else shifted from the script too: a script of the script (φ_j raised), as judged
+    for at, i in enumerate(marks):  # a prime is a script only beside one (x′ in q^{x′}), and then part of it
+        if glyphs[i][0] in PRIMES:
+            near = [out[marks[k]] for k in (at - 1, at + 1)
+                    if 0 <= k < len(marks) and glyphs[marks[k]][0] not in PRIMES and out[marks[k]][0]]
+            out[i] = near[0] if near else ("", "")
     return out
+
+
+def _shifted(glyph: tuple, base: tuple) -> tuple[str, str]:
+    shift = (glyph[4] - base[4]) / base[3]
+    return ("sup" if shift < 0 else "sub", base[0]) if abs(shift) >= SCRIPT_SHIFT else ("", "")
 
 
 # ── the scan engine, the detector, the extraction ───────────────────────
