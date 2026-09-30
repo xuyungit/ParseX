@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 from rapidfuzz.distance import LCSseq
 
-from parserx.eval.formulas import characters
+from parserx.eval.formulas import characters, one_prime
 from parserx.eval.normalize import canonicalize
 
 KINDS = ("number", "unit", "negation", "date", "sign", "script", "attribution", "unmapped")
@@ -95,7 +95,7 @@ def _script_token(position: str, raw: str) -> str | None:
     raw = raw.strip()
     if _REFERENCE_RE.match(re.sub(r"[{}\s]", "", _TAG_RE.sub("", raw))):
         return None
-    text = characters(_TAG_RE.sub("", raw).replace("\\prime", "'"))
+    text = characters(one_prime(_TAG_RE.sub("", raw)))  # x^{\\prime} inside a script is x' (2.7)
     text = unicodedata.normalize("NFKC", text).translate({ord(c): "-" for c in _MINUS})
     content = "".join(c for c in text if c.isalnum() or c in _SCRIPT_KEEP).replace("'", "")
     # a marker left without content (a prime's) goes; a script of an empty base (``_{_{k}}``) is the script itself

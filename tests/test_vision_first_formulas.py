@@ -34,7 +34,8 @@ def test_the_formulas_their_lines_engine_entries_and_boxes():
     wanted = f.wanted(_data())
     assert [(w["id"], w["lines"], w["engine"]) for w in wanted] == [
         ("B2", ["L2", "L3", "L4"], ["E1"]), ("B3", ["L5"], [])]
-    assert f.crop_box(_page(), wanted[0]) == [12, 30, 176, 60]  # lines and entry, with the margin
+    assert f.crop_box(_page(), wanted[0]) == [14, 32, 176, 58]  # its lines, with the margin (not the entry's box)
+    assert f.crop_box(_page(), {"id": "B9", "lines": [], "engine": ["E1"], "region": None}) == [12, 30, 106, 60]
     assert json.loads(f.context(_page(), wanted).split("\n")[1]) == {
         "id": "B2", "text_layer": ["x", "2", "(1)"], "engine": ["x^{2}"]}
 

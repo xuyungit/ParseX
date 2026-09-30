@@ -225,3 +225,11 @@ def test_the_text_metrics_read_math_in_one_notation():
     assert char_sequence("$x^{2}$") != char_sequence("$x_{2}$")
     assert char_sequence(r"$$y \tag{5}$$") != char_sequence(r"$$y \tag{6}$$")
     assert char_sequence("价格 $5 与 $6") == "价格$5与$6"  # two prices are not math
+
+
+def test_a_prime_inside_a_script_is_one_notation():
+    # 2.7: q^{x^{\prime}-m} and q^{x'-m} are one script
+    from parserx.eval.key_content import compute_key_content_errors as compute_key_content
+
+    assert compute_key_content(r"记 $q_2^{x^{\prime}-m}$ 与 $q^{x^\prime+2m}$", r"记 $q_2^{x'-m}$ 与 $q^{x'+2m}$").total == 0
+    assert compute_key_content(r"$q^{x'-m}$", r"$q^{x'+m}$").total > 0

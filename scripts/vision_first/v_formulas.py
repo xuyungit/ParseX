@@ -31,7 +31,7 @@ MARGIN = 6  # pixels of the allocation's page image around a formula's boxes
 
 INSTRUCTIONS = """你在为文档的一页写行间公式的 LaTeX。下面依次给出这一页的 {n} 个行间公式的图，第 k 张图是【公式】里第 k 个公式。每个公式另附：
 - text_layer：PDF 文字层里这个公式的文字，按行给出。字符准确，但上下标、分式、根号的结构散了。
-- engine：另一个识别工具读出的 LaTeX。结构通常对，个别字符可能认错，可能漏掉编号。
+- engine：另一个识别工具读出的 LaTeX。结构通常对，个别字符可能认错，可能漏掉编号；一条读数可能连着相邻的几个公式，只取图里这个公式的部分。
 
 照图写出每个公式的 LaTeX：
 - 字符以文字层为准，结构以图为准；
@@ -58,13 +58,16 @@ def wanted(data: dict) -> list[dict]:
 
 
 def crop_box(page: dict, formula: dict) -> list[float] | None:
-    """The formula's box on the allocation's page image: its lines, engine entries and region, with a margin."""
+    """The formula's box on the allocation's page image: its lines and region, with a margin; its engine entries only
+    when it has neither (the engine may read two neighbouring formulas as one entry: its box would show both, and
+    the model wrote the first twice)."""
     lines = page["lines"]
     boxes = [lines[int(x[1:]) - 1]["box"] for x in formula["lines"] if 1 <= int(x[1:]) <= len(lines)]
-    entries = {e["id"]: e for e in page.get("engine") or []}
-    boxes += [entries[e]["box"] for e in formula["engine"] if e in entries]
     if formula.get("region"):
         boxes.append(formula["region"])
+    if not boxes:
+        entries = {e["id"]: e for e in page.get("engine") or []}
+        boxes = [entries[e]["box"] for e in formula["engine"] if e in entries]
     if not boxes:
         return None
     width, height = page["image"]["width"], page["image"]["height"]
@@ -160,7 +163,9 @@ def fill(data: dict, latex: dict[str, str]) -> dict:
 def run(caller, run_n: int, run_dir: Path, page: dict, data: dict, *, max_tokens: int, source: Path) -> dict:
     """The formula request for one page (two rounds at most); the record, with ``latex`` by formula id."""
     formulas = wanted(data)
-    paths = crops(source, page, formulas, run_dir / "inputs" / "formulas")
+    # per configuration: another configuration's formula of the same page and id is another crop (runs in parallel
+    # wrote one file each other's requests read)
+    paths = crops(source, page, formulas, run_dir / "formulas" / caller.name)
     shown = [(f, p) for f, p in zip(formulas, paths) if p is not None]
     ids = [f["id"] for f, _ in shown]
     record: dict = {"formulas": ids, "rounds": [], "latex": {}, "status": "none"}
