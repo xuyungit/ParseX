@@ -169,8 +169,9 @@ def signals(data: dict, page: dict, keys: list[set[str]], n: int) -> dict[str, l
 
     - ``aside_unrepeated``: a line excluded as page furniture that no other page of the document repeats (running
       heads, feet and page numbers repeat; digits are not compared);
-    - ``copied_scripts``: a line copied (or in a table) without its script candidates, or with glyphs the text layer
-      does not map — what the model may have needed to write;
+    - ``copied_scripts``: a line copied (or in a table) without its script candidates (contracts 2–4: the switch
+      off; from v5 a copy takes them), or with glyphs the text layer does not map — what the model may have needed to
+      write;
     - ``possible_duplicate``: a written part whose added letters and digits are all in the copied lines next to the
       lines it replaces."""
     lines = page["lines"]
@@ -189,7 +190,7 @@ def signals(data: dict, page: dict, keys: list[set[str]], n: int) -> dict[str, l
             names = [x for ref in part["lines"] for x in contract._names(ref) if 1 <= int(x[1:]) <= len(lines)]
             if part["kind"] in ("copy", "table"):
                 out["copied_scripts"] += [x for x in names if lines[int(x[1:]) - 1].get("odd")
-                                          or (lines[int(x[1:]) - 1].get("scripts") and not part.get("scripts"))]
+                                          or (lines[int(x[1:]) - 1].get("scripts") and part.get("scripts") is False)]
             elif names:
                 original = "\n".join(lines[int(x[1:]) - 1]["text"] for x in names)
                 added = letters(part["text"]) - letters(original)

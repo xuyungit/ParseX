@@ -33,21 +33,21 @@ def sha256(text: str | bytes) -> str:
 
 
 class ProbeService(OpenAICompatibleService):
-    def ask(self, image: Path, prompt: str, context: str, *, schema: dict, max_tokens: int) -> dict:
-        """{"text", "finish", "usage", "seconds", "structured_output", "api"}."""
+    def ask(self, image: Path | list[Path], prompt: str, context: str, *, schema: dict, max_tokens: int) -> dict:
+        """{"text", "finish", "usage", "seconds", "structured_output", "api"}; *image* one page image or several."""
         mode = self._config.structured_output or "json_schema"
         asked = prompt if mode == "json_schema" else prompt + _schema_note(schema)
-        url = _encode_image_data_url(image)
+        urls = [_encode_image_data_url(i) for i in (image if isinstance(image, list) else [image])]
         api = self._config.api_style if self._config.api_style in ("responses", "chat") else "responses"
         started = time.monotonic()
         if api == "responses":
             content = [{"type": "input_text", "text": context}, {"type": "input_text", "text": asked},
-                       {"type": "input_image", "image_url": url}]
+                       *({"type": "input_image", "image_url": url} for url in urls)]
             text, finish, usage = self._responses(content, max_tokens, _structured_output_kwargs(
                 api_style="responses", mode=mode, json_schema=schema, json_schema_name="p0_allocation"))
         else:
             content = [{"type": "text", "text": context}, {"type": "text", "text": asked},
-                       {"type": "image_url", "image_url": {"url": url}}]
+                       *({"type": "image_url", "image_url": {"url": url}} for url in urls)]
             text, finish, usage = self._chat_once(content, max_tokens, _structured_output_kwargs(
                 api_style="chat", mode=mode, json_schema=schema, json_schema_name="p0_allocation"))
         return {"text": text, "finish": finish, "usage": usage, "seconds": round(time.monotonic() - started, 2),
@@ -117,11 +117,14 @@ class Caller:
                 "effort_sent": effort_for(self.config.reasoning_effort, self.config.efforts),
                 "structured_output": self.config.structured_output or "json_schema"}
 
-    def ask(self, image: Path, prompt: str, context: str, *, schema: dict, max_tokens: int, run: int,
-            round_: int, feedback: str = "") -> dict:
-        """The record of one request (a cache hit returns the recorded one); failed attempts are listed."""
-        material = {"method": "p0_allocate", **self.identity(),
-                    "args": {"image": {"file_sha256": sha256(image.read_bytes())}, "prompt": sha256(prompt),
+    def ask(self, image: Path | list[Path], prompt: str, context: str, *, schema: dict, max_tokens: int, run: int,
+            round_: int, feedback: str = "", method: str = "p0_allocate") -> dict:
+        """The record of one request (a cache hit returns the recorded one); failed attempts are listed.  One image
+        keys the request as P0 did (its recorded answers replay); several are keyed in order."""
+        shown = ({"file_sha256": sha256(image.read_bytes())} if not isinstance(image, list)
+                 else [{"file_sha256": sha256(i.read_bytes())} for i in image])
+        material = {"method": method, **self.identity(),
+                    "args": {"image": shown, "prompt": sha256(prompt),
                              "context": sha256(context + feedback), "schema": sha256(repr(schema)),
                              "max_tokens": max_tokens, "run": run, "round": round_}}
         attempts: list[dict] = []

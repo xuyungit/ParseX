@@ -12,8 +12,11 @@ it (review item IO of the audit: "P0 结果先独立存 JSON，通过后再定�
   a block made only of copied lines keeps the text layer as its engine (``native_pdf``) and the typography of the
   native block its lines came from, so the title step reads it as it reads any native paragraph;
 - a formula block → a FORMULA block (LaTeX);
-- a ``table`` part → the native extraction's TABLE block holding those lines, kept (with ``scripts``, cells that are
-  one line get the line's script candidates in their Unicode forms); a written HTML table → a new TABLE block;
+- a ``table`` part → the native extraction's TABLE block holding those lines, kept (cells that are one line get the
+  line's script candidates in their Unicode forms, contract v5); a written HTML table → a new TABLE block;
+- copied lines take their script candidates (contract v5); a written part that leaves out scripts the candidates of
+  its lines have keeps the lines as the candidates write them as a candidate reading — a review item (Q143 ③);
+- a formula whose LaTeX neither request gave → the engine reading whose numbers agree, else the lines (degraded);
 - a figure block → the native image placed there, kept; with no placed image under it (a drawn figure) → a FIGURE
   block cut from the page render;
 - ``aside`` lines excluded → one EXCLUDED block per aside item; into a block → merged into it;
@@ -169,8 +172,7 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                     hits = [tid for tid, owned in table_lines.items() if refs & owned]
                     for tid in hits:
                         table = tables[tid]
-                        if part.get("scripts"):
-                            _script_cells(table, refs, page)
+                        _script_cells(table, refs, page)
                         for cell in table.cells.cells if table.cells is not None else []:
                             cell.content = contract.visible(cell.content)  # an unmapped glyph: the visible mark
                         if table not in placed:
@@ -208,13 +210,23 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
         pieces, copied_only, candidates, degraded, defaults = [], True, [], False, Counter()
         for part in parts:
             names = [x for ref in part["lines"] for x in contract._names(ref) if x in text_of]
-            if part["kind"] == "copy":
-                source = scripted_of if part.get("scripts") else text_of
-                pieces.append(join_wrapped([_unicode_scripts(source[x]) if part.get("scripts") else source[x]
-                                            for x in names]))
+            if part["kind"] == "copy":  # with the script candidates (contract v5)
+                pieces.append(join_wrapped([_unicode_scripts(scripted_of[x]) for x in names]))
                 continue
             written = part["text"].strip()
             original = "\n".join(text_of[x] for x in names)
+            if kind != "formula" and names and _scripts_left_out(written, [page["lines"][int(x[1:]) - 1] for x in names]):
+                candidates.append(join_wrapped([_unicode_scripts(scripted_of[x]) for x in names]))
+                counts["scripts_left_out"] += 1
+            if kind == "formula" and not written:  # neither request gave LaTeX: the engine, else the lines
+                options = [("engine", t) for t in _engine_versions(page, names)] if names else []
+                best = min(options, key=lambda o: _number_mismatch(o[1], original)) if options else ("text layer", original)
+                pieces.append(best[1])
+                candidates += [t for _w, t in options if t != best[1]]
+                copied_only = False
+                degraded = degraded or best[0] == "text layer" or _number_mismatch(best[1], original) > 0
+                defaults["formula_engine" if best[0] == "engine" else "formula_text_layer"] += 1
+                continue
             if not names or not use_defaults or not _numbers_differ(written, original):
                 pieces.append(written)
                 copied_only = False
@@ -348,6 +360,61 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
 _DECIMAL = re.compile(r"(\d)\s*([.．])\s*(\d)")  # "0. 60": the text layer spaces a decimal point
 _TAG = re.compile(r"<[^<>]+>")
 _SPACED = re.compile(r"(\\(?!begin|end)[a-zA-Z]+)(?![a-zA-Z])")
+
+
+_HTML_SCRIPT = re.compile(r"<(?:sup|sub)>(.*?)</(?:sup|sub)>")
+_UNICODE_SCRIPTS = re.compile("[" + "".join(sorted(set("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ"))) + "]+")
+
+
+def _scripts_left_out(written: str, lines: list[dict]) -> bool:
+    """Characters the script candidates of *lines* hold that the written text holds in no script (HTML, LaTeX or
+    Unicode; compared as characters — a candidate split over two text-layer lines is one script in the writing —
+    NFKC, primes as one mark)."""
+    import unicodedata
+
+    from parserx.content.latex import characters
+
+    def chars(text: str) -> Counter:
+        shown = characters(text.replace("\\prime", "′"))
+        return Counter(unicodedata.normalize("NFKC", shown).replace("'", "′").replace(" ", ""))
+
+    wanted = sum((chars(c["t"]) for line in lines for c in line.get("scripts", ())), Counter())
+    if not wanted:
+        return False
+    scripts = [m.group(1) for m in _HTML_SCRIPT.finditer(written)] + _latex_scripts(written)
+    found = sum((chars(t) for t in scripts), Counter())
+    found += sum((chars(m.group(0)) for m in _UNICODE_SCRIPTS.finditer(written)), Counter())
+    return bool(wanted - found)
+
+
+def _latex_scripts(text: str) -> list[str]:
+    """The contents of the outermost ``_`` / ``^`` scripts of LaTeX: a brace group, a command, or one character."""
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] not in "_^" or i + 1 >= len(text):
+            i += 1
+            continue
+        j = i + 1
+        if text[j] == "{":
+            depth, k = 0, j
+            while k < len(text):
+                depth += {"{": 1, "}": -1}.get(text[k], 0)
+                k += 2 if text[k] == "\\" else 1
+                if depth == 0:
+                    break
+            out.append(text[j + 1:k - 1])
+            i = k
+        elif text[j] == "\\":
+            m = re.match(r"\\[A-Za-z]+", text[j:])
+            out.append(m.group(0) if m else text[j:j + 2])
+            i = j + (len(m.group(0)) if m else 2)
+        else:
+            out.append(text[j])
+            i = j + 1
+    return out
 
 
 def _numbers(text: str) -> Counter:

@@ -16,8 +16,8 @@ def _page(n=6, engine=None, tables=None):
             "engine": engine or [], "tables": tables or []}
 
 
-def _part(kind, lines, text="", scripts=False):
-    return {"kind": kind, "lines": lines, "text": text, "engine": [], "scripts": scripts}
+def _part(kind, lines, text=""):
+    return {"kind": kind, "lines": lines, "text": text, "engine": []}
 
 
 def _answer(**over):
@@ -104,13 +104,21 @@ def test_a_grid_holding_two_tables_the_model_split_is_rendered_once():
     assert md.count("<table>") == 1 and "接着第二行" not in md
 
 
-def test_scripts_write_the_candidates_in_copied_lines_and_single_line_cells():
+def test_copied_lines_and_single_line_cells_take_their_script_candidates():
     page = _page(tables=[{"block": "t1", "lines": ["L4", "L5"], "html": "<table><tr><td>x2 +  y = 1</td><td>(1)</td></tr></table>"}])
     page["lines"][3]["_scripted"] = "x<sup>2</sup> + y = 1"
     answer = _answer(blocks=[
-        {"id": "B1", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4"], scripts=True)]},
-        {"id": "B2", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4"])]},
-        {"id": "B3", "type": "table", "level": None, "region": None, "parts": [_part("table", ["L4-L5"], scripts=True)]}])
+        {"id": "B1", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4"])]},
+        {"id": "B3", "type": "table", "level": None, "region": None, "parts": [_part("table", ["L4-L5"])]}])
     md = c.render(answer, page)
-    assert md.count("x<sup>2</sup> + y = 1") == 2  # the copy with scripts and the cell
-    assert "\n\nx2 + y = 1\n\n" in md  # the copy without
+    assert md.count("x<sup>2</sup> + y = 1") == 2 and "x2" not in md
+    assert '"copy_as": "x<sup>2</sup> + y = 1"' in c.context(page)
+
+
+def test_only_a_display_formula_may_leave_its_text_to_the_formula_request():
+    answer = _answer()
+    answer["blocks"][1]["parts"][0]["text"] = ""  # B2 is a formula
+    assert c.check(json.dumps(answer, ensure_ascii=False), _page()).level == "valid"
+    answer["blocks"][0]["parts"] = [_part("write", ["L2-L3"])]  # B1 is text
+    problems = c.check(json.dumps(answer, ensure_ascii=False), _page()).problems
+    assert problems == ["B1 的第 1 个 write 的 text 是空的"]

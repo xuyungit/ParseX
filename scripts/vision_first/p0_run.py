@@ -28,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import p0_contract as contract  # noqa: E402
 from p0_client import Caller  # noqa: E402
-from p0_inputs import PAGES, load, page_id  # noqa: E402
+import v_formulas  # noqa: E402
+from p0_inputs import PAGES, document, load, page_id  # noqa: E402
 
 from parserx.cache import ResponseCache  # noqa: E402
 from parserx.config.schema import apply_overrides, load_config  # noqa: E402
@@ -109,14 +110,20 @@ def run_page(caller: Caller, run: int, run_dir: Path, pid: str) -> dict:
         else:
             final = {"status": "failed", "data": contract.fallback(page), "repairs": ["整页按文字层复制（回答不能用）"],
                      "from_round": None}
+    formulas = None  # contract v5: the display formulas' LaTeX, asked apart (Q143)
+    if contract.CONTRACT_VERSION >= 5 and v_formulas.wanted(final["data"]):
+        formulas = v_formulas.run(caller, run, run_dir, page, final["data"], max_tokens=MAX_TOKENS,
+                                  source=document(page["document"]))
+        final["data"] = v_formulas.fill(final["data"], formulas["latex"])
+    asked = rounds + (formulas["rounds"] if formulas else [])
     markdown = contract.render(final["data"], page)
     result = {"configuration": caller.name, "contract": contract.CONTRACT_VERSION, "page_id": pid,
               "model": caller.config.model,
               "identity": caller.identity(), "run": run, "rounds": rounds, "final": final,
-              "destinations": contract.destinations(final["data"], page), "markdown": markdown,
-              "usd": _sum(r.get("usd") for r in rounds),
-              "seconds": round(sum(r.get("seconds", 0) for r in rounds), 2),
-              "tokens": {k: sum(r.get("usage", {}).get(k, 0) for r in rounds)
+              "destinations": contract.destinations(final["data"], page), "markdown": markdown, "formulas": formulas,
+              "usd": _sum(r.get("usd") for r in asked),
+              "seconds": round(sum(r.get("seconds", 0) for r in asked), 2),
+              "tokens": {k: sum(r.get("usage", {}).get(k, 0) for r in asked)
                          for k in ("input", "cached", "output", "reasoning")}}
     out = run_dir / "results" / caller.name
     out.mkdir(parents=True, exist_ok=True)
