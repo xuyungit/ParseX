@@ -162,8 +162,9 @@ def m_pass(doc: str, work: Path) -> dict:
             "pages": [p.n for p in state.pages], "short": {n: b for n, b in short.items() if b}}
 
 
-def route(doc: str, m: dict, all_pages: bool, scanned: bool = False) -> dict[int, list[str]]:
-    """Page → why it is sent (a Word document: none, it has no pages to show)."""
+def route(doc: str, m: dict, all_pages: bool, scanned: bool = False, scanned_only: bool = False) -> dict[int, list[str]]:
+    """Page → why it is sent (a Word document: none, it has no pages to show); *scanned_only*: native pages stay
+    with the pipeline (the scanned pages' effect alone)."""
     if p0_inputs.document(doc).suffix.lower() != ".pdf":
         return {}
     config = load_config(REPO_ROOT / "configs" / "regression.yaml")
@@ -176,7 +177,7 @@ def route(doc: str, m: dict, all_pages: bool, scanned: bool = False) -> dict[int
         images = {n: [info["bbox"] for info in src[n - 1].get_image_info() if info.get("bbox")] for n in m["native"]}
     formula_doc = any(r["label"] in FORMULA_LABELS for rs in regions.values() for r in rs)
     k = 72.0 / p0_inputs.DPI
-    for n in m["native"]:
+    for n in ([] if scanned_only else m["native"]):
         why = []
         if all_pages:
             why.append("all pages (V-all)")
@@ -335,6 +336,8 @@ def main() -> None:
     parser.add_argument("--allocation-cache", type=Path, help="a P0 run directory whose cache the allocations reuse")
     parser.add_argument("--scanned", action="store_true",
                         help="send scanned pages too, by the review signals and engine_short (scanned-page plan §7)")
+    parser.add_argument("--scanned-only", action="store_true", help="send scanned pages only; native pages stay "
+                        "with the pipeline (implies --scanned)")
     parser.add_argument("--pipeline-cache", type=Path, help="a V run directory whose pipeline cache this run starts from")
     args = parser.parse_args()
     global DEFAULTS
@@ -352,7 +355,9 @@ def main() -> None:
             m = m_pass(doc, run_dir / "work")
             routing[doc] = {"native": m["native"], "worklist": {str(k): v for k, v in m["worklist"].items()},
                             "short": {str(k): v for k, v in m.get("short", {}).items()},
-                            "sent": {str(n): why for n, why in route(doc, m, args.all, args.scanned).items()}}
+                            "sent": {str(n): why for n, why in route(doc, m, args.all, args.scanned or args.scanned_only,
+                                                                     args.scanned_only).items()},
+                            "mode": "scanned only" if args.scanned_only else "scanned" if args.scanned else "native"}
             routing_path.write_text(json.dumps(routing, ensure_ascii=False, indent=1), encoding="utf-8")
         pages = {int(n): why for n, why in routing[doc]["sent"].items()}
         print(f"{doc}: {len(routing[doc]['native'])} native pages, sent {sorted(pages)}", flush=True)

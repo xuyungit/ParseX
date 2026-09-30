@@ -27,7 +27,7 @@ from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.10"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.11"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 # 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
 # 2.4 (2026-09-28, R3): inline emphasis (**, <u>, <b>, <strong>) is not text: dropped from both sides before the
@@ -54,6 +54,11 @@ METRIC_VERSION = "2.10"  # 2.1 (2026-09-24, Q28): merged cells against annotatio
 # 2.10 (2026-09-30, ocr01): a flattened table skips a cell repeating the one above or to its left only in a table
 #     that writes no spans (the repeat stands for a merge); with spans, two merged groups one under the other that
 #     read the same are two cells (they were counted once: the agent's faithful merges lost 5 key errors' worth)
+# 2.11 (2026-09-30): 2.10 counted repeats in any table with a span (real_doc01 1 → 45: an address merged per page,
+#     annotated in every row); the structure cannot tell two merged groups from one merge split by pages, so both
+#     sides read alike instead: a cell repeating the nearest cell above it that holds text (blanks under a value are
+#     a merge written without spans) or the cell to its left counts once (ocr01's "禁忌！…" per group, annotated with
+#     blank rows, and the agent's merged groups now agree)
 
 __all__ = [
     "METRIC_VERSION",

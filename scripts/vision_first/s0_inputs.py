@@ -58,7 +58,8 @@ def engine_reading(doc: str, n: int) -> tuple[dict, str, str, Path]:
     version = ""
     for block in state["blocks"]:
         for obs in block["observations"]:
-            if obs.get("engine") == scan.ENGINE and obs.get("raw_ref") and obs["task"] == "recognize":
+            if (obs.get("engine") == scan.ENGINE and obs.get("raw_ref") and obs["task"] == "recognize"
+                    and obs["anchor"].get("type") == "pdf"):  # not a reading of an embedded image (Q42)
                 pages_of.setdefault(obs["raw_ref"], set()).add(obs["anchor"]["page"])
                 version = obs.get("engine_version") or version
     ref = next(r for r, pages in pages_of.items() if n in pages)

@@ -213,13 +213,22 @@ def test_gfm_annotation_repeating_merged_values_accepts_a_rowspan():
 
 
 
-def test_two_merged_cells_with_the_same_text_are_two_cells():
-    # ocr01: "禁忌！不能用…" merged over each group's drug rows; two groups one under the other are two cells
+def test_merged_groups_that_read_the_same_count_alike_in_both_notations():
+    # ocr01: "禁忌！不能用…" merged over each group's drug rows, against an annotation leaving the rows blank
     output = ("<table><tr><th>病症</th><th>药</th><th>建议</th></tr>"
               "<tr><td rowspan=\"2\">偏头痛</td><td>二氢麦角胺</td><td rowspan=\"2\">不能用</td></tr><tr><td>麦角胺</td></tr>"
               "<tr><td>消化不良</td><td>西沙比利</td><td>不能用</td></tr></table>\n")
     expected = _table([["病症", "药", "建议"], ["偏头痛", "二氢麦角胺", "不能用"], ["", "麦角胺", ""],
                        ["消化不良", "西沙比利", "不能用"]])
+    assert compute_text_metrics(output, expected).char_f1 == 1.0
+
+
+def test_repeated_plain_cells_are_one_merge_even_where_the_table_has_spans():
+    # real_doc01: a value written in every row, in a table with a merged cell elsewhere, against an annotation
+    # that repeats it too
+    output = ("<table><tr><th>序号</th><th>保证金</th><th>地点</th></tr>"
+              "<tr><td>1</td><td>/</td><td rowspan=\"2\">无锡</td></tr><tr><td>2</td><td>/</td></tr></table>\n")
+    expected = _table([["序号", "保证金", "地点"], ["1", "/", "无锡"], ["2", "/", "无锡"]])
     assert compute_text_metrics(output, expected).char_f1 == 1.0
 
 def test_wrong_value_under_a_span_is_still_wrong():
@@ -234,10 +243,10 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_10():
+def test_metric_version_is_2_11():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.10"
+    assert METRIC_VERSION == "2.11"
 
 
 def test_inline_emphasis_is_not_text_and_is_scored_apart():

@@ -117,13 +117,12 @@ def grid_text(grid: TableGrid, sep: str = " ") -> str:
     """Cell contents in row-major order: cells joined by *sep* (a space), rows by newlines (after *sep* when it is
     a mark).
 
-    A merged cell counts once in every notation: the positions its span covers are skipped, and in a table that
-    writes no spans (a notation that cannot, like GFM) so is a cell repeating the one directly above or to the
-    left — the repeat stands for a merge.  In a table with spans, two cells are two cells even when they read the
-    same (two merged groups one under the other).
+    A merged cell counts once in every notation: the positions its span covers are skipped, and so is a cell
+    repeating the cell to its left or the nearest cell above it that holds text — blank cells under a value are how
+    a notation without spans writes a merge, so the same value stacked in a column counts once whether it is
+    repeated, left blank below or merged (per page, after a table's parts are joined).
     """
     matrix = grid.slot_matrix()
-    spans = any(cell.rowspan > 1 or cell.colspan > 1 for cell in grid.cells)
     lines: list[str] = []
     for r, row in enumerate(matrix):
         parts: list[str] = []
@@ -131,12 +130,13 @@ def grid_text(grid: TableGrid, sep: str = " ") -> str:
             if cell is None or not cell.content.strip():
                 continue
             left = row[c - 1] if c else None
-            above = matrix[r - 1][c] if r else None
+            above = next((matrix[i][c] for i in range(r - 1, -1, -1)
+                          if matrix[i][c] is not None and matrix[i][c].content.strip()), None)
             if left is cell or above is cell:  # a position the span covers
                 continue
-            if not spans and ((left is not None and left.content == cell.content) or (
+            if (left is not None and left.content == cell.content) or (
                 above is not None and above.content == cell.content
-            )):
+            ):
                 continue
             parts.append(cell.content)
         if parts:
