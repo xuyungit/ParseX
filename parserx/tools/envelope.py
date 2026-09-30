@@ -73,6 +73,7 @@ class UnresolvedKind(StrEnum):
     TEXT_ADDED = "text_added"  # text the program added from the local page reading, where the output had none (Q133)
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
+    READING_DISAGREEMENT = "reading_disagreement"  # a rewrite from the page image no reading confirms: the replaced reading
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it
     CAPTION_NUMBER_UNSEEN = "caption_number_unseen"  # a number a picture's description quotes, not read in it (IO6)
     TITLE_LEVEL_UNCLEAR = "title_level_unclear"  # two numbering styles whose nesting the numbers cannot tell (P7)

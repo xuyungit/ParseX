@@ -20,7 +20,7 @@ then the unchanged ``run_pipeline`` does the rest of its steps and ``export`` wr
 
 Signals, not reverts (user 2026-09-30): a write whose new numbers, or new letters and digits, neither reading holds
 — the engine's reading of the page, the local reading within the replaced blocks' boxes — keeps the written text
-and lists the engine's reading as a candidate for the agent; so does a write that drops engine text the page's
+and lists the engine's reading for the agent (``reading_disagreement``); so does a write that drops engine text the page's
 output no longer holds.  Notation (spacing, LaTeX markup, script form, full or half width) is not compared.
 """
 
@@ -51,6 +51,7 @@ from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.tables.grid import TableGrid
 from parserx.tools.recognize import _next_block_seq, _next_item
+from parserx.tools.views import REWRITE_CANDIDATE
 from parserx.workspace import Workspace
 from parserx.workspace.queries import block_unit
 
@@ -278,7 +279,7 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
                     heir.observations.append(Observation(
                         id=ids.observation_id(heir.id, "vlm", 10 + len(heir.observations)), engine="vlm",
                         engine_version=model, task=TaskKind.RECOGNIZE, anchor=heir.anchors[0],
-                        label=v_adapter.CANDIDATE_LABEL, text=contract.visible(original), status=ObservationStatus.OK))
+                        label=REWRITE_CANDIDATE, text=contract.visible(original), status=ObservationStatus.OK))
                     heir.decisions.append(decision(
                         "the written text differs from the engine's reading where no reading holds it: the engine's "
                         "reading listed for review", **{k: " · ".join(v[:20]) for k, v in found.items() if v}))

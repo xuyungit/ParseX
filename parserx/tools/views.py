@@ -21,6 +21,11 @@ from parserx.hierarchy.layout_titles import layout_titles
 from parserx.hierarchy.numbering_gaps import numbering_gaps, series_successors, unclear_nesting
 from parserx.reading.compare import added_from_reading, unaccounted_lines, unseen_segments, within_tables
 
+# The label of a block's reading replaced by a rewrite from the page image where no reading confirms the rewrite
+# (vision-first, scanned pages): kept on the block, listed as ``reading_disagreement`` until one is chosen or the
+# item is closed (user 2026-09-30: signals, not reverts).
+REWRITE_CANDIDATE = "replaced_reading"
+
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
 PREVIEW = 80  # characters of document text in outline previews
@@ -218,6 +223,18 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                    f"{listed(adds, ', ') or 'nothing'} more — a reading can take a superscript l for 1); {span}"
                    "look at the image: if the reading is right, correct the block with it (keep every character "
                    "the image shows), else close the item"))
+    for block in ordered(state):  # a rewrite no reading confirms: the reading it replaced, for a look at the image
+        replaced = next((o for o in reversed(block.observations) if o.label == REWRITE_CANDIDATE), None)
+        if block.status in HIDDEN or replaced is None or block.chosen_observation == replaced.id:
+            continue
+        has, had = disagreement(block.text or "", replaced.text or "")
+        items.append(Unresolved(
+            target=block.id, kind=UnresolvedKind.READING_DISAGREEMENT, quotes=_quotes([replaced.text or ""]),
+            detail=f"this block was rewritten from the page image; the quote is the reading it replaced, and where "
+                   f"they differ neither reading holds the rewrite (it has {listed(has, ', ') or 'nothing'} more, the "
+                   f"replaced reading {listed(had, ', ') or 'nothing'}); look at the image: if the rewrite is right, "
+                   "close the item; where the replaced reading is right, correct the block there (replace_text, "
+                   "set_cells) — write what the image prints, typos of the original included"))
     for block_id in figures_without_content(state):  # an image shown with nothing a reader who cannot see it gets
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
