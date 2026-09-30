@@ -175,6 +175,8 @@ def apply(ws, source: Path, n: int, page: dict, markdown: str, *, model: str) ->
         for i, block in enumerate(new + figures):
             block.order = base + i
         renumber(state)
+    ws.log_call({"tool": "vision_first_free", "request": {"page": n, "model": model},
+                 "note": "experiment adapter (scripts/vision_first/va_free.py), before the agent"})
     return dict(counts)
 
 

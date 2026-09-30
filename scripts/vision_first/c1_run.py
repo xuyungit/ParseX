@@ -35,6 +35,22 @@ from parserx.tools.context import ToolContext  # noqa: E402
 MODEL = "gpt-6.1-sol"  # the user, 2026-09-30
 
 
+def _claim_allocations(ws_dir: Path) -> None:
+    """V's page allocations were committed by the experiment adapter without a call record (before 2026-09-30):
+    claimed here by one, so the integrity check after the agent tells the agent's changes from V's step."""
+    from parserx.workspace import Workspace
+    from parserx.workspace.store import read_records
+
+    ws = Workspace.open(ws_dir)
+    records = read_records(ws.calls_path)
+    claimed = {v for r in records if r.get("type") == "call" for v in r.get("txns", [])}
+    ws._unclaimed = [r["version"] for r in records if r.get("type") == "txn" and r["version"] not in claimed
+                     and str(r.get("actor", "")).startswith("tool:vision_first")]
+    if ws._unclaimed:
+        ws.log_call({"tool": "vision_first_allocate", "request": {},
+                     "note": "V's allocations (experiment adapter), claimed when handed to the agent (C1)"})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--v-run", type=Path, required=True)
@@ -55,6 +71,7 @@ def main() -> int:
     ws_dir = agent_dir / "ws"
     agent_dir.mkdir(parents=True)
     shutil.copytree(v_run / "work" / args.configuration / args.doc, ws_dir)
+    _claim_allocations(ws_dir)
     source = doc_dir / "input.pdf"
     shutil.copyfile(next(p for root in ("ground_truth", "ground_truth_public")
                          if (p := REPO_ROOT / root / args.doc / "input.pdf").exists()), source)

@@ -105,6 +105,10 @@ def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model:
         with ws.txn("tool:vision_first:allocate") as state:
             _apply(ws, state, n, page, data, text_of, scripted_of, pdf_page, render, dpi, model, counts, defaults,
                    repeated)
+    # the transaction is claimed by a call record, as a tool's is: the workspace's integrity check (guide §7.3) then
+    # tells a later change outside the tools (by the agent) from this step of the experiment
+    ws.log_call({"tool": "vision_first_allocate", "request": {"page": n, "model": model},
+                 "note": "experiment adapter (scripts/vision_first/v_adapter.py), before the agent"})
     return dict(counts)
 
 
