@@ -37,7 +37,7 @@ from parserx.content.text import join_wrapped
 BLOCK_TYPES = ("title", "text", "list", "formula", "table", "figure", "caption", "footnote", "other")
 PART_KINDS = ("copy", "write", "table", "cell")
 EXCLUDED = "excluded"
-CONTRACT_VERSION = 6  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143); 6: the program's table grids shown, a cell written from the image by its address (``cell`` parts)
+CONTRACT_VERSION = 7  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143); 6: the program's table grids shown, a cell written from the image by its address (``cell`` parts); 7: typos of the original kept as printed (instructions only; user 2026-09-30)
 UNREADABLE = "〔?〕"  # the visible mark of a glyph no one could read (execution plan §1: never deleted, never guessed)
 
 _NULLABLE = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
@@ -101,7 +101,7 @@ INSTRUCTIONS = """你在整理文档的一页，写成供大模型阅读的 Mark
 - blocks：按阅读顺序排列的块。一块是一个段落：只有同一段落里折行的行才放进同一块；表单的各个字段、地址的各行、菜单项、列表项这类在页面上各自成行的内容，每行各成一块。每块有 id（B1、B2……）、type（title 标题、text 正文段落、list 列表项、formula 行间公式、table 表格、figure 图、caption 图表标题或图注、footnote 脚注、other 其他）、level（标题按版面估计的层级 1–6，不是标题填 null）、region（图，以及没有文字行可引用的内容，给出它在页面图上的框；其他填 null）、parts（块的内容，按顺序相接）。
 - parts 的每一项有 kind、lines、text、engine、cell（只有 cell 部分填位置，其他部分填 null）：
   - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序放入这些行的文字（有 copy_as 的行放入 copy_as），同一块里的行按换行接起来。copy_as 与图不一致（图上没有这个上下标，或上下标不同），或行里有斜体的变量或式子（x、b_i、3n−1 这类数学符号），就不要复制这一行，用 write 照图把整行写出。
-  - write：text 是你照图写的内容，lines 是它替换的行，engine 是参考了的引擎条目（没有就填空列表）。text 只写 lines 里这些行的内容：这些行的内容都要写进去，不能丢；它前后已经 copy 的字不要再写一遍。只在复制不了时写：含变量、式子或与图不符的上下标的行整行重写（行内公式写成 $…$，式子的写法照图）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，不总结、不翻译、不补全；看不清的地方写 〔?〕 并记入 unresolved，不要猜——浅得读不出、模糊的文字不要写成内容。
+  - write：text 是你照图写的内容，lines 是它替换的行，engine 是参考了的引擎条目（没有就填空列表）。text 只写 lines 里这些行的内容：这些行的内容都要写进去，不能丢；它前后已经 copy 的字不要再写一遍。只在复制不了时写：含变量、式子或与图不符的上下标的行整行重写（行内公式写成 $…$，式子的写法照图）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，不总结、不翻译、不补全，也不改正原文的错字（原件印错的字照印的写，不按上下文或同一列的规律推断）；看不清的地方写 〔?〕 并记入 unresolved，不要猜——浅得读不出、模糊的文字不要写成内容。
   - 行间公式：块的 type 为 formula，parts 只有一个 write，lines 是这个公式的全部行（含公式编号），engine 是对应的引擎条目，text 填空串——公式的 LaTeX 由程序另请一次、单独写出。每个带编号的行间公式单独成一块；图上有而文字层没有的公式，lines 为空列表，并给块填 region。
   - table：lines 是整张表的行，表格由程序从文字层建出，就是【程序建出的表格】里的那张（格子里已按 copy_as 写出上下标）。
   - cell：程序建出的表格里有几格与图不一致（映射不到的字形、认错的字、与图不符的上下标），就在这张表所在的块里，对每一格加一个 cell：cell 写这一格的位置 "T1:4:3"（表 T1 第 4 行第 3 列，按【程序建出的表格】里 rows 的行列数，从 1 数起），text 是照图写出的这一格的全部内容，lines 填空列表，engine 照常。只改有问题的格子，其余照抄；其他 part 的 cell 填 null。表格本身建错了（行列错位、漏行、把别的内容并了进来），才改用 write 照图写出整张表（HTML），lines 仍是整张表的行。

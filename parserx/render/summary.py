@@ -63,7 +63,7 @@ class AgentOverride(IRModel):
 
     target: str  # block id
     page: int | None
-    signals: list[str]  # native_numbers_changed · region_numbers_changed · region_characters_lost · text_not_in_reading
+    signals: list[str]  # native_numbers_changed · native_text_changed · region_numbers_changed · region_characters_lost · text_not_in_reading
     detail: str  # what the comparison found (before, after, the local reading)
     reason: str  # the agent's reason
     evidence: str  # the evidence id the agent cited

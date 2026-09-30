@@ -406,6 +406,24 @@ def test_a_region_read_again_replaces_its_blocks_and_can_be_undone(tmp_path):
     assert undo["accepted"] and _markdown(ws) == before and _ok("submit_draft", ws, {}, _context())["accepted"]
 
 
+def test_a_region_reading_that_changes_native_letters_is_adopted_and_recorded(tmp_path):
+    # user 2026-09-30, keep the original as printed: a native letter the reading changes is a signal like a number
+    from parserx.render.summary import document_summary
+    from parserx.workspace import Workspace
+
+    ws = _rows_as_text(tmp_path)
+    html = "<table><tr><td>项目</td><td>数值</td></tr><tr><td>申</td><td>3</td></tr><tr><td>乙</td><td>8</td></tr></table>"
+    reading = lambda: {"prunedResult": {"width": 600, "height": 200, "parsing_res_list": [  # noqa: E731
+        {"block_label": "table", "block_content": html, "block_bbox": [10, 10, 590, 190], "block_order": 1}]}}
+    region = {"page": 1, "bbox": [60, 80, 300, 190], "as": "text"}
+    look = _ok("view_source", ws, {"looks": [region]}, _context(page=reading))["results"][0]
+    outcome = _ok("edit_draft", ws, {"ops": [{"op": "adopt", "page": 1, "evidence": look["evidence"],
+                                              "reason": "原件是一张表"}]}, _context())["outcomes"][0]
+    assert outcome["accepted"] and "'甲' → '申'" in outcome["detail"]
+    listed = document_summary(Workspace.open(ws).load(), "doc").review.agent_overrides
+    assert len(listed) == 1 and "native_text_changed" in listed[0].signals
+
+
 def test_a_region_reading_that_changes_native_numbers_is_adopted_and_recorded(tmp_path):
     # execution plan §3.4: the agent decides; the lost number is a signal on the record, and unadopt brings it back
     from parserx.render.summary import document_summary

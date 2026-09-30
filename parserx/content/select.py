@@ -21,6 +21,7 @@ check.  A text candidate may not change the numbers of the evidence at all.
 
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from collections import Counter
@@ -59,7 +60,8 @@ def _plain(text: str) -> str:
 
 
 class GateCheck(IRModel):
-    name: Literal["image_evidence", "numeric_consistency", "structure_valid", "independent_reading"]
+    name: Literal["image_evidence", "numeric_consistency", "text_consistency", "structure_valid",
+                  "independent_reading"]
     passed: bool
     detail: str
     # a check that does not stop the agent but is recorded and listed in the summary (execution plan §3.4): the
@@ -274,7 +276,9 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
     block, and the result keeps content.  A native text layer's numbers change on the agent's reading of the image
     (execution plan §3.4): the change is a signal — recorded with whether the local reading of the block's place
     (*seen*, Q56) shows it — and the summary lists it (edits of OCR text are confined to the named spans by
-    construction)."""
+    construction).  So is a changed letter of a native text layer that maps every glyph (the layer is what the page
+    prints: a typo of the original corrected by meaning is what this catches; user 2026-09-30, keep the original as
+    printed); notation — spacing, width, case, markup — is not a change."""
     chosen = _chosen(block)
     native = chosen is not None and chosen.engine in NATIVE_ENGINES
     if candidate.cells is not None:
@@ -299,9 +303,33 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
                        f"the local reading of this place does not show it (it shows {sorted(shown.elements())[:10]})")
         numbers = GateCheck(name="numeric_consistency", passed=True, signal="native_numbers_changed",
                             detail=f"native numbers changed: {_number_diff(before, after, native=True)}; {reading}")
-    gate = [image, numbers,
-            GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result")]
+    gate = [image, numbers]
+    before_text = _run(block.cells, False) if candidate.cells is not None and block.cells is not None else block.text
+    after_text = _run(candidate.cells, False) if candidate.cells is not None else candidate.text or ""
+    changed = _letters_changed(before_text, after_text) if native and not _unmapped(before_text) else []
+    if changed:
+        shown = normalize(seen) if seen is not None else None
+        reading = ("no local reading of this place" if shown is None else "as the local reading shows"
+                   if all(new in shown for _old, new in changed if new) else "the local reading of this place does not show it")
+        gate.append(GateCheck(name="text_consistency", passed=True, signal="native_text_changed",
+                              detail="native letters changed: " + ", ".join(f"'{a}' → '{b}'" for a, b in changed[:10])
+                                     + f"; {reading}"))
+    gate.append(GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result"))
     return _decide(block, candidate, gate, actor)
+
+
+def _letters_changed(before: str, after: str) -> list[tuple[str, str]]:
+    """The letters a correction changed, as (before, after) runs: letters only (the numbers check has the digits),
+    in one notation (``reading.compare.normalize``: NFKC, width, case and markup folded)."""
+    a = "".join(ch for ch in normalize(before) if not ch.isdigit())
+    b = "".join(ch for ch in normalize(after) if not ch.isdigit())
+    return [(a[i0:i1], b[j0:j1]) for op, i0, i1, j0, j1 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+            if op != "equal"]
+
+
+def _unmapped(text: str) -> bool:
+    """A glyph the text layer does not map to a character (private use, U+FFFD): writing it is a correction's job."""
+    return any(0xE000 <= ord(ch) <= 0xF8FF or ord(ch) >= 0xF0000 or ch == "\ufffd" for ch in text or "")
 
 
 def add_gate(text: str, *, image: GateCheck, seen: str | None, holders: list[str]) -> list[GateCheck]:

@@ -276,5 +276,31 @@ def test_the_agent_changes_a_native_number_on_the_image_and_the_change_is_a_sign
     blind = GateCheck(name="image_evidence", passed=False, detail="not looked")
     assert not correct(b, changed, image=blind, actor="agent").adopted and b.text == "采购金额为 100 万元。"
     b = block()
-    same = _obs("o-b", "agent", text="采购金额为 100 万元整。", task=TaskKind.CORRECT)
+    same = _obs("o-b", "agent", text="采购金额为 100 万元。", task=TaskKind.CORRECT)  # spacing only
     assert correct(b, same, image=looked, actor="agent").adopted and "signal" not in b.decisions[-1].evidence
+
+
+def test_the_agent_changes_native_letters_and_the_change_is_a_signal():
+    """The native text layer is what the page prints: a changed letter, like a changed number, is recorded and
+    listed — a typo of the original corrected by meaning is the case this is for (4.0MM → 4.0MN)."""
+    from parserx.content.select import GateCheck, correct
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+
+    def block(text):
+        return Block(id="b-n", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text=text,
+                     observations=[_obs("o-n", "native_pdf", text=text)], chosen_observation="o-n")
+
+    b = block("盆式支座 GPZ(2019)-4.0MM-ZX")
+    assert correct(b, _obs("o-a", "agent", text="盆式支座 GPZ(2019)-4.0MN-ZX", task=TaskKind.CORRECT),
+                   image=looked, actor="agent", seen="GPZ(2019)-4.0MM-ZX").adopted
+    evidence = b.decisions[-1].evidence
+    assert evidence["signal"] == "native_text_changed" and "'m' → 'n'" in evidence["signal_detail"]
+    assert "does not show" in evidence["signal_detail"]
+    b = block("采购金额为 100 万元。")
+    assert correct(b, _obs("o-b", "agent", text="采购金额为 100 万元整。", task=TaskKind.CORRECT),
+                   image=looked, actor="agent").adopted
+    assert b.decisions[-1].evidence["signal"] == "native_text_changed"
+    b = block("x\ue000 的值")  # a glyph the text layer does not map: writing it is what a correction is for
+    assert correct(b, _obs("o-c", "agent", text="xβ 的值", task=TaskKind.CORRECT), image=looked,
+                   actor="agent").adopted and "signal" not in b.decisions[-1].evidence

@@ -34,6 +34,7 @@ from pydantic import Field, model_validator
 
 from parserx.content import scan
 from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, signals, transcribed
+from parserx.content.select import _letters_changed, _unmapped
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
@@ -560,6 +561,11 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
     if old and recall < RECALL:
         raised["region_characters_lost"] = (f"the reading has {recall:.0%} of the {len(before)} characters of "
                                             f"{', '.join(b.id for b in old)} (below {RECALL:.0%})")
+    native_text = "".join(_content(b) for b in native)
+    changed = _letters_changed(native_text, after) if native and not _unmapped(native_text) else []
+    if changed:  # the native text layer is what the page prints (user 2026-09-30: keep the original as printed)
+        raised["native_text_changed"] = ("the reading changes the native text layer's letters: "
+                                         + ", ".join(f"'{a}' → '{b}'" for a, b in changed[:10]))
     recorded = ({"signal": ",".join(raised), "signal_detail": "; ".join(raised.values())} if raised else {})
     for block in old:
         block.status = BlockStatus.DUPLICATE
