@@ -67,7 +67,7 @@ def _character(match: re.Match) -> str:
 
 
 def one_prime(text: str) -> str:
-    """Primes in one notation (``x^{\\prime}``, ``x^\\prime``, ``x′`` are ``x'``)."""
+    """Primes in one notation (``x^{\\prime}``, ``x^\\prime``, ``x^{'}``, ``x′`` are ``x'``)."""
     return _PRIME.sub("'", text)
 
 
@@ -82,7 +82,7 @@ _BARE_ENV = re.compile(r"(?<!\$)\\begin\{(align\*?|aligned|equation\*?|gather\*?
                        r"\\end\{\1\}", re.S)
 _NUMBER = re.compile(r"\\tag\*?\s*\{[^{}]*\}|\\eqno\s*[（(]?\s*[0-9.\-]+[a-z]?\s*[)）]?"
                      r"|(?:\\q?quad|~|\s)*[（(]\s*[0-9]+(?:[.\-][0-9]+)*[a-z]?\s*[)）]\s*$")
-_PRIME = re.compile(r"\^\s*\{\s*\^\s*\{\s*\\prime\s*\}\s*\}|\^\s*\{\s*\\prime\s*\}|\^\s*\\prime|\\prime|′")
+_PRIME = re.compile(r"\^\s*\{\s*\^\s*\{\s*\\prime\s*\}\s*\}|\^\s*\{\s*\\prime\s*\}|\^\s*\\prime|\\prime|\^\s*\{\s*'\s*\}|′")
 _DROP = re.compile(
     r"\\(?:left|right|big|Big|bigg|Bigg|bigl|bigr|Bigl|Bigr|middle|displaystyle|textstyle|scriptstyle|"
     r"mathbf|boldsymbol|bm|mathrm|mathit|mathsf|mathtt|mathcal|mathbb|operatorname|text|textbf|textit|mbox|cal|"

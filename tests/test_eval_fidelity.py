@@ -233,3 +233,4 @@ def test_a_prime_inside_a_script_is_one_notation():
 
     assert compute_key_content(r"记 $q_2^{x^{\prime}-m}$ 与 $q^{x^\prime+2m}$", r"记 $q_2^{x'-m}$ 与 $q^{x'+2m}$").total == 0
     assert compute_key_content(r"$q^{x'-m}$", r"$q^{x'+m}$").total > 0
+    assert compute_key_content(r"$q_2^{x^{'}+m}$", r"$q_2^{x'+m}$").total == 0  # the annotation writes x^{'} too

@@ -41,7 +41,7 @@ METRIC_VERSION = "2.7"  # 2.1 (2026-09-24, Q28): merged cells against annotation
 #     cell stays a script (the cell text kept only its characters)
 # 2.7 (2026-09-30, vision-first V, contract v5): the text metrics (char_f1, edit distance, order) read math in the
 #     formula metric's one notation, its equation number kept: ``x^{\prime}`` is ``x'``, ``\left(`` is ``(``, braces
-#     and font commands are markup; key content reads a prime inside a script in one notation (``q^{x^{\prime}-m}`` is
+#     and font commands are markup, ``x^{'}`` is a prime too; key content reads a prime inside a script in one notation (``q^{x^{\prime}-m}`` is
 #     ``q^{x'-m}``)
 
 __all__ = [

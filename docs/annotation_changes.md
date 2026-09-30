@@ -148,3 +148,4 @@
 | receipt | 第 2 页 `purchases.1` → `purchases.¹`，`minutes2` → `minutes²`（写法同 paper_chn02 标注的 Unicode 上下标）；页脚列表的 `1.`、`2.` 不变 | 页面图上两个脚注标记是上标，页脚的序号是平的（[测量报告](../eval_reports/2026-09-30_script_candidates.md) §3）；文字层里它们字号更小、基线抬高 |
 | receipt | 第 2 页页脚第 1 条 `…earned` 与 `for these purchases. …` 之间的空行删去，合回一段（用户同意，2026-09-30：按原件改） | 原件是同一句话连续排版，标注在句中断了段；字面 `\n` 处的分段按 Q136 不变 |
 | receipt | 第 2 页页脚 `…more information.` / `2. Subject to credit approval.` / `Apple Payments Services …` 三段合回一段，照原件写出字面的 `\n2.`、`\n\n`（撤销 2026-09-28 按 Q136 的改动） | 原件把换行符印成了两个字符（页面图上可见）；用户撤回 Q136（2026-09-30）：保留信息，照原件反映，不加规则 |
+| paper_chn01 | 第 4 页式 (18) 前后与"可类似得到"一句：`q_{z}` → `q_{2}`（4 处），式 (18) 的第一项 `\Delta q_{2}` → `\dot{\Delta} q_{2}` | 页面图是 Δ̇q₂（带点、下标 2），文字层也是 q 后跟下标 2；同一份标注别处都写 `q_2`（V 的公式请求复查时发现） |
