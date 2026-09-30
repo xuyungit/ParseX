@@ -120,6 +120,10 @@ _REGIONS_NOTE = "{n}. 版面检测的区域：只作提示，可能有错。"
 
 def prompt(page: dict) -> str:
     """The instructions for *page* (its input record); the data go in ``context``."""
+    if unit_of(page) == "K":  # a scanned page: the scan engine's blocks are the units (``s0_contract``)
+        import s0_contract
+
+        return s0_contract.prompt(page)
     image = page["image"]
     engine = bool(page.get("engine"))
     return INSTRUCTIONS.format(width=image["width"], height=image["height"],
@@ -130,6 +134,10 @@ def prompt(page: dict) -> str:
 
 def context(page: dict) -> str:
     """The page's data, as text: the text layer, the engine entries, the detector regions."""
+    if unit_of(page) == "K":
+        import s0_contract
+
+        return s0_contract.context(page)
     parts = ["【文字层】（每行一个 JSON）"]
     lines = page["lines"]
     parts += [json.dumps(_shown(line), ensure_ascii=False) for line in lines] if lines else ["（这页没有文字层）"]
@@ -166,7 +174,13 @@ def feedback(problems: list[str], answer: str) -> str:
 # ── checks ───────────────────────────────────────────────────────────────
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
-_REF = re.compile(r"L(\d+)(?:\s*[-–—~]\s*L?(\d+))?")
+_REFS = {u: re.compile(rf"{u}(\d+)(?:\s*[-–—~]\s*{u}?(\d+))?") for u in ("L", "K")}
+NOUN = {"L": "行", "K": "引擎块"}  # what a reference names: a text-layer line, or a scan engine block (scanned pages)
+
+
+def unit_of(page: dict) -> str:
+    """The page's allocation unit: ``L`` text-layer lines, ``K`` the scan engine's blocks (``s0_inputs``)."""
+    return page.get("unit", "L")
 
 
 @dataclass
@@ -199,9 +213,9 @@ def check(text: str, page: dict) -> Checked:
     return Checked("invariants" if problems else "valid", data=data, problems=problems)
 
 
-def expand(ref: str) -> list[int] | None:
-    """Line numbers of a reference ("L3", "L3-L9"); None when it is not one."""
-    match = _REF.fullmatch(ref.strip())
+def expand(ref: str, unit: str = "L") -> list[int] | None:
+    """Numbers of a reference ("L3", "L3-L9"; "K3" on a scanned page); None when it is not one."""
+    match = _REFS[unit].fullmatch(ref.strip())
     if not match:
         return None
     start = int(match.group(1))
@@ -209,18 +223,18 @@ def expand(ref: str) -> list[int] | None:
     return list(range(start, end + 1)) if end >= start else None
 
 
-def allocations(data: dict) -> list[tuple[str, str, int | None]]:
+def allocations(data: dict, unit: str = "L") -> list[tuple[str, str, int | None]]:
     """(where, ref, line) for every line reference, in order: blocks' parts, then aside; line None for a bad ref."""
     out = []
     for block in data.get("blocks", []):
         for k, part in enumerate(block.get("parts", [])):
             where = f"{block.get('id')} 的第 {k + 1} 个 {part.get('kind')}"
             for ref in part.get("lines", []):
-                nums = expand(ref)
+                nums = expand(ref, unit)
                 out += [(where, ref, n) for n in nums] if nums else [(where, ref, None)]
     for k, item in enumerate(data.get("aside", [])):
         for ref in item.get("lines", []):
-            nums = expand(ref)
+            nums = expand(ref, unit)
             out += [(f"aside 第 {k + 1} 项", ref, n) for n in nums] if nums else [(f"aside 第 {k + 1} 项", ref, None)]
     return out
 
@@ -250,6 +264,7 @@ def latex_problems(text: str) -> list[str]:
 
 def invariant_problems(data: dict, page: dict) -> list[str]:
     total = len(page["lines"])
+    u, noun = unit_of(page), NOUN[unit_of(page)]
     engine_ids = {e["id"] for e in page.get("engine") or []}
     width, height = page["image"]["width"], page["image"]["height"]
     problems: list[str] = []
@@ -257,18 +272,19 @@ def invariant_problems(data: dict, page: dict) -> list[str]:
     for dup in sorted({i for i in ids if ids.count(i) > 1}):
         problems.append(f"块 id {dup} 重复")
     seen: dict[int, str] = {}
-    for where, ref, n in allocations(data):
+    for where, ref, n in allocations(data, u):
         if n is None:
-            problems.append(f"{where}：{ref!r} 不是行号或行号区间")
+            problems.append(f"{where}：{ref!r} 不是{noun}号或{noun}号区间")
         elif not 1 <= n <= total:
-            problems.append(f"{where}：L{n} 不存在（这页只有 L1–L{total}）" if total else f"{where}：这页没有文字层，{ref} 不存在")
+            problems.append(f"{where}：{u}{n} 不存在（这页只有 {u}1–{u}{total}）" if total
+                            else f"{where}：这页没有{'文字层' if u == 'L' else '引擎块'}，{ref} 不存在")
         elif n in seen:
-            problems.append(f"L{n} 出现了不止一次（{seen[n]}；{where}）")
+            problems.append(f"{u}{n} 出现了不止一次（{seen[n]}；{where}）")
         else:
             seen[n] = where
     missing = [n for n in range(1, total + 1) if n not in seen]
     if missing:
-        problems.append(f"没有分配的行：{', '.join(compress(missing))}")
+        problems.append(f"没有分配的{noun}：{', '.join(compress(missing, u))}")
     for block in data["blocks"]:
         bid, parts = block["id"], block["parts"]
         if not parts and block["type"] != "figure":
@@ -286,10 +302,10 @@ def invariant_problems(data: dict, page: dict) -> list[str]:
             if part["kind"] == "cell":
                 problems += [f"{where}：{p}" for p in cell_problems(part, block, page)]
             if part["kind"] == "write":
-                if not part["text"].strip() and block["type"] != "formula":  # a formula's LaTeX is asked apart
+                if not part["text"].strip() and (block["type"] != "formula" or u != "L"):  # a native formula's LaTeX is asked apart
                     problems.append(f"{where} 的 text 是空的")
                 if not part["lines"] and region is None:
-                    problems.append(f"{where} 不替换任何行，块要给出 region")
+                    problems.append(f"{where} 不替换任何{noun}，块要给出 region")
                 for p in latex_problems(part["text"]):
                     problems.append(f"{where}：{p}")
                 if unmapped(part["text"]):
@@ -304,14 +320,14 @@ def invariant_problems(data: dict, page: dict) -> list[str]:
     return problems
 
 
-def compress(numbers: list[int]) -> list[str]:
-    """L-references for sorted line numbers, runs as ranges."""
+def compress(numbers: list[int], unit: str = "L") -> list[str]:
+    """References for sorted numbers, runs as ranges."""
     out, start = [], None
     for i, n in enumerate(numbers):
         if start is None:
             start = n
         if i + 1 == len(numbers) or numbers[i + 1] != n + 1:
-            out.append(f"L{start}" if start == n else f"L{start}-L{n}")
+            out.append(f"{unit}{start}" if start == n else f"{unit}{start}-{unit}{n}")
             start = None
     return out
 
@@ -322,6 +338,7 @@ def compress(numbers: list[int]) -> list[str]:
 def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
     """A schema-valid answer made to keep the line invariant, mechanically; (repaired, what was done)."""
     total = len(page["lines"])
+    u = unit_of(page)
     engine_ids = {e["id"] for e in page.get("engine") or []}
     done: list[str] = []
     data = json.loads(json.dumps(data))
@@ -330,19 +347,19 @@ def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
     def keep(refs: list[str], where: str) -> list[str]:
         kept: list[int] = []
         for ref in refs:
-            nums = expand(ref)
+            nums = expand(ref, u)
             if nums is None:
-                done.append(f"{where}：去掉不是行号的 {ref!r}")
+                done.append(f"{where}：去掉不是{NOUN[u]}号的 {ref!r}")
                 continue
             for n in nums:
                 if not 1 <= n <= total:
-                    done.append(f"{where}：去掉不存在的 L{n}")
+                    done.append(f"{where}：去掉不存在的 {u}{n}")
                 elif n in seen:
-                    done.append(f"{where}：L{n} 已在前面分配，去掉这一处")
+                    done.append(f"{where}：{u}{n} 已在前面分配，去掉这一处")
                 else:
                     seen.add(n)
                     kept.append(n)
-        return [f"L{n}" for n in kept]
+        return [f"{u}{n}" for n in kept]
 
     for block in data["blocks"]:
         for part in block["parts"]:
@@ -360,11 +377,11 @@ def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
     data["aside"] = [a for a in data["aside"] if a["lines"]]
     missing = [n for n in range(1, total + 1) if n not in seen]
     for run in _runs(missing):
-        after = _holder(data, run[0])
+        after = _holder(data, run[0], u)
         block = {"id": _free_id(data), "type": "text", "level": None, "region": None, "repaired": True,
-                 "parts": [{"kind": "copy", "lines": [f"L{n}" for n in run], "text": "", "engine": [], "cell": None}]}
+                 "parts": [{"kind": "copy", "lines": [f"{u}{n}" for n in run], "text": "", "engine": [], "cell": None}]}
         data["blocks"].insert(after + 1, block)
-        done.append(f"补回没有分配的 {', '.join(compress(run))}：复制为 {block['id']}，放在 "
+        done.append(f"补回没有分配的 {', '.join(compress(run, u))}：复制为 {block['id']}，放在 "
                     + (data['blocks'][after]['id'] + " 之后" if after >= 0 else "最前"))
     return data, done
 
@@ -379,13 +396,13 @@ def _runs(numbers: list[int]) -> list[list[int]]:
     return runs
 
 
-def _holder(data: dict, line: int) -> int:
+def _holder(data: dict, line: int, unit: str = "L") -> int:
     """Index of the block holding the nearest line before *line* (by line number), -1 when none does."""
     best, at = 0, -1
     for i, block in enumerate(data["blocks"]):
         for part in block["parts"]:
             for ref in part["lines"]:
-                n = (expand(ref) or [0])[-1]
+                n = (expand(ref, unit) or [0])[-1]
                 if best < n < line:
                     best, at = n, i
     return at
@@ -408,7 +425,7 @@ def fallback(page: dict) -> dict:
             blocks.append({"id": f"B{len(blocks) + 1}", "type": "text", "level": None, "region": None,
                            "repaired": True, "parts": [{"kind": "copy", "lines": [], "text": "", "engine": [], "cell": None}]})
             previous = line.get("_blk")
-        blocks[-1]["parts"][0]["lines"].append(f"L{k}")
+        blocks[-1]["parts"][0]["lines"].append(f"{unit_of(page)}{k}")
     return {"blocks": blocks, "aside": [], "unresolved": []}
 
 
@@ -422,8 +439,9 @@ def visible(text: str) -> str:
 
 def render(data: dict, page: dict) -> str:
     """The page's Markdown."""
-    lines = {f"L{k}": line["text"] for k, line in enumerate(page["lines"], 1)}
-    scripted = {f"L{k}": line.get("_scripted", line["text"]) for k, line in enumerate(page["lines"], 1)}
+    u = unit_of(page)
+    lines = {f"{u}{k}": line["text"] for k, line in enumerate(page["lines"], 1)}
+    scripted = {f"{u}{k}": line.get("_scripted", line["text"]) for k, line in enumerate(page["lines"], 1)}
     tables = page.get("tables") or []
     used_tables: set[str] = set()
     out: list[str] = []
@@ -442,13 +460,13 @@ def render(data: dict, page: dict) -> str:
         for part in block["parts"]:
             if part["kind"] == "copy":  # the lines as the program's script candidates write them
                 source = scripted
-                pieces.append(join_wrapped([source[r] for ref in part["lines"] for r in _names(ref) if r in source]))
+                pieces.append(join_wrapped([source[r] for ref in part["lines"] for r in _names(ref, u) if r in source]))
             elif part["kind"] == "write":
                 pieces.append(part["text"].strip())
             elif part["kind"] == "cell":
                 continue  # written into its table's grid
             else:
-                refs = {r for ref in part["lines"] for r in _names(ref)}
+                refs = {r for ref in part["lines"] for r in _names(ref, u)}
                 grids = [t for t in tables if refs & set(t["lines"])]  # one grid may hold two tables the model split
                 for t in grids:
                     if t["block"] not in used_tables:
@@ -482,7 +500,7 @@ def _scripted_cells(table_html: str, names: set[str], page: dict) -> str:
     its own way) written with that line's script candidates."""
     todo = {}
     for k, line in enumerate(page["lines"], 1):
-        if f"L{k}" in names and "_scripted" in line:
+        if f"{unit_of(page)}{k}" in names and "_scripted" in line:
             todo.setdefault("".join(line["text"].split()), []).append(
                 "".join(part if part.startswith("<") else html.escape(part, quote=False)
                         for part in re.split(r"(</?su[pb]>)", line["_scripted"])))
@@ -553,8 +571,9 @@ def cell_problems(part: dict, block: dict, page: dict) -> list[str]:
         return problems + [f"没有表 T{t + 1}（这页程序建出了 {len(tables)} 张表）"]
     if not any(x["row"] == r and x["col"] == c for x in table_cells(tables[t]["html"])):
         problems.append(f"表 T{t + 1} 没有第 {r + 1} 行第 {c + 1} 列这一格")
-    own = {x for p in block["parts"] if p["kind"] == "table" for ref in p["lines"] for x in _names(ref)}
-    if not own & {x for ref in tables[t]["lines"] for x in _names(ref)}:
+    u = unit_of(page)
+    own = {x for p in block["parts"] if p["kind"] == "table" for ref in p["lines"] for x in _names(ref, u)}
+    if not own & {x for ref in tables[t]["lines"] for x in _names(ref, u)}:
         problems.append(f"改表 T{t + 1} 的格子要放在它的 table 所在的块里")
     for p in latex_problems(part["text"]):
         problems.append(p)
@@ -588,20 +607,21 @@ def write_cells(table_html: str, written: dict[tuple[int, int], str]) -> str:
     return out
 
 
-def _names(ref: str) -> list[str]:
-    return [f"L{n}" for n in expand(ref) or []]
+def _names(ref: str, unit: str = "L") -> list[str]:
+    return [f"{unit}{n}" for n in expand(ref, unit) or []]
 
 
 def destinations(data: dict, page: dict) -> dict[str, str]:
     """Line → where it ended up: "copy:B3", "write:B4", "table:B6", "aside:excluded" or "aside:B7"."""
     out: dict[str, str] = {}
+    u = unit_of(page)
     for block in data["blocks"]:
         for part in block["parts"]:
             for ref in part["lines"]:
-                for name in _names(ref):
+                for name in _names(ref, u):
                     out.setdefault(name, f"{part['kind']}:{block['id']}")
     for item in data["aside"]:
         for ref in item["lines"]:
-            for name in _names(ref):
+            for name in _names(ref, u):
                 out.setdefault(name, f"aside:{item['to']}")
     return out

@@ -111,7 +111,7 @@ def run_page(caller: Caller, run: int, run_dir: Path, pid: str) -> dict:
             final = {"status": "failed", "data": contract.fallback(page), "repairs": ["整页按文字层复制（回答不能用）"],
                      "from_round": None}
     formulas = None  # contract v5: the display formulas' LaTeX, asked apart (Q143)
-    if contract.CONTRACT_VERSION >= 5 and v_formulas.wanted(final["data"]):
+    if contract.CONTRACT_VERSION >= 5 and contract.unit_of(page) == "L" and v_formulas.wanted(final["data"]):
         formulas = v_formulas.run(caller, run, run_dir, page, final["data"], max_tokens=MAX_TOKENS,
                                   source=document(page["document"]))
         final["data"] = v_formulas.fill(final["data"], formulas["latex"])
@@ -182,20 +182,28 @@ def manifest(run_dir: Path) -> Path:
         caller_identity = Caller(name, cfg, ResponseCache(run_dir / "cache", "read_only"), _prices).identity()
         models[name] = {"entry": model, "run": run, "effort_requested": effort, **caller_identity,
                         "max_tokens": MAX_TOKENS, "timeout_s": TIMEOUT_S, "stream_idle_s": STREAM_IDLE_S}
-    pids = [page_id(d, n) for d, n in PAGES]
+    pids = sorted(p.stem for p in (run_dir / "inputs").glob("*.json"))  # the run's pages (P0: ``PAGES``)
     prompts = {f"{pid}:prompt": contract.prompt(load(run_dir, pid)) for pid in pids}
     prompts |= {f"{pid}:context": contract.context(load(run_dir, pid)) for pid in pids}
     prompts["schema"] = json.dumps(contract.SCHEMA, sort_keys=True)
     outputs = {f"{path.parent.name}/{path.stem}": path.read_text(encoding="utf-8")
                for path in sorted((run_dir / "results").glob("*/*.md"))}
+    scanned = any(contract.unit_of(load(run_dir, pid)) == "K" for pid in pids)
+    inputs = ("inputs: <run-dir>/inputs (page render 150 dpi, the scan engine's blocks rebuilt from the V run's cached "
+              "engine response, the pipeline's local reading, detector regions; s0_inputs.py)" if scanned else
+              "inputs: <run-dir>/inputs (page render 150 dpi, text-layer lines, script candidates, engine entries of "
+              "the frozen run 2026-09-29_contentA_fixed_full's cache, detector regions)")
     record = run_manifest(
-        run_id=run_dir.name, purpose="vision-first P0 probe (execution plan §3, §7): complete allocation, ten pages",
-        gt_dirs=[REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public"], docs=sorted({d for d, _ in PAGES}),
+        run_id=run_dir.name,
+        purpose=("vision-first scanned-page probe (docs/v2_vision_first_scanned.md §5.1): complete allocation of the "
+                 "scan engine's blocks" if scanned else
+                 "vision-first P0 probe (execution plan §3, §7): complete allocation, ten pages"),
+        gt_dirs=[REPO_ROOT / "ground_truth", REPO_ROOT / "ground_truth_public"],
+        docs=sorted({load(run_dir, pid)["document"] for pid in pids}),
         models={"service": models, "agent": None}, tools=[], cache={"mode": "read_write", "dir": str(run_dir / "cache")},
         prompts=prompts, outputs=outputs,
         notes=[f"contract version {contract.CONTRACT_VERSION} (p0_contract.CONTRACT_VERSION)", "pages: " + ", ".join(pids),
-               "inputs: <run-dir>/inputs (page render 150 dpi, text-layer lines, script candidates, engine entries of "
-               "the frozen run 2026-09-29_contentA_fixed_full's cache, detector regions)",
+               inputs,
                "outputs are keyed <configuration>/<page>; results/<configuration>/<page>.json holds every round"])
     record["inputs_by_page"] = {pid: sha256(run_dir / "inputs" / f"{pid}.json") for pid in pids}
     path = run_dir / "manifest.json"
