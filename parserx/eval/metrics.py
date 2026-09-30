@@ -27,7 +27,7 @@ from parserx.eval.text import compute_edit_distance, normalize_for_comparison
 
 # Bump whenever a metric definition changes; results with different versions
 # are never compared against each other.
-METRIC_VERSION = "2.9"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
+METRIC_VERSION = "2.10"  # 2.1 (2026-09-24, Q28): merged cells against annotations without spans
 # 2.2 (2026-09-26, Q68): headings — lines inside fenced code blocks are not headings; titles compared after NFKC
 # 2.3 (2026-09-27, Q82): headings — one uniform level offset of the whole outline is forgiven (where it starts)
 # 2.4 (2026-09-28, R3): inline emphasis (**, <u>, <b>, <strong>) is not text: dropped from both sides before the
@@ -51,6 +51,9 @@ METRIC_VERSION = "2.9"  # 2.1 (2026-09-24, Q28): merged cells against annotation
 #     negation words are read outside math only (``$No$`` is a variable)
 # 2.9 (2026-09-30, scanned pages into V): key content reads units within a table cell only (a number in one
 #     cell and the letters of the next, ``250 | HRB400``, are no unit); the text metrics read tables as before
+# 2.10 (2026-09-30, ocr01): a flattened table skips a cell repeating the one above or to its left only in a table
+#     that writes no spans (the repeat stands for a merge); with spans, two merged groups one under the other that
+#     read the same are two cells (they were counted once: the agent's faithful merges lost 5 key errors' worth)
 
 __all__ = [
     "METRIC_VERSION",

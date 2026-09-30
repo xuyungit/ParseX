@@ -117,10 +117,13 @@ def grid_text(grid: TableGrid, sep: str = " ") -> str:
     """Cell contents in row-major order: cells joined by *sep* (a space), rows by newlines (after *sep* when it is
     a mark).
 
-    Positions repeating the content directly above or to the left are skipped,
-    so merged cells count once in every notation.
+    A merged cell counts once in every notation: the positions its span covers are skipped, and in a table that
+    writes no spans (a notation that cannot, like GFM) so is a cell repeating the one directly above or to the
+    left — the repeat stands for a merge.  In a table with spans, two cells are two cells even when they read the
+    same (two merged groups one under the other).
     """
     matrix = grid.slot_matrix()
+    spans = any(cell.rowspan > 1 or cell.colspan > 1 for cell in grid.cells)
     lines: list[str] = []
     for r, row in enumerate(matrix):
         parts: list[str] = []
@@ -129,9 +132,11 @@ def grid_text(grid: TableGrid, sep: str = " ") -> str:
                 continue
             left = row[c - 1] if c else None
             above = matrix[r - 1][c] if r else None
-            if (left is not None and left.content == cell.content) or (
+            if left is cell or above is cell:  # a position the span covers
+                continue
+            if not spans and ((left is not None and left.content == cell.content) or (
                 above is not None and above.content == cell.content
-            ):
+            )):
                 continue
             parts.append(cell.content)
         if parts:

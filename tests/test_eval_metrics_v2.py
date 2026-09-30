@@ -212,6 +212,16 @@ def test_gfm_annotation_repeating_merged_values_accepts_a_rowspan():
     assert text.char_f1 == 1.0  # a merged value counts once however it is written
 
 
+
+def test_two_merged_cells_with_the_same_text_are_two_cells():
+    # ocr01: "禁忌！不能用…" merged over each group's drug rows; two groups one under the other are two cells
+    output = ("<table><tr><th>病症</th><th>药</th><th>建议</th></tr>"
+              "<tr><td rowspan=\"2\">偏头痛</td><td>二氢麦角胺</td><td rowspan=\"2\">不能用</td></tr><tr><td>麦角胺</td></tr>"
+              "<tr><td>消化不良</td><td>西沙比利</td><td>不能用</td></tr></table>\n")
+    expected = _table([["病症", "药", "建议"], ["偏头痛", "二氢麦角胺", "不能用"], ["", "麦角胺", ""],
+                       ["消化不良", "西沙比利", "不能用"]])
+    assert compute_text_metrics(output, expected).char_f1 == 1.0
+
 def test_wrong_value_under_a_span_is_still_wrong():
     expected = _table([["种类", "设计值", "备注"], ["钢绞线", "1720", ""], ["", "1860", "391"], ["", "1960", ""]])
     assert compute_table_metrics(_SPANNED_OUTPUT, expected).cell_recall < 1.0
@@ -224,10 +234,10 @@ def test_annotation_with_spans_still_requires_the_same_spans():
     assert metrics.merged_cell_accuracy == 0.0 and metrics.cell_recall < 1.0
 
 
-def test_metric_version_is_2_9():
+def test_metric_version_is_2_10():
     from parserx.eval.metrics import METRIC_VERSION
 
-    assert METRIC_VERSION == "2.9"
+    assert METRIC_VERSION == "2.10"
 
 
 def test_inline_emphasis_is_not_text_and_is_scored_apart():
