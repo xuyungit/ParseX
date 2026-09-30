@@ -189,15 +189,20 @@ def _marked(text: str, scripts: list[_Script], *, drop: bool = False) -> str:
 
 _UPRIGHT_RE = re.compile(r"\\(?:text|mathrm|textrm|rm|mbox|operatorname)\s*\{([^{}]*)\}")
 _DEGREE_RE = re.compile(r"\^\s*\{?\s*\\circ\s*\}?")
+_NESTED_GROUP_RE = re.compile(r"\{\s*\{([^{}]*)\}\s*\}")
+_AFTER_COMMAND_RE = re.compile(r"(\\[A-Za-z]+)\s+")  # a command name ends at the space: ``\mu L`` is μL
+_CELSIUS_RE = re.compile(r"°\s+(?=[CF](?![A-Za-z]))")  # ``43° C``: spacing between the degree and its scale
 
 
 def _unit_view(math: str) -> str:
     """Math as its units read: upright text (``\\text{m}``, ``\\mathrm{kN}``, ``\\%``, ``^\\circ``) is written text, a
     bare letter is a variable (``12 m x`` is a product, not a unit), spacing is not writing."""
     upright: list[str] = []
+    while (flat := _NESTED_GROUP_RE.sub(r"{\1}", math)) != math:  # a group inside a group is one group
+        math = flat
 
     def keep(match: re.Match) -> str:
-        upright.append(match.group(1).strip())
+        upright.append(characters(_AFTER_COMMAND_RE.sub(r"\1{}", _DEGREE_RE.sub("°", match.group(1)))).strip())
         return f"\0{len(upright) - 1}\0"
 
     view = _DEGREE_RE.sub("°", _UPRIGHT_RE.sub(keep, math)).replace("\\%", "%")
@@ -281,12 +286,14 @@ def extract_key_tokens(markdown: str) -> dict[str, list]:
     prose = _MATH_RE.sub(lambda m: " " + _unit_view(next(g for g in m.groups() if g is not None)) + " ", raw)
     prose = _DATE_RE.sub(lambda m: " " * len(m.group(0)),
                          unicodedata.normalize("NFKC", _marked(prose, _scripts(prose))).translate(minus))
+    # spacing is not writing: math set in its own spaces and a line break inside a paragraph are one space
+    prose = _CELSIUS_RE.sub("°", re.sub(r"\s+", lambda m: "\n\n" if m.group(0).count("\n") > 1 else " ", prose))
     without_scripts = _DATE_RE.sub(lambda m: " " * len(m.group(0)),
                                    unicodedata.normalize("NFKC", _marked(raw, scripts, drop=True)))
     return {
         "number": [_plain(m.group(0)) for m in _NUMBER_RE.finditer(text)],
         "unit": [_plain(m.group("n")) + re.sub(r"[{}\s]", "", m.group("u")) for m in _UNIT_RE.finditer(prose)],
-        "negation": [m.group(0).lower() for m in _NEGATION_RE.finditer(text)],
+        "negation": [m.group(0).lower() for m in _NEGATION_RE.finditer(_MATH_RE.sub(" ", text))],  # math: variables
         "date": dates,
         "sign": _signed(without_scripts),
         "script": [s.token for s in scripts if s.token],

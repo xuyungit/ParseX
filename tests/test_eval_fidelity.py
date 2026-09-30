@@ -65,7 +65,36 @@ def test_a_unit_written_in_math_and_in_prose_is_one_unit():
     assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
     errors = compute_key_content_errors("其刚度 $k_9 = 30\\,\\mathrm{kN}$", "其刚度 $k_9 = 30\\text{ MN}$")
     assert errors.missing["unit"] == 1 and errors.extra["unit"] == 1
+    # a group inside a group is one group: ``\\text{{MPa}}`` is ``\\text{MPa}``
+    errors = compute_key_content_errors("模量 $ E_{{s}}(\\times 10^{{5}} \\text{{MPa}}) $", "模量$E_{s}$(×10$^{5}$MPa)")
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
 
+
+
+@pytest.mark.parametrize("output", [
+    "置$43^{\\circ}\\mathrm{C}$孵育",
+    "置$\\mathrm{43^\\circ C}$孵育",  # the degree inside upright text
+    "置 $ 43^{\\circ} $C孵育",  # the C after the math
+])
+def test_degrees_celsius_in_math_are_one_unit(output):
+    errors = compute_key_content_errors(output, "置43℃孵育")
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
+
+
+
+def test_spacing_around_math_does_not_part_a_number_from_its_unit():
+    errors = compute_key_content_errors("取含 $ \\ge 1 $ mg/mL 的，含量为10~20\n$\\mathrm{\\mu g/mL}$，取",
+                                        "取含≥1 mg/mL 的，含量为 10～20 μg/mL，取")
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
+
+def test_a_letter_command_in_upright_math_is_its_letter():
+    errors = compute_key_content_errors("取 $ 200 \\mathrm{\\mu L} $ 加入 $ 800 \\ \\mathrm{\\mu L} $", "取 200 μL 加入 800 μL")
+    assert errors.missing["unit"] == 0 and errors.extra["unit"] == 0
+
+
+def test_a_word_in_math_is_a_variable_not_a_negation():
+    errors = compute_key_content_errors("式中，$N_0$——为消毒前", "式中，$No$——为消毒前")
+    assert errors.missing["negation"] == 0 and errors.extra["negation"] == 0
 
 def test_a_unit_in_prose_beside_math_is_still_counted():
     errors = compute_key_content_errors("取 $k_1$ 为 6 kN，长 10 m", "取 $k_1$ 为 6 MN，长 10 m")
