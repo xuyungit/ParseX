@@ -55,6 +55,13 @@ def test_headings_paragraphs_and_page_anchors():
                   "<!-- PAGE 2 -->\n")
 
 
+def test_a_printed_backslash_n_stays_as_printed():
+    # the user, 2026-09-30 (Q136 withdrawn): a template that printed its newlines as two characters is shown as it is
+    text = r"more information.\n2. Subject to credit approval.\n\nApple Payments"
+    md = render_markdown(_state([_block("b1", BlockKind.TEXT, 0, text=text)], pages=1))
+    assert text in md
+
+
 def test_tables_render_as_gfm_or_html_and_are_found():
     md = render_markdown(_state([_block("t1", BlockKind.TABLE, 0, cells=_PLAIN),
                                  _block("t2", BlockKind.TABLE, 1, cells=_SPANNED)], pages=1))

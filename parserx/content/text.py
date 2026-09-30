@@ -37,26 +37,6 @@ _VERBATIM = re.compile(r"\$\$.+?\$\$|\$[^$\n]+\$|\\\(.+?\\\)|`[^`\n]+`", re.DOTA
 _BARE_TILDE = re.compile(r"(?<!\\)~")
 
 
-# A literal "\n" between words of prose: a template's escaped newline printed as two characters (P5, Q136).  Not after
-# a backslash, a quote or a format sign, not before a quote or a space ("%d\n", "\\n" stay).
-_LITERAL_BREAK = re.compile(r"(?<![\\\"'`%])(?:\\n)+(?=[^\s\"'`\\])")
-
-
-def literal_breaks(text: str) -> list[str]:
-    """*text* as paragraphs at the literal ``\\n`` between words of prose, outside formulas and code spans (Q136):
-    ``…more information.\\n2. Subject to credit approval.\\n\\nApple …`` is three paragraphs."""
-    parts = _VERBATIM.split(text)
-    spans = _VERBATIM.findall(text)
-    out = [""]
-    for i, part in enumerate(parts):
-        pieces = _LITERAL_BREAK.split(part)
-        out[-1] += pieces[0]
-        out += pieces[1:]
-        if i < len(spans):
-            out[-1] += spans[i]
-    return [piece.strip() for piece in out if piece.strip()]
-
-
 def escape_strikethrough(text: str) -> str:
     """``~`` written ``\\~`` where a Markdown renderer could pair two of them into strikethrough (GFM takes one or two
     tildes on each side: ``2022.01~2022.03：…；2022.04~2022.12`` would lose its middle to a line through it).  Only when

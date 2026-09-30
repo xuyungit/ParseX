@@ -25,7 +25,7 @@ from pathlib import PurePosixPath
 
 from parserx.content.lists import bulleted, strip_bullet
 from parserx.render.emphasis import emphasize
-from parserx.content.text import escape_strikethrough, join_wrapped, literal_breaks
+from parserx.content.text import escape_strikethrough, join_wrapped
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.content.equation_numbers import number_of, tagged
 from parserx.ir.asset import Asset
@@ -242,10 +242,10 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return "- " + escape_strikethrough(body)
     # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart
     out = []
-    for paragraph in (join_wrapped(part.split("\n")) for part in _PARAGRAPH.split(block.text)):
-        for part in literal_breaks(paragraph):
-            part, marks = emphasize(part, marks)
-            out.append(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(part)))
+    for paragraph in (join_wrapped(part.split("\n")).strip() for part in _PARAGRAPH.split(block.text)):
+        if paragraph:
+            paragraph, marks = emphasize(paragraph, marks)
+            out.append(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(paragraph)))
     return "\n\n".join(out)
 
 

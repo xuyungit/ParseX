@@ -58,13 +58,3 @@ def test_tildes_that_could_pair_into_strikethrough_are_escaped_outside_formulas_
     # the evaluation reads the escaped tilde as the tilde
     assert canonicalize(escape_strikethrough(schedule)).text == canonicalize(schedule).text
     assert normalize_cell(escape_strikethrough(schedule)) == normalize_cell(schedule)
-
-
-def test_a_literal_newline_between_words_of_prose_is_a_paragraph_break():
-    # P5, Q136: a template printed its escaped newlines as two characters
-    from parserx.content.text import literal_breaks
-
-    assert literal_breaks(r"more information.\n2. Subject to credit approval.\n\nApple Payments") == \
-        ["more information.", "2. Subject to credit approval.", "Apple Payments"]
-    for kept in (r'printf("%d\n", x)', r"use \n to end a line", r"公式 $a\nb$ 与 `x\ny`", r"a \\n b"):
-        assert literal_breaks(kept) == [kept]
