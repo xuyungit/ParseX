@@ -234,3 +234,13 @@ def test_a_prime_inside_a_script_is_one_notation():
     assert compute_key_content(r"记 $q_2^{x^{\prime}-m}$ 与 $q^{x^\prime+2m}$", r"记 $q_2^{x'-m}$ 与 $q^{x'+2m}$").total == 0
     assert compute_key_content(r"$q^{x'-m}$", r"$q^{x'+m}$").total > 0
     assert compute_key_content(r"$q_2^{x^{'}+m}$", r"$q_2^{x'+m}$").total == 0  # the annotation writes x^{'} too
+
+
+def test_a_mark_raised_in_math_does_not_hide_the_numbers_after_it():
+    # 2.7: dropping "^{*}" left "$$", read as display math up to the next dollar; "**" in math is not bold
+    from parserx.eval.key_content import extract_key_tokens
+    from parserx.eval.normalize import canonicalize
+
+    tokens = extract_key_tokens("| 方法 | k |\n|---|---|\n| 方法B$^{*}$ | -14.61 |\n| 方法B$^{**}$ | -4.18 |\n| 方法 A | -0.42 |\n")
+    assert tokens["sign"] == ["-14.61", "-4.18", "-0.42"]
+    assert "$^{**}$" in canonicalize("方法B$^{**}$ 与 **粗体**").text and "**粗体**" not in canonicalize("**粗体**").text

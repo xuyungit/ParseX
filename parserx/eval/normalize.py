@@ -60,11 +60,20 @@ class CanonicalDoc:
 
 def canonicalize(markdown: str) -> CanonicalDoc:
     text = _IMAGE_TEXT_RE.sub(_unquote_image_text, _TILDE_ESCAPE_RE.sub("~", markdown))
-    text = _STAR_ESCAPE_RE.sub("*", _EMPHASIS_RE.sub("", text))
+    text = _outside_math(text, lambda part: _STAR_ESCAPE_RE.sub("*", _EMPHASIS_RE.sub("", part)))  # $^{**}$ is no bold
     text = _COMMENT_RE.sub("", text)
     text = _flatten_tables(text)
     text, image_count = _strip_images(text)
     return CanonicalDoc(text=text, image_count=image_count)
+
+
+def _outside_math(text: str, change) -> str:
+    """*text* with *change* applied to what lies outside its math."""
+    out, cursor = [], 0
+    for m in _MATH_RE.finditer(text):
+        out += [change(text[cursor:m.start()]), m.group(0)]
+        cursor = m.end()
+    return "".join(out) + change(text[cursor:])
 
 
 def _unquote_image_text(match: re.Match) -> str:

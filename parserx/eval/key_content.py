@@ -174,8 +174,8 @@ def _marked(text: str, scripts: list[_Script], *, drop: bool = False) -> str:
     for s in scripts:
         parts.append(text[cursor:s.start])
         piece = text[s.start:s.end]
-        if drop:
-            parts.append(" " if s.token else s.text)
+        if drop:  # a space for a script with nothing to keep: "$^{*}$" must not become "$$" (display math)
+            parts.append(" " if s.token or not s.text else s.text)
         elif piece[0] in "^_":
             parts.append(piece)
         else:
