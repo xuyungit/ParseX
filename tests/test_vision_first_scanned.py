@@ -61,3 +61,13 @@ def test_repair_copies_a_lost_engine_block_back():
     data, done = c.repair(_answer(aside=[{"lines": ["K1"], "reason": "页眉", "to": "excluded"}]), _page())
     assert any("K5" in d for d in done)
     assert c.destinations(data, _page())["K5"].startswith("copy:")
+
+
+def test_text_copied_into_a_figure_is_its_in_image_text():
+    data = _answer()
+    data["blocks"].append({"id": "B4", "type": "figure", "level": None, "region": [0, 0, 100, 100],
+                           "parts": [_part("copy", ["K2"])]})
+    data["blocks"][0]["parts"] = [_part("write", [], "另一段。")]
+    data["blocks"][0]["region"] = [0, 0, 50, 50]
+    md = c.render(data, _page())
+    assert "![图](doc_p1-B4.png)" in md and "> 第一段，共 12 个测点。" in md

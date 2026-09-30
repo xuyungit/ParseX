@@ -450,8 +450,10 @@ def render(data: dict, page: dict) -> str:
         if kind == "figure":  # text read inside it as the pipeline writes it (render/markdown.py, IO6-5)
             src = f"{page['page_id']}-{block['id']}.png"
             out.append(f"![图]({src})")
-            written = "\n\n".join(visible(p["text"]).strip() for p in block["parts"]
-                                  if p["kind"] == "write" and p["text"].strip())
+            # its in-image text: what was written, and text copied into it (an engine's text block inside the figure)
+            written = "\n\n".join(t for t in (visible(p["text"] if p["kind"] == "write" else join_wrapped(
+                [lines[r] for ref in p["lines"] for r in _names(ref, u) if r in lines])).strip()
+                for p in block["parts"] if p["kind"] in ("write", "copy")) if t)
             if written:
                 quoted = "\n".join(f"> {ln}" if ln else ">" for ln in ("**〔图片识别〕**\n" + written).split("\n"))
                 out.append(f'<!-- parserx:image-text src="{src}" -->\n{quoted}\n<!-- /parserx:image-text -->')

@@ -4,10 +4,13 @@
 - **allocation of the engine's blocks**: blocks allocated exactly once in the first answer; where they went (copied,
   written over, table, aside) by blocks and characters;
 - **the comparison** (plan §2): every write part against the engine blocks it replaces — numbers added and dropped;
-  an added number is *supported* when the local reading has it within the replaced blocks' boxes.  Each is judged
-  against the annotation's page (the number is there: the change was right).  The **conservative default** keeps the
-  engine's reading where a write adds a number no reading supports (the rewrite would go to the agent as a
-  candidate): its page is rendered and scored too;
+  an added number is *supported* when one of the two independent readings has it: the engine's reading of the page
+  (anywhere: the engine may have put a paragraph in another block) or the local reading within the replaced blocks'
+  boxes (the written block's region for content no engine block holds).  Each change is judged on the page against
+  the annotation: an added number is right when the page's output does not have it more often than the annotation,
+  a dropped one wrong when the output has it less often.  The **conservative default** keeps the engine's reading
+  where a write adds a number no reading supports (the rewrite would go to the agent as a candidate): its page is
+  rendered and scored too;
 - **page scores** against the annotation, paired on the same page with the engine-only draft (V's draft: the pipeline
   alone on a scanned page), the agent's result on it (C1), M, and Datalab;
 - tokens, seconds and cost per page.
@@ -50,9 +53,10 @@ def local_in(page: dict, boxes: list[list]) -> str:
     return "\n".join(line["text"] for line in page.get("local") or [] if any(_overlaps(line["box"], b) for b in boxes))
 
 
-def writes(data: dict, page: dict, expected: str) -> list[dict]:
+def writes(data: dict, page: dict, expected: str, output: str) -> list[dict]:
     units = {u["id"]: u for u in page["lines"]}
-    truth = numbers(expected)
+    truth, ours = numbers(expected), numbers(output)
+    engine = numbers("\n".join(u["text"] for u in page["lines"]))
     out = []
     for block in data["blocks"]:
         for k, part in enumerate(block["parts"]):
@@ -62,6 +66,7 @@ def writes(data: dict, page: dict, expected: str) -> list[dict]:
             original = "\n".join(units[x]["text"] for x in names)
             boxes = [units[x]["box"] for x in names] or ([block["region"]] if block.get("region") else [])
             local = numbers(local_in(page, boxes))
+            supported = lambda n: local[n] > 0 or engine[n] > 0  # noqa: E731
             added = numbers(part["text"]) - numbers(original)
             dropped = numbers(original) - numbers(part["text"])
             out.append({
@@ -69,9 +74,9 @@ def writes(data: dict, page: dict, expected: str) -> list[dict]:
                 "chars": len("".join(part["text"].split())),
                 "letters_added": sum((letters(part["text"]) - letters(original)).values()),
                 "letters_dropped": sum((letters(original) - letters(part["text"])).values()),
-                "added": [{"number": n, "count": c, "supported": local[n] > 0, "in_annotation": truth[n] > 0}
+                "added": [{"number": n, "count": c, "supported": supported(n), "right": ours[n] <= truth[n]}
                           for n, c in sorted(added.items())],
-                "dropped": [{"number": n, "count": c, "in_annotation": truth[n] > 0} for n, c in sorted(dropped.items())],
+                "dropped": [{"number": n, "count": c, "right": ours[n] >= truth[n]} for n, c in sorted(dropped.items())],
             })
     return out
 
@@ -141,7 +146,7 @@ def run_score(run_dir: Path) -> dict:
                 continue
             result = json.loads(path.read_text(encoding="utf-8"))
             data = result["final"]["data"]
-            found = writes(data, page, expected)
+            found = writes(data, page, expected, result["markdown"])
             kept, reverted = conservative(data, found)
             entry["configs"][name] = {
                 "status": result["final"]["status"], "levels": [r["level"] for r in result["rounds"]],
@@ -172,9 +177,9 @@ def summary(table: dict) -> str:
             tally = Counter()
             for w in c["writes"]:
                 for a in w["added"]:
-                    tally[("s" if a["supported"] else "u") + ("r" if a["in_annotation"] else "w")] += a["count"]
+                    tally[("s" if a["supported"] else "u") + ("r" if a["right"] else "w")] += a["count"]
                 for d in w["dropped"]:
-                    tally["d" + ("w" if d["in_annotation"] else "r")] += d["count"]
+                    tally["d" + ("r" if d["right"] else "w")] += d["count"]
             out.append(f"| {pid} | {' | '.join(others)} | {name} | {c['status']} | {_k(c['score'])} | "
                        f"{_k(c['score_conservative'])} ({c['reverted']}) | {len(c['writes'])} | "
                        f"{tally['sr']}/{tally['sw']}, {tally['ur']}/{tally['uw']} | {tally['dr']}/{tally['dw']} | "
