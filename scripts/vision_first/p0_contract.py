@@ -8,7 +8,9 @@ The service model answers one JSON object: ``blocks`` in reading order, each mad
 - ``write``: text the model writes, with the lines it replaces (none for content no text line holds: then the block
   names its ``region`` on the page image) and the engine entries it drew on; a display formula's text is left empty,
   its LaTeX asked apart (``v_formulas``);
-- ``table``: the lines of a table, whose grid the native extraction builds;
+- ``table``: the lines of a table, whose grid the native extraction builds (shown to the model as ``T1``, ``T2`` …);
+- ``cell``: one cell of such a grid written from the image (contract v6): its address (``T1:3:2``, table, row, column
+  as shown), the cell's whole text, no lines — the table part keeps them; the rest of the grid stays copied;
 
 — and ``aside``, lines not put in the body, each with a reason and where they end up (``excluded`` or the block
 that takes them, e.g. a figure for its in-image text); ``unresolved`` lists what the model could not settle.
@@ -33,17 +35,17 @@ from jsonschema import Draft202012Validator
 from parserx.content.text import join_wrapped
 
 BLOCK_TYPES = ("title", "text", "list", "formula", "table", "figure", "caption", "footnote", "other")
-PART_KINDS = ("copy", "write", "table")
+PART_KINDS = ("copy", "write", "table", "cell")
 EXCLUDED = "excluded"
-CONTRACT_VERSION = 5  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143)
+CONTRACT_VERSION = 6  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143); 6: the program's table grids shown, a cell written from the image by its address (``cell`` parts)
 UNREADABLE = "〔?〕"  # the visible mark of a glyph no one could read (execution plan §1: never deleted, never guessed)
 
 _NULLABLE = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
 _STRINGS = {"type": "array", "items": {"type": "string"}}
 PART_SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["kind", "lines", "text", "engine"],
+    "type": "object", "additionalProperties": False, "required": ["kind", "lines", "text", "engine", "cell"],
     "properties": {"kind": {"type": "string", "enum": list(PART_KINDS)}, "lines": _STRINGS, "text": {"type": "string"},
-                   "engine": _STRINGS},
+                   "engine": _STRINGS, "cell": _NULLABLE({"type": "string"})},
 }
 BLOCK_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["id", "type", "level", "region", "parts"],
@@ -69,18 +71,19 @@ _VALIDATOR = Draft202012Validator(SCHEMA)
 SAMPLE = {
     "blocks": [
         {"id": "B1", "type": "title", "level": 2, "region": None,
-         "parts": [{"kind": "copy", "lines": ["L5"], "text": "", "engine": []}]},
+         "parts": [{"kind": "copy", "lines": ["L5"], "text": "", "engine": [], "cell": None}]},
         {"id": "B2", "type": "text", "level": None, "region": None, "parts": [
-            {"kind": "copy", "lines": ["L6-L9"], "text": "", "engine": []},
-            {"kind": "write", "lines": ["L10", "L11"], "text": "其中 $x_{i}^{2}$ 为第 $i$ 个测点的位移，", "engine": ["E2"]},
-            {"kind": "copy", "lines": ["L12-L14"], "text": "", "engine": []}]},
+            {"kind": "copy", "lines": ["L6-L9"], "text": "", "engine": [], "cell": None},
+            {"kind": "write", "lines": ["L10", "L11"], "text": "其中 $x_{i}^{2}$ 为第 $i$ 个测点的位移，", "engine": ["E2"], "cell": None},
+            {"kind": "copy", "lines": ["L12-L14"], "text": "", "engine": [], "cell": None}]},
         {"id": "B3", "type": "formula", "level": None, "region": None,
-         "parts": [{"kind": "write", "lines": ["L15-L31"], "text": "", "engine": ["E3"]}]},
+         "parts": [{"kind": "write", "lines": ["L15-L31"], "text": "", "engine": ["E3"], "cell": None}]},
         {"id": "B4", "type": "figure", "level": None, "region": [120, 800, 1100, 1250], "parts": []},
         {"id": "B5", "type": "caption", "level": None, "region": None,
-         "parts": [{"kind": "copy", "lines": ["L40"], "text": "", "engine": []}]},
+         "parts": [{"kind": "copy", "lines": ["L40"], "text": "", "engine": [], "cell": None}]},
         {"id": "B6", "type": "table", "level": None, "region": None,
-         "parts": [{"kind": "table", "lines": ["L41-L80"], "text": "", "engine": []}]},
+         "parts": [{"kind": "table", "lines": ["L41-L80"], "text": "", "engine": [], "cell": None},
+                   {"kind": "cell", "lines": [], "text": "−14.61", "engine": [], "cell": "T1:4:3"}]},
     ],
     "aside": [{"lines": ["L1-L4"], "reason": "页眉", "to": "excluded"},
               {"lines": ["L32-L39"], "reason": "图内文字", "to": "B4"}],
@@ -96,11 +99,12 @@ INSTRUCTIONS = """你在整理文档的一页，写成供大模型阅读的 Mark
 
 输出一个 JSON 对象：
 - blocks：按阅读顺序排列的块。一块是一个段落：只有同一段落里折行的行才放进同一块；表单的各个字段、地址的各行、菜单项、列表项这类在页面上各自成行的内容，每行各成一块。每块有 id（B1、B2……）、type（title 标题、text 正文段落、list 列表项、formula 行间公式、table 表格、figure 图、caption 图表标题或图注、footnote 脚注、other 其他）、level（标题按版面估计的层级 1–6，不是标题填 null）、region（图，以及没有文字行可引用的内容，给出它在页面图上的框；其他填 null）、parts（块的内容，按顺序相接）。
-- parts 的每一项有 kind、lines、text、engine：
+- parts 的每一项有 kind、lines、text、engine、cell（只有 cell 部分填位置，其他部分填 null）：
   - copy：lines 是要复制的行（"L3"，或区间 "L3-L9" 表示 L3 到 L9 的每一行），按阅读顺序排列；text 填空串。程序放入这些行的文字（有 copy_as 的行放入 copy_as），同一块里的行按换行接起来。copy_as 与图不一致（图上没有这个上下标，或上下标不同），或行里有斜体的变量或式子（x、b_i、3n−1 这类数学符号），就不要复制这一行，用 write 照图把整行写出。
   - write：text 是你照图写的内容，lines 是它替换的行，engine 是参考了的引擎条目（没有就填空列表）。text 只写 lines 里这些行的内容：这些行的内容都要写进去，不能丢；它前后已经 copy 的字不要再写一遍。只在复制不了时写：含变量、式子或与图不符的上下标的行整行重写（行内公式写成 $…$，式子的写法照图）；odd 里的字形、文字层与图不一致的字，照图写出；图上有而文字层没有的文字，lines 为空列表，并给块填 region。照图写，不总结、不翻译、不补全；看不清的地方写 〔?〕 并记入 unresolved，不要猜——浅得读不出、模糊的文字不要写成内容。
   - 行间公式：块的 type 为 formula，parts 只有一个 write，lines 是这个公式的全部行（含公式编号），engine 是对应的引擎条目，text 填空串——公式的 LaTeX 由程序另请一次、单独写出。每个带编号的行间公式单独成一块；图上有而文字层没有的公式，lines 为空列表，并给块填 region。
-  - table：lines 是整张表的行，表格由程序从文字层建出，只由一行组成的格子按该行的 copy_as 写出上下标。表里有 copy_as 与图不符或表达不了的上下标、公式时，改用 write 写出 HTML 表格，lines 仍是整张表的行。
+  - table：lines 是整张表的行，表格由程序从文字层建出，就是【程序建出的表格】里的那张（格子里已按 copy_as 写出上下标）。
+  - cell：程序建出的表格里有几格与图不一致（映射不到的字形、认错的字、与图不符的上下标），就在这张表所在的块里，对每一格加一个 cell：cell 写这一格的位置 "T1:4:3"（表 T1 第 4 行第 3 列，按【程序建出的表格】里 rows 的行列数，从 1 数起），text 是照图写出的这一格的全部内容，lines 填空列表，engine 照常。只改有问题的格子，其余照抄；其他 part 的 cell 填 null。表格本身建错了（行列错位、漏行、把别的内容并了进来），才改用 write 照图写出整张表（HTML），lines 仍是整张表的行。
 - aside：不放进正文的行。每项给 lines、reason（页眉、页脚、页码、图内文字等）、to（去处：excluded 表示不输出；或接收它的块 id，例如图内文字给那张图的块）。只有各页重复出现的页眉、页脚、页码、装饰线用 excluded；首页的刊名、卷期、日期、文章编号、DOI 等只出现一次的信息是正文内容，要输出。
 - unresolved：看不清、定不下的地方，每项给 where（行号或块 id）与 what。
 
@@ -129,6 +133,11 @@ def context(page: dict) -> str:
     parts = ["【文字层】（每行一个 JSON）"]
     lines = page["lines"]
     parts += [json.dumps(_shown(line), ensure_ascii=False) for line in lines] if lines else ["（这页没有文字层）"]
+    if page.get("tables"):
+        parts.append("\n【程序建出的表格】（每张一个 JSON；rows 是逐行的格子，null 是被上方或左方合并格占住的位置）")
+        parts += [json.dumps({"id": f"T{k}", "lines": compress(sorted(int(x[1:]) for ref in t["lines"] for x in _names(ref))),
+                              "rows": grid_rows(_scripted_cells(t["html"], {x for ref in t["lines"] for x in _names(ref)}, page))},
+                             ensure_ascii=False) for k, t in enumerate(page["tables"], 1)]
     if page.get("engine"):
         parts.append("\n【扫描引擎条目】（每条一个 JSON）")
         parts += [json.dumps(e, ensure_ascii=False) for e in page["engine"]]
@@ -274,6 +283,8 @@ def invariant_problems(data: dict, page: dict) -> list[str]:
             where = f"{bid} 的第 {k} 个 {part['kind']}"
             if part["kind"] in ("copy", "table") and not part["lines"]:
                 problems.append(f"{where} 没有 lines")
+            if part["kind"] == "cell":
+                problems += [f"{where}：{p}" for p in cell_problems(part, block, page)]
             if part["kind"] == "write":
                 if not part["text"].strip() and block["type"] != "formula":  # a formula's LaTeX is asked apart
                     problems.append(f"{where} 的 text 是空的")
@@ -340,7 +351,10 @@ def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
             if bad:
                 done.append(f"{block['id']}：去掉不存在的引擎条目 {', '.join(bad)}")
                 part["engine"] = [e for e in part["engine"] if e in engine_ids]
-        block["parts"] = [p for p in block["parts"] if p["lines"] or p["kind"] == "write"]
+        bad_cells = [p for p in block["parts"] if p["kind"] == "cell" and cell_problems(p, block, page)]
+        if bad_cells:
+            done.append(f"{block['id']}：去掉位置不对的 cell {', '.join(repr(p.get('cell')) for p in bad_cells)}")
+        block["parts"] = [p for p in block["parts"] if (p["lines"] or p["kind"] in ("write", "cell")) and p not in bad_cells]
     for item in data["aside"]:
         item["lines"] = keep(item["lines"], "aside")
     data["aside"] = [a for a in data["aside"] if a["lines"]]
@@ -348,7 +362,7 @@ def repair(data: dict, page: dict) -> tuple[dict, list[str]]:
     for run in _runs(missing):
         after = _holder(data, run[0])
         block = {"id": _free_id(data), "type": "text", "level": None, "region": None, "repaired": True,
-                 "parts": [{"kind": "copy", "lines": [f"L{n}" for n in run], "text": "", "engine": []}]}
+                 "parts": [{"kind": "copy", "lines": [f"L{n}" for n in run], "text": "", "engine": [], "cell": None}]}
         data["blocks"].insert(after + 1, block)
         done.append(f"补回没有分配的 {', '.join(compress(run))}：复制为 {block['id']}，放在 "
                     + (data['blocks'][after]['id'] + " 之后" if after >= 0 else "最前"))
@@ -392,7 +406,7 @@ def fallback(page: dict) -> dict:
     for k, line in enumerate(page["lines"], 1):
         if line.get("_blk") != previous or not blocks:
             blocks.append({"id": f"B{len(blocks) + 1}", "type": "text", "level": None, "region": None,
-                           "repaired": True, "parts": [{"kind": "copy", "lines": [], "text": "", "engine": []}]})
+                           "repaired": True, "parts": [{"kind": "copy", "lines": [], "text": "", "engine": [], "cell": None}]})
             previous = line.get("_blk")
         blocks[-1]["parts"][0]["lines"].append(f"L{k}")
     return {"blocks": blocks, "aside": [], "unresolved": []}
@@ -431,13 +445,16 @@ def render(data: dict, page: dict) -> str:
                 pieces.append(join_wrapped([source[r] for ref in part["lines"] for r in _names(ref) if r in source]))
             elif part["kind"] == "write":
                 pieces.append(part["text"].strip())
+            elif part["kind"] == "cell":
+                continue  # written into its table's grid
             else:
                 refs = {r for ref in part["lines"] for r in _names(ref)}
                 grids = [t for t in tables if refs & set(t["lines"])]  # one grid may hold two tables the model split
                 for t in grids:
                     if t["block"] not in used_tables:
                         used_tables.add(t["block"])
-                        out.append(_scripted_cells(t["html"], refs, page))
+                        out.append(write_cells(_scripted_cells(t["html"], refs, page),
+                                               cells_of(block, page).get(tables.index(t), {})))
                 rest = sorted(refs - {r for t in grids for r in t["lines"]}, key=lambda r: int(r[1:]))
                 if rest and grids:  # lines the model put in the table that the extraction's grid does not hold
                     out.append(join_wrapped([lines[r] for r in rest if r in lines]))
@@ -475,6 +492,100 @@ def _scripted_cells(table_html: str, names: set[str], page: dict) -> str:
         return match.group(1) + todo[key].pop(0) + match.group(3) if todo.get(key) else match.group(0)
 
     return _CELL.sub(cell, table_html)
+
+
+_ROW = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.S | re.I)
+_TD = re.compile(r"<(t[dh])\b([^>]*)>(.*?)</\1>", re.S | re.I)
+_ADDRESS = re.compile(r"^\s*T(\d+)\s*[:：]\s*(\d+)\s*[:：]\s*(\d+)\s*$")
+
+
+def _span(attrs: str, name: str) -> int:
+    match = re.search(rf'{name}\s*=\s*"?(\d+)', attrs, re.I)
+    return max(1, int(match.group(1))) if match else 1
+
+
+def table_cells(table_html: str) -> list[dict]:
+    """The cells of an HTML table as the HTML table model lays them out: row, column (0-based, a spanned position
+    taken by the cell that covers it), spans, the cell's inner HTML and where it stands in the string."""
+    out, taken = [], set()
+    for r, row in enumerate(_ROW.finditer(table_html)):
+        c = 0
+        for m in _TD.finditer(table_html, row.start(1), row.end(1)):
+            while (r, c) in taken:
+                c += 1
+            rs, cs = _span(m.group(2), "rowspan"), _span(m.group(2), "colspan")
+            taken |= {(r + i, c + j) for i in range(rs) for j in range(cs)}
+            out.append({"row": r, "col": c, "rowspan": rs, "colspan": cs, "inner": m.group(3),
+                        "at": (m.start(3), m.end(3))})
+            c += cs
+    return out
+
+
+def grid_rows(table_html: str) -> list[list[str | None]]:
+    """The table as rows of cells (inner HTML), null where a spanned cell above or to the left covers the place."""
+    cells = table_cells(table_html)
+    rows = max((x["row"] + x["rowspan"] for x in cells), default=0)
+    cols = max((x["col"] + x["colspan"] for x in cells), default=0)
+    grid: list[list[str | None]] = [[None] * cols for _ in range(rows)]
+    for x in cells:
+        grid[x["row"]][x["col"]] = x["inner"]
+    return grid
+
+
+def cell_address(part: dict) -> tuple[int, int, int] | None:
+    """(table index, row, column), all 0-based, of a ``cell`` part's address; None when it is not one."""
+    match = _ADDRESS.match(part.get("cell") or "")
+    return (int(match.group(1)) - 1, int(match.group(2)) - 1, int(match.group(3)) - 1) if match else None
+
+
+def cell_problems(part: dict, block: dict, page: dict) -> list[str]:
+    tables = page.get("tables") or []
+    address = cell_address(part)
+    problems = []
+    if part["lines"]:
+        problems.append("cell 的 lines 要是空列表（这张表的行都在 table 里）")
+    if not part["text"].strip():
+        problems.append("cell 的 text 是空的")
+    if address is None:
+        return problems + [f"cell {part.get('cell')!r} 不是 \"T表号:行:列\" 的位置"]
+    t, r, c = address
+    if not 0 <= t < len(tables):
+        return problems + [f"没有表 T{t + 1}（这页程序建出了 {len(tables)} 张表）"]
+    if not any(x["row"] == r and x["col"] == c for x in table_cells(tables[t]["html"])):
+        problems.append(f"表 T{t + 1} 没有第 {r + 1} 行第 {c + 1} 列这一格")
+    own = {x for p in block["parts"] if p["kind"] == "table" for ref in p["lines"] for x in _names(ref)}
+    if not own & {x for ref in tables[t]["lines"] for x in _names(ref)}:
+        problems.append(f"改表 T{t + 1} 的格子要放在它的 table 所在的块里")
+    for p in latex_problems(part["text"]):
+        problems.append(p)
+    if unmapped(part["text"]):
+        problems.append(f"写进了映射不到的字符：照图写出，看不清写 {UNREADABLE}")
+    return problems
+
+
+def cells_of(block: dict, page: dict) -> dict[int, dict[tuple[int, int], str]]:
+    """The block's written cells: table index → (row, column) → text."""
+    out: dict[int, dict[tuple[int, int], str]] = {}
+    for part in block["parts"]:
+        address = cell_address(part) if part["kind"] == "cell" else None
+        if address is not None and part["text"].strip():
+            out.setdefault(address[0], {})[(address[1], address[2])] = part["text"].strip()
+    return out
+
+
+def write_cells(table_html: str, written: dict[tuple[int, int], str]) -> str:
+    """The table with the written cells' contents in place (their text escaped as HTML, sub- and superscript tags
+    kept)."""
+    if not written:
+        return table_html
+    out = table_html
+    for x in sorted(table_cells(table_html), key=lambda x: x["at"][0], reverse=True):
+        text = written.get((x["row"], x["col"]))
+        if text is not None:
+            safe = "".join(p if re.fullmatch(r"</?su[pb]>", p) else html.escape(p, quote=False)
+                           for p in re.split(r"(</?su[pb]>)", text))
+            out = out[:x["at"][0]] + safe + out[x["at"][1]:]
+    return out
 
 
 def _names(ref: str) -> list[str]:

@@ -156,7 +156,8 @@ def fill(data: dict, latex: dict[str, str]) -> dict:
         lines = [ref for p in block["parts"] for ref in p["lines"]]
         engine = list(dict.fromkeys(e for p in block["parts"] for e in p["engine"]))
         kept = next((p["text"].strip() for p in block["parts"] if p["kind"] == "write" and p["text"].strip()), "")
-        block["parts"] = [{"kind": "write", "lines": lines, "text": latex.get(block["id"]) or kept, "engine": engine}]
+        block["parts"] = [{"kind": "write", "lines": lines, "text": latex.get(block["id"]) or kept, "engine": engine,
+                           "cell": None}]
     return data
 
 

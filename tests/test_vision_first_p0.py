@@ -16,8 +16,8 @@ def _page(n=6, engine=None, tables=None):
             "engine": engine or [], "tables": tables or []}
 
 
-def _part(kind, lines, text=""):
-    return {"kind": kind, "lines": lines, "text": text, "engine": []}
+def _part(kind, lines, text="", cell=None):
+    return {"kind": kind, "lines": lines, "text": text, "engine": [], "cell": cell}
 
 
 def _answer(**over):
@@ -122,3 +122,29 @@ def test_only_a_display_formula_may_leave_its_text_to_the_formula_request():
     answer["blocks"][0]["parts"] = [_part("write", ["L2-L3"])]  # B1 is text
     problems = c.check(json.dumps(answer, ensure_ascii=False), _page()).problems
     assert problems == ["B1 的第 1 个 write 的 text 是空的"]
+
+
+_SPANNED = ('<table>\n<tr><th rowspan="2">工况</th><th colspan="2">铰缝刚度</th></tr>\n'
+            "<tr><th>k1</th><th>k2</th></tr>\n<tr><td>1</td><td>\ue012 14.61</td><td>0.63</td></tr>\n</table>")
+
+
+def test_the_grid_as_the_html_table_model_lays_it_out():
+    assert c.grid_rows(_SPANNED) == [["工况", "铰缝刚度", None], [None, "k1", "k2"], ["1", "\ue012 14.61", "0.63"]]
+    assert c.write_cells(_SPANNED, {(2, 1): "−14.61", (1, 1): "k<sub>1</sub>"}).count("<td>−14.61</td>") == 1
+    assert "<th>k<sub>1</sub></th>" in c.write_cells(_SPANNED, {(1, 1): "k<sub>1</sub>"})
+
+
+def test_a_cell_is_written_by_its_address_in_its_tables_block():
+    page = _page(tables=[{"block": "t1", "lines": ["L2", "L3"], "html": _SPANNED}])
+    answer = _answer(blocks=[
+        {"id": "B1", "type": "table", "level": None, "region": None,
+         "parts": [_part("table", ["L2-L3"]), _part("cell", [], "−14.61", "T1:3:2")]},
+        {"id": "B2", "type": "text", "level": None, "region": None, "parts": [_part("copy", ["L4-L6"])]}],
+        aside=[{"lines": ["L1"], "reason": "页眉", "to": "excluded"}])
+    checked = c.check(json.dumps(answer, ensure_ascii=False), page)
+    assert checked.level == "valid", checked.problems
+    assert "<td>−14.61</td>" in c.render(answer, page) and "\"rows\"" in c.context(page)
+    answer["blocks"][0]["parts"][1]["cell"] = "T1:2:1"  # covered by 工况 above
+    answer["blocks"][1]["parts"].append(_part("cell", [], "x", "T1:3:3"))  # not the table's block
+    problems = c.check(json.dumps(answer, ensure_ascii=False), page).problems
+    assert any("第 2 行第 1 列" in p for p in problems) and any("所在的块" in p for p in problems)

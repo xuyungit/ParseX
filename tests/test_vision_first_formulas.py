@@ -53,7 +53,7 @@ def test_every_formula_once_balanced_and_what_is_usable_of_a_partial_answer():
 def test_fill_makes_each_formula_one_write_and_keeps_the_allocations_text_when_none_came():
     filled = f.fill(_data(), {"B2": "x^{2} \\tag{1}"})
     assert filled["blocks"][1]["parts"] == [
-        {"kind": "write", "lines": ["L2-L3", "L4"], "text": "x^{2} \\tag{1}", "engine": ["E1"]}]
+        {"kind": "write", "lines": ["L2-L3", "L4"], "text": "x^{2} \\tag{1}", "engine": ["E1"], "cell": None}]
     assert filled["blocks"][2]["parts"][0]["text"] == "y = 2 \\tag{2}"
     assert filled["blocks"][0] == _data()["blocks"][0]
 

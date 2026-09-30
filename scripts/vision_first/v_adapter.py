@@ -13,7 +13,8 @@ it (review item IO of the audit: "P0 结果先独立存 JSON，通过后再定�
   native block its lines came from, so the title step reads it as it reads any native paragraph;
 - a formula block → a FORMULA block (LaTeX);
 - a ``table`` part → the native extraction's TABLE block holding those lines, kept (cells that are one line get the
-  line's script candidates in their Unicode forms, contract v5); a written HTML table → a new TABLE block;
+  line's script candidates in their Unicode forms, contract v5; a ``cell`` part of the block writes one cell from the
+  image, contract v6); a written HTML table → a new TABLE block;
 - copied lines take their script candidates (contract v5); a written part that leaves out scripts the candidates of
   its lines have keeps the lines as the candidates write them as a candidate reading — a review item (Q143 ③);
 - a formula whose LaTeX neither request gave → the engine reading whose numbers agree, else the lines (degraded);
@@ -166,6 +167,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
             _written_into(state, n, blocks, figure_id, parts)
             continue
         if kind == "table":
+            written_cells = contract.cells_of(item, page)  # table index → (row, column) → text
+            block_of_table = {i: t["block"] for i, t in enumerate(page.get("tables") or [])}
             for part in parts:
                 refs = {x for ref in part["lines"] for x in contract._names(ref)}
                 if part["kind"] == "table":
@@ -173,6 +176,12 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                     for tid in hits:
                         table = tables[tid]
                         _script_cells(table, refs, page)
+                        index = next((i for i, b in block_of_table.items() if b == tid), None)
+                        for cell in table.cells.cells if table.cells is not None else []:
+                            text = written_cells.get(index, {}).get((cell.row, cell.col))
+                            if text is not None:
+                                cell.content = _unicode_scripts(text)
+                                counts["table_cells_written"] += 1
                         for cell in table.cells.cells if table.cells is not None else []:
                             cell.content = contract.visible(cell.content)  # an unmapped glyph: the visible mark
                         if table not in placed:
