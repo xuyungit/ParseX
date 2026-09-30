@@ -232,3 +232,16 @@ def test_integrity_report_finds_changes_outside_the_tools(ws, tmp_path):
     assert any(asset.id in p for p in problems)
     ws.state_path.write_bytes(ws.state_path.read_bytes().replace("改写".encode(), "再改".encode()))
     assert any("state.json" in p for p in verify_workspace(ws.root).problems)
+
+
+def test_an_interrupted_look_leaves_a_note_not_a_problem(ws):
+    # a view_source killed (SIGKILL) after recording its looks, before its call record: evidence only, no content
+    ws.log_call({"tool": "workspace_init"})
+    with ws.txn("tool:evidence"):
+        pass
+    report = verify_workspace(ws.root)
+    assert report.ok and any("version 2" in n and "interrupted" in n for n in report.notes)
+    rogue = Workspace.open(ws.root)
+    with rogue.txn("tool:edit_draft:agent") as state:
+        state.blocks[1].text = "改写"
+    assert not verify_workspace(ws.root).ok  # anything else unclaimed is still a problem

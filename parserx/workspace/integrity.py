@@ -8,7 +8,10 @@ check an experiment runs afterwards:
   last ``txn`` record agree with its digest and version);
 - transactions are numbered 1…N without gaps, and each is claimed by exactly
   one call record — a commit nobody claims came from something other than a
-  tool call (e.g. a script using the workspace API directly);
+  tool call (e.g. a script using the workspace API directly).  One exception,
+  a note and not a problem: a look ``view_source`` recorded (``tool:evidence``)
+  whose call was killed before its record — evidence of where the agent looked,
+  no content (C1: the agent ended while a parallel look still waited);
 - every asset file still has the digest it was stored under, and the input
   copy still has the source digest (unless it was converted from .doc).
 """
@@ -22,16 +25,21 @@ from parserx.ir.base import IRModel
 from parserx.workspace.store import Workspace, read_records
 
 
+EVIDENCE_ACTOR = "tool:evidence"  # tools/source.py: a look recorded, nothing else in the transaction
+
+
 class IntegrityReport(IRModel):
     ok: bool
     problems: list[str]
     transactions: int
+    notes: list[str] = []  # what is recorded but does not make the workspace unverifiable
     calls: int
 
 
 def verify_workspace(root: Path | str) -> IntegrityReport:
     ws = Workspace.open(root)
     problems: list[str] = []
+    notes: list[str] = []
     problem = ws.tampered()
     if problem is not None:
         problems.append(problem)
@@ -62,6 +70,10 @@ def verify_workspace(root: Path | str) -> IntegrityReport:
         n = claims.get(version, 0)
         if n != 1:
             actor = by_version[version].get("actor")
+            if n == 0 and actor == EVIDENCE_ACTOR:
+                notes.append(f"transaction version {version} ({actor}): a look whose call was interrupted "
+                             "before its record (evidence only)")
+                continue
             what = "not claimed by any tool call" if n == 0 else f"claimed by {n} tool calls"
             problems.append(f"transaction version {version} ({actor}) is {what}")
     for version in sorted(set(claims) - set(by_version)):
@@ -77,4 +89,4 @@ def verify_workspace(root: Path | str) -> IntegrityReport:
         if hashlib.sha256(ws.source_path.read_bytes()).hexdigest() != state.source_sha256:
             problems.append(f"the input copy {ws.source_path.name} was changed")
 
-    return IntegrityReport(ok=not problems, problems=problems, transactions=len(txns), calls=len(calls))
+    return IntegrityReport(ok=not problems, problems=problems, transactions=len(txns), calls=len(calls), notes=notes)
