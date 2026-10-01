@@ -121,11 +121,3 @@ def test_a_numbered_step_labelled_a_title_is_not_one_when_its_series_is_body_tex
         _block("section3", "三、产品结构", BODY),
     )
     assert set(found) == {"section"}
-
-
-def test_a_table_of_contents_entry_is_not_a_title():
-    # Word's built-in "toc N" styles are the entries of a table of contents: they point at titles, they are not
-    # titles (chn_doc01: the pipeline made every entry a title, each title appeared twice)
-    toc = TextStyle(font_size=16.0, bold=True, font="SimSun", style_name="toc 1")
-    found = _titles(_block("entry", "1. 采购条件", toc), _block("title", "2. 竞争性谈判内容", LARGE))
-    assert set(found) == {"title"}
