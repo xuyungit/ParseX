@@ -57,7 +57,6 @@ from parserx.tools.views import unresolved_items  # noqa: E402
 from parserx.tool_eval.runner import _scores_of  # noqa: E402
 from parserx.workspace import Workspace  # noqa: E402
 
-DOCS = ("paper_chn01", "paper_chn02", "ocr01", "receipt")  # the tuning set (common plan §6.2)
 M_RUN = REPO_ROOT / "eval_runs" / "2026-09-29_bench2f_fixed_full"
 DEFAULTS = True  # the conservative defaults without the agent (common plan §3.4); --no-defaults turns them off
 ROUTING_KINDS = frozenset({"text_suspicious", "text_unaccounted", "text_not_seen", "formula_candidate"})
@@ -278,7 +277,7 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
     from p0_score import furniture_keys
 
     keys = furniture_keys(p0_inputs.document(doc))
-    allocations, applied = {}, {}
+    allocations, applied, answered = {}, {}, {}
     session = _Session()
     for n in sorted(pages):
         if n in scanned:
@@ -292,15 +291,22 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
             else:
                 applied[n] = va_free.apply(ws, p0_inputs.document(doc), n, page, result["final"]["markdown"],
                                            model=caller.config.model)
-        else:
+        else:  # every page asked first: the glyph readings are the document's (learn_glyphs), then applied
             result = run_page(caller, run, run_dir, pid)
-            if result["final"]["status"] == "failed":  # no allocation: the page stays with the pipeline, as in M
-                applied[n] = {"left_to_pipeline": 1}
-            else:
-                applied[n] = v_adapter.apply(ws, p0_inputs.document(doc), n, page, result["final"]["data"],
-                                             model=caller.config.model, dpi=p0_inputs.DPI, defaults=DEFAULTS,
-                                             repeated=set().union(*(k for i, k in enumerate(keys, 1) if i != n)))
+            answered[n] = (page, result)
         allocations[n] = {"status": result["final"]["status"], "usd": result["usd"], "seconds": result["seconds"]}
+    glyphs = v_adapter.learn_glyphs([(page, result["final"]["data"]) for page, result in answered.values()
+                                     if result["final"]["status"] != "failed"])
+    for n, (page, result) in sorted(answered.items()):
+        if result["final"]["status"] == "failed":  # no allocation: the page stays with the pipeline, as in M
+            applied[n] = {"left_to_pipeline": 1}
+        else:
+            applied[n] = v_adapter.apply(ws, p0_inputs.document(doc), n, page, result["final"]["data"],
+                                         model=caller.config.model, dpi=p0_inputs.DPI, defaults=DEFAULTS,
+                                         repeated=set().union(*(k for i, k in enumerate(keys, 1) if i != n)),
+                                         glyphs=glyphs)
+    if glyphs:
+        applied["glyphs"] = {f"U+{ord(g):04X}": w for g, w in glyphs.items()}
     if scanned:  # the scan engine reads the pages first (as run_pipeline would), then their blocks are allocated
         pending = [p.n for p in ws.load().pages if p.status == PageStatus.PENDING]
         envelope, code = call_tool("recognize", ws_dir, {"pages": pending, "engine": "paddleocr"}, config=config,
@@ -361,7 +367,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--configs", required=True)
-    parser.add_argument("--docs", default=",".join(DOCS))
+    parser.add_argument("--docs", required=True, help="comma-separated document names (no default set)")
     parser.add_argument("--all", action="store_true", help="send every native page (V-all)")
     parser.add_argument("--free", action="store_true", help="V-a: the service model writes the pages freely")
     parser.add_argument("--no-defaults", action="store_true",

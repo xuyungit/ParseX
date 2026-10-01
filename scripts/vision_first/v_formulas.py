@@ -57,14 +57,34 @@ def wanted(data: dict) -> list[dict]:
     return out
 
 
+FORMULA_LABELS = ("display_formula", "formula")  # the layout detector's labels of a display formula
+
+
+def beside(box, regions: list) -> list:
+    """The formula *regions* in *box*'s band (overlapping it by half the lower one's height): those that touch it
+    across, else the nearest one.  A formula's lines may be only its paragraph number or its equation number, set
+    apart from the formula itself (an image); a formula of the next column is farther than the band's own."""
+    band = [r for r in regions
+            if min(box[3], r[3]) - max(box[1], r[1]) > 0.5 * min(box[3] - box[1], r[3] - r[1])]
+    touching = [r for r in band if min(box[2], r[2]) > max(box[0], r[0])]
+    if touching or not band:
+        return touching
+    return [min(band, key=lambda r: max(r[0] - box[2], box[0] - r[2]))]
+
+
 def crop_box(page: dict, formula: dict) -> list[float] | None:
-    """The formula's box on the allocation's page image: its lines and region, with a margin; its engine entries only
-    when it has neither (the engine may read two neighbouring formulas as one entry: its box would show both, and
+    """The formula's box on the allocation's page image: its lines and region, and the detector's formula regions in
+    their band (round 1: a formula set as an image was cropped to its number "(7)" alone), with a margin; its engine
+    entries only when it has neither (the engine may read two neighbouring formulas as one entry: its box would show both, and
     the model wrote the first twice)."""
     lines = page["lines"]
     boxes = [lines[int(x[1:]) - 1]["box"] for x in formula["lines"] if 1 <= int(x[1:]) <= len(lines)]
     if formula.get("region"):
         boxes.append(formula["region"])
+    if boxes:  # the detector's formula region in the same band: a formula set as an image beside its number
+        boxes += beside([min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes),
+                         max(b[3] for b in boxes)],
+                        [r["box"] for r in page.get("regions") or [] if r["label"] in FORMULA_LABELS])
     if not boxes:
         entries = {e["id"]: e for e in page.get("engine") or []}
         boxes = [entries[e]["box"] for e in formula["engine"] if e in entries]

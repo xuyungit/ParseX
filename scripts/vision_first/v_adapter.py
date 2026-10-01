@@ -40,6 +40,7 @@ import pymupdf
 from PIL import Image
 
 import p0_contract as contract
+import v_formulas
 
 from parserx.content.text import join_wrapped
 from parserx.content.select import renumber
@@ -67,6 +68,100 @@ _SUP = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼�
 _SUB = str.maketrans("0123456789+-=()aeoxhklmnpst", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ")
 
 
+def learn_glyphs(pages: list[tuple[dict, dict]]) -> dict[str, str]:
+    """Readings of the text layer's unmapped glyphs (private use, U+FFFD) from the document's allocations: where the
+    service model rewrote a line holding one, the character it wrote in its place (the line and the writing aligned
+    on their characters).  A glyph is read only when at least two rewrites agree and none disagrees; the rest keep
+    the visible mark 〔?〕 (round 1: a hyphen the model wrote as "-" in 53 rewritten lines stayed 〔?〕 in 9 copied
+    ones)."""
+    from difflib import SequenceMatcher
+
+    votes: dict[str, Counter] = {}
+    for page, data in pages:
+        lines = page["lines"]
+        for block in data["blocks"]:
+            if block["type"] == "formula":  # written as LaTeX: no character to align with
+                continue
+            for part in block["parts"]:
+                if part["kind"] != "write" or not part["lines"] or not part["text"].strip():
+                    continue
+                names = [x for ref in part["lines"] for x in contract._names(ref) if 1 <= int(x[1:]) <= len(lines)]
+                src = "".join("".join(lines[int(x[1:]) - 1]["text"].split()) for x in names)
+                if not contract.unmapped(src):
+                    continue
+                dst = "".join(part["text"].split())
+                for op, i0, i1, j0, j1 in SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
+                    written = dst[j0:j1]
+                    if op == "replace" and i1 - i0 == 1 and contract.unmapped(src[i0]) and 1 <= len(written) <= 2 \
+                            and not contract.unmapped(written) and not set(written) & set("$\\{}〔〕?"):
+                        votes.setdefault(src[i0], Counter())[written] += 1
+    return {glyph: c.most_common(1)[0][0] for glyph, c in votes.items() if len(c) == 1 and sum(c.values()) >= 2}
+
+
+def _joined(texts: list[str], style) -> str:
+    """Copied lines as one block's text: wrapped prose joined; lines set in a monospaced face (code, a console's
+    table) keep their line breaks."""
+    return "\n".join(texts) if style is not None and style.monospace else join_wrapped(texts)
+
+
+def _outside_formula(names: list[str], text_of: dict, latex: str, beside: frozenset = frozenset()) -> list[str]:
+    """Lines of a formula block that are not the formula's (a paragraph number such as "[0020]" set beside it): counted
+    over the block, a line whose letters and digits the LaTeX does not hold at all; and a line *beside* the
+    detector's formula region (in its band, not on it) whose characters the LaTeX does not hold in one run — an
+    equation number does (``\\tag{7}``), a paragraph number sharing digits with the formula does not."""
+    import unicodedata
+
+    from parserx.content.latex import characters
+
+    def alnum(text: str) -> str:
+        return "".join(ch for ch in unicodedata.normalize("NFKC", text) if ch.isalnum())
+
+    held = alnum(characters(latex))
+    lines = {x: Counter(alnum(text_of[x])) for x in names}
+    surplus = sum(lines.values(), Counter()) - Counter(held)
+    return [x for x in names if lines[x] and (not (lines[x] - surplus)
+                                              or (x in beside and alnum(text_of[x]) not in held))]
+
+
+def _formula_box(box, page: dict, pdf_page, dpi: int) -> tuple:
+    """A written formula's area on the page: its lines, and the detector's formula region beside them (a formula set
+    as an image beside its text-layer lines, ``_beside``)."""
+    return _union([box] + _beside(box, page, pdf_page, dpi))
+
+
+def _beside(box, page: dict, pdf_page, dpi: int) -> list[tuple]:
+    """The detector's formula region beside *box* (``v_formulas.beside``), in points of the page."""
+    return v_formulas.beside(box, [_page_box(r["box"], pdf_page, dpi) for r in page.get("regions") or []
+                                   if r["label"] in v_formulas.FORMULA_LABELS])
+
+
+def _set_apart(line, regions: list) -> bool:
+    """A line in the band of one of the formula *regions* and wholly to its left or right (a paragraph number in the
+    margin, an equation number) — not a line of the formula the region happens not to cover (a matrix's
+    subscripts)."""
+    return any(min(line[3], r[3]) - max(line[1], r[1]) > 0.5 * min(line[3] - line[1], r[3] - r[1]) for r in regions) \
+        and not any(min(line[2], r[2]) > max(line[0], r[0]) for r in regions)
+
+
+def _image_of(figure, formula) -> bool:
+    """Whether a placed image is a picture of the formula at *formula*: at least half its height in the formula's
+    band, and across overlapping it or beside it (a gap no wider than the formula's height: its number set beside
+    the image, a detector's region narrower than the image)."""
+    w = min(figure[2], formula[2]) - max(figure[0], formula[0])
+    h = min(figure[3], formula[3]) - max(figure[1], formula[1])
+    return h >= 0.5 * (figure[3] - figure[1]) > 0 and w >= -(formula[3] - formula[1])
+
+
+def _runs(numbers: list[int]) -> list[list[int]]:
+    runs: list[list[int]] = []
+    for k in sorted(numbers):
+        if runs and runs[-1][-1] == k - 1:
+            runs[-1].append(k)
+        else:
+            runs.append([k])
+    return runs
+
+
 def _union(boxes):
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
@@ -92,21 +187,24 @@ def _unicode_scripts(scripted: str) -> str:
 
 
 def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model: str, dpi: int,
-          defaults: bool = True, repeated: set[str] | None = None) -> dict:
+          defaults: bool = True, repeated: set[str] | None = None, glyphs: dict[str, str] | None = None) -> dict:
     """*repeated*: the furniture keys of the document's other pages (``p0_score.furniture_key``): with the defaults,
     a line put aside as excluded that no other page repeats stays in the output (information first) as a review
     item."""
-    """Put *data* (a checked allocation of page *n*) into the workspace; returns counts."""
+    """Put *data* (a checked allocation of page *n*) into the workspace; returns counts.  *glyphs*: readings of the
+    text layer's unmapped glyphs the service model gave where it rewrote their lines (``learn_glyphs``), used where
+    their lines are copied."""
     lines = page["lines"]
-    text_of = {f"L{k}": line["text"] for k, line in enumerate(lines, 1)}
-    scripted_of = {f"L{k}": line.get("_scripted", line["text"]) for k, line in enumerate(lines, 1)}
+    table = str.maketrans(glyphs or {})
+    text_of = {f"L{k}": line["text"].translate(table) for k, line in enumerate(lines, 1)}
+    scripted_of = {f"L{k}": line.get("_scripted", line["text"]).translate(table) for k, line in enumerate(lines, 1)}
     with pymupdf.open(source) as doc:
         pdf_page = doc[n - 1]
         render = pdf_page.get_pixmap(dpi=dpi).tobytes("png")
         counts: Counter = Counter()
         with ws.txn("tool:vision_first:allocate") as state:
             _apply(ws, state, n, page, data, text_of, scripted_of, pdf_page, render, dpi, model, counts, defaults,
-                   repeated)
+                   repeated, table)
     # the transaction is claimed by a call record, as a tool's is: the workspace's integrity check (guide §7.3) then
     # tells a later change outside the tools (by the agent) from this step of the experiment
     ws.log_call({"tool": "vision_first_allocate", "request": {"page": n, "model": model},
@@ -115,7 +213,8 @@ def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model:
 
 
 def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, scripted_of, pdf_page, render: bytes,
-           dpi: int, model: str, counts: Counter, use_defaults: bool = True, repeated: set[str] | None = None) -> None:
+           dpi: int, model: str, counts: Counter, use_defaults: bool = True, repeated: set[str] | None = None,
+           glyph_table: dict | None = None) -> None:
     items = {e.item: e for e in state.ledger}
     line_entry = {f"L{k}": items[ids.ledger_item_pdf(n, k)] for k in range(1, len(page["lines"]) + 1)}
     blocks = {b.id: b for b in state.blocks}
@@ -126,6 +225,7 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
     table_lines = {tid: {name for name, bid in owner.items() if bid == tid} for tid in tables}
     figures = [b for b in page_blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN]
     placed: list[Block] = []  # the page's blocks in the allocation's order
+    formula_boxes: list[tuple[Block, tuple]] = []  # written formula blocks and the page area they cover
     line_block: dict[str, str] = {}  # line → the block that now carries it
     merged: dict[str, str] = {}
     excluded: dict[str, str] = {}
@@ -188,17 +288,20 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                             if text is not None:
                                 cell.content = _unicode_scripts(text)
                                 counts["table_cells_written"] += 1
-                        for cell in table.cells.cells if table.cells is not None else []:
-                            cell.content = contract.visible(cell.content)  # an unmapped glyph: the visible mark
+                        for cell in table.cells.cells if table.cells is not None else []:  # a glyph read elsewhere:
+                            cell.content = contract.visible(cell.content.translate(glyph_table or {}))
                         if table not in placed:
                             placed.append(table)
                         for name in refs:
                             line_block[name] = tid
                         counts["table_native"] += 1
-                    if not hits:  # no grid there: the lines as a text block
-                        block = add(_text_block(new_id(), n, BlockKind.TEXT, "\n".join(
-                            text_of[x] for x in sorted(refs, key=lambda r: int(r[1:])) if x in text_of),
-                            box_of(sorted(refs), None), None, decision("a table the extraction has no grid for")))
+                    if not hits:  # no grid there: the lines as a text block (a console's table set in code: code)
+                        rows = sorted((x for x in refs if x in text_of), key=lambda r: int(r[1:]))
+                        style = _style_of(blocks, owner, rows)
+                        block = add(_text_block(new_id(), n, BlockKind.TEXT, "\n".join(text_of[x] for x in rows),
+                            box_of(rows, None), style if style is not None and style.monospace else None,
+                            decision("a table the extraction has no grid for"),
+                            engine="native_pdf" if style is not None and style.monospace else "vlm", model=model))
                         for name in refs:
                             line_block[name] = block.id
                         counts["table_as_text"] += 1
@@ -219,14 +322,29 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                                       decisions=[decision("a table the service model wrote from the page image")]))
                     for name in refs:
                         line_block[name] = block.id
+                    if not refs:  # content no text line holds: its own ledger item, read from the page image
+                        state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(n, _next_item(state, n)),
+                                                        unit="ocr_block", source=anchor, chars=0, disposition="output",
+                                                        block=block.id))
                     counts["table_written"] += 1
+                elif part["kind"] == "copy":  # lines beside the table in its block (a paragraph number): their own
+                    rows = sorted((x for x in refs if x in text_of), key=lambda r: int(r[1:]))
+                    if rows:
+                        style = _style_of(blocks, owner, rows)
+                        block = add(_text_block(new_id(), n, BlockKind.TEXT, contract.visible(_joined(
+                            [_unicode_scripts(scripted_of[x]) for x in rows], style)), box_of(rows, None), style,
+                            decision("lines the service model put in a table block, outside its grid"),
+                            engine="native_pdf", model=model))
+                        for name in rows:
+                            line_block[name] = block.id
+                        counts["table_block_lines"] += 1
             continue
         # text-like and formula blocks
         pieces, copied_only, candidates, degraded, defaults = [], True, [], False, Counter()
         for part in parts:
             names = [x for ref in part["lines"] for x in contract._names(ref) if x in text_of]
-            if part["kind"] == "copy":  # with the script candidates (contract v5)
-                pieces.append(join_wrapped([_unicode_scripts(scripted_of[x]) for x in names]))
+            if part["kind"] == "copy":  # with the script candidates (contract v5); code keeps its lines
+                pieces.append(_joined([_unicode_scripts(scripted_of[x]) for x in names], _style_of(blocks, owner, names)))
                 continue
             written = part["text"].strip()
             original = "\n".join(text_of[x] for x in names)
@@ -264,10 +382,27 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
             body = text.strip()
             body = body[2:-2].strip() if body.startswith("$$") and body.endswith("$$") else body
             text = body
+        place = None
+        if kind == "formula" and names_all:
+            regions = _beside(box_of(names_all, None), page, pdf_page, dpi)
+            outside = _outside_formula(names_all, text_of, text, frozenset(
+                x for x in names_all if x in line_entry and _set_apart(line_entry[x].source.bbox, regions)))
+            if outside:
+                if len(outside) == len(names_all) and region is None:  # the formula is the image beside its lines
+                    lines_box = box_of(names_all, None)
+                    place = _union(_beside(lines_box, page, pdf_page, dpi) or [lines_box])
+                number = add(_text_block(new_id(), n, BlockKind.TEXT, contract.visible(join_wrapped(
+                    [text_of[x] for x in outside])), box_of(outside, None), _style_of(blocks, owner, outside),
+                    decision("lines the formula does not hold (a paragraph number beside it): their own block"),
+                    engine="native_pdf", model=model))
+                for name in outside:
+                    line_block[name] = number.id
+                names_all = [x for x in names_all if x not in outside]
+                counts["formula_lines_apart"] += len(outside)
         bkind = _KINDS.get(kind, BlockKind.TEXT)
         native_style = _style_of(blocks, owner, names_all)
         marks = _marks_of(blocks, owner, names_all, text) if copied_only else []
-        block = add(_text_block(new_id(), n, bkind, text, box_of(names_all, region), native_style,
+        block = add(_text_block(new_id(), n, bkind, text, place or box_of(names_all, region), native_style,
                                 decision(f"the page's {kind} block, as the service model allocated it",
                                          parts=len(parts), lines=len(names_all)),
                                 engine="native_pdf" if copied_only and names_all else "vlm", model=model,
@@ -285,6 +420,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
             block.decisions.append(decision("conservative default without the agent (common plan §3.4): "
                                             + ", ".join(f"{k} {v}" for k, v in sorted(defaults.items())),
                                             **{k: v for k, v in defaults.items()}))
+        if kind == "formula":
+            formula_boxes.append((block, _formula_box(block.anchors[0].bbox, page, pdf_page, dpi)))
         for name in names_all:
             line_block[name] = block.id
         if not names_all:  # content no text line holds: its own ledger item, read from the page image
@@ -349,6 +486,41 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, text_of, sc
                 merged[name] = target
         counts["aside_lines"] += len(names)
 
+    # a placed image inside a formula the allocation wrote is that formula (a formula set as an image): withdrawn
+    for figure in figures:
+        if figure.id in used_figures or figure.status in HIDDEN or not isinstance(figure.anchors[0], PdfAnchor):
+            continue
+        holder = next((f for f, box in formula_boxes if _image_of(figure.anchors[0].bbox, box)), None)
+        if holder is None:
+            continue
+        figure.status = BlockStatus.DUPLICATE
+        figure.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice=CHOICE, actor=ACTOR, refs=[holder.id],
+                                         reason="an image of the formula the service model wrote (the formula block)",
+                                         evidence={"model": model}))
+        state.relations.append(Relation(id=ids.relation_id(RelationKind.DUPLICATE_OF, figure.id, holder.id),
+                                        kind=RelationKind.DUPLICATE_OF, src=figure.id, dst=holder.id))
+        for entry in state.ledger:
+            if entry.block == figure.id:
+                entry.block, entry.disposition = holder.id, "output"
+        used_figures.add(figure.id)
+        counts["formula_images_withdrawn"] += 1
+    # every line has a block: one the allocation left without (an adapter gap) is copied back at its place
+    unplaced = [x for x in line_entry if x not in line_block and x not in merged and x not in excluded
+                and owner.get(x) not in kept_furniture]
+    for run in _runs([int(x[1:]) for x in unplaced]):
+        rows = [f"L{k}" for k in run]
+        before = max((k for k in range(1, run[0]) if f"L{k}" in line_block), default=None)
+        block = _text_block(new_id(), n, BlockKind.TEXT, contract.visible(join_wrapped([text_of[x] for x in rows])),
+                            box_of(rows, None), _style_of(blocks, owner, rows),
+                            decision("lines the allocation left without a block: copied back at their place"),
+                            engine="native_pdf", model=model)
+        block.decisions.append(done)
+        state.blocks.append(block)
+        holder = next((b for b in placed if b.id == line_block.get(f"L{before}")), None) if before else None
+        placed.insert(placed.index(holder) + 1 if holder in placed else 0, block)
+        for name in rows:
+            line_block[name] = block.id
+        counts["lines_copied_back"] += len(rows)
     # the ledger: every line of the page to its new block
     for name, entry in line_entry.items():
         if name in line_block:
