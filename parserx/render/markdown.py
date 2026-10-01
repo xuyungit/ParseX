@@ -40,7 +40,7 @@ from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
 from parserx.ir.semantic import note_of
 from parserx.ir.state import DocumentState
 from parserx.reading.compare import has_math, read_inside, text_stands_for_image
-from parserx.workspace.queries import JOINABLE, block_unit, ordered
+from parserx.workspace.queries import JOINABLE, block_unit, ordered, scanned_pages
 
 _VISIBLE = frozenset({BlockStatus.OK, BlockStatus.DEGRADED})
 _MARKUP_START = re.compile(r"^(\s*)([#>])")
@@ -64,7 +64,7 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     images = {figure: _image_text(state, figure, blocks, assets, image_dir, missing, lang)
               for figure, blocks in inside.items()}
     transcribed = _transcription_starts(state)
-    scanned = _scanned_pages(state)
+    scanned = scanned_pages(state)
     numbers = number_of(state)  # a display formula's number, merged into it: its \tag
     by_unit: dict[int | None, list[Block]] = {}
     for block in ordered(state):
@@ -185,17 +185,6 @@ def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: 
         return text
     shown = f"![{_label(block, lang)}]({src})" if content else _render(block, assets, image_dir, lang)
     return f"{shown}\n\n{text}" if shown else text
-
-
-def _scanned_pages(state: DocumentState) -> set[int]:
-    """PDF pages whose content the scan engine read: its items of the page itself (not of an image in it) are
-    output, and none of the native text layer's is (a native page with formulas read from its image is not)."""
-    inside = {r.dst for r in state.relations if r.kind == RelationKind.CONTAINS}
-    kept = ("output", "merged")
-    scanned = {e.source.page for e in state.ledger if e.unit == "ocr_block" and e.block not in inside
-               and isinstance(e.source, PdfAnchor) and e.disposition in kept}
-    return scanned - {e.source.page for e in state.ledger if e.unit == "native_line"
-                      and isinstance(e.source, PdfAnchor) and e.disposition in kept}
 
 
 def _transcription_starts(state: DocumentState) -> dict[str, str]:

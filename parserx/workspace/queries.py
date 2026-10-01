@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from parserx.ir.anchor import AssetAnchor, DocxAnchor, PdfAnchor
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus
+from parserx.ir.enums import BlockKind, BlockStatus, RelationKind
 from parserx.ir.state import DocumentState
 
 # Blocks whose content is represented elsewhere or deliberately left out of the output.
@@ -54,3 +54,14 @@ def neighbors(state: DocumentState, block_id: str, k: int) -> list[Block]:
 
 def outline(state: DocumentState) -> list[Block]:
     return [b for b in ordered(state) if b.kind == BlockKind.TITLE and b.status not in HIDDEN]
+
+
+def scanned_pages(state: DocumentState) -> set[int]:
+    """PDF pages whose content the scan engine read: its items of the page itself (not of an image in it) are
+    output, and none of the native text layer's is (a native page with formulas read from its image is not)."""
+    inside = {r.dst for r in state.relations if r.kind == RelationKind.CONTAINS}
+    kept = ("output", "merged")
+    scanned = {e.source.page for e in state.ledger if e.unit == "ocr_block" and e.block not in inside
+               and isinstance(e.source, PdfAnchor) and e.disposition in kept}
+    return scanned - {e.source.page for e in state.ledger if e.unit == "native_line"
+                      and isinstance(e.source, PdfAnchor) and e.disposition in kept}

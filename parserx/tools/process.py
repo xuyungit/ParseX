@@ -12,6 +12,8 @@ The fixed sequence of the pipeline runtime; the program runs it before the agent
    certificate, a page, a table, a formula — their text and tables follow them.  A picture (a screenshot, a chart,
    a diagram, a photo) is shown with its note and not transcribed: the image is where its words are.  An image
    without a description (the service model off or failing) is transcribed by its route, SCAN or MIXED, as before;
+3b. ``second_reading``: what the scan engine read with mathematics where no text layer checks it (scanned pages,
+    transcribed images) read again by the service model; blocks the two readings differ on are listed;
 4. confirmed cross-page table continuations (``tables.merge``);
 5. titles through ``apply_structure``: DOCX styles and outline levels, then titles by agreeing evidence on native
    text (``hierarchy.typography_titles``) and the scan engine's title labels, unified as one outline (a level refused only because it depends on a title of the
@@ -52,7 +54,7 @@ from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
-from parserx.tools import describe_figure, recognize, structure
+from parserx.tools import describe_figure, recognize, second_reading, structure
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
@@ -168,6 +170,14 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
     if _read_content_images(ctx):
         steps.append(StepSummary(step="image_reading", detail="content images read locally to check their text"))
+    rereads = second_reading.candidates(ctx.ws.load()) if ctx.config.runtime.second_reading else []
+    if rereads:  # what the scan engine read with mathematics where no text layer checks it
+        ctx.report(Step("process", "second_reading", total=len(rereads)))
+        counts, problems = _unless_unconfigured(failures, lambda: second_reading.read_again(ctx), ({}, []))
+        failures += problems
+        if counts:
+            steps.append(StepSummary(step="second_reading", detail="scanned blocks with mathematics read again: "
+                                     + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))))
 
     ctx.report(Step("process", "structure"))
     if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):

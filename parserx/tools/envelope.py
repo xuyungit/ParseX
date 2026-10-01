@@ -74,6 +74,7 @@ class UnresolvedKind(StrEnum):
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     READING_DISAGREEMENT = "reading_disagreement"  # a rewrite from the page image no reading confirms: the replaced reading
+    SECOND_READING = "second_reading"  # scanned content with mathematics the service model reads otherwise (no text layer)
     ORDER_DISAGREEMENT = "order_disagreement"  # two readings of a page's order disagree across its columns: the other order
     FIGURE_WITHOUT_CONTENT = "figure_without_content"  # a shown image with no description and no text after it
     CAPTION_NUMBER_UNSEEN = "caption_number_unseen"  # a number a picture's description quotes, not read in it (IO6)

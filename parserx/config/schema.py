@@ -133,6 +133,13 @@ class SchedulingConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
 
+class Reader(BaseModel):
+    """A model that reads an image again (``tools/second_reading.py``): a ``models`` entry and its effort."""
+
+    use: str
+    reasoning_effort: str | None = None
+
+
 class ToolsConfig(BaseModel):
     """Document toolkit settings (guide §5)."""
 
@@ -142,6 +149,12 @@ class ToolsConfig(BaseModel):
     review_reasoning_effort: str | None = None
     describe_max_tokens: int = 300  # a note of one or two sentences (Q121)
     ask_reasoning_effort: str | None = "low"  # ask_image: the agent's questions about an image (P2-5)
+    # scanned content with mathematics read again (runtime.second_reading): each reader on its own, all at once; with
+    # several, a block is listed only where they all differ from the scan engine on a same character.  Readers whose
+    # entry is missing or not configured are left out; none left: the service model alone.  Measured 2026-10-01
+    # (docs/v2_pipeline_scripts.md §10.4): luna + DeepSeek caught 8 of 9 engine misreads with 3 false items in 40
+    second_readers: list[Reader] = Field(default_factory=lambda: [Reader(use="gpt-6-luna", reasoning_effort="low"),
+                                                                   Reader(use="deepseek-flash", reasoning_effort="medium")])
     ask_max_tokens: int = 1024
     review_max_tokens: int = 4096
     read_dpi: int = 150  # default page render resolution for ``read``
@@ -219,6 +232,7 @@ class RuntimeConfig(BaseModel):
     layout_shadow: bool = True  # run the layout detector and image routing (P1-9)
     page_reading: bool = True  # read every PDF page locally and compare it with the output (guide §9.5, Q56)
     formulas: bool = True  # display formulas of native PDF pages read as LaTeX by the scan engine (Q70)
+    second_reading: bool = True  # scanned content with mathematics read again by the service model, differences listed
     workspace_root: str | None = None  # keep each document's workspace here; None = a temporary directory
 
 

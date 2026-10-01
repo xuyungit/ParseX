@@ -224,6 +224,25 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                    f"{listed(adds, ', ') or 'nothing'} more — a reading can take a superscript l for 1); {span}"
                    "look at the image: if the reading is right, correct the block with it (keep every character "
                    "the image shows), else close the item"))
+    from parserx.tools import second_reading
+
+    for block in ordered(state):  # scanned content with mathematics the second readings do not agree with
+        read = second_reading.readings(block)
+        if block.status in HIDDEN or not read or block.chosen_observation in {o.id for o in read}:
+            continue
+        found = second_reading.differing(block.text or "", [o.text or "" for o in read])
+        if found is not None:
+            lacks, adds = found
+            who = ", ".join(o.engine_version.split(":", 1)[-1] for o in read)
+            items.append(Unresolved(
+                target=block.id, kind=UnresolvedKind.SECOND_READING, quotes=_quotes([o.text or "" for o in read]),
+                detail=f"the scan engine read this block from the image (no text layer checks it); {who} read it "
+                       f"again, each on its own (the quotes), and {'each' if len(read) > 1 else 'it'} differs from the "
+                       f"output: the output has {listed(lacks, ', ') or 'nothing'} the second reading"
+                       f"{'s' if len(read) > 1 else ''} lack and lacks {listed(adds, ', ') or 'nothing'} "
+                       f"{'they have' if len(read) > 1 else 'it has'}. Models misread a small image, Greek letters or "
+                       "a letter's case, and \"correct\" what is printed alike: decide each difference by the image "
+                       "alone, as printed; close the item where the output is right"))
     for block in ordered(state):  # a rewrite no reading confirms: the reading it replaced, for a look at the image
         replaced = next((o for o in reversed(block.observations) if o.label == REWRITE_CANDIDATE), None)
         if block.status in HIDDEN or replaced is None or block.chosen_observation == replaced.id:

@@ -121,6 +121,21 @@ class ToolContext:
                                             identity=service_identity(cfg), gateway=self.gateway)
         return self._vlm[key]
 
+    def vlm_using(self, name: str, reasoning_effort: str | None = None) -> MeteredService | None:
+        """The service model of the ``models`` entry *name* in place of ``services.vlm``'s, on this context's meter and
+        gateway; None when the configuration has no such entry."""
+        entry = self.config.models.get(name)
+        if entry is None:
+            return None
+        cfg = self.config.services.vlm.model_copy(update=entry.model_dump())
+        if reasoning_effort is not None:
+            cfg = cfg.model_copy(update={"reasoning_effort": reasoning_effort})
+        key = (name, cfg.reasoning_effort)
+        if key not in self._vlm:
+            self._vlm[key] = MeteredService(self._new_vlm(cfg), self.meter, "vlm", identity=service_identity(cfg),
+                                            gateway=self.gateway)
+        return self._vlm[key]
+
     def cost(self, wall_s: float, since: MeterSnapshot | None = None) -> Cost:
         snap = _delta(self.meter.snapshot(), since)
         left = self.gateway.budget.left()
