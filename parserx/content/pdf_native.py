@@ -61,10 +61,11 @@ from parserx.ir.asset import Asset  # noqa: E402
 from parserx.ir.base import BBox  # noqa: E402
 from parserx.ir.block import Block  # noqa: E402
 from parserx.ir.decision import Decision  # noqa: E402
-from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
+from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
 from parserx.ir.observation import Mark, Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
-from parserx.content import scripts  # noqa: E402
+from parserx.content import glyphs, scripts  # noqa: E402
+from parserx.content.text_audit import is_unreadable  # noqa: E402
 from parserx.content.paragraphs import group_lines  # noqa: E402
 from parserx.layout import labels  # noqa: E402
 from parserx.content.text import normalize_fullwidth_ascii, radicals_decision, radicals_in, unify_radicals  # noqa: E402
@@ -95,6 +96,7 @@ class _Line:
     trailing_space: bool = False  # the text layer ends the line with a space: a renderer's wrap point (code)
     scripts: tuple[str, ...] = ()  # per glyph: "sup", "sub" or "" (``content/scripts.py``, judged on the whole page)
     bases: tuple[tuple[str, float, float] | None, ...] = ()  # per glyph: the origin key of the glyph it is a script of
+    read: tuple[tuple[str, str], ...] = ()  # glyphs read from the page image: (the text layer's code, the reading)
 
     @property
     def marked(self) -> str:
@@ -109,28 +111,40 @@ class _Region:
     lines: list[_Line]
     grid: TableGrid | None = None
     asset: Asset | None = None
+    excluded: Decision | None = None  # why the region's lines are no text (``_not_text``)
 
 
 def extract_pdf(path: Path | str, *, layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
-                check_tables: bool = True) -> Extraction:
+                read: glyphs.Read | None = None, check_tables: bool = True) -> Extraction:
     """*layout*: the regions a layout detector sees on a page, (label, bbox in page points), asked for pages whose
     text layer is usable: text regions make the paragraphs, table regions confirm ruled grids (*check_tables*).
-    None: paragraphs by geometry, and every ruled grid that holds text is read as a table."""
+    None: paragraphs by geometry, and every ruled grid that holds text is read as a table.  *read*: what the page
+    image shows in a region (``content/glyphs.py``), for glyphs the text layer maps to no character; None: they stay."""
     ext = Extraction(format="pdf", engines={ENGINE: ENGINE_VERSION})
     off_direction: dict[str, str] = {}  # block id → text of blocks written across their page's text direction
     with pymupdf.open(path) as doc:
+        found = glyphs.read_glyphs(doc, read, layout, usable=_usable) if read is not None else {}
+        for (font, _gid, char), value in found.items():
+            ext.warnings.append(f"glyph U+{ord(char):04X} of font {font} read as {value!r} from the page image")
         for index in range(doc.page_count):
-            off_direction.update(_extract_page(doc, doc[index], index + 1, ext, layout, check_tables))
+            off_direction.update(_extract_page(doc, doc[index], index + 1, ext, layout, check_tables, found, read))
     mark_furniture(ext)
     mark_watermarks(ext, off_direction)
     return ext
 
 
+def _usable(page: pymupdf.Page) -> bool:
+    """Whether the page's text layer passes the quality check (``assess_native_layer``), as ``_extract_page`` judges."""
+    images = [info for info in page.get_image_info(xrefs=True) if info.get("bbox")]
+    return assess_native_layer(_signals(page, _lines(page), images)).ok
+
+
 def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extraction,
                   layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
-                  check_tables: bool = True) -> dict[str, str]:
+                  check_tables: bool = True, found: dict[glyphs.Key, str] | None = None,
+                  read: glyphs.Read | None = None) -> dict[str, str]:
     rect = page.rect
-    lines = _lines(page)
+    lines = _lines(page, found)
     for seq, line in enumerate(lines, 1):
         line.item = ids.ledger_item_pdf(n, seq)
     images = [info for info in page.get_image_info(xrefs=True) if info.get("bbox")]
@@ -166,6 +180,15 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
                 free = [ln for ln in free if ln not in inside]
                 accepted.append(bbox)
                 regions.append(_Region(BlockKind.TABLE, bbox, inside, grid=grid))
+    if verdict.ok:  # lines with no readable character that are no text (``content/glyphs.py``)
+        kept = []
+        for ln in free:
+            excluded = _not_text(page, ln, detected, read)
+            if excluded is not None:
+                regions.append(_Region(BlockKind.OTHER, ln.bbox, [ln], excluded=excluded))
+            else:
+                kept.append(ln)
+        free = kept
     for group in group_lines(free, detected):  # paragraphs, each in visual order (Q80)
         members = [free[i] for i in group]
         regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in members]), members))
@@ -183,12 +206,16 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
         region = regions[index]
         block_id = ids.block_id_pdf(n, seq)
         ext.blocks.append(_block(block_id, len(ext.blocks), n, region, decision))
+        if region.excluded is not None:
+            ext.blocks[-1].status = BlockStatus.EXCLUDED
+            ext.blocks[-1].decisions.append(region.excluded)
         if region.kind == BlockKind.TEXT and region.lines and all(ln.direction != main for ln in region.lines):
             off_direction[block_id] = ext.blocks[-1].text
         for line in region.lines:
             line_anchor = PdfAnchor(page=n, bbox=line.bbox, coord_space="page_pt")
-            line_items.append(LedgerEntry(item=line.item, unit="native_line", source=line_anchor,
-                                          chars=line.chars, disposition="output", block=block_id))
+            line_items.append(LedgerEntry(item=line.item, unit="native_line", source=line_anchor, chars=line.chars,
+                                          disposition="excluded" if region.excluded else "output",
+                                          block=block_id))
         if region.asset is not None:
             image_regions.append((block_id, region.bbox))
     # Line items in extraction order, then image items numbered on in reading order.
@@ -205,9 +232,14 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
 # ── Lines, signals, tables ──────────────────────────────────────────────
 
 
-def _lines(page: pymupdf.Page) -> list[_Line]:
+def _lines(page: pymupdf.Page, found: dict[glyphs.Key, str] | None = None) -> list[_Line]:
+    """The page's text lines; glyphs the text layer maps to no character read as *found* gives
+    (``content/glyphs.py``)."""
     raw = page.get_text("rawdict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)
     ctm = page.transformation_matrix
+    ids = glyphs.glyph_ids(page) if found and any(is_unreadable(ch.get("c", "")) for block in raw.get("blocks", [])
+                                                  for line in block.get("lines", []) for span in line["spans"]
+                                                  for ch in span.get("chars", ())) else {}
     faces = _face_verdicts(span for block in raw.get("blocks", []) if block.get("type") == 0
                            for line in block.get("lines", []) for span in line.get("spans", []))
     out: list[_Line] = []
@@ -217,26 +249,72 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
         if block.get("type") != 0:
             continue
         for line in block.get("lines", []):
-            spans = line.get("spans", [])
+            spans, read = _read_spans(line.get("spans", []), found if ids else None, ids)
             text = normalize_fullwidth_ascii(_reconstruct_line_from_chars(spans))
             if not text.strip():
                 continue
             script_lines.append(_script_line(spans, line.get("dir", (1.0, 0.0)), ems))
             (size, bold, font) = _line_typography(spans, faces)
             chars = [ch for span in spans for ch in span.get("chars", ())]
-            origins = tuple(_origin_key(ch["c"], pymupdf.Point(ch["origin"]) * ctm) for ch in chars)
+            origins = tuple(_origin_key(ch.get("_c", ch["c"]), pymupdf.Point(ch["origin"]) * ctm) for ch in chars)
             mono, mono_face = _line_mono(spans, faces)
             out.append(_Line(text=text.strip(), bbox=_round(line["bbox"]), block=index,
                              chars=len("".join(text.split())), size=size, bold=bold, font=font,
                              direction=(round(line["dir"][0], 2), round(line["dir"][1], 2)),
                              glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins,
                              mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip(),
-                             emphasis=tuple(_bold(span) for span in spans for _ in span.get("chars", ()))))
+                             emphasis=tuple(_bold(span) for span in spans for _ in span.get("chars", ())),
+                             read=read))
     for line, judged in zip(out, scripts.judge(script_lines)):
         if any(kind for kind, _ in judged):
             line.scripts = tuple(kind for kind, _ in judged)
             line.bases = tuple(out[base[0]].origins[base[1]] if base else None for _, base in judged)
     return out
+
+
+def _read_spans(spans: list[dict], found: dict[glyphs.Key, str] | None,
+                ids: dict[tuple[float, float], int]) -> tuple[list[dict], tuple[tuple[str, str], ...]]:
+    """*spans* with the glyphs *found* reads in place of the text layer's codes (``_c`` keeps the code: the key of
+    PyMuPDF's table characters, ``_origin_key``), and the (code, reading) pairs."""
+    if not found:
+        return spans, ()
+    out, read = [], []
+    for span in spans:
+        chars = []
+        for ch in span.get("chars", ()):
+            c = ch.get("c", "")
+            value = found.get(glyphs.key_of(span.get("font", ""), c, ch, ids)) if c and is_unreadable(c) else None
+            chars.append(ch if value is None else dict(ch, c=value, _c=c))
+            if value is not None:
+                read.append((c, value))
+        out.append(dict(span, chars=chars))
+    return out, tuple(read)
+
+
+def _not_text(page: pymupdf.Page, line: _Line, detected: list[tuple[str, BBox]] | None,
+              read: glyphs.Read | None) -> Decision | None:
+    """The exclusion of a line with no readable character that is no text (``content/glyphs.py``), or None: inside a
+    picture the layout detector sees (the image holds it), or where the page image shows no text at all.  A display
+    formula's lines are the formula tool's (``tools/formulas.py``): it reads the formula from the image and checks the
+    reading against them, so they stay."""
+    shown = [g[0] for g in line.glyphs if g[0] and not (g[0].isspace() and not is_unreadable(g[0]))]
+    if not shown or not all(is_unreadable(c) for c in shown):
+        return None
+    found = [lab for lab, box in detected or [] if lab in labels.NOT_PROSE and _centre_in(line.bbox, box)]
+    if FORMULA_REGIONS & set(found):
+        return None
+    label = found[0] if found else None
+    if label is not None:
+        reason = (f"no readable character: the text layer maps none of the line's glyphs, and it lies in a "
+                  f"{label.replace('_', ' ')} the layout detector sees, whose image holds it")
+        return Decision(stage=DecisionStage.EXCLUDE, choice=glyphs.NOT_TEXT, actor=ACTOR, reason=reason,
+                        evidence={"glyphs": len(shown), "region": label})
+    if read is not None and not page.rotation and not read(page, line.bbox).strip():
+        reason = ("no readable character: the text layer maps none of the line's glyphs, and the page image shows no "
+                  "text there (an ornament, a part of a drawn sign)")
+        return Decision(stage=DecisionStage.EXCLUDE, choice=glyphs.NOT_TEXT, actor=ACTOR, reason=reason,
+                        evidence={"glyphs": len(shown), "page_image": "no text"})
+    return None
 
 
 def _script_line(spans: list[dict], direction, ems: dict[str, float] | None = None) -> scripts.Line:
@@ -652,12 +730,12 @@ def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) 
     are dropped (``_across``) or a row splits (``_row_bands``); then each character goes to the smallest cell holding
     it, and a split row's characters to the band of their sub-row."""
     chars = [ch for ch in pymupdf_table.CHARS if _origin_key(ch["text"], ch["matrix"][4:]) not in drop]
-    chars = _mark_scripts(chars, lines)
+    chars = _cell_chars(chars, lines)
     places = [(r, c, cell) for r, row in enumerate(table.rows) for c, cell in enumerate(row.cells) if cell is not None]
     boxes = [cell for _, _, cell in places]
     held = [[k for k, box in enumerate(boxes) if _glyph_in(_box_of(ch), box)] for ch in chars]
     bands = {r: b for r, row in enumerate(table.rows) if (b := _row_bands(row, lines))}
-    marked = any(h and ch["text"][:1] in scripts.MARKS for ch, h in zip(chars, held))
+    marked = any(h and ch.get("_changed") for ch, h in zip(chars, held))
     if not drop and not bands and not marked and all(len(h) <= 1 for h in held):
         return table.extract()
     owned: dict[int, list[dict]] = {}
@@ -674,21 +752,26 @@ def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) 
     return rows
 
 
-def _mark_scripts(chars: list[dict], lines: list[_Line]) -> list[dict]:
-    """The table's characters with each script glyph's text marked (``scripts.write`` writes the cell) and set at the
-    height of the glyph it is a script of, so the cell's text keeps it on its base's line, next to it."""
+def _cell_chars(chars: list[dict], lines: list[_Line]) -> list[dict]:
+    """The table's characters as the lines read them: a glyph read from the page image (``content/glyphs.py``) in
+    place of its code, and a script glyph's text marked (``scripts.write`` writes the cell) and set at the height of
+    the glyph it is a script of, so the cell's text keeps it on its base's line, next to it.  A character changed
+    here carries ``_changed`` (the cell is then not taken from PyMuPDF's own extraction)."""
     scripted = {key: (kind, base) for ln in lines for key, kind, base in zip(ln.origins, ln.scripts, ln.bases) if kind}
-    if not scripted:
+    reads = {key: g[0] for ln in lines if ln.read for key, g in zip(ln.origins, ln.glyphs) if key[0] != g[0]}
+    if not scripted and not reads:
         return chars
     by_key = {_origin_key(ch["text"], ch["matrix"][4:]): ch for ch in chars}
     out = []
     for ch in chars:
-        kind, base = scripted.get(_origin_key(ch["text"], ch["matrix"][4:]), ("", None))
-        if not kind:
+        key = _origin_key(ch["text"], ch["matrix"][4:])
+        text = reads.get(key, ch["text"])
+        kind, base = scripted.get(key, ("", None))
+        if not kind and text == ch["text"]:
             out.append(ch)
             continue
-        level = by_key.get(base)
-        out.append(dict(ch, text=scripts.MARK_OF[kind] + ch["text"],
+        level = by_key.get(base) if kind else None
+        out.append(dict(ch, text=(scripts.MARK_OF[kind] if kind else "") + text, _changed=True,
                         **({k: level[k] for k in ("top", "bottom", "doctop", "y0", "y1")} if level else {})))
     return out
 
@@ -817,6 +900,7 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
     # the characters the text layer stores as radicals (lines and cells were read as the ideographs, see _lines);
     # listed before the page's source decision, which stays the last
     unified = radicals_decision(radicals_in("".join(g[0] for ln in region.lines for g in ln.glyphs)), ACTOR)
+    read = glyphs.decision(Counter(pair for ln in region.lines for pair in ln.read), ACTOR)
     text = ""
     if region.asset is not None:
         asset = region.asset
@@ -838,7 +922,7 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
         chosen_observation=observations[0].id if observations else None, text=text,
-        cells=region.grid, decisions=[unified, decision] if unified else [decision],
+        cells=region.grid, decisions=[d for d in (unified, read) if d is not None] + [decision],
     )
 
 

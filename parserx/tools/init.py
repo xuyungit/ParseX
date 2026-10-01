@@ -52,7 +52,8 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
                 readable = image_to_pdf(source, Path(scratch))
             else:
                 readable = source
-            ext = (extract_pdf(readable, layout=_page_layout(config), check_tables=config.layout.check_tables)
+            ext = (extract_pdf(readable, layout=_page_layout(config), read=_region_reading(config),
+                               check_tables=config.layout.check_tables)
                    if readable.suffix.lower() == ".pdf"
                    else extract_docx(readable))
         except Exception as exc:  # noqa: BLE001 - an unreadable input is reported, not raised
@@ -75,6 +76,26 @@ def workspace_init(input_path: Path | str, ws_dir: Path | str, *, config: Parser
     ws.log_call({"tool": "workspace_init", "request": {"input": str(source)},
                  "envelope": envelope.model_dump(mode="json", exclude={"result"})})
     return envelope, 0
+
+
+def _region_reading(config: ParserXConfig):
+    """What the page image shows in a region of a page (points of the unrotated page), as the local recognizer of
+    the page reading reads it (``reading/local.py``: free, offline, its readings kept in the derived cache): for the
+    glyphs the text layer maps to no character (``content/glyphs.py``)."""
+    import pymupdf
+
+    from parserx.cache.store import open_cache
+    from parserx.content.glyphs import DPI
+    from parserx.reading.local import LocalReader, read_cached
+
+    reader, cache = LocalReader(), open_cache(config.cache)
+
+    def read(page, box) -> str:
+        clip = (pymupdf.Rect(box) + (-2, -2, 2, 2)) * page.rotation_matrix
+        lines = read_cached(reader, page.get_pixmap(dpi=DPI, clip=clip).tobytes("png"), cache)
+        return " ".join(text for _box, text, _score in sorted(lines, key=lambda line: (line[0][1], line[0][0])))
+
+    return read
 
 
 def _page_layout(config: ParserXConfig):
