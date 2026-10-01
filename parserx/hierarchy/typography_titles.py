@@ -204,8 +204,17 @@ def _paragraphs(state: DocumentState):
             continue
         style = native_style(block)
         text = (block.text or "").strip()
-        if style is not None and text and not style.monospace:  # code is neither body text nor a title
-            yield block, style
+        if style is not None and text and not style.monospace and not toc_entry(style):  # code, a contents entry:
+            yield block, style  # neither body text nor a title
+
+
+_TOC_STYLE = re.compile(r"^toc\s*\d$", re.IGNORECASE)
+
+
+def toc_entry(style: TextStyle | None) -> bool:
+    """A Word table-of-contents entry (the built-in ``toc 1`` … ``toc 9`` styles, named so in every language): it
+    points at a title, it is not one."""
+    return style is not None and bool(_TOC_STYLE.match((style.style_name or "").strip()))
 
 
 def _one_line(block: Block) -> bool:

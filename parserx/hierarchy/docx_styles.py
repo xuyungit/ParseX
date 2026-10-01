@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 
 from parserx.hierarchy.levels import unify_levels
+from parserx.hierarchy.typography_titles import toc_entry
 from parserx.ir.enums import BlockKind
 from parserx.ir.state import DocumentState
 from parserx.workspace.queries import HIDDEN, ordered
@@ -34,7 +35,8 @@ def _style(block):
 
 
 def propose_docx_structure(state: DocumentState) -> list[dict]:
-    blocks = [b for b in ordered(state) if b.kind == BlockKind.TEXT and b.status not in HIDDEN and _style(b)]
+    blocks = [b for b in ordered(state) if b.kind == BlockKind.TEXT and b.status not in HIDDEN and _style(b)
+              and not toc_entry(_style(b))]  # a contents entry points at a title, it is not one
     is_title = {b.id: (_style(b).style_name or "").strip().lower() in _TITLE_NAMES for b in blocks}
     shift = 1 if any(is_title.values()) else 0
     titles: list[tuple[str, str, int]] = []
