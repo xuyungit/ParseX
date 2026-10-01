@@ -1,5 +1,7 @@
 # 视觉优先：第二轮修复说明（2026-10-01，分支 `vision-first`）
 
+**冻结提交：`454a157f691a41164c055e17acb39e141e6b4323`**（`454a157`）。其后只有说明文件的提交。离线测试 859 个通过。
+
 按第二轮规则（`/Users/xuyun/parserx-exp/round2/plan.md` §3、§5）修第一轮发现的问题。
 每条写明问题、做法，以及为什么是通用的修法。代码里没有按文档名、页号或特定文字写的规则：
 - 运行路径上唯一的文档名默认值（`v_run.py` 的 `DOCS`）已删除，`--docs` 改为必填；
@@ -24,18 +26,26 @@
 | 12 | Codex 容量失败没有退避重试 | 容量类错误：同一工作区开新会话（工作区就是检查点），最多 2 次，间隔 30 s 起；重试次数记入运行记录 | 381edcd |
 | 13 | 审计误报（开发中发现） | 喂给 `./px` 的 here-document 是工具请求，不再当作 shell 路径扫描；喂给其他程序（如 `python3 -`）的仍扫描 | 1425163 |
 
-**两边共用的老代码**：Word 目录条目被当成标题。两边各写了一个补丁：本方 ad27038，对方 ccd469bd。
-- **对方补丁**只改 Word 样式那一步（`docx_styles`），另认中文样式名"目录 N"。
-- **本方补丁**两步都改：Word 样式一步，以及按字体字号判标题的一步（`typography_titles`）。
-- 31 篇里只有 real_doc01 有目录条目（6 条 `toc 1`）。第一轮里其中 2 条是按字体字号判成一级标题的（决策记录 `program:hierarchy.typography`），对方补丁管不到这一步。
-- **建议**：两边都撤回自己的补丁，换用合并后的同一个补丁（本方两步 + 对方的"目录 N"和测试）。
-  - 补丁文件：`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first/eval_reports/2026-10-01_shared_patch/union/`；
-  - 以 main 为底，两方测试 11 个通过；
-  - 已核对：两边冻结的提交撤回各自补丁后都能干净地打上。
+**两边共用的老代码**：Word 目录条目被当成标题。两边原先各写了一个补丁（本方 ad27038，对方 ccd469b），现已统一成同一个合成补丁：
+- **合成补丁的内容**：
+  - 本方的两步排除：Word 样式一步（`docx_styles`），以及按字体字号判标题的一步（`typography_titles`）；
+  - 对方的中文样式名"目录 N"和真实 DOCX 测试。
+- **为什么要合成**：第二轮文档里只有 real_doc01 有目录条目（6 条 `toc 1`），第一轮其中 2 条是按字体字号判成一级标题的，对方原补丁管不到这一步。
+- **本方**：`528aec6` 撤回 ad27038，`454a157` 打上合成补丁。
+- **对方**：`ae672aa`。
+- 4 个共用文件在两边逐字节相同（`git rev-parse <提交>:<文件>`）：
+
+  | 文件 | blob |
+  |---|---|
+  | `parserx/hierarchy/docx_styles.py` | `d28bcefdca` |
+  | `parserx/hierarchy/typography_titles.py` | `ace941626b` |
+  | `tests/test_hierarchy_typography_titles.py` | `98515c031e` |
+  | `tests/test_docx_toc_role.py` | `7ad79f5825` |
+- 补丁文件：`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first/eval_reports/2026-10-01_shared_patch/union/`。
 
 ## 2. 没修的
 
-- **paper_chn02 大矩阵 $A_{11,m}$、$A_{21,m}$ 末行一项错到第 3 列**（应在第 4 列）：服务模型的读法错误，现在没有任何信号能指出来。可作为增强：用文字层各片段的位置核对矩阵的行列（见第 5 节）。
+- **paper_chn02 大矩阵 $A_{11,m}$、$A_{21,m}$ 末行一项错到第 3 列**（应在第 4 列）：服务模型的读法错误，现在没有任何信号能指出来。增强候选，见第 5 节。
 - **服务模型读公式图的个别字母错误**（patent01 第 3 页式 (8) 的 `J_K` 写成 `J_k`）：
   - 识读块的读法与公式请求不一致时，已作为候选交给 Agent；
   - 开发自检中，Agent 改对了第 5、7 页，第 3 页看不清，没有改，待办保留。
@@ -55,7 +65,7 @@
 - paper01：代码块正常，标题 46 个。
 - patent01：式 (6) 由 `d_t` 改对为 `d_k`；第 5、7 页式 (8) 为 `J_K`。
 
-## 4. 交给中立会话（冻结后补提交号）
+## 4. 交给中立会话（冻结提交 `454a157`）
 
 **目录**：所有命令都在 `/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first` 下运行。
 
@@ -63,11 +73,11 @@
 ```bash
 uv run pytest -q --ignore=tests/test_live_e2e.py
 ```
-应有 858 个通过。
+应有 859 个通过（1 个跳过）。
 
 **只跑初稿（V）**：
 ```bash
-uv run python scripts/vision_first/v_run.py --run-dir eval_runs/<日期>_r2_vision_first --configs luna-medium-r1,luna-medium-r2 --scanned --live-pipeline --docs <31 篇，逗号分隔>
+uv run python scripts/vision_first/v_run.py --run-dir eval_runs/<日期>_r2_vision_first --configs luna-medium-r1,luna-medium-r2 --scanned --live-pipeline --docs <docs.txt 的 30 篇，逗号分隔>
 ```
 - 服务模型的请求都现发：页面分配、公式、流水线自己的看图。
 - 扫描引擎的回答默认回放自冻结记录 `eval_runs/2026-09-29_bench2f_fixed_full/cache/raw/ocr`。
@@ -88,7 +98,7 @@ uv run python scripts/agent_explore.py --exp-root <实验目录> snapshot --roun
 - `configs/regression.yaml`，密钥在 `~/.config/parserx/config.yaml`；
 - 服务模型 gpt-6-luna medium；Agent 用 Codex gpt-6.1-sol medium，看图交给工具（`--vision tool`）。
 
-## 5. 可做的增强（待定）
+## 5. 增强
 
-1. **矩阵行列核对**：原生页上用文字层各片段的位置，核对服务模型写的矩阵每一项所在的行列。不一致时挂待办，指明哪一项。
-2. 其他由双方商定。
+本轮不做，等第二轮结果出来再定（用户 2026-10-01）。候选：
+- **矩阵行列核对**：原生页上用文字层各片段的位置，核对服务模型写的矩阵每一项所在的行列。不一致时挂待办，指明哪一项。
