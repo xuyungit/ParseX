@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 import unicodedata
 from dataclasses import dataclass
@@ -59,11 +58,6 @@ PAGES: tuple[tuple[str, int], ...] = (
     ("ocr01", 1), ("receipt", 2),
     ("paper_chn02", 5), ("pdf_text01_tables", 1),
 )
-# Documents with formulas get the scan engine's reading: (frozen run whose cache holds it, the pages of its batch).
-ENGINE_READINGS = {
-    "paper_chn01": ("2026-09-29_contentA_fixed_full", (2, 3, 4, 5, 6, 7)),
-    "paper_chn02": ("2026-09-29_contentA_fixed_full", (1, 3, 4, 5, 6, 7)),
-}
 MATH_LABELS = frozenset({"display_formula", "inline_formula", "formula", "formula_number"})
 
 # Script candidates (size and baseline only): a glyph set at most SCRIPT_SIZE of the glyph it is attached to, with
@@ -327,21 +321,23 @@ def _shifted(glyph: tuple, base: tuple) -> tuple[str, str]:
 # ── the scan engine, the detector, the extraction ───────────────────────
 
 
-def engine_pages(doc: str, run_dir: Path, config) -> dict[int, tuple[str, dict]]:
-    """page → (cache key, the engine's page result), from the frozen run's cache, copied into the run's own."""
-    frozen, batch = ENGINE_READINGS[doc]
+def engine_pages(doc: str, formula_pages: list[int], cache: Path, config) -> dict[int, tuple[str, dict]]:
+    """page → (cache key, the engine's page result) for every formula page of the document — the native pages the
+    pipeline's formula step reads, in its batches (``tools/formulas.read_formula_pages``: ``tools.scan_batch_pages``
+    at a time), so a recorded reading replays — through *cache* (read-write: a page no record holds is read now).
+    The same for every document with formulas (round-2 plan: no document is given more than another)."""
     ocr = PaddleOCRService(config.builders.ocr)
+    ocr.gateway = ServiceGateway(RequestMeter(), ResponseCache(cache, "read_write"))
+    size = config.tools.scan_batch_pages
+    out: dict[int, tuple[str, dict]] = {}
     with pymupdf.open(document(doc)) as src:
-        data = scan.batch_pdf(src, list(batch))
-    key = ocr.request_key(data, "application/pdf")
-    source = ResponseCache(REPO_ROOT / "eval_runs" / frozen / "cache", "read_only")
-    own = ResponseCache(run_dir / "cache", "read_only")
-    if not own.path("ocr", key).exists():
-        own.path("ocr", key).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source.path("ocr", key), own.path("ocr", key))
-    ocr.gateway = ServiceGateway(RequestMeter(), own)
-    results = ocr.recognize_pdf(data)
-    return {n: (key, r.raw["layoutParsingResults"][0]) for n, r in zip(batch, results)}
+        for i in range(0, len(formula_pages), size):
+            batch = formula_pages[i:i + size]
+            data = scan.batch_pdf(src, batch)
+            key = ocr.request_key(data, "application/pdf")
+            for n, result in zip(batch, ocr.recognize_pdf(data)):
+                out[n] = (key, result.raw["layoutParsingResults"][0])
+    return out
 
 
 def engine_entries(page: pymupdf.Page, n: int, reading: tuple[str, dict], scale: float, model: str) -> list[dict]:
@@ -405,7 +401,9 @@ def extraction_tables(doc: str, config, cache) -> dict[int, list[dict]]:
 # ── one page ────────────────────────────────────────────────────────────
 
 
-def build(run_dir: Path, pages=PAGES) -> list[dict]:
+def build(run_dir: Path, pages=PAGES, engine: dict | None = None) -> list[dict]:
+    """*engine*: ``{"cache": path, "pages": {document: its formula pages}}`` — the scan engine's readings of the
+    formula pages (``engine_pages``); without it, no page has engine entries."""
     config = load_config(REPO_ROOT / "configs" / "regression.yaml")
     derived = ResponseCache(Path(config.cache.dir) if Path(config.cache.dir).is_absolute()
                             else REPO_ROOT / config.cache.dir, "read_write")
@@ -418,8 +416,9 @@ def build(run_dir: Path, pages=PAGES) -> list[dict]:
         path = document(doc)
         if doc not in tables:
             tables[doc] = extraction_tables(doc, config, derived)
-        if doc in ENGINE_READINGS and doc not in engines:
-            engines[doc] = engine_pages(doc, run_dir, config)
+        if engine and doc not in engines:
+            formula_pages = sorted(engine["pages"].get(doc) or [])
+            engines[doc] = engine_pages(doc, formula_pages, engine["cache"], config) if formula_pages else {}
         with pymupdf.open(path) as src:
             page = src[n - 1]
             png, width, height = scan.render_page_at(src, n, DPI)
@@ -432,7 +431,7 @@ def build(run_dir: Path, pages=PAGES) -> list[dict]:
                 "lines": line_records(page, scale),
                 "engine": (engine_entries(page, n, engines[doc][n], scale, config.builders.ocr.model)
                            if doc in engines and n in engines[doc] else None),
-                "engine_source": ({"frozen_run": ENGINE_READINGS[doc][0], "cache_key": engines[doc][n][0]}
+                "engine_source": ({"cache_key": engines[doc][n][0], "formula_pages": sorted(engine["pages"][doc])}
                                   if doc in engines and n in engines[doc] else None),
                 "regions": detector_regions(page, config, derived),
                 "tables": tables[doc].get(n, []),

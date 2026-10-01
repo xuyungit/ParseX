@@ -34,6 +34,8 @@ def run_score(run_dir: Path) -> dict:
     table: dict = {"documents": {}}
     for doc_dir in sorted({p.parent.name for p in (run_dir / "docs").glob("*/*/v_record.json")}):
         doc = doc_dir
+        if not (document(doc).parent / "expected.md").exists():  # no annotation: nothing to score against
+            continue
         expected = (document(doc).parent / "expected.md").read_text(encoding="utf-8")
         info = pages.of(doc) if document(doc).suffix.lower() == ".pdf" else None
         entry: dict = {"groups": {}, "configs": {}}

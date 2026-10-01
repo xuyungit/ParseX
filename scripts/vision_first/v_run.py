@@ -160,7 +160,31 @@ def m_pass(doc: str, work: Path, live_cache: Path | None = None) -> dict:
     native = [p.n for p in Workspace.open(init_dir).load().pages if p.status == PageStatus.DONE]
     short = {p.n: engine_short(state, p.n) for p in state.pages if p.n not in native}
     return {"worklist": by_page, "native": native, "markdown": outcome.markdown,
-            "pages": [p.n for p in state.pages], "short": {n: b for n, b in short.items() if b}}
+            "pages": [p.n for p in state.pages], "short": {n: b for n, b in short.items() if b},
+            "formula_pages": formula_pages(state, native)}
+
+
+def formula_pages(state, native: list[int]) -> list[int]:
+    """The native pages the pipeline's formula step reads (``tools/formulas.formula_pages`` before any is decided):
+    a page whose text layer the extraction accepted, with a formula the layout detector marks."""
+    from parserx.ir.enums import TaskKind
+    from parserx.tools.formulas import LABELS
+    from parserx.workspace.queries import block_unit
+
+    marked = {block_unit(state, b) for b in state.blocks
+              if any(o.task == TaskKind.LAYOUT and o.label in LABELS for o in b.observations)}
+    return sorted(n for n in marked if n in native)
+
+
+def engine_cache(run_dir: Path) -> Path:
+    """The scan engine's readings for the allocation inputs: the recorded ones (the routing pass's cache, else the
+    frozen M run's), read-write so a page no record holds is read once and kept."""
+    cache = run_dir / "engine_cache"
+    if not cache.exists():
+        seed = run_dir / "pipeline_cache" if (run_dir / "pipeline_cache").exists() else M_RUN / "cache"
+        shutil.copytree(seed, cache, ignore=lambda folder, names: [n for n in names if Path(folder).name == "raw"
+                                                                    and n != "ocr"])
+    return cache
 
 
 def route(doc: str, m: dict, all_pages: bool, scanned: bool = False, scanned_only: bool = False) -> dict[int, list[str]]:
@@ -232,15 +256,13 @@ def free_page(caller, run: int, run_dir: Path, pid: str) -> dict:
 
 
 def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]], *, free: bool = False,
-           native: list[int] | None = None) -> dict:
+           native: list[int] | None = None, formulas: list[int] | None = None) -> dict:
     label = config_name + ("-free" if free else "")
     out_dir = run_dir / "docs" / label / doc
     ws_dir = run_dir / "work" / label / doc
     shutil.rmtree(ws_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache = run_dir / "pipeline_cache"
-    if not cache.exists():  # the pipeline's own requests start from M's recorded ones
-        shutil.copytree(M_RUN / "cache", cache)
+    cache = configuration_cache(run_dir, label)
     config = pipeline_config(cache, "read_write")  # its formula step takes only pages left to it (a failed allocation)
     started = time.monotonic()
     envelope, _ = workspace_init(p0_inputs.document(doc), ws_dir, config=config)
@@ -251,7 +273,7 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
     missing = [(doc, n) for n in pages if n not in scanned
                and not (run_dir / "inputs" / f"{p0_inputs.page_id(doc, n)}.json").exists()]
     if missing:
-        p0_inputs.build(run_dir, pages=missing)
+        p0_inputs.build(run_dir, pages=missing, engine={"cache": engine_cache(run_dir), "pages": {doc: formulas or []}})
     caller, run = callers(run_dir, [config_name], offline=False)[config_name]
     from p0_score import furniture_keys
 
@@ -318,6 +340,18 @@ def v_pass(doc: str, config_name: str, run_dir: Path, pages: dict[int, list[str]
     return {**record, "markdown": markdown}
 
 
+def configuration_cache(run_dir: Path, label: str) -> Path:
+    """The pipeline cache of one configuration: the scan engine's recorded readings (the frozen M run's, and what the
+    routing pass read for documents M never saw) and the derived local readings, without any service model answer
+    — each configuration asks the service model itself, so two runs are independent (round-2 plan §6)."""
+    cache = run_dir / f"pipeline_cache-{label}"
+    if not cache.exists():
+        seed = run_dir / "pipeline_cache" if (run_dir / "pipeline_cache").exists() else M_RUN / "cache"
+        shutil.copytree(seed, cache, ignore=lambda folder, names: [n for n in names if Path(folder).name == "raw"
+                                                                    and n not in ("ocr",)])
+    return cache
+
+
 def _sum(values):
     values = list(values)
     return None if any(v is None for v in values) else round(sum(values), 6)
@@ -360,6 +394,7 @@ def main() -> None:
             m = m_pass(doc, run_dir / "work", run_dir / "pipeline_cache" if args.live_pipeline else None)
             routing[doc] = {"native": m["native"], "worklist": {str(k): v for k, v in m["worklist"].items()},
                             "short": {str(k): v for k, v in m.get("short", {}).items()},
+                            "formula_pages": m.get("formula_pages", []),
                             "sent": {str(n): why for n, why in route(doc, m, args.all, args.scanned or args.scanned_only,
                                                                      args.scanned_only).items()},
                             "mode": "scanned only" if args.scanned_only else "scanned" if args.scanned else "native"}
@@ -371,14 +406,20 @@ def main() -> None:
             missing = [(doc, n) for n in pages if n in native
                        and not (run_dir / "inputs" / f"{p0_inputs.page_id(doc, n)}.json").exists()]
             if missing:
-                p0_inputs.build(run_dir, pages=missing)
+                p0_inputs.build(run_dir, pages=missing, engine={"cache": engine_cache(run_dir),
+                                                                "pages": {doc: routing[doc].get("formula_pages", [])}})
             if not (run_dir / "pipeline_cache").exists():
                 shutil.copytree(M_RUN / "cache", run_dir / "pipeline_cache")
             continue
         for name in args.configs.split(","):
-            record = v_pass(doc, name, run_dir, pages, free=args.free, native=native)
-            expected = (p0_inputs.document(doc).parent / "expected.md").read_text(encoding="utf-8")
-            scores = _scores_of(evaluate_markdown(record["markdown"], expected, name=doc))
+            record = v_pass(doc, name, run_dir, pages, free=args.free, native=native,
+                            formulas=routing[doc].get("formula_pages", []))
+            expected_path = p0_inputs.document(doc).parent / "expected.md"
+            if not expected_path.exists():  # a document without an annotation: the output stands, unscored
+                print(f"  {name}: {record['status']}, no annotation, ${record['allocation_usd']} + pipeline "
+                      f"${record['pipeline_usd']}, {record['seconds']} s", flush=True)
+                continue
+            scores = _scores_of(evaluate_markdown(record["markdown"], expected_path.read_text(encoding="utf-8"), name=doc))
             print(f"  {name}: {record['status']}, key errors {scores['key_errors']}, char_f1 {scores['char_f1']:.3f}, "
                   f"${record['allocation_usd']} + pipeline ${record['pipeline_usd']}, {record['seconds']} s", flush=True)
 

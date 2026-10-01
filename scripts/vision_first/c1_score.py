@@ -38,6 +38,8 @@ def run_scores(runs: Path, out: Path) -> dict:
             continue
         run_dir = record_path.parent
         doc = record["doc"]
+        if not (document(doc).parent / "expected.md").exists():  # no annotation: nothing to score against
+            continue
         info = pages.of(doc) if document(doc).suffix.lower() == ".pdf" else None
         expected = expected_of(doc)
         entry = {"record": record}
