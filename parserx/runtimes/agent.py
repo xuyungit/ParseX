@@ -16,6 +16,7 @@ loads them, inside the tool process.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -29,6 +30,8 @@ from parserx.runtimes.codex import AgentUsage, AuditResult, audit_events, exec_c
 from parserx.runtimes.px import _SECRET_NAME
 
 PROMPT = "Follow the task in AGENTS.md in the current directory. Work only with the files in this directory."
+# A turn the service ended for lack of capacity: worth starting again; other failures are not.
+_CAPACITY = re.compile(r"at capacity|overloaded|rate.?limit|too many requests|\b429\b|try again later", re.IGNORECASE)
 
 
 class AgentOutcome(IRModel):
@@ -40,6 +43,7 @@ class AgentOutcome(IRModel):
     usd_at_list_price: float | None = None
     audit: AuditResult | None = None
     last_message: str | None = None
+    retries: int = 0  # sessions started again after a capacity failure (on the same workspace)
 
 
 class AgentRuntime(Protocol):
@@ -69,12 +73,15 @@ class CodexAgent:
     engine, adapter = "codex", "cli"
 
     def __init__(self, model: str, effort: str, *, env: dict[str, str], price=None, forbidden: dict[str, Path] | None = None,
-                 executable: str = "codex", vision: str = "tool"):
+                 executable: str = "codex", vision: str = "tool", capacity_retries: int = 2, backoff_s: float = 30.0):
         self.model, self.effort, self.vision = model, effort, vision  # vision: agent — its own image viewing on
         self.env = env  # already without secrets (agent_env)
         self.price = price  # PriceConfig of the model, for the list-price cost
         self.forbidden = forbidden or {}  # paths the agent must not name (the secrets file, the user's config)
         self.executable = executable
+        # a capacity failure: a new session on the same workspace (what the agent did is in it, through the tools),
+        # after backoff_s, then three times as long; within the same deadline
+        self.capacity_retries, self.backoff_s = capacity_retries, backoff_s
 
     def available(self) -> tuple[bool, str | None]:
         if shutil.which(self.executable, path=self.env.get("PATH")) is None:
@@ -88,15 +95,39 @@ class CodexAgent:
 
     def run(self, work_dir: Path, deadline_s: float, log_dir: Path,
             on_event: Callable[[dict], None] | None = None) -> AgentOutcome:
+        """One session, started again on the same workspace after a capacity failure (at most ``capacity_retries``
+        times, with backoff, within *deadline_s*); ``events.jsonl`` holds every session's events."""
         work_dir, log_dir = Path(work_dir), Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
+        t0 = time.monotonic()
+        tries = 0
+        while True:
+            tries += 1
+            outcome = self._session(work_dir, deadline_s - (time.monotonic() - t0), log_dir, on_event, tries)
+            pause = self.backoff_s * 3 ** (tries - 1)
+            if (outcome.ok or outcome.reason != "agent_failed" or tries > self.capacity_retries
+                    or not _CAPACITY.search(outcome.detail or "")
+                    or time.monotonic() - t0 + pause >= deadline_s):
+                break
+            time.sleep(pause)
+        with open(log_dir / "events.jsonl", "wb") as merged:  # every session's events, in order
+            for k in range(1, tries + 1):
+                merged.write((log_dir / f"events.{k}.jsonl").read_bytes())
+        events, _ = read_events(log_dir / "events.jsonl")
+        usage = usage_from_events(events)
+        return outcome.model_copy(update={
+            "wall_s": round(time.monotonic() - t0, 1), "usage": usage, "retries": tries - 1,
+            "usd_at_list_price": list_price(self.price, usage),
+            "audit": audit_events(events, doc_dir=work_dir, home=Path.home(), forbidden=self.forbidden)})
+
+    def _session(self, work_dir: Path, deadline_s: float, log_dir: Path, on_event, k: int) -> AgentOutcome:
         argv = exec_command(model=self.model, effort=self.effort, doc_dir=work_dir,
                             last_message=log_dir / "last_message.md", prompt=PROMPT, vision=self.vision)
         argv[0] = self.executable
         env = dict(self.env, RUST_LOG="codex_core=info")
         t0 = time.monotonic()
         timed_out = False
-        with open(log_dir / "events.jsonl", "wb") as out, open(log_dir / "stderr.log", "wb") as err:
+        with open(log_dir / f"events.{k}.jsonl", "wb") as out, open(log_dir / "stderr.log", "ab") as err:
             proc = subprocess.Popen(argv, cwd=work_dir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=err, env=env, start_new_session=True)
 
@@ -125,7 +156,7 @@ class CodexAgent:
                 raise
             reader.join(timeout=30)
         wall = round(time.monotonic() - t0, 1)
-        events, _ = read_events(log_dir / "events.jsonl")
+        events, _ = read_events(log_dir / f"events.{k}.jsonl")
         usage = usage_from_events(events)
         audit = audit_events(events, doc_dir=work_dir, home=Path.home(), forbidden=self.forbidden)
         last = log_dir / "last_message.md"

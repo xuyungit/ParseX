@@ -100,6 +100,7 @@ class AgentRecord(IRModel):
     review_open_before: int
     review_open_after: int
     audit: list[str] = []  # hygiene notes: paths outside the agent's directory it named, other tools it used
+    retries: int = 0  # sessions started again after a capacity failure
 
 
 class Processing(IRModel):

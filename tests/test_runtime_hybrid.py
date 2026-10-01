@@ -327,6 +327,35 @@ def test_codex_runs_past_its_deadline_are_stopped(tmp_path):
     assert outcome.usage.thread_id == "t"
 
 
+
+def test_codex_at_capacity_is_tried_again_and_continues_the_workspace(tmp_path):
+    # round 1: "Selected model is at capacity" ended 3 of our 69 agent runs; the workspace holds what the agent did
+    from parserx.runtimes.agent import CodexAgent
+
+    fake = tmp_path / "codex"
+    fake.write_text(
+        "#!/bin/sh\nn=$(cat \"$FAKE_COUNT\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"$FAKE_COUNT\"\n"
+        "echo '{\"type\":\"thread.started\",\"thread_id\":\"t'$n'\"}'\n"
+        "if [ $n -le ${FAKE_FAILS:-1} ]; then\n"
+        "  echo '{\"type\":\"turn.failed\",\"error\":{\"message\":\"'\"$FAKE_ERROR\"'\"}}'; exit 1\nfi\n"
+        "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5}}'\nexit 0\n")
+    fake.chmod(0o755)
+
+    def run(name, fails, error):
+        work = tmp_path / name
+        work.mkdir()
+        env = {"PATH": "/bin:/usr/bin", "FAKE_COUNT": str(tmp_path / f"{name}.count"), "FAKE_FAILS": str(fails),
+               "FAKE_ERROR": error}
+        agent = CodexAgent("m", "medium", env=env, executable=str(fake), capacity_retries=2, backoff_s=0.01)
+        return agent.run(work, 60.0, tmp_path / f"{name}.log")
+
+    once = run("once", 1, "Selected model is at capacity. Please try a different model.")
+    assert once.ok and once.retries == 1 and once.usage.input_tokens == 5
+    always = run("always", 9, "Selected model is at capacity. Please try a different model.")
+    assert not always.ok and always.retries == 2  # a bounded number of tries
+    other = run("other", 1, "tool call rejected")  # not a capacity failure: not tried again
+    assert not other.ok and other.retries == 0
+
 def test_px_reads_no_personal_config(tmp_path, monkeypatch):
     # Q107: the agent's config is complete; the personal file (every model's key) is not read under it
     from pathlib import Path

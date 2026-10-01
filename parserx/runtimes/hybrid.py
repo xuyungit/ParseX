@@ -241,6 +241,7 @@ def _agent_stage(agent: AgentRuntime, agent_dir: Path, ws_dir: Path, work: Path,
         usd_at_list_price=outcome.usd_at_list_price, tool_calls=tally.tool_calls, changes=tally.changes,
         added=tally.added, closed=tally.closed, review_open_before=before.review.open, review_open_after=after,
         audit=[f"{h.kind}: {h.detail}" for h in (outcome.audit.hits if outcome.audit else [])],
+        retries=getattr(outcome, "retries", 0),
     )
     if record.audit:
         reporter(Notice("agent_audit", "warning", {"hits": record.audit}))
