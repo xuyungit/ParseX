@@ -159,3 +159,16 @@ def test_a_reader_that_writes_nothing_is_a_failure_and_the_other_reads_alone(tmp
     assert any("b: an empty answer" in f.message for f in _run.failures)
     items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.SECOND_READING]
     assert len(items) == 1 and len(items[0].quotes) == 1  # reader a's reading, judged alone
+
+
+def test_a_correction_is_read_again_by_its_own_readers(tmp_path):
+    from parserx.config.schema import ModelProfile, Reader as ReaderConfig
+
+    config = _config()
+    config.models = {n: ModelProfile(endpoint=f"https://{n}.test/v1", api_key="test", model=n) for n in ("a", "b")}
+    config.tools.second_readers = [ReaderConfig(use="a"), ReaderConfig(use="b")]
+    config.tools.recheck_readers = [ReaderConfig(use="b")]
+    workspace_init(_scanned_pdf(tmp_path), tmp_path / "ws", config=config)
+    ctx = _context()(Workspace.open(tmp_path / "ws"), config)
+    assert [n for n, _ in second_reading.readers(ctx)[0]] == ["a", "b"]
+    assert [n for n, _ in second_reading.readers(ctx, config.tools.recheck_readers)[0]] == ["b"]

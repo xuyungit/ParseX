@@ -97,11 +97,11 @@ def _letters(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFKC", characters(text or "")) if ch.isalnum())
 
 
-def readers(ctx: ToolContext) -> tuple[list[tuple[str, object]], list[str]]:
-    """The configured readers that can be asked, (name, service), and the names left out (no such entry, or not
-    configured); none left: the service model alone."""
+def readers(ctx: ToolContext, configured: list | None = None) -> tuple[list[tuple[str, object]], list[str]]:
+    """The *configured* readers (``tools.second_readers`` by default) that can be asked, (name, service), and the
+    names left out (no such entry, or not configured); none left: the service model alone."""
     out, missing = [], []
-    for reader in ctx.config.tools.second_readers:
+    for reader in ctx.config.tools.second_readers if configured is None else configured:
         try:
             service = ctx.vlm_using(reader.use, reader.reasoning_effort)
         except ToolFailure:
@@ -142,9 +142,9 @@ def read_again(ctx: ToolContext) -> tuple[dict[str, int], list[Failure]]:
 
 
 def recheck(ctx: ToolContext, block_ids: list[str]) -> list[Failure]:
-    """Read blocks again on their images alone, as the second reading does — every reader at once, shown neither the
-    draft nor the correction — for the agent's correction of their characters, which stands only where every reading
-    shows it (``content/select.as_printed``).  The readings join the blocks' observations (``RECHECK``), kept whatever
+    """Read blocks again on their images alone, as the second reading does — every reader of
+    ``tools.recheck_readers`` at once, shown neither the draft nor the correction — for the agent's correction of their
+    characters, which stands only where every reading shows it (``content/select.as_printed``).  The readings join the blocks' observations (``RECHECK``), kept whatever
     becomes of the correction; a block read so before is not read again.  No image to cut (a Word document's own
     text) or no reader: none, and the correction is judged by the block's other readings.  Failures."""
     blocks = block_map(ctx.ws.load())
@@ -153,7 +153,7 @@ def recheck(ctx: ToolContext, block_ids: list[str]) -> list[Failure]:
     if not todo:
         return []
     try:
-        read, _, failures = _ask(ctx, ctx.ws.load(), todo)
+        read, _, failures = _ask(ctx, ctx.ws.load(), todo, ctx.config.tools.recheck_readers)
     except ToolFailure as exc:  # no service model configured
         return [exc.failure]
     if read:
@@ -164,14 +164,14 @@ def recheck(ctx: ToolContext, block_ids: list[str]) -> list[Failure]:
     return failures
 
 
-def _ask(ctx: ToolContext, state: DocumentState, blocks: list[Block]
+def _ask(ctx: ToolContext, state: DocumentState, blocks: list[Block], configured: list | None = None
          ) -> tuple[dict[str, dict[str, str]], list[str], list[Failure]]:
-    """Each block's image read by every reader at once: ({block: {reader: reading}}, readers missing, failures).  A
+    """Each block's image read by every reader (*configured*, ``readers``) at once: ({block: {reader: reading}}, readers missing, failures).  A
     reader that wrote nothing has not read the block: the others' readings decide alone."""
     crops = _images(ctx, state, blocks)
     if not crops:
         return {}, [], []
-    asked, missing = readers(ctx)
+    asked, missing = readers(ctx, configured)
     tasks = [(block_id, path, name, service) for block_id, path in crops for name, service in asked]
     outcomes = run_ordered(tasks, lambda t: t[3].call(
         "describe_image", t[1], PROMPT, temperature=0.0, max_tokens=MAX_TOKENS, structured_output_mode="off",

@@ -155,6 +155,11 @@ class ToolsConfig(BaseModel):
     # (docs/v2_pipeline_scripts.md §10.4): luna + DeepSeek caught 8 of 9 engine misreads with 3 false items in 40
     second_readers: list[Reader] = Field(default_factory=lambda: [Reader(use="gpt-6-luna", reasoning_effort="low"),
                                                                    Reader(use="deepseek-flash", reasoning_effort="medium")])
+    # a correction of characters read again on the block's image alone (tools/edit.py): it stands only where every
+    # reader shows it.  Measured on round 2's corrections (docs §11.4): DeepSeek alone judged 34 of 42 right, with luna
+    # 30 (luna's own misreads refuse right corrections), luna alone 24; same fallbacks as ``second_readers``
+    recheck_readers: list[Reader] = Field(default_factory=lambda: [Reader(use="deepseek-flash",
+                                                                          reasoning_effort="medium")])
     ask_max_tokens: int = 1024
     review_max_tokens: int = 4096
     read_dpi: int = 150  # default page render resolution for ``read``

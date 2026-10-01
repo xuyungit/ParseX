@@ -405,6 +405,16 @@ PDF 里用线条画的图（流程图、示意图、尺寸图）页面上没有�
 
 离线测试 913 个全部通过（新增 7 个）。
 
+**换读者重判**（同一批重读，不加请求）：
+
+| 重读的读者 | 判对（可核实的 42 处） |
+|---|---|
+| luna + DeepSeek | 30 |
+| 只用 luna | 24 |
+| 只用 DeepSeek | 34 |
+
+在"每个读者都要同意"的规则下，较弱的 luna 自己读错，就会拒掉正确的改动。用户决定（2026-10-01）：重读先只用 DeepSeek。为此新增配置 `tools.recheck_readers`，默认 deepseek-flash（medium）；流水线的第二份读法仍用 `tools.second_readers`（luna + DeepSeek）。样本只有二十来种改动，以后有更多改动时再看。
+
 ### 11.5 剩下的
 
 - C：给 `formula_candidate` 段落一个整段转写的操作；
