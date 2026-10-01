@@ -61,7 +61,9 @@ from parserx.ir.asset import Asset  # noqa: E402
 from parserx.ir.base import BBox  # noqa: E402
 from parserx.ir.block import Block  # noqa: E402
 from parserx.ir.decision import Decision  # noqa: E402
-from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
+from parserx.ir.enums import (BlockKind, BlockStatus, DecisionStage, ObservationStatus, PageStatus,  # noqa: E402
+                              RelationKind, TaskKind)
+from parserx.ir.relation import Relation  # noqa: E402
 from parserx.ir.observation import Mark, Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
 from parserx.content import glyphs, scripts  # noqa: E402
@@ -112,6 +114,8 @@ class _Region:
     grid: TableGrid | None = None
     asset: Asset | None = None
     excluded: Decision | None = None  # why the region's lines are no text (``_not_text``)
+    within: int | None = None  # the index of the figure region whose text these lines are (``_vector_figures``)
+    note: Decision | None = None  # how the region was found (a vector figure)
 
 
 def extract_pdf(path: Path | str, *, layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
@@ -180,6 +184,24 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
                 free = [ln for ln in free if ln not in inside]
                 accepted.append(bbox)
                 regions.append(_Region(BlockKind.TABLE, bbox, inside, grid=grid))
+    held: list[_Line] = []  # lines that are a vector figure's text
+    drawings = _vector_figures(page, detected, images, free) if verdict.ok else []
+    for box, found in drawings:
+        inside = [ln for ln in free if _centre_in(ln.bbox, box)]
+        free = [ln for ln in free if ln not in inside]
+        figure = len(regions)
+        asset = ext.add_asset(*_image_asset(doc, page, n, {"bbox": box}))
+        regions.append(_Region(BlockKind.FIGURE, box, [], asset=asset, note=found))
+        for ln in inside:
+            excluded = _not_text(page, ln, [("image", box)], read)
+            if excluded is not None:
+                regions.append(_Region(BlockKind.OTHER, ln.bbox, [ln], excluded=excluded))
+            else:
+                held.append(ln)
+        for group in group_lines(held, None):
+            members = [held[i] for i in group]
+            regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in members]), members, within=figure))
+        held = []
     if verdict.ok:  # lines with no readable character that are no text (``content/glyphs.py``)
         kept = []
         for ln in free:
@@ -193,6 +215,8 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
         members = [free[i] for i in group]
         regions.append(_Region(BlockKind.TEXT, _union([ln.bbox for ln in members]), members))
     for info in images:
+        if any(_centre_in(_round(info["bbox"]), box) for box, _ in drawings):
+            continue  # part of a vector figure, rendered with it
         asset = ext.add_asset(*_image_asset(doc, page, n, info))
         kind = BlockKind.FIGURE if verdict.ok else BlockKind.SCAN
         regions.append(_Region(kind, _round(info["bbox"]), [], asset=asset))
@@ -202,13 +226,17 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
     off_direction: dict[str, str] = {}
     line_items: list[LedgerEntry] = []
     image_regions: list[tuple[str, BBox]] = []
+    block_of: dict[int, str] = {}
     for seq, index in enumerate(reading_order([r.bbox for r in regions]), 1):
         region = regions[index]
         block_id = ids.block_id_pdf(n, seq)
+        block_of[index] = block_id
         ext.blocks.append(_block(block_id, len(ext.blocks), n, region, decision))
         if region.excluded is not None:
             ext.blocks[-1].status = BlockStatus.EXCLUDED
             ext.blocks[-1].decisions.append(region.excluded)
+        if region.note is not None:
+            ext.blocks[-1].decisions.insert(0, region.note)
         if region.kind == BlockKind.TEXT and region.lines and all(ln.direction != main for ln in region.lines):
             off_direction[block_id] = ext.blocks[-1].text
         for line in region.lines:
@@ -218,6 +246,11 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
                                           block=block_id))
         if region.asset is not None:
             image_regions.append((block_id, region.bbox))
+    for index, region in enumerate(regions):  # a vector figure's text is read inside it (rendered with it)
+        if region.within is not None:
+            src, dst = block_of[region.within], block_of[index]
+            ext.relations.append(Relation(id=ids.relation_id(RelationKind.CONTAINS, src, dst),
+                                          kind=RelationKind.CONTAINS, src=src, dst=dst))
     # Line items in extraction order, then image items numbered on in reading order.
     ext.ledger.extend(sorted(line_items, key=lambda e: e.item))
     for offset, (block_id, bbox) in enumerate(image_regions, len(lines) + 1):
@@ -289,6 +322,38 @@ def _read_spans(spans: list[dict], found: dict[glyphs.Key, str] | None,
                 read.append((c, value))
         out.append(dict(span, chars=chars))
     return out, tuple(read)
+
+
+PICTURES = frozenset({"image", "chart"})  # detector labels of pictures
+
+
+def _vector_figures(page: pymupdf.Page, detected: list[tuple[str, BBox]] | None, images: list[dict],
+                    lines: list[_Line]) -> list[tuple[BBox, Decision]]:
+    """Pictures drawn with vector paths: regions the layout detector calls a picture where the page draws shapes
+    outside every raster image — two readings that agree (a picture of text alone, a code listing, stays text; a
+    photo with a frame or marks drawn on it stays the photo).  Each region grows to its shapes and the text lines whose
+    centre is in it, so no part of the drawing is cut off; raster images inside it are part of the drawing."""
+    out: list[tuple[BBox, Decision]] = []
+    shapes: list[BBox] | None = None
+    rasters = [_round(info["bbox"]) for info in images]
+    for label, box in detected or []:
+        if label not in PICTURES:
+            continue
+        if shapes is None:
+            shapes = [tuple(d["rect"]) for d in page.get_drawings()]
+        drawn = [r for r in shapes if _centre_in(r, box) and not any(_centre_in(r, im) for im in rasters)]
+        if not drawn or any(_overlap(box, other) for other, _ in out):
+            continue
+        grown = _round(_union([box, *drawn, *(ln.bbox for ln in lines if _centre_in(ln.bbox, box))]))
+        inside = sum(1 for im in rasters if _centre_in(im, grown))
+        out.append((grown, Decision(
+            stage=DecisionStage.CONTENT_SOURCE, choice="vector_figure", actor=ACTOR,
+            evidence={"shapes": len(drawn), "images_inside": inside, "label": label},
+            reason=f"a {label} the layout detector sees, drawn with {len(drawn)} vector shapes outside any raster "
+                   "image: rendered from the page; the text layer's lines inside it are its text"
+                   + (f"; {inside} raster image{'s' if inside > 1 else ''} inside {'are' if inside > 1 else 'is'} part "
+                      "of it" if inside else ""))))
+    return out
 
 
 def _not_text(page: pymupdf.Page, line: _Line, detected: list[tuple[str, BBox]] | None,
