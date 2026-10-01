@@ -37,6 +37,16 @@ from parserx.config.schema import ServiceConfig, effort_for
 
 log = logging.getLogger(__name__)
 
+# An answer cut at its output budget (reasoning included: a reasoning model may think the whole budget away and write
+# nothing) is asked once more with this budget — the most every configured model accepts (probed: glm-5.3-flashx
+# 131 072; gpt-6-luna, gpt-6-sol, deepseek-flash at least 393 216).  Billed per token generated, so it costs only what is
+# used.  Cut again: ``OutputTruncated``, a failure, never an empty or half answer taken as whole.
+TRUNCATED_RETRY_TOKENS = 131072
+
+
+class OutputTruncated(RuntimeError):
+    """The model stopped at its output budget, at the largest budget too: no complete answer."""
+
 
 class LLMService(Protocol):
     """Protocol for LLM text completion."""
@@ -336,14 +346,20 @@ class OpenAICompatibleService:
         }
         tokens: list[str] = []
         usage = None
+        cut = False
         with self._create(self._client.responses, kwargs) as stream:
             for event in stream:
                 kind = getattr(event, "type", "")
                 if kind == "response.output_text.delta":
                     tokens.append(event.delta)
-                elif kind == "response.completed":
-                    usage = getattr(getattr(event, "response", None), "usage", None)
+                elif kind in ("response.completed", "response.incomplete"):
+                    response = getattr(event, "response", None)
+                    usage = getattr(response, "usage", None)
+                    details = getattr(response, "incomplete_details", None)
+                    cut = kind == "response.incomplete" and getattr(details, "reason", "") == "max_output_tokens"
         self._report_usage(usage)
+        if cut:
+            return self._responses_stream(content, temperature, self._larger_budget(max_tokens), **extra)
 
         text = "".join(tokens).strip()
         if self._api_style is None:
@@ -411,7 +427,18 @@ class OpenAICompatibleService:
         self._report_usage(getattr(response, "usage", None))
         if self._api_style is None:
             self._api_style = "chat"
-        return response.choices[0].message.content or ""
+        choice = response.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            return self._chat(messages, temperature, self._larger_budget(max_tokens), **extra)
+        return choice.message.content or ""
+
+    def _larger_budget(self, max_tokens: int) -> int:
+        """The budget to ask an answer cut at *max_tokens* again with (``TRUNCATED_RETRY_TOKENS``); cut at that one:
+        ``OutputTruncated``."""
+        if max(max_tokens, self._config.min_output_tokens) >= TRUNCATED_RETRY_TOKENS:
+            raise OutputTruncated(f"{self._model}: the answer stopped at its output budget of {max_tokens} tokens")
+        log.info("%s: answer cut at %d tokens; asked again with %d", self._model, max_tokens, TRUNCATED_RETRY_TOKENS)
+        return TRUNCATED_RETRY_TOKENS
 
     def _complete_chat(
         self, system: str, user: str, temperature: float, max_tokens: int

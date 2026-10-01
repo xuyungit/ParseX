@@ -335,3 +335,55 @@ def test_a_streamed_answer_that_stalls_times_out_early(monkeypatch):
     timeout = client.responses.calls[0]["timeout"]
     assert (timeout.read, timeout.connect) == (45, 180)
 
+
+
+def test_a_chat_answer_cut_at_its_budget_is_asked_again_with_the_largest(monkeypatch):
+    from parserx.services.llm import TRUNCATED_RETRY_TOKENS
+
+    service, client = _make_service(monkeypatch, api_style="chat")
+    answers = [("", "length"), ("the whole answer", "stop")]
+
+    def create(**kw):
+        client.chat.completions.calls.append(kw)
+        text, finish = answers.pop(0)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text), finish_reason=finish)])
+
+    client.chat.completions.create = create
+    assert service.complete("s", "u", max_tokens=4096) == "the whole answer"
+    budgets = [c.get("max_tokens") or c.get("max_completion_tokens") for c in client.chat.completions.calls]
+    assert budgets == [4096, TRUNCATED_RETRY_TOKENS]
+
+
+def test_an_answer_cut_twice_is_a_failure_not_an_empty_answer(monkeypatch):
+    import pytest
+
+    from parserx.services.llm import OutputTruncated
+
+    service, client = _make_service(monkeypatch, api_style="chat")
+    client.chat.completions.create = lambda **kw: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="half"), finish_reason="length")])
+    with pytest.raises(OutputTruncated):
+        service.complete("s", "u", max_tokens=4096)
+
+
+def test_a_responses_answer_left_incomplete_at_its_budget_is_asked_again(monkeypatch):
+    from parserx.services.llm import TRUNCATED_RETRY_TOKENS
+
+    service, client = _make_service(monkeypatch)
+    incomplete = SimpleNamespace(type="response.incomplete", response=SimpleNamespace(
+        usage=None, incomplete_details=SimpleNamespace(reason="max_output_tokens")))
+    streams = []
+
+    class _Cut(_FakeResponseStream):
+        def __init__(self):
+            super().__init__(["par"])
+            self._events.append(incomplete)
+
+    def create(**kw):
+        client.responses.calls.append(kw)
+        streams.append(kw["max_output_tokens"])
+        return _Cut() if len(streams) == 1 else _FakeResponseStream(["whole"])
+
+    client.responses.create = create
+    assert service.complete("s", "u", max_tokens=4096) == "whole"
+    assert streams == [4096, TRUNCATED_RETRY_TOKENS]

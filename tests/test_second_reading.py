@@ -83,6 +83,7 @@ def _run(tmp_path, second, readers=None):
     workspace_init(_scanned_pdf(tmp_path), tmp_path / "ws", config=config)
     envelope, _ = call_tool("run_pipeline", tmp_path / "ws", {}, config=config, context_factory=Context)
     assert envelope.ok, envelope.failures
+    _run.failures = envelope.failures
     return Workspace.open(tmp_path / "ws").load(), calls
 
 
@@ -148,3 +149,13 @@ def test_two_readers_are_asked_at_once_and_list_what_they_both_read_otherwise(tm
     assert len(items) == 1 and len(items[0].quotes) == 2 and "7×1" in items[0].detail
     block = next(b for b in state.blocks if b.id == items[0].target)
     assert "C_{57}" in block.text and right == block.text.strip()
+
+
+def test_a_reader_that_writes_nothing_is_a_failure_and_the_other_reads_alone(tmp_path):
+    wrong = r"Add 5 $\mu$L of the solution to $C_{56}H_{36}$."
+    answers = {("paragraph", "a"): wrong, ("paragraph", "b"): "", ("formula", "a"): r"$$E = mc^2$$",
+               ("formula", "b"): r"$$E = mc^2$$"}
+    state, _ = _run(tmp_path, lambda kind, model: answers[(kind, model)], readers=["a", "b"])
+    assert any("b: an empty answer" in f.message for f in _run.failures)
+    items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.SECOND_READING]
+    assert len(items) == 1 and len(items[0].quotes) == 1  # reader a's reading, judged alone
