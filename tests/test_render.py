@@ -55,6 +55,25 @@ def test_headings_paragraphs_and_page_anchors():
                   "<!-- PAGE 2 -->\n")
 
 
+def test_code_fenced_in_a_text_block_keeps_its_lines_and_never_runs_on():
+    """Round 1: the agent wrote a code block into a text block, fences on their own lines; joining the block's lines
+    put the opening fence and the code on one line and the rest of the document rendered as code."""
+    from parserx.render.markdown import fences
+
+    code = "```python\nimport tensorflow as tf\n\nb = tf.Variable(tf.zeros([100]))  # 100-d vector\n```"
+    md = render_markdown(_state([
+        _block("b1", BlockKind.TEXT, 0, text="示例如下：\n" + code + "\n运行后得到"),
+        _block("b2", BlockKind.TEXT, 1, text="```\n[db,dW,dx] = tf.gradients(C, [b,W,x])"),  # left open
+        _block("b3", BlockKind.TITLE, 2, level=2, text="结果"),
+        _block("b4", BlockKind.TEXT, 3, text="`a` 与 ``` b ``` 都是行内代码"),
+    ]))
+    assert "示例如下：\n\n" + code + "\n\n运行后得到" in md
+    assert "```\n[db,dW,dx] = tf.gradients(C, [b,W,x])\n```" in md
+    title = next(seg for fenced, seg in fences(md) if "## 结果" in seg)
+    assert not next(fenced for fenced, seg in fences(md) if seg == title)  # the title is not inside code
+    assert "`a` 与 ``` b ``` 都是行内代码" in md
+
+
 def test_a_printed_backslash_n_stays_as_printed():
     # the user, 2026-09-30 (Q136 withdrawn): a template that printed its newlines as two characters is shown as it is
     text = r"more information.\n2. Subject to credit approval.\n\nApple Payments"

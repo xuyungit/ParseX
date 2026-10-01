@@ -2,7 +2,9 @@
 
 - ATX headings for titles with a level; a title whose level is still
   pending is a plain paragraph (the renderer never invents structure);
-- no hard line breaks inside a paragraph (CJK-aware joining);
+- no hard line breaks inside a paragraph (CJK-aware joining); a fenced code block in a block's text (the agent's
+  code) keeps its lines, and one the text leaves open is closed at the block's end: no block turns the rest of the
+  document into code (round 1, a fence on a joined line);
 - tables from ``TableGrid``: GFM, or HTML when GFM cannot express them;
 - figures: ``![<type>](images/<file>)`` followed by the note ``> 图片说明：…`` (one or two sentences, Q121) — the
   layout the evaluator strips
@@ -233,7 +235,7 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
             face = this
             continue
         if code:
-            out.append("```\n" + "\n".join(code) + "\n```")
+            out.append(_code_block(code))
             code, face = [], None
         if this is not None:  # code in another face starts right away
             code, face = [(block.text or "").strip("\n")], this
@@ -246,8 +248,15 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
         if block.id in missing:  # shown as it is (a page image), its content not read: the note follows
             out.append(missing[block.id])
     if code:
-        out.append("```\n" + "\n".join(code) + "\n```")
+        out.append(_code_block(code))
     return out
+
+
+def _code_block(lines: list[str]) -> str:
+    """Lines as a fenced code block, its fence longer than any run of backticks the lines hold (so none closes it)."""
+    longest = max((len(run) for line in lines for run in re.findall(r"`+", line)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n" + "\n".join(lines) + f"\n{fence}"
 
 
 def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = "zh") -> str:
@@ -276,13 +285,50 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
     if bulleted(block):  # a bulleted item: "- " in place of the page's bullet
         body, _ = emphasize(strip_bullet(text), marks)
         return "- " + escape_strikethrough(body)
-    # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart
+    # a paragraph's lines are joined; a blank line (the scan engine's paragraph break) keeps paragraphs apart; a
+    # fenced code block keeps its lines
     out = []
-    for paragraph in (join_wrapped(part.split("\n")).strip() for part in _PARAGRAPH.split(block.text)):
-        if paragraph:
-            paragraph, marks = emphasize(paragraph, marks)
-            out.append(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(paragraph)))
+    for fenced, segment in fences(block.text):
+        if fenced:
+            out.append(segment)
+            continue
+        for paragraph in (join_wrapped(part.split("\n")).strip() for part in _PARAGRAPH.split(segment)):
+            if paragraph:
+                paragraph, marks = emphasize(paragraph, marks)
+                out.append(_MARKUP_START.sub(r"\1\\\2", escape_strikethrough(paragraph)))
     return "\n\n".join(out)
+
+
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def fences(text: str) -> list[tuple[bool, str]]:
+    """*text* in segments, each a fenced code block (True: its lines as they are, closed at the end of the text when
+    it is left open) or the text between (False).  Fences as CommonMark reads them: three or more backticks or
+    tildes at the start of a line (an info string after backticks has none), closed by a line of at least as many of
+    the same character and nothing else."""
+    out: list[tuple[bool, str]] = []
+    lines = text.split("\n")
+    plain: list[str] = []
+    i = 0
+    while i < len(lines):
+        match = _FENCE.match(lines[i])
+        if match is None or (match.group(1)[0] == "`" and "`" in match.group(2)):
+            plain.append(lines[i])
+            i += 1
+            continue
+        if plain:
+            out.append((False, "\n".join(plain)))
+            plain = []
+        mark = match.group(1)
+        close = re.compile(rf"^ {{0,3}}{re.escape(mark[0])}{{{len(mark)},}}\s*$")
+        end = next((j for j in range(i + 1, len(lines)) if close.match(lines[j])), None)
+        body = lines[i:end + 1] if end is not None else lines[i:] + [mark]
+        out.append((True, "\n".join(body)))
+        i = len(lines) if end is None else end + 1
+    if plain:
+        out.append((False, "\n".join(plain)))
+    return out
 
 
 def _marks(block: Block) -> list:
