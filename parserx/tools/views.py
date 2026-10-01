@@ -222,8 +222,9 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             detail="the page reading writes this passage with its formulas as LaTeX, but it (and the editor's "
                    f"version) lacks characters the text layer has ({listed(lacks, ', ')}; it has "
                    f"{listed(adds, ', ') or 'nothing'} more — a reading can take a superscript l for 1); {span}"
-                   "look at the image: if the reading is right, correct the block with it (keep every character "
-                   "the image shows), else close the item"))
+                   "look at the image: where the passage's formulas need their structure written (or the text "
+                   f"layer cut it into blocks), write it whole with transcribe_passage on {block_id}; for a few "
+                   "characters, replace_text; where the output is right, close the item"))
     from parserx.tools import second_reading
 
     for block in ordered(state):  # scanned content with mathematics the second readings do not agree with

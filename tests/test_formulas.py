@@ -204,3 +204,59 @@ def test_a_piece_the_text_layer_cut_from_a_formula_goes_with_its_passage():
         block("n", (500, 417, 543, 428))
     passages = _enclosed([formula, prime, number], [(["f"], [block("r", (304, 358, 520, 719))])])
     assert passages[0][0] == ["f", "p"]  # the prime above the line; the number at the right is not inside
+
+
+def _kept_passage(tmp_path):
+    """A passage kept from the text layer, its page reading a formula_candidate item: (workspace, the item's block)."""
+    state, _, _ = _run(tmp_path, [_entry("display_formula", "$$ F=ma $$", (110, 190, 170, 203)), PROSE],
+                       editor_answer="$F=ma$")
+    return tmp_path / "ws", next(u for u in unresolved_items(state) if u.kind.value == "formula_candidate").target
+
+
+def _transcribe(ws, block, text, *, looked_at=None):
+    from tests.test_tools_contract import _call, _evidence
+
+    context = _context()
+    evidence = _evidence(ws, context, block=looked_at or block, **{"as": "image"})
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "transcribe_passage", "block": block, "text": text,
+                                               "reason": "照原件写这一段", "evidence": evidence}]}, context=context)
+    assert env.ok, env.failures
+    return env.result.outcomes[0], evidence
+
+
+def test_the_agent_writes_a_kept_passage_whole_and_can_take_it_back(tmp_path):
+    from tests.test_tools_contract import _call
+
+    ws, owner = _kept_passage(tmp_path)
+    out, evidence = _transcribe(ws, owner, "[0068] $$F = ma$$ (5)")
+    assert out.accepted and out.block
+    state = Workspace.open(ws).load()
+    made = next(b for b in state.blocks if b.id == out.block)
+    assert made.text == "[0068] $$F = ma$$ (5)" and made.observations[0].engine == "agent"
+    assert next(b for b in state.blocks if b.id == owner).status.value == "duplicate"  # kept, not output
+    assert not [u for u in unresolved_items(state) if u.kind.value == "formula_candidate"]
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "unadopt", "evidence": evidence, "reason": "写错了"}]},
+                   context=_context())
+    assert env.result.outcomes[0].accepted
+    state = Workspace.open(ws).load()
+    assert next(b for b in state.blocks if b.id == owner).status.value == "ok"
+    assert [u for u in unresolved_items(state) if u.kind.value == "formula_candidate"]  # the item is back
+
+
+def test_a_transcription_keeps_every_letter_and_digit_adds_none_unseen_and_renders(tmp_path):
+    ws, owner = _kept_passage(tmp_path)
+    out, _ = _transcribe(ws, owner, "$$F = ma$$ (5)")  # the paragraph number left out
+    assert not out.accepted and out.rule == "conservation" and "0×2" in out.detail
+    out, _ = _transcribe(ws, owner, "[0068] $$F = m a_x$$ (5)")  # an x no reading of the place has
+    assert not out.accepted and out.rule == "not_seen" and "x×1" in out.detail
+    out, _ = _transcribe(ws, owner, "[0068] $$F = ma (5)")
+    assert not out.accepted and out.rule == "latex" and "$$" in out.detail
+
+
+def test_a_transcription_rests_on_a_look_at_the_whole_passage_of_a_pending_item(tmp_path):
+    ws, owner = _kept_passage(tmp_path)
+    prose = next(b.id for b in Workspace.open(ws).load().blocks if (b.text or "").startswith("A plain sentence"))
+    out, _ = _transcribe(ws, owner, "[0068] $$F = ma$$ (5)", looked_at=prose)  # a look at another place
+    assert not out.accepted and out.rule == "image_evidence"
+    out, _ = _transcribe(ws, prose, "A plain sentence of prose that the page reading repeats word for word.")
+    assert not out.accepted and out.rule == "not_candidate"

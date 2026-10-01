@@ -36,7 +36,9 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from parserx.content import scan
-from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, signals, transcribed
+from parserx.content.latex import characters, problems
+from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, renumber, signals
+from parserx.content.select import transcribed
 from parserx.content.select import _letters_changed, _unmapped, substitutes
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
@@ -64,14 +66,16 @@ from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationS
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
-from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, text_at, text_near
+from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, normalize, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools import second_reading
 from parserx.tools.describe_figure import Described
 from parserx.tools.describe_figure import apply as apply_description
 from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
-from parserx.tools.evidence import image_evidence, image_evidence_at
+from parserx.tools.evidence import image_evidence, image_evidence_at, image_evidence_whole
+from parserx.tools.formulas import _adopt as adopt_passage, _edited_block, _lost as formula_lost
+from parserx.tools.formulas import _union as formula_union, disagreement, listed, passage_of, pending_candidates
 from parserx.tools.recognize import _next_block_seq, _next_item, integrate_page, scan_engine_pages
 from parserx.tools.views import unresolved_items
 from parserx.workspace.queries import HIDDEN, block_unit, current_notes, ordered
@@ -86,7 +90,7 @@ _NOT_DISMISSED = frozenset({UnresolvedKind.PAGE_PENDING, UnresolvedKind.BLOCK_FA
 
 DESCRIPTION = ("改初稿：初稿只能这样改。ops 是一组操作，按顺序在一个事务里执行，每条单独被接受或拒绝："
                "结果 outcomes 里每条有 accepted，被拒绝的给出规则名 rule 与原因 detail，据此修正后再提交。"
-               "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt）和 dismiss 必须引用证据 "
+               "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt、transcribe_passage）和 dismiss 必须引用证据 "
                "evidence——view_source 给出的编号，证据要看得到被改之处（这一块、它所在的页或区域、或跨页接缝）。"
                "结构操作从不改文字。块号形如 b-p003-0012（第 3 页第 12 块）；表格的行、列从 0 起。"
                "结果的 issues_opened / issues_closed 是这次修改新开和关掉的待办。")
@@ -157,8 +161,22 @@ class Adopt(IRModel):
         return self
 
 
+class TranscribePassage(IRModel):
+    model_config = agent_doc("整段写出公式待定的一段（待办 formula_candidate）：看过整段原件（看这一块即看到整段）后，"
+                             "把这一段的正文、公式和编号照图完整写出，公式用 LaTeX（行内 $…$，独立成行 $$…$$）。"
+                             "用于公式结构要改、或文字层把一段切成了几块的地方；个别字符用 replace_text。"
+                             "程序核对：文字层的每个字母和数字都要写出（一个不少），多写的字母或数字要有别的读数在这里看得到，"
+                             "LaTeX 要能排版。照原件写，原件的错字也照写。旧块保留，可用 unadopt 撤回。")
+
+    op: Literal["transcribe_passage"]
+    block: str = Field(description="待办 formula_candidate 的块")
+    text: str = Field(description="整段的写法：正文照写，公式用 LaTeX")
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description="看过整段原件的证据编号（看这一块、它所在的整页，或包住整段的区域）")
+
+
 class Unadopt(IRModel):
-    model_config = agent_doc("撤回一次区域采用：被替换的块恢复，读数的块不再输出。")
+    model_config = agent_doc("撤回一次区域采用或整段写出：被替换的块恢复，读数或写出的块不再输出。")
 
     op: Literal["unadopt"]
     evidence: str = Field(description="当时采用的读数的证据编号")
@@ -189,7 +207,7 @@ class WriteNote(IRModel):
 
 
 EditOp = Annotated[
-    ReplaceText | SetCells | InsertText | Adopt | Unadopt | SetRole | Move | Join | Unjoin | Split | Exclude
+    ReplaceText | SetCells | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join | Unjoin | Split | Exclude
     | Include | MarkPending | Dismiss | WriteNote,
     Field(discriminator="op"),
 ]
@@ -290,6 +308,8 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             made, detail = _insert_text(state, op)
         elif isinstance(op, Adopt):
             detail = _adopt(ctx, state, op)
+        elif isinstance(op, TranscribePassage):
+            made, detail = _transcribe_passage(state, op)
         elif isinstance(op, Unadopt):
             detail = _unadopt(state, op)
         elif isinstance(op, Dismiss):
@@ -622,14 +642,74 @@ def _adopt_region(state: DocumentState, op: Adopt, evidence, page_json: dict) ->
             f"characters kept {recall:.0%}" + "".join(f"; signal {k} — {v}" for k, v in raised.items()))
 
 
+TRANSCRIBED, SUPERSEDED = "passage_transcription", "superseded_by_transcription"
+_ADOPTED = frozenset({"region_reading", TRANSCRIBED})
+_SUPERSEDED = frozenset({"superseded_by_reading", SUPERSEDED})
+
+
+def _transcribe_passage(state: DocumentState, op: TranscribePassage) -> tuple[str, str]:
+    """The agent writes a kept formula passage whole (a ``formula_candidate`` item), on a look at all of it: held to
+    the rule the page reading and its editor are held to (``tools/formulas``: every letter and digit of the text
+    layer, a mis-mapped glyph aside), each letter or digit it adds seen by another reading of the place (the page
+    reading, the local reading), and its LaTeX renders.  It replaces the passage's blocks as their readings do; they
+    stay, and ``unadopt`` brings them back."""
+    owner = _block(state, op.block)
+    candidate = dict(pending_candidates(state)).get(owner.id)
+    if candidate is None:
+        raise _Refused("not_candidate", f"{op.block} stands for no kept formula passage (formula_candidate); "
+                                        "change a block's characters with replace_text")
+    members = passage_of(state, owner.id) or [owner]
+    page = next((a.page for a in owner.anchors if isinstance(a, PdfAnchor)), None)
+    members = [b for b in members if any(isinstance(a, PdfAnchor) and a.page == page for a in b.anchors)]
+    box = formula_union([b.anchors[0].bbox for b in members])
+    shown = image_evidence_whole(state, owner, page, box, op.evidence)
+    if not shown.passed:
+        raise _Refused(shown.name, shown.detail)
+    text = op.text.strip()
+    wrong = problems(text)
+    if not text or wrong:
+        raise _Refused("latex", "; ".join(wrong) or "an empty passage")
+    native = "\n".join(b.text or "" for b in members)
+    blocks = {b.id: b for b in state.blocks}
+    if formula_lost(state, page, [b.id for b in members], blocks, native, text):
+        lacks, _ = disagreement(native, text)
+        raise _Refused("conservation", f"the text layer here has {listed(lacks, ', ')} the transcription lacks: "
+                                       "write every letter and digit the passage prints, prose and numbers included")
+    written = Counter(normalize(characters(text)))
+    layer, others = Counter(normalize(native)), Counter(normalize(characters(candidate)))
+    others |= Counter(normalize(text_at(state, page, box) or ""))
+    unseen = +Counter({ch: k - max(layer[ch], others[ch]) for ch, k in written.items()})
+    if unseen:
+        raise _Refused("not_seen", f"{listed(unseen, ', ')} written here is in no reading of this place (the text "
+                                   "layer, the page reading, the local reading): write what the page prints")
+    reading = _edited_block(page, members, [], text)
+    reading.observations[0] = reading.observations[0].model_copy(
+        update={"engine": "agent", "engine_version": ACTOR, "label": None})
+    known = {b.id for b in state.blocks}
+    adopt_passage(state, page, members, [reading], how="agent")
+    made = [b for b in state.blocks if b.id not in known]
+    for block in made:
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice=TRANSCRIBED, actor=ACTOR,
+                                        reason=op.reason, evidence={"evidence": op.evidence},
+                                        refs=[b.id for b in members]))
+    for block in members:
+        block.decisions.append(Decision(stage=DecisionStage.CONTENT_SOURCE, choice=SUPERSEDED, actor=ACTOR,
+                                        reason=op.reason, evidence={"evidence": op.evidence},
+                                        refs=[b.id for b in made]))
+    renumber(state)
+    return made[0].id, (f"the passage of {len(members)} block(s) written whole as {made[0].id}; "
+                        "its blocks stay (unadopt brings them back)")
+
+
 def _unadopt(state: DocumentState, op: Unadopt) -> str:
-    """Undo a region's adoption: the replaced blocks come back, the reading's blocks become their duplicates."""
+    """Undo a region's adoption or a passage's transcription: the replaced blocks come back, the reading's (or the
+    transcription's) blocks become their duplicates."""
     made = [b for b in state.blocks if b.status not in HIDDEN and any(
-        d.choice == "region_reading" and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
+        d.choice in _ADOPTED and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
     replaced = [b for b in state.blocks if b.status == BlockStatus.DUPLICATE and any(
-        d.choice == "superseded_by_reading" and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
+        d.choice in _SUPERSEDED and d.evidence.get("evidence") == op.evidence for d in b.decisions)]
     if not made and not replaced:
-        raise _Refused("not_adopted", f"no region adopted from {op.evidence} is in the draft")
+        raise _Refused("not_adopted", f"no region adopted or passage written on {op.evidence} is in the draft")
     back = {b.id for b in replaced}
     state.relations[:] = [r for r in state.relations
                           if not (r.kind == RelationKind.DUPLICATE_OF and r.src in back)]

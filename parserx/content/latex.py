@@ -113,3 +113,39 @@ def _argument(text: str, i: int) -> tuple[str, int]:
         return text[i + 1:], len(text)
     command = _COMMAND.match(text, i) if text[i] == "\\" else None
     return (command.group(0), command.end()) if command else (text[i], i + 1)
+
+
+_ESCAPED = re.compile(r"\\[\\$%{}]")  # a line break, an escaped sign: no delimiter, no brace
+_BEGIN_END = re.compile(r"\\(begin|end)\{([^{}]*)\}")
+_LEFT_RIGHT = re.compile(r"\\(left|right)(?![A-Za-z])")
+
+
+def problems(text: str) -> list[str]:
+    """What keeps *text*'s mathematics from rendering: a ``$``/``$$`` left open, a brace without its pair, an
+    environment or ``\\left`` without its end.  Empty when none."""
+    plain = _ESCAPED.sub(" ", text)
+    out = []
+    display = plain.count("$$")
+    if display % 2:
+        out.append("a $$ is not closed")
+    if plain.replace("$$", "").count("$") % 2:
+        out.append("a $ is not closed")
+    depth = 0
+    for ch in plain:
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        if depth < 0:
+            break
+    if depth:
+        out.append("a } has no {" if depth < 0 else "a { is not closed")
+    stack: list[str] = []
+    for kind, name in _BEGIN_END.findall(plain):
+        if kind == "begin":
+            stack.append(name)
+        elif not stack or stack.pop() != name:
+            out.append(f"\\end{{{name}}} does not close the environment open there")
+            break
+    out += [f"\\begin{{{name}}} is not closed" for name in stack]
+    sides = [m.group(1) for m in _LEFT_RIGHT.finditer(plain)]
+    if sides.count("left") != sides.count("right"):
+        out.append("\\left and \\right do not pair")
+    return out

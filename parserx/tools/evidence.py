@@ -66,6 +66,26 @@ def image_evidence_at(state: DocumentState, page: int, bbox, ref: str) -> GateCh
     return _no_evidence(ref)
 
 
+def image_evidence_whole(state: DocumentState, block, page: int, box, ref: str) -> GateCheck:
+    """*ref* shows all of the place (*page*, *box*) *block* stands for: a look at *block* (a kept formula passage's
+    look shows all of it, ``tools/source.py``), the whole page, or a region of it holding the box."""
+    for evidence in cited(state, ref):
+        if evidence.block == block.id:
+            return _passed(f"{evidence.id} shows this block and all of its place")
+        if page in _whole_pages(evidence):
+            return _passed(f"{evidence.id} shows page {page}")
+        if evidence.bbox is not None and evidence.page == page and _holds(evidence.bbox, box):
+            return _passed(f"{evidence.id} shows the region of page {page} holding this place")
+    return GateCheck(name="image_evidence", passed=False, detail=(
+        f"{ref} does not show all of this place: look at {block.id} (the look shows all of it), its page, or a region "
+        f"holding {[round(v) for v in box]} on page {page}"))
+
+
+def _holds(outer, inner, slack: float = 2.0) -> bool:
+    return (outer[0] - slack <= inner[0] and outer[1] - slack <= inner[1] and inner[2] <= outer[2] + slack
+            and inner[3] <= outer[3] + slack)
+
+
 def _whole_pages(evidence: Evidence) -> set[int]:
     if evidence.seam is not None:  # the seam image shows both pages around the break
         return {evidence.seam, evidence.seam + 1}
