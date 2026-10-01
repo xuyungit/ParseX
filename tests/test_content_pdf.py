@@ -462,6 +462,37 @@ def test_monospaced_text_renders_as_a_code_block_with_its_lines():
     assert "```" not in render_markdown(alone)
 
 
+def test_code_keeps_its_lines_whatever_role_it_is_given():
+    # round 2: an agent set numbered steps with command lines as list items, and the renderer joined the commands
+    # into one paragraph; set in a monospaced face, the lines stay a code block (a title stays a title)
+    from parserx.ir.block import Block
+    from parserx.ir.enums import ObservationStatus, TaskKind
+    from parserx.ir.observation import Observation, TextStyle
+    from parserx.ir.state import DocumentState, PageState
+    from parserx.render import render_markdown
+
+    anchor = PdfAnchor(page=1, bbox=(0, 0, 100, 20), coord_space="page_pt")
+
+    def block(bid, order, text, kind, font):
+        obs = Observation(id=f"o-{bid}", engine="native_pdf", engine_version="1", task=TaskKind.EXTRACT, anchor=anchor,
+                          text=text, style=TextStyle(monospace=font if font == "Monaco" else None, font=font),
+                          status=ObservationStatus.OK)
+        return Block(id=bid, kind=kind, order=order, anchors=[anchor], observations=[obs], chosen_observation=obs.id,
+                     text=text, level=2 if kind == BlockKind.TITLE else None)
+
+    def state(kind):
+        return DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status="complete",
+                             pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                             blocks=[block("p", 0, "Replace a failed disk of the storage cluster as follows.",
+                                           BlockKind.TEXT, "Helvetica"),
+                                     block("a", 1, "1. Pause the rebalancing of the cluster:", BlockKind.LIST, "Helvetica"),
+                                     block("b", 2, "ceph osd set nobackfill\nceph osd set norebalance", kind, "Monaco")])
+
+    for kind in (BlockKind.TEXT, BlockKind.LIST, BlockKind.OTHER, BlockKind.CAPTION):
+        assert "```\nceph osd set nobackfill\nceph osd set norebalance\n```" in render_markdown(state(kind)), kind
+    assert "## ceph osd set nobackfill" in render_markdown(state(BlockKind.TITLE))
+
+
 def _three_line_table(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page(width=595, height=842)

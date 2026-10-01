@@ -216,7 +216,7 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
             continue
         style = _style(block)
         this = code_face(block, body)
-        if this is None and face is not None and block.kind == BlockKind.TEXT and style is not None \
+        if this is None and face is not None and block.kind in _CODE_ROLES and style is not None \
                 and style.font == face:
             this = face  # a line in the same face too short to measure (a rule of dashes)
         if this is not None and (face is None or this == face) and not (notes and block.id in notes):
@@ -347,11 +347,16 @@ def body_face(state: DocumentState) -> str | None:
 
 def code_face(block: Block, body: str | None) -> str | None:
     """The face of a code block: text set in a monospaced face that is not the body's (P4-6), else None.  A document
-    without prose in another face has no code by this evidence."""
+    without prose in another face has no code by this evidence.  Code keeps its lines whatever role the block is
+    given — set as a list item, its commands are not joined into a paragraph (round 2) — but a title stays a title."""
     style = _style(block)
-    if body is None or block.kind != BlockKind.TEXT or style is None or not style.monospace or style.monospace == body:
+    if body is None or block.kind not in _CODE_ROLES or style is None or not style.monospace \
+            or style.monospace == body:
         return None
     return style.monospace
+
+
+_CODE_ROLES = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.CAPTION, BlockKind.FOOTNOTE, BlockKind.OTHER})
 
 
 # ── Missing content (Q117) ──────────────────────────────────────────────
