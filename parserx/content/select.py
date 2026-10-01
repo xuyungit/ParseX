@@ -331,6 +331,9 @@ _BY_MEANING = frozenset({"agent", "vlm"})
 # the second reading of scanned mathematics, and the readings the edit tool asks for a correction of characters.
 UNPROMPTED = frozenset({"second_reading", "recheck"})
 _SCRIPT = {"sub": "_", "sup": "^", "": ""}
+# a correction refused because the page is shown to print the draft: what the agent took for a mistake is printed so,
+# a doubt about the original (tools/edit.py)
+PRINTED_AS_DRAFT = "printed_as_draft"
 
 
 def substitutes(before: str, after: str, math: bool = False) -> bool:
@@ -379,10 +382,10 @@ def as_printed(block: Block, before: str, after: str, seen: str | None) -> GateC
             change.append(engine)
     what = f"'{''.join(sorted(lost.elements()))[:20]}' written as '{''.join(sorted(added.elements()))[:20]}'"
     if len(draft) >= AGREEING and not change:
-        return GateCheck(name="as_printed", passed=False, detail=(
+        return GateCheck(name="as_printed", passed=False, signal=PRINTED_AS_DRAFT, detail=(
             f"{what}: the readings of this place agree with the draft ({', '.join(draft)}) and none shows the "
             "change — the page prints it so; write it as printed, even where it looks like a mistake of the "
-            "original, and name a suspected mistake in the final report"))
+            "original, and the program records it as a doubt about the original"))
     return GateCheck(name="as_printed", passed=True, detail=(
         f"{what}: readings showing the change: {', '.join(change) or 'none'}; showing the draft: "
         f"{', '.join(draft) or 'none'}"))
@@ -408,10 +411,10 @@ def _read_alone(block: Block, readings: dict[str, str], before: str, after: str)
         flat_old, flat_new, flat_layer = ([t[-1] for t in tokens] for tokens in (old, new, _placed(layer)))
         if (Counter(flat_old) - Counter(flat_new) and Counter(flat_new) - Counter(flat_old)
                 and _shows(flat_new, flat_old, flat_layer) and not _shows(flat_old, flat_new, flat_layer)):
-            return GateCheck(name="as_printed", passed=False, detail=(
+            return GateCheck(name="as_printed", passed=False, signal=PRINTED_AS_DRAFT, detail=(
                 f"{what}: the text layer, which maps every glyph of this place, prints the draft's characters — the "
                 "page prints them so; write it as printed, even where it looks like a mistake of the original, and "
-                "name a suspected mistake in the final report"))
+                "the program records it as a doubt about the original"))
     places = [op[1:] for op in SequenceMatcher(None, old, new, autojunk=False).get_opcodes() if op[0] != "equal"]
     verdicts = {}
     for reader, text in sorted(readings.items()):
@@ -423,12 +426,14 @@ def _read_alone(block: Block, readings: dict[str, str], before: str, after: str)
         return None
     otherwise = {name: v for name, v in verdicts.items() if v != "change"}
     if otherwise:
-        return GateCheck(name="as_printed", passed=False, detail=(
+        confirmed = PRINTED_AS_DRAFT if "draft" in otherwise.values() else None
+        return GateCheck(name="as_printed", passed=False, signal=confirmed, detail=(
             f"{what}: read again on the image alone, without the draft, "
             + "; ".join(f"{name} reads {'the draft' if v == 'draft' else 'it otherwise'}"
                         for name, v in otherwise.items())
             + " at this place — the draft stays; write what is printed, even where it looks like a mistake of the "
-              "original, and name a suspected mistake in the final report"))
+              "original" + (", and the program records it as a doubt about the original" if confirmed else
+                            "; a mistake of the original you are sure of: record it with doubt")))
     return GateCheck(name="as_printed", passed=True, detail=(
         f"{what}: every reading of the image alone shows it ({', '.join(verdicts)})"))
 

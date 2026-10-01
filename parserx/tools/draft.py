@@ -33,7 +33,7 @@ from parserx.hierarchy.typography_titles import body_typography, native_style, t
 from parserx.ir.base import IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, TaskKind
-from parserx.ir.state import DocumentState, Note
+from parserx.ir.state import DocumentState, Doubt, Note
 from parserx.render.markdown import semantic_block
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import DocText, FailureCode, ToolFailure, Unresolved, UnresolvedKind
@@ -62,7 +62,8 @@ class ReadDraftRequest(IRModel):
                                "与所有像标题的行（附后文开头），Word 文档附样式与编号；"
                                "blocks：指定块的细节（表格的每个单元格、状态）；"
                                "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据；"
-                               "notes：你记下的对文档的理解（edit_draft 的 note），修订过的只列最新的")
+                               "notes：你记下的对文档的理解（edit_draft 的 note），修订过的只列最新的；"
+                               "以及存疑记录（edit_draft 的 doubt，和程序因页面印的就是初稿而拒绝的改动）")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
     page: int | None = Field(None, description="issues、text：只看这一页")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
@@ -106,6 +107,7 @@ class DraftSummary(IRModel):
     requests: dict[str, int]  # service requests made for the document so far
     usd: float | None
     notes: int = 0  # the agent's current notes (view=notes)
+    doubts: int = 0  # places the original itself may be wrong (view=notes)
 
 
 class DraftLine(IRModel):
@@ -164,6 +166,7 @@ class ReadDraftResult(IRModel):
     sources: list[ObservationView] | None = None
     changes: list[DraftChange] | None = None
     notes: list[Note] | None = None
+    doubts: list[Doubt] | None = None  # notes: places the original itself may be wrong
     total_blocks: int | None = None  # text: shown blocks in the document
     before_id: str | None = None  # text: read back from here with before
     after_id: str | None = None  # text: read on from here with after
@@ -182,7 +185,7 @@ def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
     if req.view == "changes":
         return output(ReadDraftResult(view="changes", changes=_changes(ctx)))
     if req.view == "notes":
-        return output(ReadDraftResult(view="notes", notes=current_notes(state)))
+        return output(ReadDraftResult(view="notes", notes=current_notes(state), doubts=state.doubts))
     shown = [b for b in ordered(state) if b.status not in HIDDEN]
     classes = _classes(state, shown)
     if req.view == "outline":
@@ -201,7 +204,7 @@ def _summary(state: DocumentState) -> DraftSummary:
                         blocks=dict(sorted(Counter(b.kind.value for b in shown).items())),
                         issues=dict(sorted(Counter(u.kind.value for u in unresolved_items(state)).items())),
                         requests=dict(state.stats.requests), usd=state.stats.cost_usd,
-                        notes=len(current_notes(state)))
+                        notes=len(current_notes(state)), doubts=len(state.doubts))
 
 
 def _issues(state: DocumentState, req: ReadDraftRequest) -> list[Unresolved]:

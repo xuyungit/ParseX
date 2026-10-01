@@ -142,6 +142,22 @@ class Note(IRModel):
     actor: str
 
 
+class Doubt(IRModel):
+    """A place where the original itself may be wrong — a typo, a dropped character, a number at odds with the rest
+    (user 2026-10-01): the output keeps what the page prints; this records what the agent takes it to be meant as,
+    for a proofreading of the original — raised by the agent (``doubt``), or by the program where it refused the
+    agent's correction because the page is shown to print the draft.  Never applied to the text."""
+
+    id: str  # q-001 …
+    block: str
+    printed: str  # as the page prints it (and the output has it)
+    suggested: str = ""  # what it may be meant as
+    reason: str = ""
+    by: str  # who took it for a mistake (the agent)
+    refused: bool = False  # recorded from the agent's correction, refused because the page prints the draft
+    evidence: list[str] = []  # evidence ids (view_source)
+
+
 class DocumentState(IRModel):
     schema_version: Literal[1] = 1
     id: str
@@ -160,6 +176,7 @@ class DocumentState(IRModel):
     closed: list[ClosedItem] = []  # worklist signals checked and left as they are
     evidence: list[Evidence] = []  # what was looked at in the source and seen there (Q85)
     notes: list[Note] = []  # the agent's understanding of the document (Q87)
+    doubts: list[Doubt] = []  # places the original itself may be wrong, kept as printed
     ledger: list[LedgerEntry] = []
     missing: list[Missing] = []
     stats: Stats = Stats()

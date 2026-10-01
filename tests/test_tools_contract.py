@@ -596,6 +596,29 @@ def test_a_changed_character_the_image_read_alone_does_not_show_is_refused(ws):
     _call("edit_draft", ws, {"ops": [{"op": "replace_text", "block": block.id, "find": "3 件", "replace": "8 件",
                                       "reason": "再试", "evidence": evidence}]}, context=context)
     assert len(context.fake_vlm.calls) == calls  # the reading is kept: not asked again
+    # what the agent took for a mistake is printed so: a doubt about the original, kept though the call took no
+    # effect, recorded once however often it is tried
+    doubts = Workspace.open(ws).load().doubts
+    assert [(d.block, d.printed, d.suggested, d.refused) for d in doubts] == [(block.id, "3 件", "8 件", True)]
+
+
+def test_the_agent_records_a_doubt_about_the_original_and_the_summary_lists_it(ws, tmp_path):
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
+    evidence = _evidence(ws, context, block=block.id)
+    doubt = {"op": "doubt", "block": block.id, "printed": "3 件", "suggested": "8 件", "reason": "合计对不上",
+             "evidence": evidence}
+    out = _edit(ws, context, {**doubt, "printed": "9 件"}, {**doubt, "evidence": "e-none"}, doubt)
+    assert [o.rule for o in out] == ["find", "image_evidence", None] and out[2].target == "q-001"
+    state = Workspace.open(ws).load()
+    assert next(b for b in state.blocks if b.id == block.id).text == OCR_TEXT  # the draft stays as printed
+    seen = _call("read_draft", ws, {"view": "notes"}, context=context)[0].result.doubts
+    assert [(d.id, d.printed, d.by) for d in seen] == [("q-001", "3 件", "agent")]
+    _call("export", ws, {"out": str(tmp_path / "out"), "name": "d"}, context=context)
+    summary = json.loads((tmp_path / "out" / "d.json").read_text())
+    assert summary["doubts"] == [{"block": block.id, "page": 2, "printed": "3 件", "suggested": "8 件",
+                                  "reason": "合计对不上", "refused": False}]
 
 
 def test_a_correction_needs_evidence_and_a_native_number_changed_is_recorded(ws):

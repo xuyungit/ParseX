@@ -114,6 +114,17 @@ class Processing(IRModel):
     agent: AgentRecord | None = None
 
 
+class DoubtEntry(IRModel):
+    """A place where the original itself may be wrong (``ir.state.Doubt``): the Markdown has it as printed."""
+
+    block: str
+    page: int | None  # PDF page; None for DOCX
+    printed: str
+    suggested: str
+    reason: str
+    refused: bool  # from a correction the program refused because the page prints it so
+
+
 class DocumentSummary(IRModel):
     schema_version: Literal[1] = 1
     name: str
@@ -128,6 +139,7 @@ class DocumentSummary(IRModel):
     images: list[ImageEntry]
     processing: Processing
     review: Review
+    doubts: list[DoubtEntry] = []  # for a proofreading of the original (user 2026-10-01)
     warnings: list[str]
     files: dict[str, str]
 
@@ -145,6 +157,7 @@ def document_summary(state: DocumentState, name: str, image_dir: str = "images")
         processing=Processing(engines=_engines(state), requests=dict(sorted(state.stats.requests.items())),
                               cost_usd=state.stats.cost_usd, wall_time_s=state.stats.wall_time_s),
         review=_review(state),
+        doubts=_doubts(state),
         warnings=state.warnings,
         files={"markdown": f"{name}.md", "blocks": f"{name}.blocks.json", "images": f"{image_dir}/"},
     )
@@ -203,6 +216,17 @@ def _review(state: DocumentState) -> Review:
                   occluded=_occluded(state), agent_overrides=_overrides(state),
                   items=[OpenItem(target=i.target, kind=i.kind.value, detail=i.detail, quotes=[q.doc_text for q in i.quotes])
                          for i in items[:REVIEW_ITEMS_MAX]])
+
+
+def _doubts(state: DocumentState) -> list[DoubtEntry]:
+    blocks = {b.id: b for b in state.blocks}
+    out = []
+    for d in state.doubts:
+        block = blocks.get(d.block)
+        page = block_unit(state, block) if block is not None and state.format == "pdf" else None
+        out.append(DoubtEntry(block=d.block, page=page, printed=d.printed, suggested=d.suggested, reason=d.reason,
+                              refused=d.refused))
+    return out
 
 
 def _occluded(state: DocumentState) -> list[OccludedText]:

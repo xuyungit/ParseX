@@ -39,7 +39,7 @@ from parserx.content import scan
 from parserx.content.latex import characters, problems
 from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, renumber, signals
 from parserx.content.select import transcribed
-from parserx.content.select import _letters_changed, _unmapped, substitutes
+from parserx.content.select import PRINTED_AS_DRAFT, _letters_changed, _unmapped, substitutes
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
@@ -65,7 +65,7 @@ from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
-from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
+from parserx.ir.state import ClosedItem, DocumentState, Doubt, LedgerEntry, Note
 from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, normalize, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
@@ -92,7 +92,7 @@ DESCRIPTION = ("改初稿：初稿只能这样改。ops 是一组操作，按顺
                "结果 outcomes 里每条有 accepted，被拒绝的给出规则名 rule 与原因 detail，据此修正后再提交。"
                "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt、transcribe_passage）和 dismiss 必须引用证据 "
                "evidence——view_source 给出的编号，证据要看得到被改之处（这一块、它所在的页或区域、或跨页接缝）。"
-               "结构操作从不改文字。块号形如 b-p003-0012（第 3 页第 12 块）；表格的行、列从 0 起。"
+               "存疑（doubt）和记录（note）不改初稿。结构操作从不改文字。块号形如 b-p003-0012（第 3 页第 12 块）；表格的行、列从 0 起。"
                "结果的 issues_opened / issues_closed 是这次修改新开和关掉的待办。")
 
 
@@ -194,6 +194,19 @@ class Dismiss(IRModel):
     occluded: bool = Field(False, description="text_not_seen：文字确实在，只是被别的元素盖住（保留原文）")  # Q71
 
 
+class RecordDoubt(IRModel):
+    model_config = agent_doc("存疑：原件本身看来印错了（错字、漏字、编号或数值前后矛盾），正文照印的写、不改，"
+                             "在这里记下印的是什么、疑为什么、为什么这样认为，交付的报告单列，供校对原件。不改初稿。"
+                             "结果的 target 是记录的编号。")
+
+    op: Literal["doubt"]
+    block: str = Field(description=BLOCK)
+    printed: str = Field(description="原件印的写法：这一块里的片段（表格为某格里的片段）")
+    suggested: str = Field("", description="疑为什么（可省）")
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description="看过原件这一处的证据编号")
+
+
 class WriteNote(IRModel):
     model_config = agent_doc("记下对文档的理解：由哪几部分组成、某一部分的标题惯例、某处为什么这样判断，写明适用范围与证据。"
                              "记录不改初稿，只能修订（replaces 指向旧记录）、不能删除；上下文被清理后仍在（read_draft 的 "
@@ -207,8 +220,8 @@ class WriteNote(IRModel):
 
 
 EditOp = Annotated[
-    ReplaceText | SetCells | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join | Unjoin | Split | Exclude
-    | Include | MarkPending | Dismiss | WriteNote,
+    ReplaceText | SetCells | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join | Unjoin | Split
+    | Exclude | Include | MarkPending | Dismiss | RecordDoubt | WriteNote,
     Field(discriminator="op"),
 ]
 
@@ -248,8 +261,10 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     open_before = {u.id: u for u in unresolved_items(ctx.ws.load())}
     outcomes: list[OpOutcome] = []
     failures = second_reading.recheck(ctx, _substituting(ctx.ws.load(), req.ops))
+    refused: list[Doubt] = []  # doubts from refused corrections: kept even where the call takes no effect
     try:
         with ctx.ws.txn("tool:edit_draft:agent") as state:
+            known = len(state.doubts)
             issues = _Issues(state)
             batch: list[tuple[int, object]] = []  # consecutive structure changes: judged by the outline they produce
             for index, op in enumerate(req.ops):
@@ -262,8 +277,14 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
             outcomes += _structure(state, batch, issues)
             accepted = [o.accepted for o in outcomes]
             if not any(accepted) or (req.atomic and not all(accepted)):
+                refused = [d for d in state.doubts[known:] if d.refused]
                 raise _Rollback
     except _Rollback:
+        if refused:
+            with ctx.ws.txn("tool:edit_draft:doubts") as state:
+                for d in refused:
+                    _record_doubt(state, d.block, d.printed, d.suggested, reason=d.reason, evidence=d.evidence,
+                                  refused=True)
         if req.atomic:
             outcomes = [o.model_copy(update={"accepted": False, "rule": "atomic",
                                              "detail": "another operation of this call was refused"})
@@ -314,6 +335,8 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             detail = _unadopt(state, op)
         elif isinstance(op, Dismiss):
             target = _dismiss(state, op, issues)
+        elif isinstance(op, RecordDoubt):
+            target = _doubt(state, op)
         elif isinstance(op, WriteNote):
             target = _note(state, op)
     except _Refused as exc:
@@ -407,7 +430,20 @@ def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: 
     outcome = correct_gate(block, candidate, image=image, actor=ACTOR, seen=text_near(state, block))
     block.decisions[-1].evidence["evidence"] = op.evidence
     block.decisions[-1].reason += f"; {op.reason}"
+    if any(not g.passed and g.signal == PRINTED_AS_DRAFT for g in outcome.gate):
+        for printed, suggested in _spans(block, op):  # what the agent took for a mistake is printed so
+            _record_doubt(state, block.id, printed, suggested, reason=op.reason, evidence=[op.evidence],
+                          refused=True)
     return _gated(outcome.gate)
+
+
+def _spans(block: Block, op) -> list[tuple[str, str]]:
+    """What a correction writes in place of what: its find and replace, or each cell's content before and after."""
+    if isinstance(op, ReplaceText):
+        return [(op.find, op.replace)]
+    before = [block.cells.slot(e.row, e.col) if block.cells is not None else None for e in op.cells]
+    return [(b.content if b else "", e.content) for b, e in zip(before, op.cells)
+            if substitutes(b.content if b else "", e.content)]
 
 
 def _gated(gate) -> str:
@@ -769,6 +805,33 @@ def _missing_numbers(before: str, after: str) -> list[str]:
 
 
 # ── the understanding ───────────────────────────────────────────────────
+
+
+def _doubt(state: DocumentState, op: RecordDoubt) -> str:
+    """The agent's doubt about the original at a place it looked at; the draft stays."""
+    block = _block(state, op.block)
+    printed = op.printed.strip()
+    held = block.text if block.cells is None else "\n".join(c.content for c in block.cells.cells)
+    if not printed or printed not in (held or ""):
+        raise _Refused("find", f"'printed' must be a piece of {op.block} as the draft has it: {printed[:40]!r}")
+    image = image_evidence(state, block, op.evidence)
+    if not image.passed:
+        raise _Refused(image.name, image.detail)
+    return _record_doubt(state, block.id, printed, op.suggested.strip(), reason=op.reason.strip(),
+                         evidence=[op.evidence]).id
+
+
+def _record_doubt(state: DocumentState, block: str, printed: str, suggested: str, *, reason: str,
+                  evidence: list[str], refused: bool = False) -> Doubt:
+    """A place the original itself may be wrong (``Doubt``); one already raised there (same block, printed and
+    suggested) is kept, not repeated."""
+    for doubt in state.doubts:
+        if (doubt.block, doubt.printed, doubt.suggested) == (block, printed, suggested):
+            return doubt
+    doubt = Doubt(id=f"q-{len(state.doubts) + 1:03d}", block=block, printed=printed, suggested=suggested,
+                  reason=reason, by=ACTOR, evidence=evidence, refused=refused)
+    state.doubts.append(doubt)
+    return doubt
 
 
 def _note(state: DocumentState, op: WriteNote) -> str:
