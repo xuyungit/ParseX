@@ -308,6 +308,28 @@ def _workspace_internals(command: str, doc_dir: Path) -> str | None:
     return None
 
 
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+_PX = re.compile(r"(?:^|[\s'\"(;&|])\./px\b")
+
+
+def _without_px_requests(command: str) -> str:
+    """*command* without the here-documents it feeds to ``./px``: the product tool's request, data the tool parses
+    (an agent's reason may hold a word like "/including"), not paths the shell opens.  A here-document fed to anything
+    else (``python3 - <<EOF``) is a program and stays; the forbidden words are looked for in the whole command."""
+    lines = command.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        match = _HEREDOC.search(line)
+        if match is not None and _PX.search(line[:match.start()]):
+            while i < len(lines) and lines[i].strip().strip("'\"") != match.group(2):
+                i += 1
+    return "\n".join(out)
+
+
 def _audit_command(item_id: str, command: str, doc_dir: Path, home: Path,
                    forbidden: dict[str, Path]) -> AuditHit | None:
     evidence = command[:300]
@@ -315,7 +337,7 @@ def _audit_command(item_id: str, command: str, doc_dir: Path, home: Path,
     if words:
         return AuditHit(item=item_id, kind="forbidden", detail=f"names {', '.join(words)}", evidence=evidence)
     outside: list[str] = []
-    for path in _paths_in(command, doc_dir, home):
+    for path in _paths_in(_without_px_requests(command), doc_dir, home):
         problem = classify_path(path, doc_dir=doc_dir, home=home, forbidden=forbidden)
         if problem is not None and problem[0] == "forbidden":
             return AuditHit(item=item_id, kind="forbidden", detail=f"{problem[1]}: {path}", evidence=evidence)

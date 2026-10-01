@@ -69,6 +69,8 @@ def test_audit_accepts_work_inside_the_experiment_directory():
                 "print(im.size[0]/2, 'https://example.org/a/b')\nEOF\""),
         _cmd(4, "/bin/zsh -lc 'cd ws && ls renders && /usr/bin/env python3 -V'"),
         _cmd(6, "/bin/zsh -lc \"rg -n '<tr><td>(15|16)</td>' out/input.md; echo '<br/></th>'\""),
+        _cmd(7, "/bin/zsh -lc \"./px tool edit_draft --ws ws --ops - --json <<'EOF'\n[{\\\"op\\\":\\\"adopt\\\","
+                "\\\"reason\\\":\\\"code /including its comments\\\"}]\nEOF\""),  # the tool's request: data
         {"type": "item.completed", "item": {"id": "item_5", "type": "file_change", "status": "completed",
                                             "changes": [{"path": str(DOC / "notes.py"), "kind": "add"}]}},
     )
@@ -83,11 +85,13 @@ def test_audit_flags_answers_other_documents_and_codex_home():
         _cmd(4, f"/bin/zsh -lc 'sed -n 1,5p {EXP}/r1/_toolkit/px-run'"),
         _cmd(5, "/bin/zsh -lc 'find / -name expected.md'"),
         _cmd(6, f"/bin/zsh -lc 'ls {HOME}/Downloads'"),
+        _cmd(7, f"/bin/zsh -lc \"python3 - <<'EOF'\nprint(open('{HOME}/notes.txt').read())\nEOF\""),  # a program: scanned
+        _cmd(8, f"/bin/zsh -lc \"./px tool edit_draft --ws ws --ops - <<'EOF'\n[{{\\\"reason\\\": \\\"expected.md\\\"}}]\nEOF\""),
     )
     assert not result.ok
     by_item = {h.item: h.kind for h in result.hits}
     assert by_item == {"item_1": "forbidden", "item_2": "forbidden", "item_3": "forbidden", "item_4": "forbidden",
-                       "item_5": "forbidden", "item_6": "outside"}
+                       "item_5": "forbidden", "item_6": "outside", "item_7": "outside", "item_8": "forbidden"}
 
 
 def test_audit_flags_tools_other_than_the_shell_and_writes_to_the_workspace():
