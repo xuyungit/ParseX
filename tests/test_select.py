@@ -345,3 +345,117 @@ def test_a_correction_the_readings_agree_against_is_refused():
     assert "as_printed" not in b.decisions[-1].evidence
     b = block("扫描全能王 第一章 总则")  # text removed only: not a substitution, other checks have it
     assert correct(b, fix("第一章 总则"), image=looked, actor="agent", seen="扫描全能王 第一章 总则").adopted
+
+
+def test_readings_made_for_a_correction_without_the_draft_decide_it():
+    """The agent changes characters or a script's place: two readers read the place again, shown neither the draft
+    nor the change (``tools/edit.py``).  The change stands only where every such reading shows it — μL two recognition
+    engines both read as pL; J_K the agent "corrects" to J_k by the context; No moved into a subscript."""
+    from parserx.content.select import GateCheck, correct
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+
+    def block(text, engine, fresh, seen):
+        reads = [_obs(f"o-r{k}", "vlm", text=t, task=TaskKind.RECOGNIZE) for k, t in enumerate(fresh)]
+        for k, r in enumerate(reads):
+            r.label, r.engine_version = "recheck", f"second-reading:reader{k}"
+        b = Block(id="b-s", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text=text,
+                  observations=[_obs("o-s", engine, text=text, task=TaskKind.RECOGNIZE), *reads],
+                  chosen_observation="o-s")
+        return b, seen
+
+    def fix(text):
+        return _obs("o-a", "agent", text=text, task=TaskKind.CORRECT)
+
+    b, seen = block("加入 5 pL 菌液", "paddleocr", ["加入 5 μL 菌液", "加入5μL菌液"], "加入 5 pL 菌液")
+    assert correct(b, fix("加入 5 μL 菌液"), image=looked, actor="agent", seen=seen).adopted
+    b, seen = block("$(J_K^T J_k)$", "paddleocr", ["$(J_k^T J_k)$", "$(J_K^T J_k)$"], None)
+    assert not correct(b, fix("$(J_k^T J_k)$"), image=looked, actor="agent", seen=seen).adopted
+    b, seen = block("式中 No 为菌数", "paddleocr", ["式中 No 为菌数", "式中 $N_0$ 为菌数"], None)
+    out = correct(b, fix("式中 $N_o$ 为菌数"), image=looked, actor="agent", seen=seen)
+    assert not out.adopted and "'o' written as '_o'" in out.gate[-2].detail
+    b, seen = block("面积 12 m2", "native_pdf", ["面积 12 m²", "面积 12 $m^2$"], "面积 12 m2")  # a script added
+    assert correct(b, fix("面积 12 $m^{2}$"), image=looked, actor="agent", seen=seen).adopted
+
+
+def test_without_readings_of_the_image_alone_a_script_moved_is_no_substitution():
+    # a text layer and most recognition engines write no scripts: they neither show nor deny a character's place
+    from parserx.content.select import GateCheck, correct, substitutes
+
+    assert substitutes("No", "$N_o$") and substitutes("m2", "m²") and not substitutes("m2", "m2 ")
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+    b = Block(id="b-t", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text="面积 12 m2",
+              observations=[_obs("o-t", "native_pdf", text="面积 12 m2")], chosen_observation="o-t")
+    fix = _obs("o-a", "agent", text="面积 12 m²", task=TaskKind.CORRECT)
+    assert correct(b, fix, image=looked, actor="agent", seen="面积 12 m2").adopted
+
+
+def test_a_text_layer_mapping_every_glyph_outweighs_readers_and_an_image_missing_the_place_is_no_reading():
+    from parserx.content.select import GateCheck, correct
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+
+    def block(text, engine, fresh):
+        reads = [_obs(f"o-r{k}", "vlm", text=t, task=TaskKind.RECOGNIZE) for k, t in enumerate(fresh)]
+        for k, r in enumerate(reads):
+            r.label, r.engine_version = "recheck", f"second-reading:reader{k}"
+        task = TaskKind.EXTRACT if engine == "native_pdf" else TaskKind.RECOGNIZE
+        return Block(id="b-v", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text=text,
+                     observations=[_obs("o-s", engine, text=text, task=task), *reads], chosen_observation="o-s")
+
+    def fix(text):
+        return _obs("o-a", "agent", text=text, task=TaskKind.CORRECT)
+
+    # the original's typo, as its text layer prints it: the readers "correct" it by meaning as the agent did
+    b = block("实时数字李生、新材料", "native_pdf", ["实时数字孪生、新材料", "实时数字孪生、新材料"])
+    out = correct(b, fix("实时数字孪生、新材料"), image=looked, actor="agent", seen=None)
+    assert not out.adopted and "text layer" in out.gate[-2].detail
+    # a character's place is the readers' to tell: the text layer writes no scripts
+    b = block("面积 12 m2", "native_pdf", ["面积 12 m²", "面积 12 $m^2$"])
+    assert correct(b, fix("面积 12 m²"), image=looked, actor="agent", seen=None).adopted
+    # one reader reads the place a third way: not every reading shows the change, the draft stays
+    b = block("加入 5 pL 菌液", "paddleocr", ["加入 5 uL 菌液", "加入 5 μL 菌液"])
+    out = correct(b, fix("加入 5 μL 菌液"), image=looked, actor="agent", seen=None)
+    assert not out.adopted and "reader0 reads it otherwise" in out.gate[-2].detail
+    # none reads the place (an anchor that misses it): the block's other readings decide, as before
+    b = block("加入 5 pL 菌液", "paddleocr", ["(6)", "(6)"])
+    assert not correct(b, fix("加入 5 μL 菌液"), image=looked, actor="agent", seen="加入 5 pL 菌液").adopted
+    b = block("加入 5 pL 菌液", "paddleocr", ["(6)", "(6)"])
+    assert correct(b, fix("加入 5 μL 菌液"), image=looked, actor="agent", seen=None).adopted
+
+
+def test_an_accent_a_text_layer_holds_as_a_glyph_of_its_own_is_notation():
+    from parserx.content.select import _printed, substitutes
+
+    assert _printed("Mart´ın Abad, Benoˆıt, Fr´ed´eric") == _printed("Martín Abad, Benoît, Frédéric")
+    assert not substitutes("Mart´ın Abad", "Martín Abad") and substitutes("Abad, Benoıt", "Abad, Benoit")  # no accent
+
+
+def test_a_formula_block_is_mathematics_and_each_changed_place_is_judged_where_a_reading_reads_it():
+    from parserx.content.select import GateCheck, correct
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+
+    def block(text, kind, fresh):
+        reads = [_obs(f"o-r{k}", "vlm", text=t, task=TaskKind.RECOGNIZE) for k, t in enumerate(fresh)]
+        for k, r in enumerate(reads):
+            r.label, r.engine_version = "recheck", f"second-reading:reader{k}"
+        return Block(id="b-f", kind=kind, order=0, anchors=[_pdf(1)], text=text,
+                     observations=[_obs("o-s", "vlm", text=text, task=TaskKind.RECOGNIZE), *reads],
+                     chosen_observation="o-s")
+
+    def fix(text):
+        return _obs("o-a", "agent", text=text, task=TaskKind.CORRECT)
+
+    # a formula block's LaTeX has no delimiters: its scripts are scripts all the same
+    b = block(r"d_k^T(J_K^T J_k)d_k", BlockKind.FORMULA, [r"$$d_k^T(J_k^T J_k)d_k$$", r"$$d_k^T(J_K^T J_k)d_k$$"])
+    out = correct(b, fix(r"d_k^T(J_k^T J_k)d_k"), image=looked, actor="agent", seen=None)
+    assert not out.adopted and "reader1 reads the draft" in out.gate[-2].detail
+    # two places: one reader shows the draft at one of them
+    b = block("杀菌率(Pt)，No——为", BlockKind.TEXT, ["杀菌率$(P_t)$，$N_o$——为", "杀菌率$(Pt)$，$N_o$——为"])
+    out = correct(b, fix("杀菌率($P_t$)，$N_o$——为"), image=looked, actor="agent", seen=None)
+    assert not out.adopted and "reader1 reads the draft" in out.gate[-2].detail
+    # read a third way at the place (N_0 for the agent's N_o): not shown, the draft stays
+    b = block("式中：No——为", BlockKind.TEXT, ["式中：$N_0$——为", "式中：$N_0$——为"])
+    out = correct(b, fix("式中：$N_o$——为"), image=looked, actor="agent", seen=None)
+    assert not out.adopted and "reads it otherwise" in out.gate[-2].detail

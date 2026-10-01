@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _LETTERS = {name: chr(code) for name, code in (
     ("alpha", 0x3B1), ("beta", 0x3B2), ("gamma", 0x3B3), ("delta", 0x3B4), ("epsilon", 0x3B5), ("varepsilon", 0x3B5),
@@ -38,3 +39,77 @@ def _character(match: re.Match) -> str:
     if name is None:  # a line break
         return " "
     return f" {name} " if name in _OPERATORS else _LETTERS.get(name, "")
+
+
+# Mathematics opens and closes on these (``$`` and ``$$`` toggle); ``\$`` is a dollar sign.
+_DELIMITERS = {"\\(": True, "\\[": True, "\\)": False, "\\]": False}
+_TAG = re.compile(r"<(/?)(\w*)[^>]*>")
+_DELIMITED = re.compile(r"(?<!\\)\$|\\[(\[]")
+
+
+def placed(text: str, math: bool = False) -> list[tuple[str, str]]:
+    """The characters of *text* (LaTeX commands as theirs, ``characters``; HTML tags none), each with the script it
+    is written in — "sub", "sup" or "" — by ``_`` and ``^`` in mathematics, a Unicode script form (² as 2) or an
+    HTML ``<sub>``/``<sup>``; in a script inside a script, the inner one.  What a correction moving a character into or
+    out of a script changes (``N_o`` is not ``No``).  *math*: the text is mathematics (a formula block's LaTeX) —
+    unless it has delimiters of its own, which say where."""
+    out: list[tuple[str, str]] = []
+    _scan(_ENVIRONMENT.sub(" ", text), "", math and not _DELIMITED.search(text), out)
+    return out
+
+
+def _scan(text: str, kind: str, math: bool, out: list[tuple[str, str]]) -> None:
+    tags: list[str] = []
+    i = 0
+    while i < len(text):
+        ch, pair = text[i], text[i:i + 2]
+        if pair in _DELIMITERS or pair == "$$" or ch == "$":
+            math = _DELIMITERS.get(pair, not math)
+            i += 1 if ch == "$" and pair != "$$" else 2
+            continue
+        if ch == "\\":
+            command = _COMMAND.match(text, i)
+            if command:
+                out += [(c, kind) for c in _character(command)]
+            i = command.end() if command else i + 2  # \{, \$: a sign, no letter
+            continue
+        tag = _TAG.match(text, i) if ch == "<" else None
+        if tag:
+            if tag.group(2).lower() in ("sub", "sup"):
+                if not tag.group(1):
+                    tags.append(tag.group(2).lower())
+                elif tags:
+                    tags.pop()
+            i = tag.end()
+            continue
+        if math and ch in "_^":
+            argument, i = _argument(text, i + 1)
+            _scan(argument, "sub" if ch == "_" else "sup", True, out)
+            continue
+        own = unicodedata.decomposition(ch)
+        if own.startswith(("<super>", "<sub>")):
+            out += [(c, "sup" if own.startswith("<super>") else "sub") for c in unicodedata.normalize("NFKC", ch)]
+        else:
+            out.append((ch, tags[-1] if tags else kind))
+        i += 1
+
+
+def _argument(text: str, i: int) -> tuple[str, int]:
+    """A script's argument starting at *i* — a braced group, a command or one character — and where it ends."""
+    while i < len(text) and text[i] == " ":
+        i += 1
+    if i >= len(text):
+        return "", i
+    if text[i] == "{":
+        depth, j = 0, i
+        while j < len(text):
+            if text[j] == "\\":
+                j += 2
+                continue
+            depth += {"{": 1, "}": -1}.get(text[j], 0)
+            if depth == 0:
+                return text[i + 1:j], j + 1
+            j += 1
+        return text[i + 1:], len(text)
+    command = _COMMAND.match(text, i) if text[i] == "\\" else None
+    return (command.group(0), command.end()) if command else (text[i], i + 1)

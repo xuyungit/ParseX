@@ -10,6 +10,7 @@ from parserx.layout.detector import Region
 from parserx.tools import call_tool, workspace_init
 from parserx.reading.compare import normalize
 from parserx.content.latex import characters as _symbols
+from parserx.content.latex import placed
 from parserx.tools.views import unresolved_items
 from parserx.workspace import Workspace
 from tests.test_tools_contract import _config, _context
@@ -27,6 +28,20 @@ def test_command_names_are_not_characters_of_the_text():
 
 def test_a_line_break_is_no_character_and_the_letter_after_it_is_one():
     assert normalize(_symbols(r"\begin{aligned}f_{ij}&=1\\f_{ij}&=0\end{aligned}")) == "fij1fij0"
+
+
+def test_characters_are_read_with_the_script_they_are_written_in():
+    def seen(text):
+        return [(c, k) for c, k in placed(text) if c.isalnum()]
+
+    assert seen(r"式中 $N_o$ 与 No") == [("式", ""), ("中", ""), ("N", ""), ("o", "sub"), ("与", ""), ("N", ""), ("o", "")]
+    # LaTeX, a Unicode script form and HTML write the same thing; in a script inside a script, the inner one
+    assert seen(r"$m^{2}$") == seen("m²") == seen("m<sup>2</sup>") == [("m", ""), ("2", "sup")]
+    assert seen(r"$e^{x_1}$ \(J_K^T\)") == [("e", ""), ("x", "sup"), ("1", "sub"), ("J", ""), ("K", "sub"), ("T", "sup")]
+    # outside mathematics an underscore is no script; commands are their letters, markup none
+    assert seen(r"file_1 $\mathrm{CDCl_{3}}$ $\mu$L") == [
+        ("f", ""), ("i", ""), ("l", ""), ("e", ""), ("1", ""), ("C", ""), ("D", ""), ("C", ""), ("l", ""),
+        ("3", "sub"), ("μ", ""), ("L", "")]
 
 
 def test_operator_names_print_their_letters():

@@ -15,6 +15,7 @@ models "correct" what is printed alike (No read as N₀ by every model tried).  
 
 from __future__ import annotations
 
+import hashlib
 import io
 import unicodedata
 from collections import Counter
@@ -23,6 +24,7 @@ from functools import reduce
 import pymupdf
 
 from parserx.content.latex import characters
+from parserx.content.select import UNPROMPTED
 from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.block import Block
@@ -40,6 +42,7 @@ from parserx.workspace.queries import HIDDEN, block_map, ordered, scanned_pages
 
 ACTOR = "program:tools.second_reading"
 LABEL = "second_reading"  # the observation holding a reader's reading
+RECHECK = "recheck"  # one made for the agent's correction of the block's characters (``recheck``)
 VERSION = "second-reading"  # its engine version: "second-reading:<reader>"
 DPI = 200
 MAX_TOKENS = 32768  # the answer's budget, reasoning included (DeepSeek at medium thought 8 192 away on a long block)
@@ -117,23 +120,57 @@ def read_again(ctx: ToolContext) -> tuple[dict[str, int], list[Failure]]:
     todo = candidates(state)
     if not todo:
         return {}, []
-    pages = {p.n: p for p in state.pages}
-    holder = {r.dst: r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
-    blocks, assets = block_map(state), {a.id: a for a in state.assets}
-    crops = []
-    with pymupdf.open(ctx.ws.source_path) as doc:
-        for block in todo:
-            anchor = _page_anchor(block)
-            if anchor is not None:  # a block of a scanned page: its place on the page
-                clip = pymupdf.Rect(shown(pages.get(anchor.page), anchor.bbox)) + (-4, -4, 4, 4)
-                png = doc[anchor.page - 1].get_pixmap(dpi=DPI, clip=clip).tobytes("png")
-            else:  # read inside an image: its place in that image
-                png = _crop(ctx, block, blocks.get(holder.get(block.id, "")), assets)
-            if png is None:
-                continue
-            path = ctx.ws.root / "renders" / f"second-{block.id}.png"
-            write_once(path, png)
-            crops.append((block.id, path))
+    read, missing, failures = _ask(ctx, state, todo)
+    counts: Counter[str] = Counter({f"reader {name} missing": 1 for name in missing})
+    with ctx.ws.txn("tool:process:second_reading") as state:
+        blocks = block_map(state)
+        for block_id, by_reader in read.items():
+            block = blocks[block_id]
+            _record(block, by_reader, LABEL)
+            found = differing(block.text or "", list(by_reader.values()))
+            block.decisions.append(Decision(
+                stage=DecisionStage.CONTENT_SOURCE, choice=LABEL, actor=ACTOR,
+                evidence={"readers": ",".join(sorted(by_reader)), "listed": found is not None,
+                          "lacks": sum(found[0].values()) if found else 0,
+                          "adds": sum(found[1].values()) if found else 0},
+                reason=(f"read again on its image by {', '.join(sorted(by_reader))}: "
+                        + ("the readings differ from the scan engine's on the same characters: listed for a look at "
+                           "the image; the scan engine's reading stays" if found else
+                           "no reading differs from the scan engine's, or they differ from it on nothing alike"))))
+            counts["listed" if found else "agree"] += 1
+    return dict(counts), failures
+
+
+def recheck(ctx: ToolContext, block_ids: list[str]) -> list[Failure]:
+    """Read blocks again on their images alone, as the second reading does — every reader at once, shown neither the
+    draft nor the correction — for the agent's correction of their characters, which stands only where every reading
+    shows it (``content/select.as_printed``).  The readings join the blocks' observations (``RECHECK``), kept whatever
+    becomes of the correction; a block read so before is not read again.  No image to cut (a Word document's own
+    text) or no reader: none, and the correction is judged by the block's other readings.  Failures."""
+    blocks = block_map(ctx.ws.load())
+    todo = [blocks[i] for i in block_ids
+            if i in blocks and not any(o.label in UNPROMPTED for o in blocks[i].observations)]
+    if not todo:
+        return []
+    try:
+        read, _, failures = _ask(ctx, ctx.ws.load(), todo)
+    except ToolFailure as exc:  # no service model configured
+        return [exc.failure]
+    if read:
+        with ctx.ws.txn("tool:edit_draft:recheck") as state:
+            blocks = block_map(state)
+            for block_id, by_reader in read.items():
+                _record(blocks[block_id], by_reader, RECHECK)
+    return failures
+
+
+def _ask(ctx: ToolContext, state: DocumentState, blocks: list[Block]
+         ) -> tuple[dict[str, dict[str, str]], list[str], list[Failure]]:
+    """Each block's image read by every reader at once: ({block: {reader: reading}}, readers missing, failures).  A
+    reader that wrote nothing has not read the block: the others' readings decide alone."""
+    crops = _images(ctx, state, blocks)
+    if not crops:
+        return {}, [], []
     asked, missing = readers(ctx)
     tasks = [(block_id, path, name, service) for block_id, path in crops for name, service in asked]
     outcomes = run_ordered(tasks, lambda t: t[3].call(
@@ -147,31 +184,45 @@ def read_again(ctx: ToolContext) -> tuple[dict[str, int], list[Failure]]:
             failures.append(service_failure(outcome.exception, [block_id]))
         elif str(outcome.value or "").strip():
             read.setdefault(block_id, {})[name] = str(outcome.value).strip()
-        else:  # a reader that wrote nothing has not read the block: the others' readings decide alone
+        else:
             failures.append(Failure(code=FailureCode.SERVICE_ERROR, retryable=False, targets=[block_id],
                                     message=f"{name}: an empty answer to the second reading"))
-    counts: Counter[str] = Counter({f"reader {name} missing": 1 for name in missing})
-    with ctx.ws.txn("tool:process:second_reading") as state:
-        blocks = block_map(state)
-        for block_id, by_reader in read.items():
-            block = blocks[block_id]
-            for name, text in by_reader.items():
-                block.observations.append(Observation(
-                    id=ids.observation_id(block_id, "vlm", 1 + sum(o.engine == "vlm" for o in block.observations)),
-                    engine="vlm", engine_version=f"{VERSION}:{name}", task=TaskKind.RECOGNIZE,
-                    anchor=block.anchors[0], label=LABEL, text=text, status=ObservationStatus.OK))
-            found = differing(block.text or "", list(by_reader.values()))
-            block.decisions.append(Decision(
-                stage=DecisionStage.CONTENT_SOURCE, choice=LABEL, actor=ACTOR,
-                evidence={"readers": ",".join(sorted(by_reader)), "listed": found is not None,
-                          "lacks": sum(found[0].values()) if found else 0,
-                          "adds": sum(found[1].values()) if found else 0},
-                reason=(f"read again on its image by {', '.join(sorted(by_reader))}: "
-                        + ("the readings differ from the scan engine's on the same characters: listed for a look at "
-                           "the image; the scan engine's reading stays" if found else
-                           "no reading differs from the scan engine's, or they differ from it on nothing alike"))))
-            counts["listed" if found else "agree"] += 1
-    return dict(counts), failures
+    return read, missing, failures
+
+
+def _images(ctx: ToolContext, state: DocumentState, blocks: list[Block]) -> list[tuple[str, object]]:
+    """Each block's image, (block id, path): its place on its page, or in the image it was read in; blocks without
+    one (a Word document's own text) left out."""
+    pages = {p.n: p for p in state.pages}
+    holder = {r.dst: r.src for r in state.relations if r.kind == RelationKind.CONTAINS}
+    by_id, assets = block_map(state), {a.id: a for a in state.assets}
+    crops, doc = [], None
+    try:
+        for block in blocks:
+            anchor = _page_anchor(block)
+            if anchor is not None and state.format == "pdf":  # its place on the page
+                doc = doc or pymupdf.open(ctx.ws.source_path)
+                clip = pymupdf.Rect(shown(pages.get(anchor.page), anchor.bbox)) + (-4, -4, 4, 4)
+                png = doc[anchor.page - 1].get_pixmap(dpi=DPI, clip=clip).tobytes("png")
+            else:  # read inside an image: its place in that image
+                png = _crop(ctx, block, by_id.get(holder.get(block.id, "")), assets)
+            if png is None:
+                continue
+            path = ctx.ws.root / "renders" / f"second-{block.id}-{hashlib.sha256(png).hexdigest()[:8]}.png"
+            write_once(path, png)
+            crops.append((block.id, path))
+    finally:
+        if doc is not None:
+            doc.close()
+    return crops
+
+
+def _record(block: Block, by_reader: dict[str, str], label: str) -> None:
+    for name, text in by_reader.items():
+        block.observations.append(Observation(
+            id=ids.observation_id(block.id, "vlm", 1 + sum(o.engine == "vlm" for o in block.observations)),
+            engine="vlm", engine_version=f"{VERSION}:{name}", task=TaskKind.RECOGNIZE, anchor=block.anchors[0],
+            label=label, text=text, status=ObservationStatus.OK))
 
 
 def differing(text: str, readings: list[str]) -> tuple[Counter, Counter] | None:

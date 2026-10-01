@@ -18,7 +18,10 @@ acceptance gate, structure stays legal (no skipped level, one level per numberin
 pipeline never overrides the agent.  Where the agent goes against a program's comparison — a native text layer's
 number changed, a region reading that drops characters or numbers, text the local reading does not show — the
 change stands on the image's evidence and the comparison is a signal, recorded and listed in the summary
-(execution plan §3.4).
+(execution plan §3.4).  A correction that writes other characters in place of some — letters, digits, or one moved
+into or out of a script — is no signal but a question for the page: before the operations apply, the configured
+readers read each such block again on its image alone, all at once, and the correction stands only where every
+reading shows it (``tools/second_reading.recheck``, ``content/select.as_printed``).
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from pydantic import Field, model_validator
 
 from parserx.content import scan
 from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, signals, transcribed
-from parserx.content.select import _letters_changed, _unmapped
+from parserx.content.select import _letters_changed, _unmapped, substitutes
 from parserx.content.select import correct as correct_gate
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
@@ -64,6 +67,7 @@ from parserx.ir.state import ClosedItem, DocumentState, LedgerEntry, Note
 from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
+from parserx.tools import second_reading
 from parserx.tools.describe_figure import Described
 from parserx.tools.describe_figure import apply as apply_description
 from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
@@ -225,6 +229,7 @@ class _Rollback(Exception):
 def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     open_before = {u.id: u for u in unresolved_items(ctx.ws.load())}
     outcomes: list[OpOutcome] = []
+    failures = second_reading.recheck(ctx, _substituting(ctx.ws.load(), req.ops))
     try:
         with ctx.ws.txn("tool:edit_draft:agent") as state:
             issues = _Issues(state)
@@ -245,11 +250,33 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
             outcomes = [o.model_copy(update={"accepted": False, "rule": "atomic",
                                              "detail": "another operation of this call was refused"})
                         if o.accepted else o for o in outcomes]
-        return output(EditDraftResult(outcomes=outcomes, issues_opened=[], issues_closed=[]))
+        return output(EditDraftResult(outcomes=outcomes, issues_opened=[], issues_closed=[]), failures=failures)
     open_after = {u.id: u for u in unresolved_items(ctx.ws.load())}
     return output(EditDraftResult(outcomes=outcomes,
                                   issues_opened=[u for k, u in open_after.items() if k not in open_before],
-                                  issues_closed=[k for k in open_before if k not in open_after]))
+                                  issues_closed=[k for k in open_before if k not in open_after]), failures=failures)
+
+
+def _substituting(state: DocumentState, ops) -> list[str]:
+    """The blocks a ``replace_text`` or ``set_cells`` of *ops* writes other characters in place of some in
+    (``substitutes``), as the block stands before the call."""
+    blocks = {b.id: b for b in state.blocks}
+    out: list[str] = []
+    for op in ops:
+        block = blocks.get(getattr(op, "block", None) or "")
+        if block is None or block.id in out:
+            continue
+        if isinstance(op, ReplaceText) and op.find and op.find in (block.text or ""):
+            changed = substitutes(block.text, block.text.replace(op.find, op.replace),
+                                  math=block.kind == BlockKind.FORMULA)
+        elif isinstance(op, SetCells) and block.cells is not None:
+            slots = [block.cells.slot(e.row, e.col) for e in op.cells]
+            changed = any(substitutes(s.content if s else "", e.content) for s, e in zip(slots, op.cells))
+        else:
+            continue
+        if changed:
+            out.append(block.id)
+    return out
 
 
 def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Issues") -> OpOutcome:

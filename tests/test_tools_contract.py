@@ -65,6 +65,7 @@ class FakeVLM:
         self.schemas = []
         self.figure_type = "photo"  # what a description says the image is (IO6: content is transcribed)
         self.caption = VLM_TEXT
+        self.reading = ""  # what it reads on an image alone (tools/second_reading.py): nothing unless told
 
     def describe_image(self, image_path, prompt, *, context="", temperature=0.1, max_tokens=8192,
                        structured_output_mode="off", json_schema=None, json_schema_name="x"):
@@ -73,6 +74,8 @@ class FakeVLM:
         image_path.read_bytes()  # like the real service: the image file is read (a str path would fail here)
         if self.usage_hook:
             self.usage_hook("gpt-6-luna", 1000, 0, 100)
+        if json_schema_name == "parserx_second_reading":
+            return self.reading
         if json_schema_name == "parserx_ask_image":
             return "SENTINEL-VLM 图上写的是：扫描文字 8 件"
         if json_schema_name == "parserx_review_table":
@@ -562,15 +565,37 @@ def test_the_agent_corrects_ocr_text_it_has_seen(ws):
     _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
     block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
     evidence = _evidence(ws, context, block=block.id)
+    context.fake_vlm.reading = OCR_TEXT.replace("3 件", "8 件")  # the block's image read alone shows the 8
     env, code = _call("edit_draft", ws, {"ops": [{"op": "replace_text", "block": block.id, "find": "3 件",
                                                   "replace": "8 件", "reason": "图上是 8 件", "evidence": evidence}]},
                       context=context)
     data = _assert_contract(env, "edit_draft")
-    assert code == 0 and data["result"]["outcomes"][0]["accepted"] and data["cost"]["requests"] == {}
+    assert code == 0 and data["result"]["outcomes"][0]["accepted"] and data["cost"]["requests"] == {"vlm": 1}
     after = next(b for b in Workspace.open(ws).load().blocks if b.id == block.id)
     assert after.text == OCR_TEXT.replace("3 件", "8 件") and after.chosen_observation.endswith("agent-1")
-    assert after.decisions[-1].actor == "agent" and len(after.observations) == 2  # the OCR reading stays
+    assert after.decisions[-1].actor == "agent"
+    assert [o.label for o in after.observations] == ["text", "recheck", None]  # the OCR reading, the re-read
     assert verify_workspace(ws).ok
+
+
+def test_a_changed_character_the_image_read_alone_does_not_show_is_refused(ws):
+    # the agent writes 8 where the engine read 3; read again on the block's image alone, without the draft or the
+    # agent's claim, the page shows 3: the draft stays, and the reason names the reader
+    context = _context()
+    _call("recognize", ws, {"pages": [2], "engine": "paddleocr"}, context=context)
+    block = next(b for b in Workspace.open(ws).load().blocks if b.text == OCR_TEXT)
+    evidence = _evidence(ws, context, block=block.id)
+    context.fake_vlm.reading = OCR_TEXT
+    env, _ = _call("edit_draft", ws, {"ops": [{"op": "replace_text", "block": block.id, "find": "3 件",
+                                               "replace": "8 件", "reason": "图上是 8 件", "evidence": evidence}]},
+                   context=context)
+    outcome = _assert_contract(env, "edit_draft")["result"]["outcomes"][0]
+    assert not outcome["accepted"] and outcome["rule"] == "as_printed" and "'3' written as '8'" in outcome["detail"]
+    assert next(b for b in Workspace.open(ws).load().blocks if b.id == block.id).text == OCR_TEXT
+    calls = len(context.fake_vlm.calls)
+    _call("edit_draft", ws, {"ops": [{"op": "replace_text", "block": block.id, "find": "3 件", "replace": "8 件",
+                                      "reason": "再试", "evidence": evidence}]}, context=context)
+    assert len(context.fake_vlm.calls) == calls  # the reading is kept: not asked again
 
 
 def test_a_correction_needs_evidence_and_a_native_number_changed_is_recorded(ws):

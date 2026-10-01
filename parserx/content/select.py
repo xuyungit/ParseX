@@ -25,6 +25,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Literal
 
 from rapidfuzz import fuzz
@@ -33,7 +34,7 @@ from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
 from parserx.ir.block import Block
-from parserx.content.latex import characters
+from parserx.content.latex import placed
 from parserx.content.text import normalize_fullwidth_ascii
 from parserx.reading.compare import NEAR, normalize, pairs_share
 from parserx.ir.decision import Decision
@@ -326,19 +327,38 @@ AGREEING = 2  # independent readings that, agreeing on what the page prints, out
 # Readers that read by meaning, as the agent does — the service model, given the draft's reading of the place as it
 # reads it — are no evidence of what the page prints against the agent: the text layer and the recognition engines are.
 _BY_MEANING = frozenset({"agent", "vlm"})
-_TAG = re.compile(r"<[^>]+>")
+# Readings of a block's image alone, by readers shown neither the draft nor a correction (tools/second_reading.py):
+# the second reading of scanned mathematics, and the readings the edit tool asks for a correction of characters.
+UNPROMPTED = frozenset({"second_reading", "recheck"})
+_SCRIPT = {"sub": "_", "sup": "^", "": ""}
+
+
+def substitutes(before: str, after: str, math: bool = False) -> bool:
+    """Whether *after* writes other characters in place of some of *before* — letters or digits, or one moved into or
+    out of a script — not only adds or removes some (characters compared as printed, ``_placed``; *math*: a formula
+    block's LaTeX)."""
+    old, new = Counter(_placed(before, math)), Counter(_placed(after, math))
+    return bool(old - new) and bool(new - old)
 
 
 def as_printed(block: Block, before: str, after: str, seen: str | None) -> GateCheck | None:
-    """A correction that writes other characters in place of some (a substitution, not text added or removed only)
-    where independent readings of the place — the block's own readings by the text layer and recognition engines,
-    and the local reading of its place (*seen*) — agree with the draft, and none shows the correction: the page
-    prints what they read,
-    and a mistake of the original is kept as printed (round-1 review: ``No`` corrected to ``N_0`` by meaning).
-    Refused when at least ``AGREEING`` readings agree and none shows the change; recorded otherwise.  Characters are
-    compared as printed: case kept (``J_K`` is not ``J_k``), notation folded (NFKC, accents, LaTeX and HTML
-    markup).  A reading shows a side when it holds that side's changed characters as often as that side does and the
+    """A correction that writes other characters in place of some (``substitutes``) is held against what the page
+    prints.  Where the block has readings of its image alone (``UNPROMPTED``: the readers saw neither the draft nor
+    the correction), they decide (``_read_alone``): it stands where some shows it at its place and none shows the
+    draft, and a text layer mapping every glyph does not print the draft's characters.  Where none of them reads
+    the place, or there are none, the independent readings of the place are the block's own readings by the text
+    layer and recognition engines and the local reading of its place (*seen*): where at least ``AGREEING`` of them
+    agree with the draft and none shows the correction, the page prints what they read, and a mistake of the
+    original is kept as printed (round-1 review: ``No`` corrected to ``N_0`` by meaning) — refused; recorded
+    otherwise.  These readings are compared by
+    their letters and digits (``_printed``), scripts not told apart (a text layer and most recognition engines write
+    none).  A reading shows a side when it holds that side's changed characters as often as that side does and the
     other side's not: a reading of part of the place (a formula's local reading) shows neither."""
+    alone = {o.engine_version: o.text for o in block.observations if o.label in UNPROMPTED and o.text}
+    if alone:
+        check = _read_alone(block, alone, before, after)
+        if check is not None:
+            return check
     old, new = Counter(_printed(before)), Counter(_printed(after))
     lost, added = old - new, new - old
     if not lost or not added:
@@ -368,12 +388,113 @@ def as_printed(block: Block, before: str, after: str, seen: str | None) -> GateC
         f"{', '.join(draft) or 'none'}"))
 
 
+def _read_alone(block: Block, readings: dict[str, str], before: str, after: str) -> GateCheck | None:
+    """A substitution judged by readings of the block's image alone (*readings*, by reader), or None where none of
+    them reads any place it changes (an image that misses them).  It stands where every reading shows it at every
+    changed place the reading reads (``_sides``) — models "correct" what is printed by meaning as the agent does, but
+    none of these was told what to see; a reading showing the draft at a place, or the place read a third way, keeps
+    the draft.  A text layer that maps every glyph is what the page prints, whatever the readers make of it: where it
+    shows the draft's characters, the draft stays (it writes no scripts, so a character's place is the readers' to
+    tell)."""
+    math = block.kind == BlockKind.FORMULA
+    old, new = _placed(before, math), _placed(after, math)
+    lost, added = Counter(old) - Counter(new), Counter(new) - Counter(old)
+    if not lost or not added:
+        return None
+    what = f"'{' '.join(sorted(lost.elements()))[:40]}' written as '{' '.join(sorted(added.elements()))[:40]}'"
+    layer = next((_run(o.cells, False) if o.cells is not None else o.text or "" for o in block.observations
+                  if o.engine in NATIVE_ENGINES and o.task == TaskKind.EXTRACT), None)
+    if layer is not None and not _unmapped(layer):
+        flat_old, flat_new, flat_layer = ([t[-1] for t in tokens] for tokens in (old, new, _placed(layer)))
+        if (Counter(flat_old) - Counter(flat_new) and Counter(flat_new) - Counter(flat_old)
+                and _shows(flat_new, flat_old, flat_layer) and not _shows(flat_old, flat_new, flat_layer)):
+            return GateCheck(name="as_printed", passed=False, detail=(
+                f"{what}: the text layer, which maps every glyph of this place, prints the draft's characters — the "
+                "page prints them so; write it as printed, even where it looks like a mistake of the original, and "
+                "name a suspected mistake in the final report"))
+    places = [op[1:] for op in SequenceMatcher(None, old, new, autojunk=False).get_opcodes() if op[0] != "equal"]
+    verdicts = {}
+    for reader, text in sorted(readings.items()):
+        read = [side for side in _sides(old, new, places, _placed(text, math)) if side is not None]
+        if read:
+            verdicts[reader.split(":", 1)[-1]] = ("change" if all(side == "change" for side in read) else
+                                                  "draft" if "draft" in read else "otherwise")
+    if not verdicts:
+        return None
+    otherwise = {name: v for name, v in verdicts.items() if v != "change"}
+    if otherwise:
+        return GateCheck(name="as_printed", passed=False, detail=(
+            f"{what}: read again on the image alone, without the draft, "
+            + "; ".join(f"{name} reads {'the draft' if v == 'draft' else 'it otherwise'}"
+                        for name, v in otherwise.items())
+            + " at this place — the draft stays; write what is printed, even where it looks like a mistake of the "
+              "original, and name a suspected mistake in the final report"))
+    return GateCheck(name="as_printed", passed=True, detail=(
+        f"{what}: every reading of the image alone shows it ({', '.join(verdicts)})"))
+
+
+def _sides(draft: list[str], change: list[str], places: list[tuple[int, int, int, int]],
+           reading: list[str]) -> list[str | None]:
+    """What *reading* shows at each changed place (draft[i1:i2] written as change[j1:j2]): "change", "draft",
+    "otherwise" (read a third way), or None where it does not read the place — neither side's characters nor the
+    characters beside the place line up with it (an image that misses it, a reading of part of the block)."""
+    on_change, on_draft = _aligned(change, reading), _aligned(draft, reading)
+    out: list[str | None] = []
+    for i1, i2, j1, j2 in places:
+        writes = all(j in on_change for j in range(j1, j2))
+        keeps = all(i in on_draft for i in range(i1, i2))
+        near = bool({j1 - 1, j2} & on_change or {i1 - 1, i2} & on_draft)
+        has_change = writes and (j2 > j1 or (near and not (i2 > i1 and keeps)))
+        has_draft = keeps and (i2 > i1 or (near and not (j2 > j1 and writes)))
+        out.append("change" if has_change and not has_draft else "draft" if has_draft and not has_change else
+                   "otherwise" if near or has_change or has_draft else None)
+    return out
+
+
+def _aligned(text: list[str], reading: list[str]) -> set[int]:
+    """The positions of *text* that line up with the same character of *reading*."""
+    return {a + k for a, _, n in SequenceMatcher(None, text, reading, autojunk=False).get_matching_blocks()
+            for k in range(n)}
+
+
+def _shows(draft: list[str], change: list[str], reading: list[str]) -> bool:
+    """Whether *reading* holds a correction at its place: every character the correction writes (*change* aligned
+    with *draft*) is aligned with the same character of the reading (a reading's slip elsewhere in the block, or a
+    reading of part of it, is no matter)."""
+    written = {j for tag, _, _, j1, j2 in SequenceMatcher(None, draft, change, autojunk=False).get_opcodes()
+               if tag in ("replace", "insert") for j in range(j1, j2)}
+    held = {a + k for a, _, n in SequenceMatcher(None, change, reading, autojunk=False).get_matching_blocks()
+            for k in range(n)}
+    return written <= held
+
+
+def _placed(text: str, math: bool = False) -> list[str]:
+    """The letters and digits of *text* as printed, each with its script (``N`` ``_o``): one notation (NFKC, full
+    width, accents dropped — a text layer may hold an accent as a glyph of its own, ``Fr´ed´eric``, ``Mart´ın``:
+    ``_ACCENT`` — LaTeX commands as their characters, HTML tags dropped), case kept (``J_K`` is not ``J_k``)."""
+    out = []
+    text = _UNDER_ACCENT.sub(lambda m: _DOTTED[m.group(0)], normalize_fullwidth_ascii(text or ""))
+    for ch, kind in placed(text, math):
+        for c in unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", ch)):
+            if c.isalnum() and not _modifier(c):
+                out.append(_SCRIPT[kind] + c)
+    return out
+
+
+# An accent a text layer holds as a glyph of its own: a spacing modifier (ˆ is a "letter" to Unicode) or a spacing
+# accent (´ ¨ ` ¯ ¸); TeX sets an accented i or j on the dotless ı or ȷ beside it (Mart´ın is Martín).
+_ACCENT = "\u00b4\u0060\u00a8\u00af\u00b8\u02b0-\u02ff\u0300-\u036f"
+_UNDER_ACCENT = re.compile(f"(?<=[{_ACCENT}])[ıȷ]|[ıȷ](?=[{_ACCENT}])")
+_DOTTED = {"ı": "i", "ȷ": "j"}
+
+
+def _modifier(ch: str) -> bool:
+    return 0x02B0 <= ord(ch) <= 0x02FF
+
+
 def _printed(text: str) -> str:
-    """The letters and digits of *text* as printed: one notation (NFKC, full width, accents dropped — a text layer
-    may hold an accent as a glyph of its own, ``Fr´ed´eric`` — LaTeX commands as their characters, HTML tags
-    dropped), case kept."""
-    text = characters(_TAG.sub("", unicodedata.normalize("NFKC", normalize_fullwidth_ascii(text or ""))))
-    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if ch.isalnum())
+    """The letters and digits of *text* as printed (``_placed``), scripts not told apart."""
+    return "".join(t[-1] for t in _placed(text))
 
 
 def _letters_changed(before: str, after: str) -> tuple[str, str] | None:
