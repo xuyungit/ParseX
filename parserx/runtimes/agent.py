@@ -73,7 +73,7 @@ class CodexAgent:
     engine, adapter = "codex", "cli"
 
     def __init__(self, model: str, effort: str, *, env: dict[str, str], price=None, forbidden: dict[str, Path] | None = None,
-                 executable: str = "codex", vision: str = "tool", capacity_retries: int = 2, backoff_s: float = 30.0):
+                 executable: str = "codex", vision: str = "agent", capacity_retries: int = 2, backoff_s: float = 30.0):
         self.model, self.effort, self.vision = model, effort, vision  # vision: agent — its own image viewing on
         self.env = env  # already without secrets (agent_env)
         self.price = price  # PriceConfig of the model, for the list-price cost

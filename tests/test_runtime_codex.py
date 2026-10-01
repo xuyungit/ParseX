@@ -31,10 +31,10 @@ def test_command_line_names_model_effort_and_isolation():
     for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--json",
                  "--disable memories", "--disable plugins", "--disable multi_agent"):
         assert flag in joined
-    assert f"-C {DOC}" in joined and "view_image" not in joined
+    assert f"-C {DOC}" in joined and "--enable view_image" in joined  # the agent looks itself (round 2), switched on
     text_only = " ".join(exec_command(model="gpt-6-sol", effort="high", doc_dir=DOC, last_message=EXP / "m.md",
                                       prompt="p", vision="tool"))
-    assert "--disable view_image" in text_only  # the agent reads images only through the ask_image tool
+    assert "--disable view_image" in text_only and "--enable" not in text_only  # images only through ask_image
 
 
 def test_usage_is_read_from_the_event_stream(tmp_path):

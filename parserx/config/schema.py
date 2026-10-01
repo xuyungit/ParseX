@@ -203,7 +203,9 @@ class AgentConfig(BaseModel):
     use: str | None = None  # the loop: a ``models`` entry for its model, endpoint, key, api, efforts (Q100)
     model: str = "gpt-6-sol"
     effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
-    vision: Literal["tool", "agent"] = "tool"  # tool: the service VLM answers questions (Q47); agent: it looks itself
+    # agent: it looks at the source itself; tool: the service VLM answers its questions (Q47).  Round 2 (2026-10-01):
+    # the agent looking itself made the other side's final drafts better (156 looks against none; analysis §4)
+    vision: Literal["tool", "agent"] = "agent"
     # the loop's model API (Q88): responses (OpenAI) or chat (OpenAI-compatible Chat Completions); endpoint and key
     # default to the service VLM's
     api: Literal["responses", "chat"] = "responses"
