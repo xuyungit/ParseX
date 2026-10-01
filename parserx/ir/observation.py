@@ -33,12 +33,13 @@ class TextStyle(IRModel):
 
 
 class Mark(IRModel):
-    """Inline emphasis of a span of an observation's text (R3): the text itself stays plain, so numbering, titles,
-    comparisons and the agent's edits read it unchanged; rendering finds the span and writes ``**…**`` or
-    ``<u>…</u>`` around it."""
+    """Inline emphasis of a span of an observation's text (R3), or a run of sub- or superscripts (Q143 ③): the text
+    itself stays plain, so numbering, titles, comparisons and the agent's edits read it unchanged; rendering finds the
+    span and writes ``**…**`` or ``<u>…</u>`` around it, or the run as a script (``content/scripts.form``)."""
 
-    kind: Literal["bold", "underline"]
+    kind: Literal["bold", "underline", "sub", "sup"]
     text: str  # the span as it reads in the text (spacing may differ: it is found ignoring whitespace)
+    before: str = ""  # a script's: the glyph before the run, the span is found right after it
 
 
 class Observation(IRModel):

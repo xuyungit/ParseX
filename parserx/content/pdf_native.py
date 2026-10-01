@@ -38,6 +38,8 @@ from __future__ import annotations
 import io
 import os
 import re
+import statistics
+import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -62,6 +64,7 @@ from parserx.ir.decision import Decision  # noqa: E402
 from parserx.ir.enums import BlockKind, DecisionStage, ObservationStatus, PageStatus, TaskKind  # noqa: E402
 from parserx.ir.observation import Mark, Observation, TextStyle  # noqa: E402
 from parserx.ir.state import LedgerEntry, PageState  # noqa: E402
+from parserx.content import scripts  # noqa: E402
 from parserx.content.paragraphs import group_lines  # noqa: E402
 from parserx.layout import labels  # noqa: E402
 from parserx.content.text import normalize_fullwidth_ascii, radicals_decision, radicals_in, unify_radicals  # noqa: E402
@@ -90,6 +93,13 @@ class _Line:
     mono_face: str = ""  # that face
     emphasis: tuple[bool, ...] = ()  # per glyph: set in a bold face (R3)
     trailing_space: bool = False  # the text layer ends the line with a space: a renderer's wrap point (code)
+    scripts: tuple[str, ...] = ()  # per glyph: "sup", "sub" or "" (``content/scripts.py``, judged on the whole page)
+    bases: tuple[tuple[str, float, float] | None, ...] = ()  # per glyph: the origin key of the glyph it is a script of
+
+    @property
+    def marked(self) -> str:
+        """The text with a mark before each script glyph (``scripts.write`` writes them)."""
+        return scripts.marked(self.text, [(g[0], k) for g, k in zip(self.glyphs, self.scripts)])
 
 
 @dataclass
@@ -129,6 +139,7 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
     regions: list[_Region] = []
     free = lines
     detected = layout(page) if verdict.ok and lines and layout is not None else None
+    _leave_formulas(lines, detected)
     if verdict.ok:
         grids = [t for t in _tables(page) if any(_glyph_in(g, t.bbox) for ln in lines for g in ln.glyphs if g[0].strip())]
         seen = ([box for label, box in detected if labels.LAYOUT.get(label) == BlockKind.TABLE]
@@ -200,6 +211,8 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
     faces = _face_verdicts(span for block in raw.get("blocks", []) if block.get("type") == 0
                            for line in block.get("lines", []) for span in line.get("spans", []))
     out: list[_Line] = []
+    script_lines: list[scripts.Line] = []
+    ems = _font_ems(raw)
     for index, block in enumerate(raw.get("blocks", [])):
         if block.get("type") != 0:
             continue
@@ -208,6 +221,7 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
             text = normalize_fullwidth_ascii(_reconstruct_line_from_chars(spans))
             if not text.strip():
                 continue
+            script_lines.append(_script_line(spans, line.get("dir", (1.0, 0.0)), ems))
             (size, bold, font) = _line_typography(spans, faces)
             chars = [ch for span in spans for ch in span.get("chars", ())]
             origins = tuple(_origin_key(ch["c"], pymupdf.Point(ch["origin"]) * ctm) for ch in chars)
@@ -218,7 +232,83 @@ def _lines(page: pymupdf.Page) -> list[_Line]:
                              glyphs=tuple((ch["c"], *ch["bbox"]) for ch in chars), origins=origins,
                              mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip(),
                              emphasis=tuple(_bold(span) for span in spans for _ in span.get("chars", ()))))
+    for line, judged in zip(out, scripts.judge(script_lines)):
+        if any(kind for kind, _ in judged):
+            line.scripts = tuple(kind for kind, _ in judged)
+            line.bases = tuple(out[base[0]].origins[base[1]] if base else None for _, base in judged)
     return out
+
+
+def _script_line(spans: list[dict], direction, ems: dict[str, float] | None = None) -> scripts.Line:
+    """A line's glyphs for judging scripts, with the size most of its letters and digits are set in (whatever their
+    faces: a formula sets its letters, Greek and digits in three; on a tie the larger, scripts being the fewer) and
+    the baseline of the first of them; no glyphs for a line not written left to right.  Sizes as set
+    (``_font_ems``)."""
+    if abs(direction[0] - 1.0) >= 0.01 or abs(direction[1]) >= 0.01:
+        return scripts.Line(())
+    ems = ems or {}
+    glyphs = tuple(scripts.Glyph(ch.get("c", ""), ch["bbox"][0], ch["bbox"][2], ch["bbox"][1], ch["bbox"][3],
+                                 span.get("size", 0.0) * ems.get(span.get("font", ""), 1.0), ch["origin"][1])
+                   for span in spans for ch in span.get("chars", ()))
+    if not glyphs:
+        return scripts.Line(())
+    words = [g for g in glyphs if unify_radicals(g.char).isalnum()] or [g for g in glyphs if g.char.strip()] or glyphs
+    counts = Counter(round(g.size, 1) for g in words)
+    size = max(counts, key=lambda s: (counts[s], s))
+    main = next(g for g in words if round(g.size, 1) == size)
+    return scripts.Line(glyphs, main.baseline, main.size)
+
+
+def _font_ems(raw: dict) -> dict[str, float]:
+    """Per font of the page whose ideographs are set closer than its nominal size: the step from one ideograph to the
+    next over that size.  An ideograph is one em wide, so this is the font's size as set; some producers give CJK fonts
+    a nominal size twice the text's (a full-width comma beside a 10 pt letter is then "21 pt", and so is its glyph
+    box).  Fonts without two ideographs in a row keep their nominal size, as does a font set with spacing (a step
+    longer than the size: justified text)."""
+    ratios: dict[str, list[float]] = defaultdict(list)
+    for block in raw.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                size, chars = span.get("size") or 0.0, span.get("chars", ())
+                for a, b in zip(chars, chars[1:]) if size > 0 else ():
+                    if _ideograph(a.get("c", "")) and _ideograph(b.get("c", "")):
+                        ratios[span.get("font", "")].append((b["origin"][0] - a["origin"][0]) / size)
+    return {font: m for font, r in ratios.items() if 0 < (m := statistics.median(r)) < 1.0}
+
+
+def _ideograph(ch: str) -> bool:
+    return bool(ch) and unicodedata.category(ch) == "Lo" and unicodedata.east_asian_width(ch) == "W"
+
+
+FORMULA_REGIONS = frozenset({"display_formula"})  # detector labels whose scripts the formula tool reads from the image
+
+
+def _leave_formulas(lines: list[_Line], detected: list[tuple[str, BBox]] | None) -> None:
+    """No scripts from geometry inside the detector's formula regions: a formula's structure (fractions, matrices,
+    nested scripts, large operators) is read from the image by the formula tool (``tools/formulas.py``), the text
+    layer serving only to check its reading; geometry keeps to scripts beside their base in text and tables."""
+    boxes = [box for label, box in detected or [] if label in FORMULA_REGIONS]
+    for line in lines if boxes else []:
+        if not line.scripts:
+            continue
+        kept = tuple("" if kind and any(_glyph_in(g, box) for box in boxes) else kind
+                     for g, kind in zip(line.glyphs, line.scripts))
+        line.scripts = kept if any(kept) else ()
+
+
+def _script_marks(lines: list[_Line]) -> list[Mark]:
+    """The runs of script glyphs in a block, in reading order, each with the glyph before it (the span is found after
+    it: a script is mostly a digit or a letter that occurs unscripted too)."""
+    chars: list[tuple[str, str]] = []
+    for line in lines:
+        if chars:
+            chars.append(("\n", ""))
+        chars += scripts.unmark(line.marked)
+    marks = []
+    for start, end, kind in scripts.runs(chars):
+        before = next((ch for ch, _ in reversed(chars[:start]) if not ch.isspace()), "")
+        marks.append(Mark(kind=kind, text="".join(ch for ch, _ in chars[start:end]), before=before))
+    return marks
 
 
 MONO_LETTERS = 5  # distinct ASCII letters a span needs before its glyph widths say anything (sample size)
@@ -433,7 +523,7 @@ def _unruled_table(page: pymupdf.Page, box: BBox, free: list[_Line]) -> tuple[li
     keep = [c for c in range(max((len(r) for r in rows), default=0)) if any(c < len(r) and r[c].strip() for r in rows)]
     if len(rows) < 2 or len(keep) < 2:
         return None
-    cells = [Cell(row=r, col=k, content=join_wrapped(row[c].split("\n")) if c < len(row) else "")
+    cells = [Cell(row=r, col=k, content=join_wrapped(scripts.write(row[c]).split("\n")) if c < len(row) else "")
              for r, row in enumerate(rows) for k, c in enumerate(keep)]
     return held + used, TableGrid(n_rows=len(rows), n_cols=len(keep), cells=cells), _round(bbox)
 
@@ -477,7 +567,7 @@ def _head_rows(missed: list[_Line], table) -> tuple[list[list[str]], list[_Line]
             col = next((c for c, (x0, x1) in columns.items() if x0 <= centre < x1), None)
             if col is None or row[col]:
                 break
-            row[col] = ln.text
+            row[col] = ln.marked
         else:
             rows.append(row)
             used += group
@@ -490,7 +580,7 @@ def _grid(table, lines: list[_Line], across: list[_Line]) -> TableGrid:
 
     def text(r: int, c: int) -> str:
         row = rows[r]
-        return join_wrapped(_cell_text(row[c]).split("\n")) if c < len(row) else ""
+        return join_wrapped(scripts.write(_cell_text(row[c])).split("\n")) if c < len(row) else ""
 
     flat = TableGrid(n_rows=len(rows), n_cols=n_cols,
                      cells=[Cell(row=r, col=c, content=text(r, c)) for r in range(len(rows)) for c in range(n_cols)])
@@ -562,11 +652,13 @@ def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) 
     are dropped (``_across``) or a row splits (``_row_bands``); then each character goes to the smallest cell holding
     it, and a split row's characters to the band of their sub-row."""
     chars = [ch for ch in pymupdf_table.CHARS if _origin_key(ch["text"], ch["matrix"][4:]) not in drop]
+    chars = _mark_scripts(chars, lines)
     places = [(r, c, cell) for r, row in enumerate(table.rows) for c, cell in enumerate(row.cells) if cell is not None]
     boxes = [cell for _, _, cell in places]
     held = [[k for k, box in enumerate(boxes) if _glyph_in(_box_of(ch), box)] for ch in chars]
     bands = {r: b for r, row in enumerate(table.rows) if (b := _row_bands(row, lines))}
-    if not drop and not bands and all(len(h) <= 1 for h in held):
+    marked = any(h and ch["text"][:1] in scripts.MARKS for ch, h in zip(chars, held))
+    if not drop and not bands and not marked and all(len(h) <= 1 for h in held):
         return table.extract()
     owned: dict[int, list[dict]] = {}
     for ch, holders in zip(chars, held):
@@ -580,6 +672,25 @@ def _cell_texts(table, lines: list[_Line], drop: set[tuple[str, float, float]]) 
                 [ch for ch in owned.get(index[(r, c)], []) if top <= (ch["top"] + ch["bottom"]) / 2 < bottom])
                 for c, cell in enumerate(row.cells)])
     return rows
+
+
+def _mark_scripts(chars: list[dict], lines: list[_Line]) -> list[dict]:
+    """The table's characters with each script glyph's text marked (``scripts.write`` writes the cell) and set at the
+    height of the glyph it is a script of, so the cell's text keeps it on its base's line, next to it."""
+    scripted = {key: (kind, base) for ln in lines for key, kind, base in zip(ln.origins, ln.scripts, ln.bases) if kind}
+    if not scripted:
+        return chars
+    by_key = {_origin_key(ch["text"], ch["matrix"][4:]): ch for ch in chars}
+    out = []
+    for ch in chars:
+        kind, base = scripted.get(_origin_key(ch["text"], ch["matrix"][4:]), ("", None))
+        if not kind:
+            out.append(ch)
+            continue
+        level = by_key.get(base)
+        out.append(dict(ch, text=scripts.MARK_OF[kind] + ch["text"],
+                        **({k: level[k] for k in ("top", "bottom", "doctop", "y0", "y1")} if level else {})))
+    return out
 
 
 def _owner(glyph_box, cells: list) -> int | None:
@@ -722,7 +833,8 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
         observations.append(Observation(
             id=ids.observation_id(block_id, ENGINE, 1), engine=ENGINE, engine_version=ENGINE_VERSION,
             task=TaskKind.EXTRACT, anchor=anchors[0], text=text, style=style,
-            marks=[] if style.monospace else _bold_marks(region.lines), status=ObservationStatus.OK))
+            marks=[] if style.monospace else _bold_marks(region.lines) + _script_marks(region.lines),
+            status=ObservationStatus.OK))
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
         chosen_observation=observations[0].id if observations else None, text=text,

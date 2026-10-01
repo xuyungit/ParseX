@@ -52,7 +52,7 @@ from pathlib import Path
 from lxml import etree
 from PIL import Image
 
-from parserx.content import vector
+from parserx.content import scripts, vector
 from parserx.content.extraction import Extraction
 from parserx.content.omml import omml_to_latex
 from parserx.content.text import radicals_decision, radicals_in, unify_radicals
@@ -164,6 +164,7 @@ class _Style:
     bold: bool | None = None
     east_asia: str | None = None  # w:rFonts: the face of CJK text
     ascii: str | None = None  # the face of other text
+    vert: str | None = None  # w:vertAlign: "sup", "sub", "" (on the baseline) or None (not set)
 
 
 class _Styles:
@@ -188,7 +189,7 @@ class _Styles:
                 based_on=_attr(style.find(_w("basedOn")), "val"),
                 outline=int(_attr(outline, "val")) if outline is not None and (_attr(outline, "val") or "").isdigit() else None,
                 num=_num_pr(num),
-                size=size, bold=bold, east_asia=east_asia, ascii=ascii_face,
+                size=size, bold=bold, east_asia=east_asia, ascii=ascii_face, vert=_vert(style.find(_w("rPr"))),
             )
             if _attr(style, "type") == "paragraph" and _attr(style, "default") in ("1", "true"):
                 self.default_paragraph = sid
@@ -203,6 +204,12 @@ class _Styles:
 
     def first(self, sid: str | None, attr: str):
         return next((getattr(s, attr) for s in self.chain(sid) if getattr(s, attr) is not None), None)
+
+
+def _vert(rpr) -> str | None:
+    """A run properties element's vertical alignment: "sup", "sub", "" (the baseline) or None where it sets none."""
+    val = _attr(rpr.find(_w("vertAlign")), "val") if rpr is not None and rpr.find(_w("vertAlign")) is not None else None
+    return {"superscript": "sup", "subscript": "sub"}.get(val or "", "" if val else None)
 
 
 def _run_props(rpr) -> tuple[float | None, bool | None, tuple[str | None, str | None]]:
@@ -380,8 +387,9 @@ class _Para:
     # chars, size, bold, rStyle, (East Asian, ASCII) faces, mostly CJK
     runs: list[tuple[int, float | None, bool | None, str | None, tuple[str | None, str | None], bool]] = \
         field(default_factory=list)
-    # per run: text, direct bold, direct underline, rStyle — for inline emphasis (R3)
-    emphasis: list[tuple[str, bool | None, bool, str | None]] = field(default_factory=list)
+    # per run: text, direct bold, direct underline, rStyle, direct vertical alignment — for inline emphasis (R3) and
+    # scripts (``_vert``)
+    emphasis: list[tuple[str, bool | None, bool, str | None, str | None]] = field(default_factory=list)
     breaks: int = 0  # explicit page breaks inside the paragraph
     inserted: int = 0  # tracked insertions / move destinations read as content
     fields: list[str] = field(default_factory=list)  # field stack: "instr" | "result"
@@ -443,7 +451,8 @@ def _run(r, para: _Para, path: str) -> None:
         para.runs.append((added, size, bold, style, faces, cjk * 2 > len(text.strip() or text)))
         underline = rpr is not None and rpr.find(_w("u")) is not None \
             and (_attr(rpr.find(_w("u")), "val") or "single") != "none"
-        para.emphasis.append((text, bold, underline, style))
+        note = r.find(_w("footnoteReference")) is not None or r.find(_w("endnoteReference")) is not None
+        para.emphasis.append((text, bold, underline, style, "" if note else _vert(rpr)))  # a note is [^n]: no script
 
 
 def _run_children(node, para: _Para, path: str) -> None:
@@ -770,7 +779,7 @@ class _Reader:
                 marks.append(Mark(kind=kind, text=text))
             runs[kind] = []
 
-        for text, bold, underline, rstyle in para.emphasis:
+        for text, bold, underline, rstyle, _vert_align in para.emphasis:
             bold = bold if bold is not None else self.styles.first(rstyle, "bold")
             bold = bold if bold is not None else (p_bold if p_bold is not None else self.styles.default_bold)
             for kind, on in (("bold", bool(bold)), ("underline", underline)):
@@ -783,6 +792,19 @@ class _Reader:
                     flush(kind)
         flush("bold")
         flush("underline")
+        return marks + self._script_marks(para)
+
+    def _script_marks(self, para: _Para) -> list[Mark]:
+        """Runs set as sub- or superscripts (``w:vertAlign``, directly or by the run's character style; Q143 ③), each
+        with the character before it: consecutive runs of one kind form one mark."""
+        chars: list[tuple[str, str]] = []
+        for text, _bold, _underline, rstyle, vert in para.emphasis:
+            kind = vert if vert is not None else (self.styles.first(rstyle, "vert") or "")
+            chars += [(ch, kind if ch.strip() else "") for ch in text]
+        marks = []
+        for start, end, kind in scripts.runs(chars):
+            before = next((ch for ch, _ in reversed(chars[:start]) if not ch.isspace()), "")
+            marks.append(Mark(kind=kind, text="".join(ch for ch, _ in chars[start:end]), before=before))
         return marks
 
     # ── pieces: revisions, images, unsupported ──────────────────────────

@@ -30,7 +30,7 @@ import re
 from pathlib import PurePosixPath
 
 from parserx.content.lists import bulleted, strip_bullet
-from parserx.render.emphasis import emphasize
+from parserx.render.emphasis import SCRIPTS, emphasize
 from parserx.content.text import escape_strikethrough, join_wrapped
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.content.equation_numbers import number_of, tagged
@@ -279,9 +279,10 @@ def _render(block: Block, assets: dict[str, Asset], image_dir: str, lang: str = 
         return ""
     if kind == BlockKind.FORMULA:
         return text if text.startswith(_MATH_START) else f"$$\n{text}\n$$"
-    if kind == BlockKind.TITLE and block.level is not None:
+    marks = _marks(block)  # inline bold and underline (R3), sub- and superscripts (Q143 ③)
+    if kind == BlockKind.TITLE and block.level is not None:  # a title is not set in bold, its scripts are written
+        text, _ = emphasize(text, [m for m in marks if m.kind in SCRIPTS])
         return f"{'#' * block.level} {escape_strikethrough(text)}"
-    marks = _marks(block)  # inline bold and underline (R3)
     if bulleted(block):  # a bulleted item: "- " in place of the page's bullet
         body, _ = emphasize(strip_bullet(text), marks)
         return "- " + escape_strikethrough(body)

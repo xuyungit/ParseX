@@ -23,7 +23,7 @@ _SCRIPTS = ("CJK", "LATIN", "DIGIT", "HIRAGANA", "KATAKANA", "HANGUL", "GREEK", 
 
 def suspicious_characters(text: str, document: list[str]) -> str | None:
     """What is suspicious in *text* given all the texts of the *document*, or None."""
-    unreadable = Counter(ch for ch in text if _unreadable(ch))
+    unreadable = Counter(ch for ch in text if is_unreadable(ch))
     if unreadable:
         n = sum(unreadable.values())
         codes = ", ".join(f"U+{ord(ch):04X}" for ch, _ in unreadable.most_common(3))
@@ -39,7 +39,8 @@ def suspicious_characters(text: str, document: list[str]) -> str | None:
     return f"{n} character{'s' if n > 1 else ''} of a script found nowhere else in the document ({', '.join(rare)})"
 
 
-def _unreadable(ch: str) -> bool:
+def is_unreadable(ch: str) -> bool:
+    """A character the text layer does not map to a readable one: U+FFFD, private use, a control character."""
     category = unicodedata.category(ch)
     return ch == "�" or category == "Co" or (category == "Cc" and ch not in "\n\t\r")
 
