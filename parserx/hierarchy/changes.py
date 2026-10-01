@@ -39,7 +39,8 @@ def agent_doc(text: str) -> ConfigDict:
 class SetRole(IRModel):
     model_config = agent_doc("设块的角色，与 read_draft 显示的角色相同。H1–H6 是标题及其层级：层级不能跳（H1 之后不能直接 H3），"
                              "同一部分里同一编号模式同级；一次调用中连续的结构操作按结果判定，整组编号可以一起调层级。"
-                             "表格、图片、公式、扫描图不能改角色。被程序当作页眉页脚隐去的块，设了角色就重新输出。")
+                             "表格、图片、公式、扫描图不能改角色。被程序当作页眉页脚隐去的块，设了角色就重新输出"
+                             "（要附看图证据）。")
 
     op: Literal["set_role"]
     block: str = Field(description=BLOCK)
@@ -124,7 +125,8 @@ class Include(IRModel):
     text; text deleted by a revision stays deleted (Q26)."""
 
     model_config = agent_doc("恢复不输出的块（程序判为页眉页脚、装饰图的，或 exclude 的）；页眉页脚类恢复后是 text。"
-                             "修订中删除的文字不能恢复。")
+                             "页眉、页脚、页码在导出时已写进该页的页标记（页眉：…），不会丢：只有被误判为页眉页脚的正文"
+                             "才恢复，并附看图证据。修订中删除的文字不能恢复。")
 
     op: Literal["include"]
     block: str = Field(description=BLOCK)
@@ -165,6 +167,7 @@ class LegalityRule(StrEnum):
     NOT_ADJACENT = "not_adjacent"  # join of tables: not on the next page, or more than page furniture between
     ROWS_NOT_DUPLICATE = "rows_not_duplicate"
     OVERRIDE_WITHOUT_EVIDENCE = "override_without_evidence"  # an exception rests on evidence that exists
+    FURNITURE_WITHOUT_EVIDENCE = "furniture_without_evidence"  # page furniture back into the body: a look at the page
     REASON_REQUIRED = "reason_required"  # exclude: content leaves the output only with a reason
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded

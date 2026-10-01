@@ -51,7 +51,7 @@ from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.tables.grid import TableGrid
 from parserx.tools.recognize import _next_block_seq, _next_item
-from parserx.tools.views import REWRITE_CANDIDATE
+from parserx.tools.views import ORDER_DISAGREEMENT, REWRITE_CANDIDATE
 from parserx.workspace import Workspace
 from parserx.workspace.queries import block_unit
 
@@ -60,6 +60,9 @@ CHOICE = v_adapter.CHOICE
 ENGINE = v_adapter.ENGINE
 FIGURE_KINDS = frozenset({BlockKind.FIGURE})
 FURNITURE = frozenset({BlockKind.HEADER, BlockKind.FOOTER, BlockKind.PAGE_NUMBER})
+# engine labels of the page's margins: a block the model sets aside that the engine also read as margin text goes
+MARGIN_LABELS = frozenset({"header", "header_image", "footer", "footer_image", "number", "aside_text"})
+
 
 
 def apply(ws: Workspace, source: Path, n: int, page: dict, data: dict, *, model: str, dpi: int) -> dict:
@@ -125,6 +128,10 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
     placed: list[Block] = []
     handled: set[str] = set()
     excluded: list[str] = []
+    kept: list[Block] = []  # engine blocks kept in the output that the model did not place: where they were
+    footnotes: set[str] = set()  # blocks the model typed footnote: their place is a convention, not the order
+    engine_order = {b.id: b.order for b in page_blocks}
+    multi_page = len(state.pages) > 1
 
     def decision(reason: str, **evidence) -> Decision:
         return Decision(stage=DecisionStage.CONTENT_SOURCE, choice=CHOICE, reason=reason, actor=ACTOR,
@@ -157,7 +164,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
         block = block_of[uid]
         handled.add(uid)
         block.decisions.append(decision(f"kept in the output (information first): {why}"))
-        place(block)
+        if block not in placed and block not in kept:
+            kept.append(block)
         counts["kept_as_body"] += 1
 
     def reading(block: Block, text: str | None, cells: TableGrid | None, label: str) -> Observation:
@@ -232,6 +240,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
             continue
         # text-like and formula blocks
         uids_all = [x for p in parts for x in names(p)]
+        if kind == "footnote":
+            footnotes.update(block_of[x].id for x in uids_all)
         copied_only = all(p["kind"] == "copy" for p in parts)
         if copied_only and len(uids_all) == 1:  # the engine block as it is
             handled.add(uids_all[0])
@@ -312,7 +322,8 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
                     counts["furniture_engine"] += 1
                     continue
                 key = furniture_key(block.text or "")
-                if block.kind in FIGURE_KINDS or (key and key in others):
+                margin = units[uid]["label"] in MARGIN_LABELS  # the engine read it as margin text too
+                if block.kind in FIGURE_KINDS or margin or (multi_page and key and key in others):
                     block.status = BlockStatus.EXCLUDED
                     if block.id in entry_of:
                         entry_of[block.id].disposition = "excluded"
@@ -322,15 +333,107 @@ def _apply(ws, state: DocumentState, n: int, page: dict, data: dict, pdf_page, r
                                                     evidence={"model": model}))
                     counts["excluded"] += 1
                 else:
-                    keep_as_body(uid, f"the service model excluded it ({item['reason'][:80]}), but the engine did not "
-                                      "take it for page furniture and no other page repeats it")
+                    keep_as_body(uid, f"the service model excluded it ({item['reason'][:80]}), but the engine read it "
+                                      "as body text" + (" and no other page repeats it" if multi_page else ""))
     # a text layer's copy of what was set aside (a scanning app's mark) follows it, as the pipeline's furniture step does
     counts["copies_excluded"] += len(_copies_follow(state, excluded)) if excluded else 0
+    # reading order: the model's, unless it crosses the page's columns where the engine read them one by one
+    engine_ids = {b.id for b in block_of.values()}
+    boxes = {block_of[uid].id: units[uid]["box"] for uid in units if uid in block_of}
+    body = [b for b in placed if b.id in engine_ids and b.id not in footnotes and b.id in boxes]
+    columns = column_of({b.id: boxes[b.id] for b in body}, page["image"]["width"])
+    engine_body = sorted(body, key=lambda b: (engine_order.get(b.id, 0), b.id))
+    if (len({c for c in columns.values() if c is not None}) >= 2 and not row_paired(columns, boxes)
+            and column_returns([b.id for b in engine_body], columns, boxes) == 0
+            and (returns := column_returns([b.id for b in body], columns, boxes)) > 0):
+        model_order = [b.id for b in placed]
+        final = list(engine_body)
+        for i, block in enumerate(placed):  # what the engine did not read (written, footnotes) follows its predecessor
+            if block in final:
+                continue
+            final.insert(final.index(placed[i - 1]) + 1 if i and placed[i - 1] in final else 0, block)
+        placed = final
+        placed[0].decisions.append(Decision(
+            stage=DecisionStage.CONTENT_SOURCE, choice=ORDER_DISAGREEMENT, actor=ACTOR,
+            reason="the service model's reading order goes back to columns it had left, where the scan engine read "
+                   "the page column by column: the engine's order is kept; the model's order is listed for review",
+            evidence={"model": model, "model_order": " ".join(model_order), "returns": returns}))
+        counts["order_kept_engine"] += 1
+    for block in sorted(kept, key=lambda b: engine_order.get(b.id, 0)):  # at its place in the engine's order
+        before = [b for b in placed if engine_order.get(b.id, -1) < engine_order.get(block.id, 0)]
+        placed.insert(placed.index(before[-1]) + 1 if before else 0, block)
     # the page's order: the allocation's; engine blocks it did not place keep their relative order after it
     rest = sorted((b for b in page_blocks if b not in placed), key=lambda b: (b.order, b.id))
     for i, block in enumerate(placed + rest):
         block.order = base + i
     renumber(state)
+
+
+def column_of(boxes: dict[str, list], width: float) -> dict[str, str | None]:
+    """The column of each box: the boxes split at vertical gutters, recursively — a gutter has at least two boxes
+    wholly on each side, at most a quarter of the boxes crossing it, and a gap of at least 1% of the page width; of
+    the gutters, the one fewest boxes cross, then the widest.
+    A box crossing a gutter belongs to no column (None)."""
+    out: dict[str, str | None] = {}
+
+    def split(ids: list[str], path: str) -> None:
+        best = None
+        for x in sorted({boxes[i][2] for i in ids}):
+            starts = [boxes[i][0] for i in ids if boxes[i][0] > x]
+            if not starts:
+                continue
+            gap = min(starts) - x
+            left = [i for i in ids if boxes[i][2] <= x]
+            right = [i for i in ids if boxes[i][0] >= x + gap]
+            cross = [i for i in ids if i not in left and i not in right]
+            if len(left) >= 2 and len(right) >= 2 and gap >= 0.01 * width and len(cross) <= 0.25 * len(ids) \
+                    and (best is None or (len(cross), -gap) < (len(best[3]), -best[0])):  # fewest crossing, widest
+                best = (gap, left, right, cross)
+        if best is None:
+            out.update({i: path for i in ids})
+            return
+        _gap, left, right, cross = best
+        out.update({i: None for i in cross})
+        split(left, path + "L")
+        split(right, path + "R")
+
+    split(list(boxes), "")
+    return out
+
+
+def column_returns(order: list[str], columns: dict[str, str | None], boxes: dict[str, list]) -> int:
+    """How often an order goes back to a column it had left.  Reading down into a new band (a block starting below
+    everything read since) starts afresh: a header row or a full-width figure is not a return."""
+    returns, visited, current, band_bottom = 0, set(), None, float("-inf")
+    for i in order:
+        column = columns.get(i)
+        top, bottom = boxes[i][1], boxes[i][3]
+        if top >= band_bottom:  # below everything read in this band
+            visited, current, band_bottom = set(), None, float("-inf")
+        band_bottom = max(band_bottom, bottom)
+        if column is None:
+            continue
+        if column != current:
+            if column in visited:
+                returns += 1
+            if current is not None:
+                visited.add(current)
+            current = column
+    return returns
+
+
+def row_paired(columns: dict[str, str | None], boxes: dict[str, list]) -> bool:
+    """A form: at least half of the column boxes sit on a row with a box of another column (they overlap vertically
+    by half the larger height) — read row by row, not column by column."""
+    placed = [i for i, c in columns.items() if c is not None]
+
+    def paired(i: str) -> bool:
+        a = boxes[i]
+        return any(columns[j] not in (None, columns[i])
+                   and min(a[3], boxes[j][3]) - max(a[1], boxes[j][1])
+                   >= 0.5 * max(a[3] - a[1], boxes[j][3] - boxes[j][1]) for j in placed if j != i)
+
+    return bool(placed) and sum(paired(i) for i in placed) * 2 >= len(placed)
 
 
 def join_texts(texts: list[str]) -> str:

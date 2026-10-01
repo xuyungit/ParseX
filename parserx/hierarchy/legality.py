@@ -164,6 +164,12 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
     if getattr(change, "override", False) and not _evidence_exists(state, change.evidence):
         return (LegalityRule.OVERRIDE_WITHOUT_EVIDENCE,
                 "an exception to a document convention rests on evidence: give the evidence id (view_source) and why")
+    if isinstance(change, (SetRole, Include)) and blocks[change.block].status == BlockStatus.EXCLUDED \
+            and blocks[change.block].kind in FURNITURE and not _evidence_exists(state, change.evidence):
+        return (LegalityRule.FURNITURE_WITHOUT_EVIDENCE,
+                f"{change.block} is page furniture: the export keeps it in its page's marker line (页眉：…), nothing "
+                "is lost; bring it into the body only if the page shows it is body text — give the evidence id "
+                "(view_source) and why")
     if isinstance(change, SetRole):
         block = blocks[change.block]
         if block.kind in _CONTENT_KINDS:

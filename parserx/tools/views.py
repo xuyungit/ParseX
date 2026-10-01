@@ -25,6 +25,7 @@ from parserx.reading.compare import added_from_reading, unaccounted_lines, unsee
 # (vision-first, scanned pages): kept on the block, listed as ``reading_disagreement`` until one is chosen or the
 # item is closed (user 2026-09-30: signals, not reverts).
 REWRITE_CANDIDATE = "replaced_reading"
+ORDER_DISAGREEMENT = "order_disagreement"  # the decision choice that records it (``vision_first`` scanned pages)
 
 NATIVE_ENGINES = frozenset({"native_pdf", "docx"})  # exact numbers: nothing to re-read on the image
 
@@ -235,6 +236,15 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                    f"replaced reading {listed(had, ', ') or 'nothing'}); look at the image: if the rewrite is right, "
                    "close the item; where the replaced reading is right, correct the block there (replace_text, "
                    "set_cells) — write what the image prints, typos of the original included"))
+    for block in ordered(state):  # a page whose reading order two readings disagree on: the order kept, the other listed
+        for d in block.decisions:
+            if d.choice == ORDER_DISAGREEMENT and block_unit(state, block) is not None:
+                items.append(Unresolved(
+                    target=f"p{block_unit(state, block)}", kind=UnresolvedKind.ORDER_DISAGREEMENT,
+                    detail="the scan engine read this page column by column and that order is kept; the service model "
+                           f"read it in another order ({d.evidence.get('model_order', '')}), going back to columns it "
+                           "had left; look at the page: if the kept order is right, close the item; else put the "
+                           "blocks in the page's order (move)"))
     for block_id in figures_without_content(state):  # an image shown with nothing a reader who cannot see it gets
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,

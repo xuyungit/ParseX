@@ -167,12 +167,19 @@ def test_appendix_numbering_has_its_own_signature():
 
 
 def test_page_furniture_given_a_body_role_or_included_comes_back():
+    from parserx.ir.evidence import Evidence
+
     state = _ledgered_state()
+    state.evidence.append(Evidence(id="e-000000000009", how="image", page=1, image="a-1"))
     for block in state.blocks[1:3]:  # p1, p2: running headers the program left out
         block.kind, block.status = BlockKind.HEADER, BlockStatus.EXCLUDED
         next(e for e in state.ledger if e.block == block.id).disposition = "excluded"
-    outcome = apply_changes(state, _changes({"op": "set_role", "block": "p1", "role": "H2", "reason": "节标题"},
-                                            {"op": "include", "block": "p2", "reason": "是正文"}), actor="agent")
+    # without a look at the page: refused — page furniture stays in the page's marker line, nothing is lost
+    blind = apply_changes(state, _changes({"op": "include", "block": "p2", "reason": "唯一的标准编号"}), actor="agent")
+    assert blind.accepted == [] and blind.rejected[0].rule == "furniture_without_evidence"
+    outcome = apply_changes(state, _changes(
+        {"op": "set_role", "block": "p1", "role": "H2", "reason": "节标题", "evidence": "e-000000000009"},
+        {"op": "include", "block": "p2", "reason": "是正文", "evidence": "e-000000000009"}), actor="agent")
     p1, p2 = state.blocks[1:3]
     assert outcome.accepted == [0, 1]
     assert (p1.kind, p1.level, p1.status) == (BlockKind.TITLE, 2, BlockStatus.OK)

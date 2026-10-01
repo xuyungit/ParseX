@@ -35,3 +35,15 @@ def test_an_unconfirmed_rewrite_lists_the_engines_reading_until_it_is_decided():
     assert not any(u.kind == UnresolvedKind.FORMULA_CANDIDATE for u in unresolved_items(_state("o-v")))
     # the engine's reading adopted: nothing left to decide
     assert not any(u.kind == UnresolvedKind.READING_DISAGREEMENT for u in unresolved_items(_state("o-c")))
+
+
+def test_a_reading_order_the_engine_and_the_model_disagree_on_is_listed_for_the_page():
+    from parserx.ir.decision import Decision
+    from parserx.ir.enums import DecisionStage
+
+    state = _state("o-v")
+    state.blocks[0].decisions.append(Decision(
+        stage=DecisionStage.CONTENT_SOURCE, choice="order_disagreement", actor="program:vision_first.v_scan",
+        reason="kept the engine's order", evidence={"model_order": "b1 b2", "returns": 1}))
+    items = [u for u in unresolved_items(state) if u.kind == UnresolvedKind.ORDER_DISAGREEMENT]
+    assert len(items) == 1 and items[0].target == "p1" and "b1 b2" in items[0].detail
