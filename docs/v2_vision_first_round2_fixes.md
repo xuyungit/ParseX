@@ -24,8 +24,14 @@
 | 12 | Codex 容量失败没有退避重试 | 容量类错误：同一工作区开新会话（工作区就是检查点），最多 2 次，间隔 30 s 起；重试次数记入运行记录 | 381edcd |
 | 13 | 审计误报（开发中发现） | 喂给 `./px` 的 here-document 是工具请求，不再当作 shell 路径扫描；喂给其他程序（如 `python3 -`）的仍扫描 | 1425163 |
 
-**两边共用的老代码**：Word 目录条目（`toc N` 样式）当成标题，补丁 ad27038，待对方审。补丁文件：
-`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first/eval_reports/2026-10-01_shared_patch/`。
+**两边共用的老代码**：Word 目录条目被当成标题。两边各写了一个补丁：本方 ad27038，对方 ccd469bd。
+- **对方补丁**只改 Word 样式那一步（`docx_styles`），另认中文样式名"目录 N"。
+- **本方补丁**两步都改：Word 样式一步，以及按字体字号判标题的一步（`typography_titles`）。
+- 31 篇里只有 real_doc01 有目录条目（6 条 `toc 1`）。第一轮里其中 2 条是按字体字号判成一级标题的（决策记录 `program:hierarchy.typography`），对方补丁管不到这一步。
+- **建议**：两边都撤回自己的补丁，换用合并后的同一个补丁（本方两步 + 对方的"目录 N"和测试）。
+  - 补丁文件：`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first/eval_reports/2026-10-01_shared_patch/union/`；
+  - 以 main 为底，两方测试 11 个通过；
+  - 已核对：两边冻结的提交撤回各自补丁后都能干净地打上。
 
 ## 2. 没修的
 
@@ -64,7 +70,9 @@ uv run pytest -q --ignore=tests/test_live_e2e.py
 uv run python scripts/vision_first/v_run.py --run-dir eval_runs/<日期>_r2_vision_first --configs luna-medium-r1,luna-medium-r2 --scanned --live-pipeline --docs <31 篇，逗号分隔>
 ```
 - 服务模型的请求都现发：页面分配、公式、流水线自己的看图。
-- 扫描引擎的回答回放自冻结记录 `eval_runs/2026-09-29_bench2f_fixed_full/cache/raw/ocr`。记录里没有的公式页，第一次读后存进 `<run-dir>/engine_cache`。
+- 扫描引擎的回答默认回放自冻结记录 `eval_runs/2026-09-29_bench2f_fixed_full/cache/raw/ocr`。
+  - 要用中立会话统一的 OCR 记录：第一次运行前把它放到 `<run-dir>/pipeline_cache/raw/ocr`（与 `parserx` 的响应缓存同一格式）。有了这个目录就不再复制默认记录；路由、引擎读数和各配置的流水线都从它取 OCR 回答。
+  - 记录里没有的公式页，第一次读后存进 `<run-dir>/engine_cache`。
 - 结果：`<run-dir>/docs/<配置>/<文档>/<文档>.md`。
 
 **带 Agent**：先做工具快照，每篇都跑，同时最多 2 个。
