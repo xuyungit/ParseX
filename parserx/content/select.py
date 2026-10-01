@@ -33,6 +33,8 @@ from parserx.ir import ids
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
 from parserx.ir.block import Block
+from parserx.content.latex import characters
+from parserx.content.text import normalize_fullwidth_ascii
 from parserx.reading.compare import NEAR, normalize, pairs_share
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, PageStatus, RelationKind, TaskKind
@@ -60,7 +62,7 @@ def _plain(text: str) -> str:
 
 class GateCheck(IRModel):
     name: Literal["image_evidence", "numeric_consistency", "text_consistency", "structure_valid",
-                  "independent_reading"]
+                  "independent_reading", "as_printed"]
     passed: bool
     detail: str
     # a check that does not stop the agent but is recorded and listed in the summary (execution plan §3.4): the
@@ -313,8 +315,65 @@ def correct(block: Block, candidate: Observation, *, image: GateCheck, actor: st
                    if not Counter(added) - shown else "the local reading of this place does not show it")
         gate.append(GateCheck(name="text_consistency", passed=True, signal="native_text_changed",
                               detail=f"native letters changed: lost '{lost[:40]}', added '{added[:40]}'; {reading}"))
+    printed = as_printed(block, before_text, after_text, seen)
+    if printed is not None:
+        gate.append(printed)
     gate.append(GateCheck(name="structure_valid", passed=valid, detail="content kept" if valid else "empty result"))
     return _decide(block, candidate, gate, actor)
+
+
+AGREEING = 2  # independent readings that, agreeing on what the page prints, outweigh a correction no reading shows
+# Readers that read by meaning, as the agent does — the service model, given the draft's reading of the place as it
+# reads it — are no evidence of what the page prints against the agent: the text layer and the recognition engines are.
+_BY_MEANING = frozenset({"agent", "vlm"})
+_TAG = re.compile(r"<[^>]+>")
+
+
+def as_printed(block: Block, before: str, after: str, seen: str | None) -> GateCheck | None:
+    """A correction that writes other characters in place of some (a substitution, not text added or removed only)
+    where independent readings of the place — the block's own readings by the text layer and recognition engines,
+    and the local reading of its place (*seen*) — agree with the draft, and none shows the correction: the page
+    prints what they read,
+    and a mistake of the original is kept as printed (round-1 review: ``No`` corrected to ``N_0`` by meaning).
+    Refused when at least ``AGREEING`` readings agree and none shows the change; recorded otherwise.  Characters are
+    compared as printed: case kept (``J_K`` is not ``J_k``), notation folded (NFKC, accents, LaTeX and HTML
+    markup).  A reading shows a side when it holds that side's changed characters as often as that side does and the
+    other side's not: a reading of part of the place (a formula's local reading) shows neither."""
+    old, new = Counter(_printed(before)), Counter(_printed(after))
+    lost, added = old - new, new - old
+    if not lost or not added:
+        return None
+    readings = {o.engine: _run(o.cells, False) if o.cells is not None else o.text or ""
+                for o in block.observations
+                if o.task in (TaskKind.EXTRACT, TaskKind.RECOGNIZE, TaskKind.REVIEW) and o.engine not in _BY_MEANING}
+    if seen is not None:
+        readings["page_reading"] = seen
+    draft, change = [], []
+    for engine, text in readings.items():
+        shown = Counter(_printed(text))
+        has_draft = all(shown[ch] >= old[ch] for ch in lost)
+        has_change = all(shown[ch] >= new[ch] for ch in added)
+        if has_draft and not has_change:
+            draft.append(engine)
+        elif has_change and not has_draft:
+            change.append(engine)
+    what = f"'{''.join(sorted(lost.elements()))[:20]}' written as '{''.join(sorted(added.elements()))[:20]}'"
+    if len(draft) >= AGREEING and not change:
+        return GateCheck(name="as_printed", passed=False, detail=(
+            f"{what}: the readings of this place agree with the draft ({', '.join(draft)}) and none shows the "
+            "change — the page prints it so; write it as printed, even where it looks like a mistake of the "
+            "original, and name a suspected mistake in the final report"))
+    return GateCheck(name="as_printed", passed=True, detail=(
+        f"{what}: readings showing the change: {', '.join(change) or 'none'}; showing the draft: "
+        f"{', '.join(draft) or 'none'}"))
+
+
+def _printed(text: str) -> str:
+    """The letters and digits of *text* as printed: one notation (NFKC, full width, accents dropped — a text layer
+    may hold an accent as a glyph of its own, ``Fr´ed´eric`` — LaTeX commands as their characters, HTML tags
+    dropped), case kept."""
+    text = characters(_TAG.sub("", unicodedata.normalize("NFKC", normalize_fullwidth_ascii(text or ""))))
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if ch.isalnum())
 
 
 def _letters_changed(before: str, after: str) -> tuple[str, str] | None:

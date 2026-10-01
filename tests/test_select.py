@@ -293,10 +293,10 @@ def test_the_agent_changes_native_letters_and_the_change_is_a_signal():
 
     b = block("盆式支座 GPZ(2019)-4.0MM-ZX")
     assert correct(b, _obs("o-a", "agent", text="盆式支座 GPZ(2019)-4.0MN-ZX", task=TaskKind.CORRECT),
-                   image=looked, actor="agent", seen="GPZ(2019)-4.0MM-ZX").adopted
+                   image=looked, actor="agent", seen="GPZ(2019)-4.0MN-ZX").adopted
     evidence = b.decisions[-1].evidence
     assert evidence["signal"] == "native_text_changed" and "lost 'm', added 'n'" in evidence["signal_detail"]
-    assert "does not show" in evidence["signal_detail"]
+    assert "as the local reading shows" in evidence["signal_detail"]
     b = block("采购金额为 100 万元。")
     assert correct(b, _obs("o-b", "agent", text="采购金额为 100 万元整。", task=TaskKind.CORRECT),
                    image=looked, actor="agent").adopted
@@ -307,3 +307,41 @@ def test_the_agent_changes_native_letters_and_the_change_is_a_signal():
     b = block("x\ue000 的值")  # a glyph the text layer does not map: writing it is what a correction is for
     assert correct(b, _obs("o-c", "agent", text="xβ 的值", task=TaskKind.CORRECT), image=looked,
                    actor="agent").adopted and "signal" not in b.decisions[-1].evidence
+
+
+def test_a_correction_the_readings_agree_against_is_refused():
+    """Two independent readings of the place (the text layer or a recognition engine, and the local reading) agree
+    with the draft and none shows the correction: the page prints it so, and the original is kept as printed —
+    round 1's N_0 for a printed No, a typo of the original corrected by meaning."""
+    from parserx.content.select import GateCheck, correct
+
+    looked = GateCheck(name="image_evidence", passed=True, detail="looked")
+
+    def block(text, engine="paddleocr"):
+        return Block(id="b-s", kind=BlockKind.TEXT, order=0, anchors=[_pdf(1)], text=text,
+                     observations=[_obs("o-s", engine, text=text, task=TaskKind.RECOGNIZE)], chosen_observation="o-s")
+
+    def fix(text):
+        return _obs("o-a", "agent", text=text, task=TaskKind.CORRECT)
+
+    draft, agent = "式中：No——为消毒前对照组菌数；", "式中：$N_0$——为消毒前对照组菌数；"
+    b = block(draft)
+    assert not correct(b, fix(agent), image=looked, actor="agent", seen="式中：No-为消毒前对照组菌数；").adopted
+    assert b.text == draft and b.decisions[-1].evidence["as_printed"] is False
+    b = block(draft)  # the local reading shows the change
+    assert correct(b, fix(agent), image=looked, actor="agent", seen="式中：N0-为消毒前对照组菌数；").adopted
+    b = block(draft)  # one reading only
+    assert correct(b, fix(agent), image=looked, actor="agent", seen=None).adopted
+    b = block(draft, engine="vlm")  # the service model reads by meaning, as the agent does: no evidence against it
+    assert correct(b, fix(agent), image=looked, actor="agent", seen="式中：No-为消毒前对照组菌数；").adopted
+    b = block("实时数字李生", engine="native_pdf")  # case kept, a text layer's character as printed
+    assert not correct(b, fix("实时数字孪生"), image=looked, actor="agent", seen="实时数字李生").adopted
+    b = block("(J_K^T J_k)", engine="native_pdf")
+    assert not correct(b, fix("(J_k^T J_k)"), image=looked, actor="agent", seen="(JKT Jk)").adopted
+    b = block("(J_K^T J_k)", engine="native_pdf")  # a local reading of part of the place shows neither side
+    assert correct(b, fix("(J_k^T J_k)"), image=looked, actor="agent", seen="T J").adopted
+    b = block("Fr´ed´eric Bastien", engine="native_pdf")  # notation: an accent the text layer holds as a glyph
+    assert correct(b, fix("Frédéric Bastien"), image=looked, actor="agent", seen="Frederic Bastien").adopted
+    assert "as_printed" not in b.decisions[-1].evidence
+    b = block("扫描全能王 第一章 总则")  # text removed only: not a substitution, other checks have it
+    assert correct(b, fix("第一章 总则"), image=looked, actor="agent", seen="扫描全能王 第一章 总则").adopted

@@ -643,13 +643,17 @@ def test_the_agent_adds_text_the_page_shows_and_no_block_has(ws):
 
 
 def test_the_local_reading_of_a_native_number_is_told_not_obeyed(ws):
+    """Where the local reading and the text layer agree on a number and nothing shows the agent's, the page prints it
+    so: the change is refused (as printed).  A local reading that shows neither is told (a signal), not obeyed."""
     context = _context()
     native = next(b for b in Workspace.open(ws).load().blocks if b.text == NATIVE)
-    evidence = _evidence(ws, context, block=native.id)
     edit = {"op": "replace_text", "block": native.id, "find": "100 万元", "replace": "900 万元", "reason": "图上是 900",
-            "evidence": evidence}
+            "evidence": _evidence(ws, context, block=native.id)}
     _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为100万元", native.anchors[0].bbox)])  # the page shows 100
     outcome = _edit(ws, context, edit)[0]
+    assert not outcome.accepted and outcome.rule == "as_printed" and "agree with the draft" in outcome.detail
+    _give_reading(ws, 1, [("SENTINEL-NATIVE 采购金额为700万元", native.anchors[0].bbox)])  # the reading has 700
+    outcome = _edit(ws, context, {**edit, "evidence": _evidence(ws, context, block=native.id)})[0]
     assert outcome.accepted and "does not show" in outcome.detail
     detail = next(b for b in Workspace.open(ws).load().blocks if b.id == native.id).decisions[-1].evidence
     assert "does not show" in detail["signal_detail"]
