@@ -7,16 +7,21 @@ flattened (N_o → "No"), fractions and matrices in fragments.  Measured on the 
 well as crops of them (crops cut formulas the detector splits); taken as a whole the page reading loses prose the
 text layer has, so it is adopted passage by passage.
 
-1. **Pages**: native pages where the local layout detector marks a display or inline formula.  Pages whose
-   formulas are plain text need no reading; DOCX formulas are OMML, already LaTeX (Q9); scanned pages are read
-   whole anyway.
+1. **Pages** (``pages_to_read``): native pages whose text layer may not carry all the page prints — where the local
+   layout detector marks a display or inline formula; where the text layer sets letters or digits small that the
+   glyph geometry does not judge scripts (``content/scripts.unsettled``: paper_chn01's F₁ set small but hardly
+   lowered); where the local reading of the page image sees text no block has (``UNSEEN_SHARE`` of its
+   characters) — and every native page when more than half of them are (a document is set one way throughout:
+   one reading of it all keeps it consistent).  Pages whose formulas are plain text need no reading; DOCX formulas
+   are OMML, already LaTeX (Q9); scanned pages are read whole anyway.
 2. **Reading**: those pages, batched, through the scan engine (the scanned-page path, ``scan.page_blocks``).
 3. **Passages**: the native text blocks and the reading's text and formula blocks over the same place form
    passages (a block belongs to a passage when its centre lies in a block of the other reading).  The engine reads
    a paragraph cut by a column break whole, at the place before the cut: the native block after the cut joins the
    passage when the reading carries its text; a piece the text layer cut from a formula (a prime set above the
-   line) lying inside a native block of the passage is the passage's too.  Only passages where the reading has mathematics are considered:
-   prose stays the text layer's.
+   line) lying inside a native block of the passage is the passage's too.  Only passages where the reading has
+   mathematics, or letters and digits the text layer lacks there that the local reading sees too, are considered:
+   other prose stays the text layer's.
 4. **Choice**, per passage (the selection step's rule: two readings, conservation):
    - the reading carries every letter and digit of the text layer (a character neither the reading nor the
      local page reading sees — a mis-mapped glyph — does not count; LaTeX command names are not characters) →
@@ -50,7 +55,8 @@ from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.rotation import shown
 from parserx.ir.state import DocumentState, LedgerEntry
-from parserx.reading.compare import normalize, text_at
+from parserx.content.scripts import UNSETTLED
+from parserx.reading.compare import normalize, text_at, unaccounted_lines
 from parserx.runtimes.events import Step
 from parserx.scheduling import run_ordered
 from parserx.services.llm import OUTPUT_BUDGET
@@ -61,6 +67,7 @@ from parserx.tools.recognize import _next_block_seq, _next_item
 from parserx.workspace.queries import HIDDEN, block_unit
 
 LABELS = frozenset({"display_formula", "inline_formula"})  # detector labels that make a page worth reading
+UNSEEN_SHARE = 0.05  # share of the local reading's characters no block has that makes a page worth reading
 DONE = "formula_page"  # decision choice: the passage was decided (adopted or kept)
 CANDIDATE = "formula_reading"  # observation label: the reading (or the editor's version) not adopted
 PAD = 2.0  # pt: a block's centre may lie this far outside the other block (box rounding, measurement tolerance)
@@ -69,6 +76,7 @@ EDITOR_ROUNDS = 2  # the editor's tries per passage (the service model does not 
 DIFFERENCES = 12  # characters the editor is told the two readings disagree on, the most frequent first
 CARRIED = 8  # letters and digits a native block needs before a reading may carry it (a shorter one matches by chance)
 CARRIED_MATCH = 90  # rapidfuzz partial ratio of that block's text inside the reading's
+SHOWN_MORE = CARRIED  # letters and digits a reading must add, the local reading seeing them too, for prose to count
 _PASSAGE_KINDS = frozenset({BlockKind.TEXT, BlockKind.FORMULA})
 _EDITOR_PROMPT = (
     "你是编辑。图中是文档的一段。给你两份读数：A 是 PDF 文字层（字符准确，但公式的上下标、分式等结构丢失，个别字形可能是乱码），"
@@ -91,8 +99,8 @@ def editor_service(ctx: ToolContext):
     return ctx.vlm(ctx.config.tools.ask_reasoning_effort)
 
 
-def formula_pages(state: DocumentState) -> list[int]:
-    """Native PDF pages with a detected formula, not decided yet."""
+def pages_to_read(state: DocumentState) -> list[int]:
+    """Native PDF pages to read on their image too, not decided yet (the module docstring, 1.)."""
     if state.format != "pdf":
         return []
     native_pages = {p.n for p in state.pages if p.status == PageStatus.DONE}
@@ -102,13 +110,31 @@ def formula_pages(state: DocumentState) -> list[int]:
     for block in state.blocks:
         n = block_unit(state, block)
         if any(o.task == TaskKind.LAYOUT and o.label in LABELS for o in block.observations):
-            marked.add(n)
+            marked.add(n)  # a formula
+        if block.status not in HIDDEN and any(d.choice == UNSETTLED for d in block.decisions):
+            marked.add(n)  # small glyphs the geometry does not judge
         if any(d.choice == DONE for d in block.decisions):
             done.add(n)
         if block.status not in HIDDEN and block.kind != BlockKind.FIGURE and isinstance(block.anchors[0], PdfAnchor) \
                 and any(o.engine == "paddleocr" and o.task == TaskKind.RECOGNIZE for o in block.observations):
             scanned.add(n)  # read by the scan engine already (a scanned page)
-    return sorted(n for n in marked & native_pages if n not in done and n not in scanned)
+    marked |= _unseen(state)  # text the page image shows that no block has
+    layer = native_pages - scanned
+    if 2 * len(marked & layer) > len(layer):  # most of the document: all of it, read one way
+        marked = layer
+    return sorted(n for n in marked & layer if n not in done)
+
+
+def _unseen(state: DocumentState) -> set[int]:
+    """Pages where the local reading sees text no block has: ``UNSEEN_SHARE`` of its characters or more."""
+    missed = unaccounted_lines(state)
+    out = set()
+    for reading in state.readings:
+        seen = sum(len(normalize(line.text)) for line in reading.lines)
+        lacking = sum(len(normalize(line.text)) for line in missed.get(reading.n, []))
+        if seen and lacking >= UNSEEN_SHARE * seen:
+            out.add(reading.n)
+    return out
 
 
 def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, int], list[Failure]]:
@@ -150,8 +176,8 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
     need_editor = []
     for index, (n, natives, reading) in enumerate(plans):
         native_text, reading_text = _texts(blocks, natives, reading)
-        if not _lost(state, n, natives, blocks, native_text, reading_text):
-            continue
+        if not _math(reading) or not _lost(state, n, natives, blocks, native_text, reading_text):
+            continue  # prose the reading shows more of is taken as read, or not at all
         box = _union([blocks[b].anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading])
         with pymupdf.open(source) as doc:
             png = doc[n - 1].get_pixmap(dpi=EDITOR_DPI, clip=pymupdf.Rect(shown(page_of[n], box)) + (-4, -4, 4, 4)
@@ -189,11 +215,17 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
                 _adopt(state, n, [blocks[b] for b in natives],
                        [_edited_block(n, [blocks[b] for b in natives], reading, edited[index])], how="editor")
                 counts["editor"] += 1
+            elif not _math(reading):  # prose whose reading loses characters of the layer: the layer stays
+                counts["prose_kept"] += 1
             else:
                 _keep([blocks[b] for b in natives], edited.get(index) or reading_text)
                 counts["kept"] += 1
         renumber(state)
     return dict(counts), failures
+
+
+def _math(reading: list[Block]) -> bool:
+    return any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in reading)
 
 
 def _texts(blocks: dict, natives: list[str], reading: list[Block]) -> tuple[str, str]:
@@ -228,8 +260,20 @@ def _passages(state: DocumentState, n: int, reading: list[Block]) -> list[tuple[
     for j, b in enumerate(reading):
         groups.setdefault(find(len(natives) + j), ([], []))[1].append(b)
     passages = [(native_ids, blocks) for native_ids, blocks in groups.values()
-                if native_ids and blocks and any(b.kind == BlockKind.FORMULA or "$" in (b.text or "") for b in blocks)]
+                if native_ids and blocks and (_math(blocks) or _shows_more(
+                    state, n, [b for b in natives if b.id in native_ids], blocks))]
     return _enclosed(natives, _continued(sorted(natives, key=lambda b: b.order), passages))
+
+
+def _shows_more(state: DocumentState, n: int, natives: list[Block], reading: list[Block]) -> bool:
+    """Whether the reading has letters or digits the text layer lacks at this place that the local reading sees
+    there too: text the page prints and the layer does not hold (two readings of the image agree on it)."""
+    layer = Counter(normalize("\n".join(b.text or "" for b in natives)))
+    more = Counter(normalize(characters("\n".join(b.text or "" for b in reading)))) - layer
+    if sum(more.values()) < SHOWN_MORE:
+        return False
+    seen = text_at(state, n, _union([b.anchors[0].bbox for b in natives] + [b.anchors[0].bbox for b in reading]))
+    return seen is not None and sum((more & (Counter(normalize(seen)) - layer)).values()) >= SHOWN_MORE
 
 
 def _enclosed(natives: list[Block], passages: list[tuple[list[str], list[Block]]]

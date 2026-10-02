@@ -83,7 +83,7 @@ def _run(tmp_path, entries, editor_answer=None, pdf=_page_pdf, formula=(70, 118,
         name, version = "layout", "fake-formula-detector"
 
         def detect(self, png):
-            return [Region(bbox=tuple(v * k for v in formula), label="inline_formula", score=0.9)]
+            return [Region(bbox=tuple(v * k for v in formula), label="inline_formula", score=0.9)] if formula else []
 
     def ocr_page():
         return {"prunedResult": {"width": 595, "height": 842, "parsing_res_list": entries}}
@@ -284,3 +284,71 @@ def test_the_formula_editor_asks_its_own_model_else_the_service_model():
     assert editor_service(ctx(luna, lambda name, effort: None)) == ("service", "low")  # no such entry
     assert editor_service(ctx(luna, unconfigured)) == ("service", "low")
     assert editor_service(ctx(None, lambda name, effort: (name, effort))) == ("service", "low")
+
+
+# ── Which native pages are read on their image (rules 2–4 and the whole document, 2026-10-02) ──
+
+
+def _small_pdf(tmp_path):
+    """A subscript set small but hardly lowered (paper_chn01's F₁): the geometry does not judge it."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    lead = "The rear axle carries the load F"
+    page.insert_text((72, 130), lead, fontsize=10)
+    x = 72 + pymupdf.get_text_length(lead, fontsize=10)
+    page.insert_text((x, 130.5), "1", fontsize=5.5)
+    page.insert_text((x + 3, 130), " as measured on the deck.", fontsize=10)
+    page.insert_text((72, 260), "A plain sentence of prose that the page reading repeats word for word.", fontsize=10)
+    path = tmp_path / "f.pdf"
+    doc.save(path)
+    return path
+
+
+def test_small_glyphs_the_geometry_does_not_judge_send_the_page_to_be_read(tmp_path):
+    state, md, _ = _run(tmp_path, [
+        _entry("text", "The rear axle carries the load $ F_{1} $ as measured on the deck.", (72, 120, 330, 133)),
+        PROSE,
+    ], pdf=_small_pdf, formula=None)
+    assert "$ F_{1} $" in md  # no formula detected: the small glyph sent the page to be read
+    assert any(d.choice == "unsettled_glyphs" for b in state.blocks for d in b.decisions)
+    prose = [b for b in state.blocks if (b.text or "").startswith("A plain sentence")]
+    assert len(prose) == 1 and prose[0].observations[0].engine == "native_pdf"  # prose stays the text layer's
+
+
+def _layer_state(flagged: set[int], pages=(1, 2, 3), readings=()):
+    from parserx.ir.anchor import PdfAnchor
+    from parserx.ir.block import Block
+    from parserx.ir.decision import Decision
+    from parserx.ir.enums import BlockKind, DecisionStage, DocumentStatus, ObservationStatus, PageStatus, TaskKind
+    from parserx.ir.observation import Observation
+    from parserx.ir.state import DocumentState, PageState
+
+    blocks = []
+    for n in pages:
+        anchor = PdfAnchor(page=n, bbox=(72, 100, 500, 112), coord_space="page_pt")
+        obs = Observation(id=f"o-{n}", engine="native_pdf", engine_version="v", task=TaskKind.EXTRACT, anchor=anchor,
+                          text=f"Body text of page {n}.", status=ObservationStatus.OK)
+        decisions = [Decision(stage=DecisionStage.CONTENT_SOURCE, choice="unsettled_glyphs", reason="r", actor="t",
+                              evidence={"glyphs": 2})] if n in flagged else []
+        blocks.append(Block(id=f"b-p{n:03d}-0001", kind=BlockKind.TEXT, order=n, anchors=[anchor], observations=[obs],
+                            chosen_observation=obs.id, text=f"Body text of page {n}.", decisions=decisions))
+    return DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf",
+                         status=DocumentStatus.IN_PROGRESS, blocks=blocks, readings=list(readings),
+                         pages=[PageState(n=n, unit="pdf_page", status=PageStatus.DONE) for n in pages])
+
+
+def test_most_pages_needing_a_reading_read_the_whole_document():
+    from parserx.tools.formulas import pages_to_read
+
+    assert pages_to_read(_layer_state(set())) == []
+    assert pages_to_read(_layer_state({2})) == [2]
+    assert pages_to_read(_layer_state({1, 3})) == [1, 2, 3]  # more than half: all of it, read one way
+
+
+def test_text_the_page_image_shows_and_no_block_has_sends_the_page_to_be_read():
+    from parserx.ir.state import PageReading, ReadLine
+    from parserx.tools.formulas import pages_to_read
+
+    lines = [ReadLine(bbox=(72, 100, 500, 112), text="Body text of page 1.", score=0.99),
+             ReadLine(bbox=(72, 300, 500, 312), text="A header row drawn as lines", score=0.99)]
+    assert pages_to_read(_layer_state(set(), readings=[PageReading(n=1, engine="ppocr", dpi=100, lines=lines)])) == [1]

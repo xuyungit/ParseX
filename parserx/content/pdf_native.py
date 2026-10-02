@@ -99,6 +99,7 @@ class _Line:
     scripts: tuple[str, ...] = ()  # per glyph: "sup", "sub" or "" (``content/scripts.py``, judged on the whole page)
     bases: tuple[tuple[str, float, float] | None, ...] = ()  # per glyph: the origin key of the glyph it is a script of
     read: tuple[tuple[str, str], ...] = ()  # glyphs read from the page image: (the text layer's code, the reading)
+    unsettled: int = 0  # small letters and digits the geometry does not judge (``scripts.unsettled``)
 
     @property
     def marked(self) -> str:
@@ -298,7 +299,8 @@ def _lines(page: pymupdf.Page, found: dict[glyphs.Key, str] | None = None) -> li
                              mono=mono, mono_face=mono_face, trailing_space=text != text.rstrip(),
                              emphasis=tuple(_bold(span) for span in spans for _ in span.get("chars", ())),
                              read=read))
-    for line, judged in zip(out, scripts.judge(script_lines)):
+    for line, judged, glyph_line in zip(out, scripts.judge(script_lines), script_lines):
+        line.unsettled = scripts.unsettled(glyph_line, [kind for kind, _ in judged])
         if any(kind for kind, _ in judged):
             line.scripts = tuple(kind for kind, _ in judged)
             line.bases = tuple(out[base[0]].origins[base[1]] if base else None for _, base in judged)
@@ -984,10 +986,15 @@ def _block(block_id: str, order: int, n: int, region: _Region, decision: Decisio
             task=TaskKind.EXTRACT, anchor=anchors[0], text=text, style=style,
             marks=[] if style.monospace else _bold_marks(region.lines) + _script_marks(region.lines),
             status=ObservationStatus.OK))
+    small = sum(ln.unsettled for ln in region.lines) if text else 0
+    unsettled = Decision(  # the page is read on its image too (``tools/formulas.pages_to_read``)
+        stage=DecisionStage.CONTENT_SOURCE, choice=scripts.UNSETTLED, actor=ACTOR, evidence={"glyphs": small},
+        reason="letters or digits set smaller than their line that the glyph geometry judges no script: the page "
+               "image tells what they are") if small else None
     return Block(
         id=block_id, kind=region.kind, order=order, anchors=anchors, observations=observations,
         chosen_observation=observations[0].id if observations else None, text=text,
-        cells=region.grid, decisions=[d for d in (unified, read) if d is not None] + [decision],
+        cells=region.grid, decisions=[d for d in (unified, read, unsettled) if d is not None] + [decision],
     )
 
 

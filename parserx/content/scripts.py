@@ -69,6 +69,17 @@ class Line:
     size: float = 0.0
 
 
+UNSETTLED = "unsettled_glyphs"  # decision choice: a block holds small glyphs the geometry does not judge
+
+
+def unsettled(line: Line, kinds: Sequence[str]) -> int:
+    """Letters and digits of *line* set clearly smaller than its text (``SCRIPT_SIZE``) and judged no script: what
+    they are the geometry does not tell (a script set small but hardly shifted, as some typesetting systems do; a
+    small label), a reader of the page image does."""
+    return sum(1 for glyph, kind in zip(line.glyphs, kinds)
+               if not kind and glyph.char.isalnum() and line.size and glyph.size <= SCRIPT_SIZE * line.size)
+
+
 def kinds(lines: Sequence[Line]) -> list[list[str]]:
     """Per line, per glyph: "sup", "sub" or "" (``judge``)."""
     return [[kind for kind, _ in line] for line in judge(lines)]

@@ -60,7 +60,7 @@ from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.layout_shadow import layout_todo
-from parserx.tools.formulas import formula_pages, read_formula_pages
+from parserx.tools.formulas import pages_to_read, read_formula_pages
 from parserx.tools.page_reading import read_pages, reading_todo
 from parserx.tools.views import unresolved_items
 from parserx.workspace.queries import HIDDEN, ordered
@@ -136,7 +136,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
 
     if ctx.config.runtime.formulas:  # formulas of native pages: whole pages read, passages chosen (Q70)
-        pages = formula_pages(ctx.ws.load())
+        pages = pages_to_read(ctx.ws.load())
         if pages:
             counts, problems = _unless_unconfigured(failures, lambda: read_formula_pages(ctx, pages), ({}, []))
             failures += problems
