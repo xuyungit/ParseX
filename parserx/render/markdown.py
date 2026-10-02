@@ -70,10 +70,16 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     for block in ordered(state):
         if block.id in skipped:
             continue
+        number = numbers.get(block.id)
         if block.id in joined:
-            block = block.model_copy(update={"text": "\n".join(b.text for b in joined[block.id])})
-        if block.id in numbers:
-            block = block.model_copy(update={"text": tagged(block.text, numbers[block.id])})
+            chain = joined[block.id]
+            if block.kind == BlockKind.FORMULA:  # a formula a page splits: one display, numbered where a part is
+                block = block.model_copy(update={"text": "\n".join(_math_body(b.text) for b in chain)})
+                number = next((numbers[b.id] for b in chain if b.id in numbers), None)
+            else:
+                block = block.model_copy(update={"text": "\n".join(b.text for b in chain)})
+        if number is not None:
+            block = block.model_copy(update={"text": tagged(block.text, number)})
         by_unit.setdefault(block_unit(state, block), []).append(block)
     parts: list[str] = []
     section = 1
@@ -124,12 +130,14 @@ def _comment_safe(text: str) -> str:
 
 
 def _continuations(state: DocumentState) -> dict[str, list[Block]]:
-    """Chains of visible text blocks linked by ``continues`` (earlier → later, guide §6.9), by their first block."""
+    """Chains of visible text blocks — or parts of a formula — linked by ``continues`` (earlier → later, guide
+    §6.9), by their first block."""
     blocks = {b.id: b for b in state.blocks}
 
     def joinable(block_id: str) -> bool:
         block = blocks.get(block_id)
-        return block is not None and block.status in _VISIBLE and block.kind in JOINABLE
+        return block is not None and block.status in _VISIBLE and (block.kind in JOINABLE
+                                                                   or block.kind == BlockKind.FORMULA)
 
     following = {r.src: r.dst for r in sorted(state.relations, key=lambda r: r.id)
                  if r.kind == RelationKind.CONTINUES and joinable(r.src) and joinable(r.dst)}
@@ -239,6 +247,15 @@ def _render_all(blocks: list[Block], assets: dict[str, Asset], image_dir: str,
     if code:
         out.append(_code_block(code))
     return out
+
+
+def _math_body(text: str) -> str:
+    """A display formula's LaTeX without its delimiters ($$ … $$, \\[ … \\])."""
+    body = text.strip()
+    for opening, closing in (("$$", "$$"), ("\\[", "\\]")):
+        if body.startswith(opening) and body.endswith(closing) and len(body) >= len(opening) + len(closing):
+            return body[len(opening):len(body) - len(closing)].strip()
+    return body
 
 
 def _code_block(lines: list[str]) -> str:

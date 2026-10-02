@@ -382,3 +382,60 @@ def test_a_batch_refuses_what_is_illegal_in_the_result_and_keeps_the_rest():
     assert outcome.accepted == [1] and [(r.index, r.rule) for r in outcome.rejected] == \
         [(0, "numbering_level_inconsistent")]
     assert "s2" in outcome.rejected[0].detail and [b.level for b in state.blocks] == [1, 2, 3, 3]
+
+
+def _formula_pages():
+    """A formula a page break splits, read as two blocks; the page reading replaced the text layer's lines of the
+    second part (n1, n2: duplicates of f2, as the formula tool leaves them)."""
+    from parserx.ir.state import LedgerEntry
+
+    state = _state()
+    state.blocks += [_b("f1", 5, BlockKind.FORMULA, "$$ a = b + $$"), _b("f2", 6, BlockKind.FORMULA, "$$ c + d $$"),
+                     _b("n1", 7, text="c +", status=BlockStatus.DUPLICATE),
+                     _b("n2", 8, text="d", status=BlockStatus.DUPLICATE)]
+    state.relations += [Relation(id=f"r-dup-{n}", kind="duplicate_of", src=n, dst="f2") for n in ("n1", "n2")]
+    anchor = PdfAnchor(page=1, bbox=(0, 0, 1, 1), coord_space="page_pt")
+    state.ledger = [LedgerEntry(item=f"i-{b.id}", unit="native_line", source=anchor, chars=2, block=b.id,
+                                disposition="duplicate" if b.status == BlockStatus.DUPLICATE else "output")
+                    for b in state.blocks]
+    return state
+
+
+def test_a_block_the_only_place_other_blocks_content_shows_is_not_left_out():
+    # round 2 → F (paper_chn01): the agent copied a formula's second part into the first and excluded the second,
+    # the reading the text layer's lines had been replaced by: their content showed nowhere, the ledger failed
+    state = _formula_pages()
+    refused = check_changes(state, _changes({"op": "exclude", "block": "f2", "reason": "已并入前一块"}))
+    assert [(r.index, r.rule) for r in refused] == [(0, "holds_content")]
+    assert "n1" in refused[0].detail and "join" in refused[0].detail
+    assert check_changes(state, _changes({"op": "exclude", "block": "p3", "reason": "界面文字"})) == []
+
+
+def test_the_two_parts_of_a_formula_a_page_splits_join_into_one():
+    from parserx.render import render_markdown
+
+    state = _formula_pages()
+    assert check_changes(state, _changes({"op": "join", "first": "f1", "second": "p3", "reason": "r"}))[0].rule == \
+        "not_joinable"  # a formula continues as a formula only
+    outcome = apply_changes(state, _changes({"op": "join", "first": "f1", "second": "f2", "reason": "公式跨页"}),
+                            actor="agent")
+    assert outcome.accepted == [0]
+    state.pages = []
+    md = render_markdown(state)
+    assert "$$\na = b + c + d\n$$" in md and md.count("$$") == 2
+    # the number at the right of the second part's line is the whole formula's
+    state.blocks.append(_b("num", 9, text="(5)", status=BlockStatus.MERGED))
+    state.relations.append(Relation(id="r-numbers-num-f2", kind="numbers", src="num", dst="f2"))
+    assert "$$\na = b + c + d \\tag{5}\n$$" in render_markdown(state)
+
+
+def test_mismatched_ledger_items_are_explained_by_their_blocks():
+    from parserx.accounting import check
+    from parserx.accounting.check import explained
+
+    state = _formula_pages()
+    next(b for b in state.blocks if b.id == "f2").status = BlockStatus.EXCLUDED  # as before the rule, by hand
+    result = check(state)
+    assert sorted(result.mismatched) == ["i-f2", "i-n1", "i-n2"]
+    why = explained(state, result.mismatched)
+    assert any("n1, n2" in w and "f2" in w and "excluded" in w and "include" in w for w in why), why

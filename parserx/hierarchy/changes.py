@@ -76,7 +76,8 @@ class Join(IRModel):
     two tables become one, ``second``'s rows appended to ``first`` (a table continued on the next page)."""
 
     model_config = agent_doc("续接：second 接着 first。两段文字（被分页或分栏拆开的一段）在输出中合成一段，块的原文不变；"
-                             "两张表（下一页的续表）合成一张。")
+                             "两块公式（被分页拆开的一个公式）合成一个公式，编号随之；两张表（下一页的续表）合成一张。"
+                             "被拆开的内容用续接合成，不要把后一块抄进前一块再排除后一块。")
 
     op: Literal["join"]
     first: str = Field(description="前一块")
@@ -113,7 +114,8 @@ class Exclude(IRModel):
     """Leave a block out of the output (an icon read as a character, interface text …); its text stays in the
     sidecar, the ledger counts it as excluded and the Decision says why (guide §2.3, Q27; P2-5)."""
 
-    model_config = agent_doc("不输出这一块（界面文字、图标被识成的字符、扫描软件字样、装饰图等），必须写明理由；文字留在 sidecar。")
+    model_config = agent_doc("不输出这一块（界面文字、图标被识成的字符、扫描软件字样、装饰图等），必须写明理由；文字留在 sidecar。"
+                             "别的块的内容只靠这一块输出时（它是替换它们的读法）不能排除，结果会说明是哪些块。")
 
     op: Literal["exclude"]
     block: str = Field(description=BLOCK)
@@ -171,6 +173,7 @@ class LegalityRule(StrEnum):
     FURNITURE_WITHOUT_EVIDENCE = "furniture_without_evidence"  # page furniture back into the body: a look at the page
     REASON_REQUIRED = "reason_required"  # exclude: content leaves the output only with a reason
     NOT_VISIBLE = "not_visible"  # exclude: the block is not in the output
+    HOLDS_CONTENT = "holds_content"  # exclude: other blocks' content shows only through this one
     NOT_EXCLUDED = "not_excluded"  # restore: the block is not excluded
     NOT_RESTORABLE = "not_restorable"  # restore: text deleted by a revision (Q26)
     NOT_JOINED = "not_joined"  # unjoin: second does not continue first

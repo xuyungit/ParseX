@@ -51,6 +51,7 @@ from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState, share_containers
 from parserx.layout.labels import FURNITURE
 from parserx.tables.merge import merge_candidate, merge_tables, repeats_header, split_problem, split_tables
+from parserx.accounting.check import held_only_by
 from parserx.workspace.queries import HIDDEN, JOINABLE, ordered
 
 _CONTENT_KINDS = frozenset({BlockKind.TABLE, BlockKind.FIGURE, BlockKind.FORMULA, BlockKind.SCAN})
@@ -189,6 +190,13 @@ def _problem(state: DocumentState, change: StructureChange, *, levels: bool = Tr
             return LegalityRule.REASON_REQUIRED, "content leaves the output only with a reason"
         if blocks[change.block].status in HIDDEN:
             return LegalityRule.NOT_VISIBLE, f"{change.block} is {blocks[change.block].status}"
+        held = held_only_by(state, change.block)
+        if held:
+            return LegalityRule.HOLDS_CONTENT, (
+                f"{change.block} is where the content of {len(held)} other block(s) shows ({', '.join(held[:4])}"
+                f"{' …' if len(held) > 4 else ''}: read again into it, duplicate_of); left out, their text is in no "
+                "output. A formula or paragraph a page splits: join its parts (second continues first) instead of "
+                "copying one into the other; a reading that is wrong: correct it")
         return None
     if isinstance(change, Include):
         block = blocks[change.block]
@@ -238,9 +246,10 @@ def _join_problem(state: DocumentState, first: Block, second: Block, drop_rows: 
             return (LegalityRule.ROWS_NOT_DUPLICATE,
                     f"the first {drop_rows} rows of {second.id} do not repeat the header of {first.id}")
         return None
-    if first.kind not in JOINABLE or second.kind not in JOINABLE:
+    formula = first.kind == second.kind == BlockKind.FORMULA  # a display formula a page or column splits
+    if not formula and (first.kind not in JOINABLE or second.kind not in JOINABLE):
         return (LegalityRule.NOT_JOINABLE, f"{first.id} is {_role(first)}, {second.id} is {_role(second)}: join joins "
-                "two paragraphs (text, list, footnote, other) or two tables")
+                "two paragraphs (text, list, footnote, other), two parts of a formula, or two tables")
     if drop_rows:
         return LegalityRule.NOT_JOINABLE, "drop_rows is for tables"
     if _joined(state, first.id, second.id) is not None:

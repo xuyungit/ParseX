@@ -16,6 +16,7 @@ from parserx.ir.base import IRModel
 from parserx.ir.enums import DocumentStatus
 from parserx.render import write_export
 from parserx.accounting import CheckResult, check
+from parserx.accounting.check import explained
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.views import unresolved_items
 
@@ -68,7 +69,8 @@ def _submitted(ctx: ToolContext) -> SubmitDraftResult:
     for what, items in (("unassigned ledger items", result.unassigned), ("mismatched ledger items", result.mismatched),
                         ("illegal references", result.illegal_refs), ("missing assets", result.missing_assets)):
         if items:
-            blockers.append(f"{len(items)} {what}")
+            why = explained(state, items) if items is result.mismatched else []
+            blockers.append(f"{len(items)} {what}" + (": " + "; ".join(why[:4]) if why else ""))
     return SubmitDraftResult(accepted=result.exportable and not blockers, status=state.status, blockers=blockers,
                              open_issues=open_issues)
 

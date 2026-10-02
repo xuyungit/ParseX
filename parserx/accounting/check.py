@@ -88,6 +88,46 @@ def check(state: DocumentState, root: Path | str | None = None) -> CheckResult:
     )
 
 
+def explained(state: DocumentState, items: list[str]) -> list[str]:
+    """Why ledger items disagree with their blocks, by cause, naming the blocks: what to change to settle them."""
+    blocks = {b.id: b for b in state.blocks}
+    ledger = {e.item: e for e in state.ledger}
+    orphaned = _orphaned_duplicates(state, blocks)
+    targets: dict[str, list[str]] = {}
+    for relation in state.relations:
+        if relation.kind == RelationKind.DUPLICATE_OF:
+            targets.setdefault(relation.src, []).append(relation.dst)
+    causes: dict[str, set[str]] = {}
+    for item in items:
+        entry = ledger.get(item)
+        block = blocks.get(entry.block) if entry is not None else None
+        if block is None:
+            continue
+        if entry.disposition == "duplicate" and block.id in orphaned:
+            held = [t for t in targets.get(block.id, []) if t in blocks]
+            cause = (f"show only through {', '.join(held)}, which is "
+                     f"{' / '.join(sorted({blocks[t].status.value for t in held}))}: include it again (their text "
+                     "is in no output)")
+        else:
+            cause = f"are counted as {entry.disposition} but are {block.status.value}"
+        causes.setdefault(cause, set()).add(block.id)
+    out = []
+    for cause, ids in causes.items():
+        named = sorted(ids)
+        out.append(f"{', '.join(named[:6])}{' …' if len(named) > 6 else ''} ({len(named)} blocks) {cause}")
+    return out
+
+
+def held_only_by(state: DocumentState, block_id: str) -> list[str]:
+    """The duplicate blocks whose content shows only through *block_id* (``duplicate_of``, through other duplicates):
+    left out, it would leave them in no output — the ledger's mismatch, known before the change."""
+    blocks = {b.id: b for b in state.blocks}
+    if block_id not in blocks:
+        return []
+    without = {**blocks, block_id: blocks[block_id].model_copy(update={"status": BlockStatus.EXCLUDED})}
+    return sorted(_orphaned_duplicates(state, without) - _orphaned_duplicates(state, blocks))
+
+
 def _orphaned_duplicates(state: DocumentState, blocks: dict) -> set[str]:
     """Duplicate blocks whose ``duplicate_of`` relations lead (through other duplicates) to no shown block.
 
