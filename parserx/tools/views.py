@@ -8,7 +8,8 @@ from typing import Literal
 from parserx.ir.anchor import SourceAnchor
 from parserx.ir.base import Affine, IRModel
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus, ObservationStatus, RelationKind, TaskKind
+from parserx.ir.enums import (BlockKind, BlockStatus, DocumentStatus, ObservationStatus, PageStatus, RelationKind,
+                              TaskKind)
 from parserx.ir.observation import Observation
 from parserx.ir.state import ClosedItem, DocumentState
 from parserx.tables.grid import TableGrid
@@ -135,6 +136,9 @@ def outline_nodes(state: DocumentState) -> list[OutlineNode]:
 def doc_info(state: DocumentState) -> DocInfo:
     return DocInfo(id=state.id, source=state.source, format=state.format, pages=len(state.pages),
                    status=state.status, version=state.version)
+
+
+OUTLINE_QUOTES = 8  # outline_review: the lines quoted
 
 
 def unresolved_items(state: DocumentState) -> list[Unresolved]:
@@ -313,6 +317,28 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                 target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
                 detail=f"this paragraph starts with {evidence['numbering']} in the same style; look at the page and, "
                        f"if it is a title set like that one, set its role and level (proposed level {level})"))
+    from parserx.tools.draft import title_like
+
+    asked = {u.target for u in items if u.kind == UnresolvedKind.TITLE_CANDIDATE}
+    like = [b for b in title_like(state) if b.id not in asked]
+    shown = [b for b in ordered(state) if b.status not in HIDDEN and (b.text or "").strip()]
+    if any(p.status == PageStatus.PENDING for p in state.pages):  # the outline is looked at once every page is read
+        like, shown = [], []
+    if shown and not any(b.kind == BlockKind.TITLE for b in shown):  # an outline nobody would look at otherwise
+        items.append(Unresolved(
+            target=(like or shown)[0].id, kind=UnresolvedKind.OUTLINE_REVIEW,
+            quotes=_quotes([b.text or "" for b in (like or shown)[:OUTLINE_QUOTES]]),
+            detail="the output has no title. Look at the first page: if the document has a title or section headings "
+                   "(the quotes are its first lines, or lines numbered or set like titles), set their roles and "
+                   "levels; if it has none (a form, a receipt, a single table), close the item"))
+    elif like:
+        items.append(Unresolved(
+            target=like[0].id, kind=UnresolvedKind.OUTLINE_REVIEW,
+            quotes=_quotes([b.text or "" for b in like[:OUTLINE_QUOTES]]),
+            detail=f"{len(like)} one-line paragraph(s) numbered or set like titles are not titles (the quotes, the "
+                   "first of them): a level of headings the outline lacks, or list items, labels, notes. Look at the "
+                   "outline (read_draft view outline) and the page; set the roles and levels of those that are "
+                   "headings, then close the item"))
     for block_id, text, above in unclear_nesting(state):  # which of two numbering styles is the outer one
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TITLE_LEVEL_UNCLEAR, quotes=_quotes([text, above]),

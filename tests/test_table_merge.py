@@ -79,7 +79,7 @@ def test_misaligned_tables_stay_unconfirmed_and_are_reported():
     state = _continued(_rows(21, 30), second_bbox=(200, 60, 590, 400))
     [candidate] = merge_candidates(state)
     assert not candidate.confirmed and propose_merges(state) == []
-    assert [u.kind for u in unresolved_items(state)] == ["table_merge_candidate"]
+    assert [u.kind for u in unresolved_items(state) if u.kind != "outline_review"] == ["table_merge_candidate"]
 
 
 def test_merge_appends_rows_and_keeps_every_source():
@@ -93,7 +93,7 @@ def test_merge_appends_rows_and_keeps_every_source():
     assert [(r.kind, r.src, r.dst) for r in state.relations] == [("continues", "t1", "t2")]
     result = check(state)
     assert result.unassigned == [] and result.mismatched == [] and result.accounting.merged == 1
-    assert render_markdown(state).count("| --- | --- | --- |") == 1 and unresolved_items(state) == []
+    assert render_markdown(state).count("| --- | --- | --- |") == 1 and [u for u in unresolved_items(state) if u.kind != "outline_review"] == []
 
 
 def test_merge_legality():

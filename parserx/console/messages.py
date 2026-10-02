@@ -52,6 +52,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "kind.figure_without_content": {"zh": "没有描述也没有文字的图片", "en": "images without description or text"},
     "kind.caption_number_unseen": {"zh": "说明里有图中读不到的数字", "en": "descriptions quoting numbers not read in the image"},
     "kind.title_candidate": {"zh": "标题候选", "en": "title candidates"},
+    "kind.outline_review": {"zh": "大纲待查", "en": "outline to review"},
     "kind.structure_pending": {"zh": "待定的标题层级", "en": "undecided title levels"},
     "kind.budget_skipped": {"zh": "因预算跳过", "en": "skipped for budget"},
     "kind.asset_missing": {"zh": "缺失的图片文件", "en": "missing image files"},

@@ -391,11 +391,7 @@ def _outline_lines(state: DocumentState, shown: list[Block], classes: _Classes) 
     table shows them."""
     out = []
     for i, block in enumerate(shown):
-        text = _text_of(block).strip()
-        heading_like = block.kind == BlockKind.TITLE or (
-            block.kind == BlockKind.TEXT and text and "\n" not in text
-            and set(classes.evidence.get(block.id, ())) & {"numbering", "layout"})
-        if not heading_like:
+        if block.kind != BlockKind.TITLE and not _set_like_a_title(block, classes):
             continue
         line = _line(state, block, classes.of.get(block.id), GLANCE)
         following = next((_text_of(b).strip() for b in shown[i + 1:] if _text_of(b).strip()), "")
@@ -403,6 +399,19 @@ def _outline_lines(state: DocumentState, shown: list[Block], classes: _Classes) 
             line.next = DocText(doc_text=_shorten(following, FOLLOWING))
         out.append(line)
     return out
+
+
+def title_like(state: DocumentState) -> list[Block]:
+    """The shown one-line paragraphs numbered or set like a title that are not titles (the outline view lists them)."""
+    shown = [b for b in ordered(state) if b.status not in HIDDEN]
+    classes = _classes(state, shown)
+    return [b for b in shown if _set_like_a_title(b, classes)]
+
+
+def _set_like_a_title(block: Block, classes: "_Classes") -> bool:
+    text = _text_of(block).strip()
+    return (block.kind == BlockKind.TEXT and bool(text) and "\n" not in text
+            and bool(set(classes.evidence.get(block.id, ())) & {"numbering", "layout"}))
 
 
 def _word_styles(state: DocumentState) -> tuple[list[WordStyle] | None, list[WordNumbering] | None]:

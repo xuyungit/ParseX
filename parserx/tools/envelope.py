@@ -80,6 +80,7 @@ class UnresolvedKind(StrEnum):
     CAPTION_NUMBER_UNSEEN = "caption_number_unseen"  # a number a picture's description quotes, not read in it (IO6)
     TITLE_LEVEL_UNCLEAR = "title_level_unclear"  # two numbering styles whose nesting the numbers cannot tell (P7)
     TITLE_CANDIDATE = "title_candidate"  # the layout detector sees a section title set apart from the body (D4)
+    OUTLINE_REVIEW = "outline_review"  # no title at all, or one-line paragraphs numbered or set like titles that are not
     STRUCTURE_PENDING = "structure_pending"
     BUDGET_SKIPPED = "budget_skipped"
     ASSET_MISSING = "asset_missing"
