@@ -223,3 +223,59 @@ services:
 - **本机**：仓库 `.env` 的各组已改写成个人配置里的模型条目（Q109）：`_B` 给 gpt-6-luna 与 gpt-6-sol，无后缀的中转站另起条目 `gpt-6-luna-relay`，`_D`、`_G` 各给自己的条目，`_C` 不用。
 - **Agent 的 px**：不读个人配置。
 - **结果**：两个冻结 run 的指纹与回放不变。
+
+## 8. 接入 qwen3.8-flash（2026-10-02，Q145）
+
+用户要把阿里云百炼的 qwen3.8-flash 接成与 gpt-6-luna、deepseek-flash、glm-5.3-flashx 并列的工作模型，并先定接入方式：OpenAI 兼容，还是 DashScope 自有接口。依据是官方的两篇文档（[OpenAI 兼容 Chat](https://docs.bailian.console.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions)、[DashScope 原生](https://docs.bailian.console.aliyun.com/zh/model-studio/qwen-api-via-dashscope)）和 [qwen3.8-flash 的模型页](https://docs.bailian.console.aliyun.com/zh/model-studio/qwen3-8-flash)。
+
+### 8.1 接入方式：OpenAI 兼容的 Chat Completions
+
+| | OpenAI 兼容（compatible-mode） | DashScope 原生 |
+|---|---|---|
+| 地址 | `…/compatible-mode/v1`，一个端点 | `…/api/v1/services/aigc/text-generation/generation` 与 `…/multimodal-generation/generation`，文字和图片是两个端点 |
+| 请求体 | `messages`，图片是 `image_url` 的 Base64 Data URL——与我们现在发的一样 | `input.messages`，图片写 `{"image": …}`，参数放 `parameters` |
+| 思考 | `reasoning_effort` 是标准参数；`enable_thinking`、`thinking_budget`、`preserve_thinking`、`vl_high_resolution_images` 经 `extra_body` | 同名参数放 `parameters` |
+| 只有它有的 | — | 显式缓存 `cache_control`、`fileid://` 引用已上传文件、联网搜索策略、视频 `max_frames` |
+| 我们的代码 | 现有的 Chat / Responses 两条路直接可用 | 要新写一个协议适配器 |
+
+**结论：走 OpenAI 兼容。** 原生接口多出的能力我们一样都不用；按 §2.2，只在协议本身不同、而且需要时才加适配器。兼容模式下 Chat 与 Responses 两条路都通（8.3），条目写 `api_style: chat`：思考内容只在 Chat 以 `reasoning_content` 返回，而 qwen3.8-flash 的 `preserve_thinking` 默认开启，官方要求多轮里把历史的 `reasoning_content` 完整交回——循环对 DeepSeek 已经这样做（`runtimes/models.py`），同一机制直接适用。
+
+### 8.2 地址与 key 怎么配
+
+- **地址**：`https://dashscope.aliyuncs.com/compatible-mode/v1`（北京地域的通用域名；官方说"现有域名仍可正常使用"，本机 key 在它上面能列出 261 个模型，含 qwen3.8-flash）。官方建议迁到业务空间专属域名 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，WorkspaceId 在百炼控制台"业务空间详情"页看；要用时在个人配置的条目下写 `endpoint:` 覆盖即可。新加坡地域的 key 对应 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`（或 `{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com`）。旧 `.env` `_C` 组写的 `…/api/v2/apps/protocols/compatible-mode/v1` 现在返回 404，不再用。
+- **key**：按决定二，只写在个人配置 `~/.config/parserx/config.yaml`（条目的端点和参数都在内置默认里）：
+
+  ```yaml
+  models:
+    qwen3.8-flash:
+      api_key: sk-...
+      # endpoint: https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1   # 可选：业务空间专属域名
+  ```
+
+- **验证与使用**：`uv run parserx check --model qwen3.8-flash`；`parserx parse x.pdf --vlm qwen3.8-flash`（服务模型）、`--agent qwen3.8-flash`（自己的循环）；评测用 `configs/vlm_qwen.yaml`；读图摸底 `scripts/model_probe.py --model qwen3.8-flash --effort low`。
+
+### 8.3 模型特性与探测（2026-10-02）
+
+官方文档：
+- 多模态：输入图片、文字、视频，输出文字；上下文 100 万，最大输出 131 072，思维链最长 262 144。
+- 思考强度：原生只有 low / medium / xhigh（默认 xhigh）；`max`、`high` 映射为 xhigh，`minimal` 映射为 low，`none` 映射为关闭思考；其他值报错。七个都能发，条目不列 `efforts`。**两者都不发时按 xhigh、预算 131 072 思考**——我们的任务都发强度（服务默认 `none`，描述与看图 `low`），循环也发，但条目里写明了。`reasoning_effort` 与 `thinking_budget` 不能同时设。
+- `max_tokens` 只算回答、不含思维链（与 DeepSeek 不同），所以不需要 `min_output_tokens`。
+- 图片像素上限默认 2 621 440（约 1620²），200 dpi 的整页会被缩小；`extra_body: {vl_high_resolution_images: true}` 提到 16 777 216，输入 token 随之增加。先不开，读图摸底时再定。
+- 价格（北京，标价）：输入 0.8 元、缓存命中 0.1 元、输出 2.7 元 / 百万 token；按 6.75 折成 0.12 / 0.015 / 0.40 美元写进 `scheduling.prices`。与 luna（0.10 / 0.01 / 0.50）同一量级，比 GLM（0.30 / 0.084 / 1.04）便宜。
+
+探测（`check --model`，Responses 路）：
+
+| | qwen3.8-flash |
+|---|---|
+| 列在端点的模型里 | 是（261 个） |
+| 文字、图片 | 可以（读出样图的 12345） |
+| temperature | 接受 |
+| 思考强度 | none、minimal、low、medium、high、xhigh、max 七个都接受 |
+| json_schema / json_object | 都遵守 |
+| 返回 `reasoning_content` | Responses 路不返回；Chat 路按文档返回 |
+
+Chat 路（条目写的那条）的探测还没跑：那次命令从 `.env` 里取 key，被权限检查拦下；key 写进个人配置后用 8.2 的命令跑一遍，条目与模型应一致。
+
+### 8.4 改动
+
+`parserx/config/defaults.yaml` 条目与价格；`parserx/config/personal.yaml` 骨架留空 key；`configs/vlm_qwen.yaml`；`scripts/model_probe.py` 的帮助文字；README 的个人配置示例。代码没改：现有的 Chat 适配器、effort 换算、结构化输出退级都直接适用。

@@ -1,0 +1,6 @@
+extends: regression.yaml
+
+# the regression config with another service model (like vlm_glm.yaml, vlm_deepseek.yaml): qwen3.8-flash on Bailian
+services:
+  vlm:
+    use: qwen3.8-flash

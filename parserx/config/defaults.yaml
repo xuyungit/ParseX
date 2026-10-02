@@ -47,6 +47,19 @@ models:
     api_style: chat          # no Responses API (404)
     efforts: [low, high, max]  # always thinks; none / minimal / medium / xhigh are rejected (2026-09-28)
     structured_output: json_object  # json_schema is accepted but not honoured: fenced JSON (2026-09-28)
+  qwen3.8-flash:            # Alibaba Bailian (DashScope), Beijing region (docs/v2_model_config.md §8)
+    # the common domain; the console's workspace domain https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    # is the recommended replacement: write it under endpoint in the personal config
+    endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model: qwen3.8-flash
+    api_style: chat          # Responses works too (probed 2026-10-02); reasoning_content comes back on Chat only, and the
+                             # model wants it handed back in multi-turn (preserve_thinking is on by default)
+    # multimodal (image, text, video in); 1M context, 131 072 output; max_tokens counts the answer only, not the thinking.
+    # Every effort none … max is accepted: not listed (natively low / medium / xhigh; max and high become xhigh, minimal
+    # low, none turns thinking off).  With no effort sent it thinks at xhigh with a 131 072-token budget: always send one.
+    # Images are scaled down above 2 621 440 pixels (~1620²); extra_body: {vl_high_resolution_images: true} lifts the cap
+    # to 16 777 216 at more input tokens — not on until the model probe says it matters (2026-10-02)
+    structured_output: json_schema  # honoured (probed 2026-10-02)
 
 services:
   vlm:
@@ -78,6 +91,7 @@ scheduling:
     gpt-6-sol:    {input: 2.00, cached_input: 0.20, output: 10.00}
     deepseek-flash: {input: 0.30, cached_input: 0.006, output: 1.20}  # peak hours (off-peak half), api-docs.deepseek.com, 2026-09-27
     glm-5.3-flashx: {input: 0.30, cached_input: 0.084, output: 1.04}  # CNY 2.0 / 0.57 / 7.0 at 6.75 (2026-09-24), bigmodel.cn, 2026-09-28
+    qwen3.8-flash: {input: 0.12, cached_input: 0.015, output: 0.40}  # CNY 0.8 / 0.1 / 2.7 at 6.75, Bailian console price page (Beijing, checked by the user), 2026-10-02
 
 # The agent (recommended; Q13, Q106, Q112): the standard processing first, then an agent on documents with open
 # review items.  engine codex: Codex on this machine (`codex login`, its model and effort below); engine loop: our own

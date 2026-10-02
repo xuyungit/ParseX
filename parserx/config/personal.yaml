@@ -13,6 +13,8 @@ models:
     api_key: ""
   glm-5.3-flashx:
     api_key: ""
+  qwen3.8-flash:
+    api_key: ""
 
 # The scan engine (required for scanned pages and the text of images): PaddleOCR-VL through the AI Studio jobs API.
 builders:

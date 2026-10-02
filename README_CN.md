@@ -125,6 +125,7 @@ models:                     # 内置条目已写明端点和参数：补上 key 
   gpt-6-luna: {api_key: sk-...}
   gpt-6-sol: {api_key: sk-...}          # 用于 --agent gpt-6-sol（自己的循环）
   deepseek-flash: {api_key: sk-...}
+  qwen3.8-flash: {api_key: sk-...}          # 阿里云百炼（DashScope）
 builders:
   ocr: {token: ...}                     # 扫描引擎，在 https://aistudio.baidu.com/paddleocr 获取
 services:

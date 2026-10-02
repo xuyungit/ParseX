@@ -128,6 +128,7 @@ models:                     # the built-in entries know endpoints and parameters
   gpt-6-luna: {api_key: sk-...}
   gpt-6-sol: {api_key: sk-...}          # for --agent gpt-6-sol (our own loop)
   deepseek-flash: {api_key: sk-...}
+  qwen3.8-flash: {api_key: sk-...}          # Alibaba Bailian (DashScope)
 builders:
   ocr: {token: ...}                     # the scan engine, from https://aistudio.baidu.com/paddleocr
 services:
