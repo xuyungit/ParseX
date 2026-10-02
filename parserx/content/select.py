@@ -63,7 +63,7 @@ def _plain(text: str) -> str:
 
 class GateCheck(IRModel):
     name: Literal["image_evidence", "numeric_consistency", "text_consistency", "structure_valid",
-                  "independent_reading", "as_printed"]
+                  "independent_reading", "as_printed", "structure_only"]
     passed: bool
     detail: str
     # a check that does not stop the agent but is recorded and listed in the summary (execution plan §3.4): the
@@ -223,6 +223,57 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
     if outcome.adopted and filled:  # Q45: shown as image-only evidence in the sidecar
         block.decisions[-1].evidence["image_only_cells"] = ",".join(f"r{r}c{c}" for r, c in sorted(filled))
     return outcome
+
+
+def structure_only(current: TableGrid, grid: TableGrid) -> GateCheck:
+    """A table written anew by its structure (``set_table``): rows, columns and merged cells change, the text does
+    not.  It writes the table's characters, no other and no fewer (letters and digits as printed, ``_placed``, and
+    the other marks; whitespace aside) — taking text out is a change of content — and every current cell's text
+    reads on whole, row by row or column by column (``_lost_cells``): a cell may be joined from several or split
+    across several, its text is not cut up and mixed."""
+    have, written = _characters(current), _characters(grid)
+    added, dropped = written - have, have - written
+    if added:
+        cells = sorted((c.row, c.col) for c in grid.cells if _characters(c.content) & added)
+        return GateCheck(name="structure_only", passed=False, detail=(
+            f"characters the table does not have: {_where(grid, added)} at cells {cells[:12]}; set_table "
+            "changes the structure only — write each cell with the table's own text, change characters with set_cells"))
+    if dropped:
+        return GateCheck(name="structure_only", passed=False, detail=(
+            f"characters dropped: {_where(current, dropped)}; set_table changes the structure only — every "
+            "character stays; take text out (a reading's repeat, a stray mark) with set_cells first"))
+    lost = _lost_cells(current, grid, set())
+    if lost:
+        return GateCheck(name="structure_only", passed=False, detail=_lost_detail(lost, current, grid))
+    return GateCheck(name="structure_only", passed=True, detail="the table's characters, every cell's text whole")
+
+
+def _characters(text: "str | TableGrid") -> Counter[str]:
+    """What a cell or a table writes: its letters and digits as printed (``_placed``) and its other marks."""
+    if isinstance(text, TableGrid):
+        return sum((_characters(c.content) for c in text.cells), Counter())
+    return Counter(_marks(text))
+
+
+def _marks(text: str) -> list[str]:
+    return [*_placed(text), *(ch for ch in _plain(text) if not ch.isalnum())]
+
+
+def _where(grid: TableGrid, chars: Counter[str]) -> str:
+    """Where the table writes *chars*: the cells made of them whole, then the rest in reading order."""
+    left, parts, rest = Counter(chars), [], []
+    cells = sorted(grid.cells, key=lambda c: (c.row, c.col))
+    for cell in cells:
+        own = _characters(cell.content)
+        if own and not own - left:
+            left -= own
+            parts.append(f"'{cell.content.strip()[:30]}' (r{cell.row}c{cell.col})")
+    for cell in cells:
+        for ch in _marks(cell.content):
+            if left[ch] > 0:
+                left[ch] -= 1
+                rest.append(ch)
+    return ", ".join(parts[:10] + ([f"'{''.join(rest)[:40]}'"] if rest else []))
 
 
 def _filled_cells(current: TableGrid, grid: TableGrid, region: set[tuple[int, int]]) -> set[tuple[int, int]]:

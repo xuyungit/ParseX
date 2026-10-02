@@ -103,6 +103,8 @@ def _edit(op: dict, outcome: dict, text_of: Lookup) -> AgentAction | None:
     if kind in ("replace_text", "set_cells"):
         after = op.get("replace") if kind == "replace_text" else (op.get("cells") or [{}])[0].get("content")
         return AgentAction("edit", target=block, page=_page_of(block), text=_short(after))
+    if kind == "set_table":
+        return AgentAction("table_fix", target=block, page=_page_of(block))
     if kind == "insert_text":
         return AgentAction("add", target=f"p{op.get('page')}", page=op.get("page"), text=_short(op.get("text")))
     if kind == "adopt":

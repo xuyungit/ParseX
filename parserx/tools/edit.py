@@ -5,7 +5,8 @@ the rule that refused it (``atomic``: any refusal and none takes effect).  Every
 one that changes content cites the evidence it rests on (``evidence``, from ``view_source``):
 
 - content: ``replace_text`` (a span that occurs exactly once in the block), ``insert_text`` (text a page shows where
-  no block has it), ``set_cells`` (table cells), ``adopt`` (a reading of the source as it was read: a page's or a
+  no block has it), ``set_cells`` (table cells), ``set_table`` (a table's rows, columns and merged cells, its
+  characters kept), ``adopt`` (a reading of the source as it was read: a page's or a
   figure's text, a table read again, a figure's description, a region of a page whose blocks it replaces — Q87),
   ``unadopt`` (a region's blocks back);
 - structure: ``set_role``, ``move``, ``join`` / ``unjoin``, ``split``, ``exclude`` / ``include``, ``mark_pending`` —
@@ -33,14 +34,14 @@ import unicodedata
 from collections import Counter
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from parserx.content import scan
 from parserx.content.latex import characters, problems
 from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, renumber, signals
 from parserx.content.select import transcribed
 from parserx.content.select import PRINTED_AS_DRAFT, _letters_changed, _unmapped, substitutes
-from parserx.content.select import correct as correct_gate
+from parserx.content.select import correct as correct_gate, structure_only
 from parserx.content.select import review_table as table_gate
 from parserx.hierarchy import apply_batch
 from parserx.hierarchy.changes import (
@@ -90,7 +91,8 @@ _NOT_DISMISSED = frozenset({UnresolvedKind.PAGE_PENDING, UnresolvedKind.BLOCK_FA
 
 DESCRIPTION = ("改初稿：初稿只能这样改。ops 是一组操作，按顺序在一个事务里执行，每条单独被接受或拒绝："
                "结果 outcomes 里每条有 accepted，被拒绝的给出规则名 rule 与原因 detail，据此修正后再提交。"
-               "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt、transcribe_passage）和 dismiss 必须引用证据 "
+               "每条操作写明理由 reason；改内容的（replace_text、set_cells、insert_text、adopt、transcribe_passage）、"
+               "改表格结构的 set_table 和 dismiss 必须引用证据 "
                "evidence——view_source 给出的编号，证据要看得到被改之处（这一块、它所在的页或区域、或跨页接缝）。"
                "存疑（doubt）和记录（note）不改初稿。结构操作从不改文字。块号形如 b-p003-0012（第 3 页第 12 块）；表格的行、列从 0 起。"
                "结果的 issues_opened / issues_closed 是这次修改新开和关掉的待办。")
@@ -136,6 +138,30 @@ class SetCells(IRModel):
     op: Literal["set_cells"]
     block: str = Field(description=BLOCK)
     cells: list[CellEdit] = Field(min_length=1, description="[{row, col, content}, …]")  # empty places too (Q45)
+    reason: str = Field(description=REASON)
+    evidence: str = Field(description=EVIDENCE)
+
+
+class TableCell(IRModel):
+    row: int = Field(ge=0, description="行（从 0 起）")
+    col: int = Field(ge=0, description="列（从 0 起）")
+    rowspan: int = Field(1, ge=1, description="跨几行")
+    colspan: int = Field(1, ge=1, description="跨几列")
+    content: str = Field(description="这一格的文字")
+
+
+class SetTable(IRModel):
+    model_config = agent_doc("改表格的结构：行、列、合并单元格，例如把被分页切成两半的一行合回一行、删去读数多出的空行、"
+                             "把读成一格的两格分开。给出整张表，写法与 read_draft 的 blocks 视图相同，没列出的位置是空格。"
+                             "只改结构不改字：表里的字一个不多、一个不少，几格的文字可以接成一格、一格的文字可以分到几格，"
+                             "每格原有的文字仍连在一起。改字、删字用 set_cells。")
+
+    op: Literal["set_table"]
+    block: str = Field(description=BLOCK)
+    n_rows: int = Field(ge=1, description="行数")
+    n_cols: int = Field(ge=1, description="列数")
+    header_rows: int = Field(0, ge=0, description="表头有几行")
+    cells: list[TableCell] = Field(min_length=1, description="[{row, col, rowspan, colspan, content}, …]")
     reason: str = Field(description=REASON)
     evidence: str = Field(description=EVIDENCE)
 
@@ -220,8 +246,8 @@ class WriteNote(IRModel):
 
 
 EditOp = Annotated[
-    ReplaceText | SetCells | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join | Unjoin | Split
-    | Exclude | Include | MarkPending | Dismiss | RecordDoubt | WriteNote,
+    ReplaceText | SetCells | SetTable | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join
+    | Unjoin | Split | Exclude | Include | MarkPending | Dismiss | RecordDoubt | WriteNote,
     Field(discriminator="op"),
 ]
 
@@ -325,6 +351,8 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
             detail = _replace_text(state, op)
         elif isinstance(op, SetCells):
             detail = _set_cells(state, op)
+        elif isinstance(op, SetTable):
+            detail = _set_table(state, op)
         elif isinstance(op, InsertText):
             made, detail = _insert_text(state, op)
         elif isinstance(op, Adopt):
@@ -418,6 +446,24 @@ def _set_cells(state: DocumentState, op: SetCells) -> str:
     return _correct(state, block, op, text=None, grid=edited)
 
 
+def _set_table(state: DocumentState, op: SetTable) -> str:
+    """The table's structure written anew on the agent's look at it: the same characters, no other and no fewer
+    (``content/select.structure_only``), then the correction's gate (evidence of its place)."""
+    block = _block(state, op.block)
+    if block.kind != BlockKind.TABLE or block.cells is None:
+        raise _Refused("not_table", f"{op.block} is a {block.kind.value}, not a table")
+    try:
+        grid = TableGrid(n_rows=op.n_rows, n_cols=op.n_cols, header_rows=op.header_rows, cells=[
+            Cell(row=c.row, col=c.col, rowspan=c.rowspan, colspan=c.colspan, content=c.content,
+                 is_header=c.row < op.header_rows) for c in sorted(op.cells, key=lambda c: (c.row, c.col))])
+    except ValidationError as exc:
+        raise _Refused("cell", "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())) from None
+    check = structure_only(block.cells, grid)
+    if not check.passed:
+        raise _Refused(check.name, check.detail)
+    return _correct(state, block, op, text=None, grid=grid)
+
+
 def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: TableGrid | None) -> str:
     """The agent's own reading of spans or cells becomes a candidate; the gate adopts it or not (content/select.py)."""
     image = image_evidence(state, block, op.evidence)
@@ -442,6 +488,8 @@ def _spans(block: Block, op) -> list[tuple[str, str]]:
     """What a correction writes in place of what: its find and replace, or each cell's content before and after."""
     if isinstance(op, ReplaceText):
         return [(op.find, op.replace)]
+    if isinstance(op, SetTable):  # the table's own characters: nothing written in place of others
+        return []
     before = [block.cells.slot(e.row, e.col) if block.cells is not None else None for e in op.cells]
     return [(b.content if b else "", e.content) for b, e in zip(before, op.cells)
             if substitutes(b.content if b else "", e.content)]

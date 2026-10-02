@@ -307,6 +307,8 @@ def _change(op: dict, outcome: dict) -> DraftChange:
         text = f"{op['find']} → {op['replace']}"
     elif kind == "set_cells":
         text = "; ".join(f"({c['row']}, {c['col']}) {c['content']}" for c in op["cells"])
+    elif kind == "set_table":
+        what = f"{op['n_rows']}×{op['n_cols']}"
     elif kind == "insert_text":
         target, text = outcome.get("block") or f"p{op['page']}", op["text"]
     elif kind == "adopt":
