@@ -300,6 +300,9 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
                 detail="the description quotes these numbers, but the local reading of the image does not have them: "
                        "the model may have misread a digit (or the local reader a blurred or styled one); look at the "
                        "image and describe it again (view_source as description, then adopt), or close the item"))
+    # where a line is seen as set: a PDF's page image; a Word document has none, its styles are in the outline view
+    pdf = state.format == "pdf"
+    page = "the page" if pdf else "how it is set in the outline (read_draft view outline: a Word document has no page images)"
     for block_id, text, level, evidence in layout_titles(state):  # the page image shows a title the outline lacks
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
@@ -318,7 +321,7 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
         if block_id not in listed:
             items.append(Unresolved(
                 target=block_id, kind=UnresolvedKind.TITLE_CANDIDATE, quotes=_quotes([text]),
-                detail=f"this paragraph starts with {evidence['numbering']} in the same style; look at the page and, "
+                detail=f"this paragraph starts with {evidence['numbering']} in the same style; look at {page} and, "
                        f"if it is a title set like that one, set its role and level (proposed level {level})"))
     from parserx.tools.draft import title_like
 
@@ -327,11 +330,12 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
     shown = [b for b in ordered(state) if b.status not in HIDDEN and (b.text or "").strip()]
     if any(p.status == PageStatus.PENDING for p in state.pages):  # the outline is looked at once every page is read
         like, shown = [], []
+    start = "the first page" if pdf else "the beginning of the draft (a Word document's text is its source)"
     if shown and not any(b.kind == BlockKind.TITLE for b in shown):  # an outline nobody would look at otherwise
         items.append(Unresolved(
             target=(like or shown)[0].id, kind=UnresolvedKind.OUTLINE_REVIEW,
             quotes=_quotes([b.text or "" for b in (like or shown)[:OUTLINE_QUOTES]]),
-            detail="the output has no title. Look at the first page: if the document has a title or section headings "
+            detail=f"the output has no title. Look at {start}: if the document has a title or section headings "
                    "(the quotes are its first lines, or lines numbered or set like titles), set their roles and "
                    "levels; if it has none (a form, a receipt, a single table), close the item"))
     elif like:
@@ -340,15 +344,15 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             quotes=_quotes([b.text or "" for b in like[:OUTLINE_QUOTES]]),
             detail=f"{len(like)} one-line paragraph(s) numbered or set like titles are not titles (the quotes, the "
                    "first of them): a level of headings the outline lacks, or list items, labels, notes. Look at the "
-                   "outline (read_draft view outline) and the page; set the roles and levels of those that are "
-                   "headings, then close the item"))
+                   f"outline (read_draft view outline){' and the page' if pdf else ''}; set the roles and levels of those "
+                   "that are headings, then close the item"))
     for block_id, text, above in unclear_nesting(state):  # which of two numbering styles is the outer one
         items.append(Unresolved(
             target=block_id, kind=UnresolvedKind.TITLE_LEVEL_UNCLEAR, quotes=_quotes([text, above]),
             detail="this title's numbering style begins here, right after a title of another style, and not at its "
                    "first number: either the text began inside a section of this style (a page cut from a document; "
                    "then the titles of the other style belong one level below this one) or its list's earlier items "
-                   "were not found and it nests one level below the title above. Look at the page — how the two "
+                   f"were not found and it nests one level below the title above. Look at {page} — how the two "
                    "styles are set (bold, italic, size, indentation) — and set the levels of both series"))
     for candidate in merge_candidates(state):
         items.append(Unresolved(target=candidate.second, kind=UnresolvedKind.TABLE_MERGE_CANDIDATE,

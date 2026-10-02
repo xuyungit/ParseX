@@ -28,6 +28,7 @@ from pydantic import Field, model_validator
 
 from parserx.content import scan
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
+from parserx.ir.asset import Asset
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.enums import BlockKind
 from parserx.ir.evidence import Evidence, evidence_id
@@ -40,7 +41,7 @@ from parserx.tools.context import ToolContext, ToolOutput, output, service_failu
 from parserx.tools.describe_figure import perceive as describe
 from parserx.tools.envelope import DocText, Failure, FailureCode, ToolFailure
 from parserx.tools.formulas import passage_box
-from parserx.tools.imaging import image_crop, page_render, region_crop, seam_image, write_once
+from parserx.tools.imaging import image_crop, page_render, places, region_crop, seam_image, stacked, write_once
 from parserx.tables.grid import TableGrid
 from parserx.tools.views import ImageRef, TableView, table_view
 from parserx.tools.vlm_tasks import REVIEW_SCHEMA, parse_review
@@ -485,8 +486,18 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
     if state.format != "pdf" or not isinstance(first, PdfAnchor):
         return None, _WORD
     page = next(p for p in state.pages if p.n == first.page)
-    box = passage_box(state, block) or first.bbox  # a formula the text layer cut into blocks: all of it
-    crop, data, transform, _render, _png = region_crop(ctx.ws.source_path, page, box, dpi, pad)
+    box = passage_box(state, block)  # a formula the text layer cut into blocks: all of it
+    boxes = [box] if box else [a.bbox for a in places(block)] or [first.bbox]
+    crop, data, transform, render, _png = region_crop(ctx.ws.source_path, page, boxes[0], dpi, pad)
+    if len(boxes) > 1:  # printed in several places of the page (a paragraph across columns): each, one under another
+        crops = [(crop, data), *((c, d) for c, d, *_ in (region_crop(ctx.ws.source_path, page, b, dpi, pad)
+                                                          for b in boxes[1:]))]
+        data, width, height = stacked([d for _, d in crops])
+        x0, y0, x1, y1 = zip(*(c.source.bbox for c, _ in crops))
+        crop = Asset.from_bytes(data, media_type="image/png", width=width, height=height, role="crop",
+                                derived_from=render.id, source=PdfAnchor(
+                                    page=page.n, bbox=(min(x0), min(y0), max(x1), max(y1)), coord_space="page_pt"))
+        transform = None
     path = renders / f"{crop.id}.png"
     write_once(path, data)
     return ImageRef(asset=crop.id, path=str(path.resolve()), width=crop.width, height=crop.height,

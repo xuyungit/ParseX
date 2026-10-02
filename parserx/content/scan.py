@@ -171,6 +171,7 @@ def page_blocks(
 
     boxes = [entry_bbox(e) for e in entries]
     order = scan_order(boxes, [e.get("block_order") for e in entries])
+    made: dict[int, tuple[Block, LedgerEntry]] = {}
     for offset, index in enumerate(order):
         entry, box = entries[index], boxes[index]
         label = str(entry.get("block_label", ""))
@@ -223,11 +224,37 @@ def page_blocks(
             item=ids.ledger_item_pdf(scan.page, first_item + offset), unit="ocr_block",
             source=pixel_anchor, chars=chars,
             disposition="excluded" if status == BlockStatus.EXCLUDED else "output", block=block_id))
+        made[index] = (out.blocks[-1], out.ledger[-1])
         if render is not None and status != BlockStatus.EXCLUDED:
             for k, pbox in enumerate(pictures, 1):
                 _picture(out, scan, block_id, k, pbox, render, page_image[0], page_box(pbox), (width, height),
                          transform)
+    _run_on(entries, made)
     return out
+
+
+def _run_on(entries: list[dict], made: dict[int, tuple[Block, LedgerEntry]]) -> None:
+    """Regions the engine wrote into another (``merge_layout_blocks``: a paragraph running on from one column or
+    region into the next is a group, its text in the group's first region and the others left empty): the first
+    region's block holds the text, so all of the group's regions are its place, and the empty ones are merged into
+    it."""
+    first = {e.get("block_id"): made.get(i) for i, e in enumerate(entries) if e.get("block_id") == e.get("group_id")}
+    for i, entry in enumerate(entries):
+        group, member = entry.get("group_id"), made.get(i)
+        head = first.get(group) if group is not None and group != entry.get("block_id") else None
+        if head is None or member is None:
+            continue
+        (block, item), (into, _) = member, head
+        if (block.status != BlockStatus.OK or block.kind != into.kind or (block.text or "").strip()
+                or block.cells is not None):
+            continue
+        into.anchors.append(block.anchors[0])
+        block.status = BlockStatus.MERGED
+        block.decisions.append(Decision(
+            stage=DecisionStage.CONTENT_SOURCE, choice="run_on", actor=ACTOR, refs=[into.id],
+            reason=f"the scan engine wrote this region's text into {into.id}: one paragraph running on",
+            evidence={"group_id": group}))
+        item.disposition, item.block = "merged", into.id
 
 
 def _picture(out: PageScanResult, scan: PageScan, parent: str, k: int, box: BBox, render: Asset, render_png: bytes,
@@ -279,6 +306,7 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
     sx = asset.width / width if width else 1.0
     sy = asset.height / height if height else 1.0
     boxes = [entry_bbox(e) for e in entries]
+    made: dict[int, tuple[Block, LedgerEntry]] = {}
     for offset, index in enumerate(scan_order(boxes, [e.get("block_order") for e in entries]), 1):
         entry, box = entries[index], boxes[index]
         label = str(entry.get("block_label", ""))
@@ -322,6 +350,8 @@ def image_blocks(scan: PageScan, asset: Asset, *, figure: str) -> PageScanResult
         out.ledger.append(LedgerEntry(item=item, unit="ocr_block", source=anchor, chars=chars,
                                       disposition="excluded" if status == BlockStatus.EXCLUDED else "output",
                                       block=block_id))
+        made[index] = (out.blocks[-1], out.ledger[-1])
+    _run_on(entries, made)
     return out
 
 

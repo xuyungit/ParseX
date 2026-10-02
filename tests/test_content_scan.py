@@ -221,3 +221,18 @@ def test_a_filled_in_blank_is_its_value_and_an_empty_one_stays():
     assert fill_in_lines("<td>负责人：___ 张三</td>") == "<td>负责人：张三</td>"
     for kept in ("日期：______", "签字：____ 年 月 日", "var_name = a__b", "$a_{1}$"):
         assert fill_in_lines(kept) == kept
+
+
+def test_a_paragraph_the_engine_ran_on_into_another_region_has_both_places():
+    # milestone run (2026-10-02): PaddleOCR-VL (merge_layout_blocks) wrote a paragraph running from the foot of the
+    # left column into the top of the right one into the first region, leaving the second empty in its group; the
+    # block had the first region's place only, and the agent's look at where the rest is printed was no evidence
+    entries = [{**_entry("text", "左栏末段，接到右栏。", [100, 1000, 480, 1300], 1), "block_id": 3, "group_id": 3},
+               {**_entry("text", "", [520, 100, 900, 400], 2), "block_id": 4, "group_id": 3},
+               {**_entry("text", "右栏下一段。", [520, 420, 900, 600], 3), "block_id": 5, "group_id": 5}]
+    result = page_blocks(_scan(entries), page_size=(500.0, 700.0), first_seq=1, first_item=1)
+    head, member, other = result.blocks
+    assert [a.bbox for a in head.anchors] == [(50.0, 500.0, 240.0, 650.0), (260.0, 50.0, 450.0, 200.0)]
+    assert member.status == BlockStatus.MERGED and other.status == BlockStatus.OK and len(other.anchors) == 1
+    entry = next(e for e in result.ledger if e.block == head.id and e.disposition == "merged")
+    assert entry.chars == 0

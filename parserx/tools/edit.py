@@ -154,13 +154,13 @@ class SetTable(IRModel):
     model_config = agent_doc("改表格的结构：行、列、合并单元格，例如把被分页切成两半的一行合回一行、删去读数多出的空行、"
                              "把读成一格的两格分开。给出整张表，写法与 read_draft 的 blocks 视图相同，没列出的位置是空格。"
                              "只改结构不改字：表里的字一个不多、一个不少，几格的文字可以接成一格、一格的文字可以分到几格，"
-                             "每格原有的文字仍连在一起。改字、删字用 set_cells。")
+                             "每格原有的文字仍连在一起。改字、删字用 set_cells。输出总把第一行当表头，只为标出表头不必用它。")
 
     op: Literal["set_table"]
     block: str = Field(description=BLOCK)
     n_rows: int = Field(ge=1, description="行数")
     n_cols: int = Field(ge=1, description="列数")
-    header_rows: int = Field(0, ge=0, description="表头有几行")
+    header_rows: int = Field(0, ge=0, description="表头有几行（不止一行时才要写）")
     cells: list[TableCell] = Field(min_length=1, description="[{row, col, rowspan, colspan, content}, …]")
     reason: str = Field(description=REASON)
     evidence: str = Field(description=EVIDENCE)

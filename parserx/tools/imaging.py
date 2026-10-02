@@ -64,6 +64,26 @@ def region_crop(source: Path, page: PageState, bbox_pt: BBox, dpi: int,
     return crop, data, transform, render, render_png
 
 
+def places(block) -> list[PdfAnchor]:
+    """A block's places on the first page it is on (page points): one, or several where its text runs on from one
+    region of the page into another (a paragraph across columns, ``content/scan._run_on``)."""
+    on_pages = [a for a in block.anchors if isinstance(a, PdfAnchor) and a.coord_space == "page_pt"]
+    return [a for a in on_pages if a.page == on_pages[0].page]
+
+
+def stacked(images: list[bytes], gap: int = 16) -> tuple[bytes, int, int]:
+    """PNG images one under another on white, in order (the places a block is printed in, read as one)."""
+    parts = [Image.open(io.BytesIO(data)).convert("RGB") for data in images]
+    width, height = max(p.width for p in parts), sum(p.height for p in parts) + gap * (len(parts) - 1)
+    canvas, y = Image.new("RGB", (width, height), "white"), 0
+    for part in parts:
+        canvas.paste(part, (0, y))
+        y += part.height + gap
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG")
+    return buf.getvalue(), width, height
+
+
 def write_once(path: Path, data: bytes) -> None:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -38,7 +38,7 @@ from parserx.scheduling import run_ordered
 from parserx.services.llm import OUTPUT_BUDGET
 from parserx.tools.context import ToolContext, service_failure
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
-from parserx.tools.imaging import write_once
+from parserx.tools.imaging import places, stacked, write_once
 from parserx.workspace.queries import HIDDEN, block_map, ordered, scanned_pages
 
 ACTOR = "program:tools.second_reading"
@@ -200,11 +200,12 @@ def _images(ctx: ToolContext, state: DocumentState, blocks: list[Block]) -> list
     crops, doc = [], None
     try:
         for block in blocks:
-            anchor = _page_anchor(block)
-            if anchor is not None and state.format == "pdf":  # its place on the page
+            on_page = places(block)
+            if on_page and state.format == "pdf":  # its place on the page (its places, one under another)
                 doc = doc or pymupdf.open(ctx.ws.source_path)
-                clip = pymupdf.Rect(shown(pages.get(anchor.page), anchor.bbox)) + (-4, -4, 4, 4)
-                png = doc[anchor.page - 1].get_pixmap(dpi=DPI, clip=clip).tobytes("png")
+                pngs = [doc[a.page - 1].get_pixmap(dpi=DPI, clip=pymupdf.Rect(shown(pages.get(a.page), a.bbox))
+                                                   + (-4, -4, 4, 4)).tobytes("png") for a in on_page]
+                png = pngs[0] if len(pngs) == 1 else stacked(pngs)[0]
             else:  # read inside an image: its place in that image
                 png = _crop(ctx, block, by_id.get(holder.get(block.id, "")), assets)
             if png is None:

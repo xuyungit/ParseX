@@ -71,3 +71,11 @@ def test_the_outline_item_keeps_its_name_while_the_agent_works_and_stays_closed(
     next(b for b in state.blocks if b.id == "c").kind = BlockKind.TITLE  # a later change: the outline was looked at
     next(b for b in state.blocks if b.id == "c").level = 3
     assert _outline_items(state) == []
+
+
+def test_a_word_document_is_looked_at_in_its_text():
+    # milestone run (2026-10-02): told to look at the first page, the agent asked for page images a Word document has not
+    state = _state(_block("a", 0, "某工程集团有限公司某高速公路物资需求一览表"))
+    state.format = "docx"
+    (item,) = _outline_items(state)
+    assert "first page" not in item.detail and "Word document's text is its source" in item.detail
