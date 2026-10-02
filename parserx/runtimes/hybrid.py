@@ -313,9 +313,14 @@ def agent_config(config: ParserXConfig, agent_dir: Path) -> tuple[str, dict[str,
     """The effective config for the agent's tools, with every credential replaced by a ``${…}`` reference, and
     those credentials by name.  Its response cache lives in the agent's directory (the sandbox writes only there).
     The model entries stay behind (Q100): the places that use a model are already filled from its entry, so the
-    other models' keys never reach the agent's side."""
+    other models' keys never reach the agent's side — but the readers the tools name (``tools.second_readers``,
+    ``tools.recheck_readers``) are looked up by entry when a tool runs, and theirs go along (F, 2026-10-01: left
+    behind, a correction was read again by the service model in their place)."""
     data = config.model_dump(mode="json")
-    data.pop("models", None)
+    entries = data.pop("models", None) or {}
+    named = {r.use for r in [*config.tools.second_readers, *config.tools.recheck_readers]}
+    if named & set(entries):
+        data["models"] = {name: entry for name, entry in entries.items() if name in named}
     for section, key in (("services", "vlm"), ("runtime", "agent")):
         data.get(section, {}).get(key, {}).pop("use", None)
     secrets: dict[str, str] = {}

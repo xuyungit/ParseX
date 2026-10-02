@@ -379,3 +379,24 @@ def test_agent_when_always_hands_a_clean_document_to_the_agent(pdf, tmp_path):
     outcome = parse_document(pdf, tmp_path / "out", config, agent=agent, reporter=lambda e: None,
                              context_class=_context_class(None))
     assert outcome.review_open == 0 and agent.runs and outcome.runtime == "hybrid:agent"
+
+
+def test_the_readers_entries_go_with_their_keys_as_references(tmp_path):
+    # F (2026-10-01): with every entry left behind, the readers the tools name (tools.recheck_readers) were not found
+    # and the agent's corrections were read again by the service model instead; the named readers' entries go along,
+    # their keys replaced by references as the others are
+    import yaml
+
+    from parserx.config.schema import ParserXConfig
+
+    config = ParserXConfig.model_validate({
+        "models": {"used": {"endpoint": "https://u", "model": "u", "api_key": "sk-SECRET-USED"},
+                   "reader": {"endpoint": "https://r", "model": "r", "api_key": "sk-SECRET-READER"},
+                   "other": {"endpoint": "https://o", "model": "o", "api_key": "sk-SECRET-OTHER"}},
+        "services": {"vlm": {"use": "used"}},
+        "tools": {"second_readers": [{"use": "reader"}], "recheck_readers": [{"use": "reader"}]}})
+    text, secrets = agent_config(config, tmp_path)
+    assert "sk-SECRET-READER" not in text and "sk-SECRET-OTHER" not in text
+    assert set(secrets.values()) == {"sk-SECRET-USED", "sk-SECRET-READER"}
+    loaded = ParserXConfig.model_validate(yaml.safe_load(text))
+    assert set(loaded.models) == {"reader"} and loaded.models["reader"].api_key.startswith("${")
