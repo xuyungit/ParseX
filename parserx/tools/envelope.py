@@ -86,6 +86,10 @@ class UnresolvedKind(StrEnum):
     ASSET_MISSING = "asset_missing"
 
 
+# items that ask for one look at the whole document, not at a place: closed once, they stay closed
+DOCUMENT_ITEMS = frozenset({UnresolvedKind.OUTLINE_REVIEW})
+
+
 class Unresolved(IRModel):
     target: str
     kind: UnresolvedKind
@@ -95,7 +99,11 @@ class Unresolved(IRModel):
     @computed_field
     @property
     def id(self) -> str:
-        """Stable while the item reads the same (target, kind, quoted text): the name ``dismiss`` takes (Q85)."""
+        """Stable while the item reads the same (target, kind, quoted text): the name ``dismiss`` takes (Q85).  A
+        document-level item (``DOCUMENT_ITEMS``) is one per document and named by its kind alone: what it quotes
+        changes as the agent works on it."""
+        if self.kind in DOCUMENT_ITEMS:
+            return issue_id("", self.kind.value, [])
         return issue_id(self.target, self.kind.value, [q.doc_text for q in self.quotes])
 
 

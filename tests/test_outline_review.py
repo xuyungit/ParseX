@@ -49,3 +49,25 @@ def test_an_outline_with_nothing_to_ask_raises_no_item():
     state = _state(_block("h", 0, "一、企业基本情况", BlockKind.TITLE, level=2),
                    _block("b", 1, "企业成立于二〇一〇年，主营桥梁监测设备的研发、生产与销售。"))
     assert _outline_items(state) == []
+
+
+def test_the_outline_item_keeps_its_name_while_the_agent_works_and_stays_closed():
+    # real agent runs (2026-10-02): the agent set a role, the item's quotes changed, and its dismiss of the item by
+    # the name it had read was refused (unknown_issue) — the item asks for one look at the outline, named by its kind
+    from parserx.ir.state import ClosedItem
+
+    state = _state(_block("h", 0, "一、企业基本情况", BlockKind.TITLE, level=2),
+                   _block("a", 1, "（一）企业情况简介。"),
+                   _block("b", 2, "企业成立于二〇一〇年，主营桥梁监测设备的研发、生产与销售。"),
+                   _block("c", 3, "（二）企业营业执照。"),
+                   _block("d", 4, "（三）企业资质情况。"))
+    (before,) = _outline_items(state)
+    next(b for b in state.blocks if b.id == "a").kind = BlockKind.TITLE  # one of them set as a title
+    next(b for b in state.blocks if b.id == "a").level = 3
+    (after,) = _outline_items(state)
+    assert after.id == before.id and after.target != before.target
+    state.closed.append(ClosedItem(target=after.target, kind=after.kind.value, quotes=[q.doc_text for q in after.quotes],
+                                   reason="其余是条目，不是标题", actor="agent", image="e-1"))
+    next(b for b in state.blocks if b.id == "c").kind = BlockKind.TITLE  # a later change: the outline was looked at
+    next(b for b in state.blocks if b.id == "c").level = 3
+    assert _outline_items(state) == []

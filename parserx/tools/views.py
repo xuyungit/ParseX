@@ -16,7 +16,7 @@ from parserx.tables.grid import TableGrid
 from parserx.content.text_audit import suspicious_characters
 from parserx.tables.arithmetic import arithmetic_issues
 from parserx.tables.merge import merge_candidates
-from parserx.tools.envelope import DocText, Unresolved, UnresolvedKind
+from parserx.tools.envelope import DOCUMENT_ITEMS, DocText, Unresolved, UnresolvedKind
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
 from parserx.hierarchy.layout_titles import layout_titles
 from parserx.hierarchy.numbering_gaps import numbering_gaps, series_successors, unclear_nesting
@@ -144,7 +144,10 @@ OUTLINE_QUOTES = 8  # outline_review: the lines quoted
 def unresolved_items(state: DocumentState) -> list[Unresolved]:
     """Open work in the document, in page / block order; signals the agent checked and closed are left out."""
     closed = {(c.target, c.kind, tuple(c.quotes)) for c in state.closed}
-    return [u for u in _all_items(state) if (u.target, u.kind.value, tuple(q.doc_text for q in u.quotes)) not in closed]
+    looked = {c.kind for c in state.closed}  # a document-level item closed once stays closed (DOCUMENT_ITEMS)
+    return [u for u in _all_items(state)
+            if (u.target, u.kind.value, tuple(q.doc_text for q in u.quotes)) not in closed
+            and not (u.kind in DOCUMENT_ITEMS and u.kind.value in looked)]
 
 
 def _all_items(state: DocumentState) -> list[Unresolved]:
