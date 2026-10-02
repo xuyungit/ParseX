@@ -690,3 +690,28 @@ def test_a_command_the_renderer_wrapped_is_joined_back_and_real_lines_are_not(tm
                                    "ceph osd set noout", "ceph osd set norebalance"]
     table = next(t for t in texts if t.startswith("| name"))
     assert len(table.split("\n")) == 3  # rows of a table drawn in characters stay rows
+
+
+def test_a_word_broken_at_a_line_end_is_joined_where_the_document_writes_it_whole():
+    # paper01: the text layer keeps the hyphen of a word broken at a line end ("com-" / "putation"); whether it is a
+    # break or a compound's hyphen ("well-known") is told by the document itself — the joined word written whole
+    # elsewhere — not by a dictionary
+    from parserx.ir.block import Block
+    from parserx.ir.state import DocumentState, PageState
+    from parserx.render import render_markdown
+
+    anchor = PdfAnchor(page=1, bbox=(0, 0, 100, 20), coord_space="page_pt")
+
+    def block(bid, order, text, kind=BlockKind.TEXT, level=None):
+        return Block(id=bid, kind=kind, order=order, anchors=[anchor], text=text, level=level)
+
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf", status="complete",
+                          pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                          blocks=[block("t", 0, "5.4 Optimized Kernel Imple-\nmentations", BlockKind.TITLE, level=3),
+                                  block("a", 1, "An operation is an abstract com-\nputation; its imple-\nmentation is "
+                                                "a well-\nknown kernel. Com-\nputation and implementations."),
+                                  block("b", 2, "Each computation runs on a device.")])
+    md = render_markdown(state)
+    assert "### 5.4 Optimized Kernel Implementations" in md
+    # "implementation" is written whole nowhere (only "implementations"): its hyphen stays, as a compound's does
+    assert "an abstract computation; its imple-mentation is a well-known kernel. Computation and" in md

@@ -141,6 +141,8 @@ arrange to execute the appropriate nodes in an order that respects their depende
 
 **Variables**
 
+### Variables
+
 In most computations a graph is executed multiple times. Most tensors do not survive past a single execution of the graph. However, a *Variable* is a special kind of operation that returns a handle to a persistent mutable tensor that survives across executions of a graph. Handles to these persistent mutable tensors can be passed to a handful of special operations, such as *Assign* and *AssignAdd* (equivalent to +=) that mutate the referenced tensor. For machine learning applications of TensorFlow, the parameters of the model are typically stored in tensors held in variables, and are updated as part of the *Run* of the training graph for the model.
 
 ## 3 Implementation
@@ -149,9 +151,13 @@ The main components in a TensorFlow system are the *client*, which uses the Sess
 
 **Devices**
 
+### Devices
+
 Devices are the computational heart of TensorFlow. Each worker is responsible for one or more devices, and each device has a device type, and a name. Device names are composed of pieces that identify the device’s type, the device’s index within the worker, and, in our distributed setting, an identification of the job and task of the worker (or localhost for the case where the devices are local to the process). Example device names are `"/job:localhost/device:cpu:0"` or `"/job:worker/task:17/device:gpu:3"`. We have implementations of our Device interface for CPUs and GPUs, and new device implementations for other device types can be provided via a registration mechanism. Each device object is responsible for managing allocation and deallocation of device memory, and for arranging for the execution of any kernels that are requested by higher levels in the TensorFlow implementation.
 
 **Tensors**
+
+### Tensors
 
 A tensor in our implementation is a typed, multi-dimensional array. We support a variety of tensor element types, including signed and unsigned integers ranging in size from 8 bits to 64 bits, IEEE float and double types, a complex number type, and a string type (an arbitrary byte array). Backing store of the appropriate size is managed by an allocator that is specific to the device on which the tensor resides. Tensor backing store buffers are reference counted and are deallocated when no references remain.
 

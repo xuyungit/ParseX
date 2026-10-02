@@ -212,3 +212,12 @@ val_word_template01：差异来自图示改写成表格后的标签顺序，原�
 |---|---|---|
 | paper01 | 第 1 页右栏开头两段挪到"1 Introduction"第一段之后，"sequence prediction [47]…"并入第一段（同一句话跨栏）；第 11 页"Data Parallel Training"及其第一段挪到第 7 节前两段之后 | 页面上左栏在前、右栏在后：`/Users/xuyun/parserx-exp/round2/evidence/paper01_p1_columns.png`、`paper01_p11_columns.png` |
 | receipt | 补上"2025年11月23日"、"2025年12月23日续期 / 徐蕴的iPhone"、"小计 $200.00"、"账户余额 $200.00" | 页面上都印着：`/Users/xuyun/parserx-exp/round2/evidence/receipt_p1.png` |
+
+## 2026-10-02（标题剩余错误的分析中核实的两处，同时做成第二轮公共标注 v5）
+
+起因：分析 F 剩下的标题错误（`docs/v2_pipeline_scripts.md` §24）。公共标注同步改成 `/Users/xuyun/parserx-exp/round2/annotations-common-v5/`（清单 `annotation_v5_changes.md`）。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| paper01 | 补三级标题 `### Variables`、`### Devices`、`### Tensors` | 与已标为三级的"Operations and Kernels""Sessions"同为单独成行、同一字体（NimbusRomNo9L-Medi 10 pt）的小标题 |
+| ocr01 | `# Paxlovid 药物` + 下一行"相互作用「红灯区」"合成 `# Paxlovid 药物相互作用「红灯区」`；"黄灯区"同 | 横幅上排成两行的一个标题（标题标准第 1 条）：`/Users/xuyun/parserx-exp/round2/evidence/ocr01_p3_title.png` |

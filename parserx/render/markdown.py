@@ -31,7 +31,7 @@ from pathlib import PurePosixPath
 
 from parserx.content.lists import bulleted, strip_bullet
 from parserx.render.emphasis import SCRIPTS, emphasize
-from parserx.content.text import escape_strikethrough, join_wrapped
+from parserx.content.text import unbreak, whole_words, escape_strikethrough, join_wrapped
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.content.equation_numbers import number_of, tagged
 from parserx.ir.asset import Asset
@@ -66,10 +66,14 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     transcribed = _transcription_starts(state)
     scanned = scanned_pages(state)
     numbers = number_of(state)  # a display formula's number, merged into it: its \tag
+    body = body_face(state)
+    whole = whole_words(b.text for b in state.blocks if b.status in _VISIBLE and b.kind in _UNBROKEN)
     by_unit: dict[int | None, list[Block]] = {}
     for block in ordered(state):
         if block.id in skipped:
             continue
+        if block.kind in _UNBROKEN and block.text and code_face(block, body) is None:
+            block = block.model_copy(update={"text": unbreak(block.text, whole)})  # a word a line end broke
         number = numbers.get(block.id)
         if block.id in joined:
             chain = joined[block.id]
@@ -83,7 +87,6 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
         by_unit.setdefault(block_unit(state, block), []).append(block)
     parts: list[str] = []
     section = 1
-    body = body_face(state)
     furniture = _furniture(state) if page_furniture != "omit" else {}
     for page in state.pages:
         if state.format == "pdf":
@@ -374,6 +377,7 @@ def code_face(block: Block, body: str | None) -> str | None:
 
 
 _CODE_ROLES = frozenset({BlockKind.TEXT, BlockKind.LIST, BlockKind.CAPTION, BlockKind.FOOTNOTE, BlockKind.OTHER})
+_UNBROKEN = _CODE_ROLES | {BlockKind.TITLE}  # the text kinds whose words a line end may break
 
 
 # ── Missing content (Q117) ──────────────────────────────────────────────

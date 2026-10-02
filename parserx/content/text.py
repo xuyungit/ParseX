@@ -52,6 +52,23 @@ def escape_strikethrough(text: str) -> str:
     return "".join(out)
 
 
+_BROKEN = re.compile(r"([A-Za-z]+)-\n([a-z]+)")
+_WORD = re.compile(r"[A-Za-z]+")
+
+
+def whole_words(texts) -> set[str]:
+    """The words a document writes (lower case), for telling a line-end break from a compound's hyphen
+    (``unbreak``); the halves of a broken word are two words here, not the joined one."""
+    return {w.lower() for text in texts for w in _WORD.findall(text or "")}
+
+
+def unbreak(text: str, whole: set[str]) -> str:
+    """A word a line end broke at a hyphen ("com-" / "putation") written whole where the document writes the joined
+    word elsewhere (*whole*, ``whole_words``); a hyphen it does not settle — a compound's ("well-" / "known"), a
+    word written nowhere else — stays (``join_wrapped`` keeps it)."""
+    return _BROKEN.sub(lambda m: m[1] + m[2] if (m[1] + m[2]).lower() in whole else m[0], text)
+
+
 def _hyphen_break(before: str, after: str) -> bool:
     return len(before) > 1 and before[-1] == "-" and before[-2].isalpha() and after[0].islower()
 
