@@ -147,21 +147,33 @@ class ToolsConfig(BaseModel):
     # (guide §10.3: transcription / review ``none``, description ``low``); None keeps the service's.
     describe_reasoning_effort: str | None = "low"
     review_reasoning_effort: str | None = None
-    describe_max_tokens: int = 300  # a note of one or two sentences (Q121)
+    # output budgets, reasoning included: services.llm.OUTPUT_BUDGET, the most every configured model accepts.  A budget
+    # caps, it does not ask for length (billed per token used); a small one only cut answers short and asked again
+    # (docs/v2_model_probe.md §7.1).  The note's length is the prompt's (Q121)
+    describe_max_tokens: int = 131072
     ask_reasoning_effort: str | None = "low"  # ask_image: the agent's questions about an image (P2-5)
     # scanned content with mathematics read again (runtime.second_reading): each reader on its own, all at once; with
     # several, a block is listed only where they all differ from the scan engine on a same character.  Readers whose
     # entry is missing or not configured are left out; none left: the service model alone.  Measured 2026-10-01
     # (docs/v2_pipeline_scripts.md §10.4): luna + DeepSeek caught 8 of 9 engine misreads with 3 false items in 40
+    # DeepSeek without thinking since 2026-10-02 (docs/v2_model_probe.md §7.1): as accurate as at medium (its high), its
+    # readings steadier (79 of 96 crops alike over three reads, medium 63), 2.4 times cheaper and faster
     second_readers: list[Reader] = Field(default_factory=lambda: [Reader(use="gpt-6-luna", reasoning_effort="low"),
-                                                                   Reader(use="deepseek-flash", reasoning_effort="medium")])
+                                                                   Reader(use="deepseek-flash", reasoning_effort="none")])
     # a correction of characters read again on the block's image alone (tools/edit.py): it stands only where every
     # reader shows it.  Measured on round 2's corrections (docs §11.4): DeepSeek alone judged 34 of 42 right, with luna
     # 30 (luna's own misreads refuse right corrections), luna alone 24; same fallbacks as ``second_readers``
+    # (DeepSeek without thinking since 2026-10-02: 44 of 57 judged right as at medium, 54 of 57 verdicts alike over three
+    # reads against 51)
     recheck_readers: list[Reader] = Field(default_factory=lambda: [Reader(use="deepseek-flash",
-                                                                          reasoning_effort="medium")])
-    ask_max_tokens: int = 1024
-    review_max_tokens: int = 4096
+                                                                          reasoning_effort="none")])
+    # the formula editor (tools/formulas.py): a native page's passages with formulas written from the text layer and the
+    # page reading.  luna, not the service model: on the 2026-10-02 replay qwen3.8-flash copied the reading's lost
+    # superscript x though told the text layer has it (paper_chn01 formula (4) fell back to the raw text layer, key
+    # errors 533 → 560); None or an entry that cannot be used: the service model
+    formula_editor: Reader | None = Field(default_factory=lambda: Reader(use="gpt-6-luna", reasoning_effort="low"))
+    ask_max_tokens: int = 131072
+    review_max_tokens: int = 131072
     read_dpi: int = 150  # default page render resolution for ``read``
     strip_dpi: int = 300  # ``ask_image --rows``: a band of table rows, sharp enough for small digits
     reading_dpi: int = 150  # page renders for the local page reading (guide §9.5, Q56)
@@ -472,6 +484,7 @@ def apply_overrides(
 
     data = config.model_dump()
     changed: set[tuple[str, str]] = set()
+    written: list[tuple[list[str], Any]] = []  # each override's path and value, set again after the entries fill in
     for override in overrides:
         if "=" not in override:
             raise ValueError(
@@ -495,7 +508,17 @@ def apply_overrides(
             raise ValueError(f"Unknown config path '{dotted_path}'.")
 
         current[leaf] = yaml.safe_load(raw_value) if raw_value != "" else ""  # key= empties a setting
+        written.append((parts, current[leaf]))
         if leaf == "use" and len(parts) == 3:
             changed.add((parts[0], parts[1]))
 
-    return ParserXConfig.model_validate(expand_uses(data, replace=changed))
+    data = expand_uses(data, replace=changed)
+    # a place whose model changed took its entry's fields; what the same overrides write there wins over the entry
+    # (``use`` and ``model=`` in one call: the name stays)
+    for parts, value in written:
+        if len(parts) > 2 and tuple(parts[:2]) in changed and parts[2] != "use":
+            current = data
+            for part in parts[:-1]:
+                current = current[part]
+            current[parts[-1]] = value
+    return ParserXConfig.model_validate(data)

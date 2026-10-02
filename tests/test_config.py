@@ -167,7 +167,7 @@ def test_regression_config_is_the_production_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = load_config(_REPO / "configs" / "regression.yaml")
     assert config_fingerprint(reg) == config_fingerprint(load_config())
-    assert reg.services.vlm.model == "gpt-6-luna" and reg.cache.dir == ".parserx_cache"
+    assert reg.services.vlm.model == "qwen3.8-flash" and reg.cache.dir == ".parserx_cache"
 
 
 def test_config_fingerprint_ignores_secrets_but_not_settings():
@@ -288,21 +288,21 @@ def test_layers_merge_in_order(tmp_path, monkeypatch):
     import os
 
     personal = Path(os.environ["PARSERX_CONFIG_DIR"]) / "config.yaml"
-    personal.write_text("models:\n  gpt-6-luna:\n    api_key: sk-mine\nservices:\n  vlm:\n    timeout: 90\n")
+    personal.write_text("models:\n  qwen3.8-flash:\n    api_key: sk-mine\nservices:\n  vlm:\n    timeout: 90\n")
     (tmp_path / "parserx.yaml").write_text("services:\n  vlm:\n    timeout: 60\n    max_concurrent: 2\n")
     explicit = tmp_path / "eval.yaml"
     explicit.write_text("services:\n  vlm:\n    max_concurrent: 1\n")
     monkeypatch.chdir(tmp_path)
     loaded = load_config_with_result(explicit)
     vlm = loaded.config.services.vlm
-    assert (vlm.model, vlm.api_key, vlm.timeout, vlm.max_concurrent) == ("gpt-6-luna", "sk-mine", 90, 1)
+    assert (vlm.model, vlm.api_key, vlm.timeout, vlm.max_concurrent) == ("qwen3.8-flash", "sk-mine", 90, 1)
     assert [p.name for p in loaded.layers] == ["defaults.yaml", "parserx.yaml", "config.yaml", "eval.yaml"]
 
 
 def test_no_env_file_is_read(tmp_path, monkeypatch):
     # keys live in the personal config; ${VAR} still reads a real environment variable
     (tmp_path / ".env").write_text("SOME_KEY=from-dotenv\n")
-    (tmp_path / "c.yaml").write_text("models:\n  gpt-6-luna:\n    api_key: ${SOME_KEY}\n")
+    (tmp_path / "c.yaml").write_text("models:\n  qwen3.8-flash:\n    api_key: ${SOME_KEY}\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("SOME_KEY", raising=False)
     assert load_config(tmp_path / "c.yaml").services.vlm.api_key == ""
@@ -328,7 +328,21 @@ def test_init_writes_the_personal_config_and_keeps_an_old_one(tmp_path):
 
     merged = _deep_merge_dicts(_load_raw_config(DEFAULTS_FILE, set()), yaml.safe_load((home / "config.yaml").read_text()))
     config = ParserXConfig.model_validate(merged)
-    assert (config.services.vlm.api_key, config.builders.ocr.token) == ("sk-old", "tok-old")
-    assert config.services.vlm.model == "gpt-6-luna"  # the model name of the old .env is not carried
+    # the old .env's key is luna's (a second reader); the service model is qwen3.8-flash, its key added by hand
+    assert (config.models["gpt-6-luna"].api_key, config.builders.ocr.token) == ("sk-old", "tok-old")
+    assert config.services.vlm.model == "qwen3.8-flash"  # the model name of the old .env is not carried
     _cmd_init(config_dir=home)  # a new-format config stays
     assert not (home / "config.yaml.bak").exists()
+
+
+def test_overrides_written_with_use_win_over_the_entry():
+    """``use`` and another field of the same place in one call: the entry fills the place, the field stays (the
+    gpt-6.1-sol readings of the 2026-10-01 model comparison were gpt-6-sol's: the name was written over)."""
+    from parserx.config.schema import apply_overrides
+
+    config = apply_overrides(load_config(), ["services.vlm.use=gpt-6-sol", "services.vlm.model=gpt-6.1-sol",
+                                             "services.vlm.extra_body={a: 1}"])
+    assert (config.services.vlm.model, config.services.vlm.extra_body) == ("gpt-6.1-sol", {"a": 1})
+    assert config.services.vlm.endpoint == config.models["gpt-6-sol"].endpoint
+    plain = apply_overrides(load_config(), ["services.vlm.use=gpt-6-sol"])
+    assert plain.services.vlm.model == "gpt-6-sol"

@@ -20,7 +20,7 @@ def test_check_says_what_is_missing_and_how_to_add_it(tmp_path, monkeypatch):
     config, loaded = _config(tmp_path, monkeypatch)
     text, code = report(check(config, loaded, offline=True), loaded)
     assert code == 1  # the scan engine and the service model are required
-    assert "builders.ocr.token" in text and "models.gpt-6-luna.api_key" in text and "codex login" in text
+    assert "builders.ocr.token" in text and "models.qwen3.8-flash.api_key" in text and "codex login" in text
     assert "parserx init" in text  # no personal config yet
 
 

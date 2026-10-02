@@ -400,3 +400,21 @@ def test_the_readers_entries_go_with_their_keys_as_references(tmp_path):
     assert set(secrets.values()) == {"sk-SECRET-USED", "sk-SECRET-READER"}
     loaded = ParserXConfig.model_validate(yaml.safe_load(text))
     assert set(loaded.models) == {"reader"} and loaded.models["reader"].api_key.startswith("${")
+
+
+def test_agent_config_carries_the_formula_editors_entry(tmp_path):
+    # the formula editor (tools.formula_editor) is looked up by entry as the readers are: its entry goes along
+    import yaml
+
+    from parserx.config.schema import ParserXConfig
+
+    config = ParserXConfig.model_validate({
+        "models": {"used": {"endpoint": "https://u", "model": "u", "api_key": "sk-SECRET-USED"},
+                   "editor": {"endpoint": "https://e", "model": "e", "api_key": "sk-SECRET-EDITOR"},
+                   "other": {"endpoint": "https://o", "model": "o", "api_key": "sk-SECRET-OTHER"}},
+        "services": {"vlm": {"use": "used"}},
+        "tools": {"second_readers": [], "recheck_readers": [], "formula_editor": {"use": "editor"}}})
+    text, secrets = agent_config(config, tmp_path)
+    assert "sk-SECRET-EDITOR" not in text and "sk-SECRET-OTHER" not in text
+    loaded = ParserXConfig.model_validate(yaml.safe_load(text))
+    assert set(loaded.models) == {"editor"}

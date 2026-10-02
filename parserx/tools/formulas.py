@@ -53,8 +53,9 @@ from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.reading.compare import normalize, text_at
 from parserx.runtimes.events import Step
 from parserx.scheduling import run_ordered
+from parserx.services.llm import OUTPUT_BUDGET
 from parserx.tools.context import ToolContext, service_failure
-from parserx.tools.envelope import Failure
+from parserx.tools.envelope import Failure, ToolFailure
 from parserx.tools.imaging import write_once
 from parserx.tools.recognize import _next_block_seq, _next_item
 from parserx.workspace.queries import HIDDEN, block_unit
@@ -74,6 +75,20 @@ _EDITOR_PROMPT = (
     "B 是 OCR（有 LaTeX 结构，个别字符可能认错、可能漏掉公式编号）。请以图为准，输出这段的最终文字：正文照抄，公式用 LaTeX（行内 "
     "$…$，行间 $$…$$），字符以 A 为准、结构以 B 为准，公式编号保留。图的边上可能露出相邻的内容，只输出 A 这一段。"
     "只输出结果，不加解释。")
+
+
+def editor_service(ctx: ToolContext):
+    """The formula editor's model (``tools.formula_editor``), or the service model where it names none or an entry
+    that cannot be used (missing, not configured)."""
+    editor = ctx.config.tools.formula_editor
+    if editor is not None:
+        try:
+            service = ctx.vlm_using(editor.use, editor.reasoning_effort)
+        except ToolFailure:
+            service = None
+        if service is not None:
+            return service
+    return ctx.vlm(ctx.config.tools.ask_reasoning_effort)
 
 
 def formula_pages(state: DocumentState) -> list[int]:
@@ -145,11 +160,11 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
         write_once(path, png)
         need_editor.append((index, path, native_text, reading_text))
     edited: dict[int, str] = {}
-    vlm = ctx.vlm(ctx.config.tools.ask_reasoning_effort) if need_editor else None
+    vlm = editor_service(ctx) if need_editor else None
     for _ in range(EDITOR_ROUNDS):  # a version that still loses characters is the next round's B
         outcomes = run_ordered(need_editor, lambda t: vlm.call(
             "describe_image", t[1], _EDITOR_PROMPT, context=f"A：\n{t[2]}\n\nB：\n{t[3]}{_differences(t[2], t[3])}",
-            temperature=0.0, max_tokens=4096, structured_output_mode="off", json_schema_name="parserx_formula_editor"),
+            temperature=0.0, max_tokens=OUTPUT_BUDGET, structured_output_mode="off", json_schema_name="parserx_formula_editor"),
             max_workers=ctx.config.services.vlm.max_concurrent)
         again = []
         for outcome in outcomes:

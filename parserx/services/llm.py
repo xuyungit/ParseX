@@ -37,11 +37,13 @@ from parserx.config.schema import ServiceConfig, effort_for
 
 log = logging.getLogger(__name__)
 
-# An answer cut at its output budget (reasoning included: a reasoning model may think the whole budget away and write
-# nothing) is asked once more with this budget — the most every configured model accepts (probed: glm-5.3-flashx
+# Every service task's output budget, reasoning included (tools config, second reading, formula editor).  An answer cut
+# at a smaller budget (reasoning included: a reasoning model may think the whole budget away and write nothing) is
+# asked once more with this budget — the most every configured model accepts (probed: glm-5.3-flashx
 # 131 072; gpt-6-luna, gpt-6-sol, deepseek-flash at least 393 216).  Billed per token generated, so it costs only what is
 # used.  Cut again: ``OutputTruncated``, a failure, never an empty or half answer taken as whole.
-TRUNCATED_RETRY_TOKENS = 131072
+OUTPUT_BUDGET = 131072
+TRUNCATED_RETRY_TOKENS = OUTPUT_BUDGET  # the tasks ask with it already: a cut answer there is OutputTruncated
 
 
 class OutputTruncated(RuntimeError):

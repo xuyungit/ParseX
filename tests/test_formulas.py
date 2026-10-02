@@ -260,3 +260,27 @@ def test_a_transcription_rests_on_a_look_at_the_whole_passage_of_a_pending_item(
     assert not out.accepted and out.rule == "image_evidence"
     out, _ = _transcribe(ws, prose, "A plain sentence of prose that the page reading repeats word for word.")
     assert not out.accepted and out.rule == "not_candidate"
+
+
+def test_the_formula_editor_asks_its_own_model_else_the_service_model():
+    # tools.formula_editor names luna (the 2026-10-02 replay: the service model qwen3.8-flash copied a reading's lost
+    # superscript); an entry that cannot be used, or none, leaves the service model
+    from types import SimpleNamespace
+
+    from parserx.config.schema import Reader
+    from parserx.tools.envelope import FailureCode, ToolFailure
+    from parserx.tools.formulas import editor_service
+
+    def ctx(editor, using):
+        tools = SimpleNamespace(formula_editor=editor, ask_reasoning_effort="low")
+        return SimpleNamespace(config=SimpleNamespace(tools=tools), vlm_using=using,
+                               vlm=lambda effort: ("service", effort))
+
+    def unconfigured(name, effort):
+        raise ToolFailure(FailureCode.SERVICE_ERROR, f"{name} has no key")
+
+    luna = Reader(use="gpt-6-luna", reasoning_effort="low")
+    assert editor_service(ctx(luna, lambda name, effort: (name, effort))) == ("gpt-6-luna", "low")
+    assert editor_service(ctx(luna, lambda name, effort: None)) == ("service", "low")  # no such entry
+    assert editor_service(ctx(luna, unconfigured)) == ("service", "low")
+    assert editor_service(ctx(None, lambda name, effort: (name, effort))) == ("service", "low")

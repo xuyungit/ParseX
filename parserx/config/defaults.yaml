@@ -59,13 +59,25 @@ models:
     # low, none turns thinking off).  With no effort sent it thinks at xhigh with a 131 072-token budget: always send one.
     # Images are scaled down above 2 621 440 pixels (~1620²); extra_body: {vl_high_resolution_images: true} lifts the cap
     # to 16 777 216 at more input tokens — not on until the model probe says it matters (2026-10-02)
-    structured_output: json_schema  # honoured (probed 2026-10-02)
+    # json_object: with json_schema, real tasks got the schema itself back (2–3 of 10 table reviews) or the object
+    # wrapped in an array (figure notes), though the probe's small schema is honoured (model probe, 2026-10-02)
+    structured_output: json_object
+  doubao-seed-2-1-lite-260915:  # Volcengine Ark (Doubao), Beijing region; on trial in the model probe (docs/v2_model_probe.md §7.4)
+    endpoint: https://ark.cn-beijing.volces.com/api/v3
+    model: doubao-seed-2-1-lite-260915
+    api_style: chat          # Ark has Responses too (the console's sample uses it)
+    # text, image, video in; 1M context; answer up to 256K (4K when no budget is sent), thinking up to 256K; thinks by
+    # default.  Chat: reasoning_effort none … max (none turns thinking off) or thinking.type; Responses:
+    # reasoning.effort minimal turns it off (Ark docs, 2026-10-02; probe with `parserx check --model` before relying on it)
 
 services:
   vlm:
-    use: gpt-6-luna
+    # qwen3.8-flash at low since 2026-10-02 (docs/v2_model_probe.md §7.3): in the image-reading probe it scored 91 to
+    # luna's 85, copied what the original prints far more often (14 of 17 printed errors kept, luna 7), at a little
+    # less cost and about luna's speed.  Tasks that set their own effort keep it.
+    use: qwen3.8-flash
     provider: openai
-    reasoning_effort: none
+    reasoning_effort: low
     max_concurrent: 6
     timeout: 180
 
@@ -92,6 +104,7 @@ scheduling:
     deepseek-flash: {input: 0.30, cached_input: 0.006, output: 1.20}  # peak hours (off-peak half), api-docs.deepseek.com, 2026-09-27
     glm-5.3-flashx: {input: 0.30, cached_input: 0.084, output: 1.04}  # CNY 2.0 / 0.57 / 7.0 at 6.75 (2026-09-24), bigmodel.cn, 2026-09-28
     qwen3.8-flash: {input: 0.12, cached_input: 0.015, output: 0.40}  # CNY 0.8 / 0.1 / 2.7 at 6.75, Bailian console price page (Beijing, checked by the user), 2026-10-02
+    doubao-seed-2-1-lite-260915: {input: 0.12, cached_input: 0.12, output: 0.40}  # CNY 0.8 / ? / 2.7 at 6.75 from a third-party listing: to check on the Ark console; cache unknown (input price), 2026-10-02
 
 # The agent (recommended; Q13, Q106, Q112): the standard processing first, then an agent on documents with open
 # review items.  engine codex: Codex on this machine (`codex login`, its model and effort below); engine loop: our own

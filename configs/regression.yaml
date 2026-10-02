@@ -2,7 +2,7 @@
 # cache named here, so a personal config (~/.config/parserx/config.yaml) supplies only keys and endpoints (Q100 §3.1).
 services:
   vlm:
-    use: gpt-6-luna
+    use: qwen3.8-flash
 cache:
   mode: read_write
   dir: .parserx_cache

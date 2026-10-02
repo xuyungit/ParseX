@@ -35,6 +35,7 @@ from parserx.ir.rotation import shown
 from parserx.ir.state import DocumentState
 from parserx.reading.compare import has_math
 from parserx.scheduling import run_ordered
+from parserx.services.llm import OUTPUT_BUDGET
 from parserx.tools.context import ToolContext, service_failure
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import write_once
@@ -45,7 +46,7 @@ LABEL = "second_reading"  # the observation holding a reader's reading
 RECHECK = "recheck"  # one made for the agent's correction of the block's characters (``recheck``)
 VERSION = "second-reading"  # its engine version: "second-reading:<reader>"
 DPI = 200
-MAX_TOKENS = 32768  # the answer's budget, reasoning included (DeepSeek at medium thought 8 192 away on a long block)
+MAX_TOKENS = OUTPUT_BUDGET  # the answer's budget, reasoning included (services.llm.OUTPUT_BUDGET)
 PROMPT = (
     "照图逐字抄写这一块的全部内容。正文照抄；数学用 LaTeX，行内用 $…$，独立成行的公式用 $$…$$，公式编号照抄。"
     "照原件写，不改写、不补全、不纠正原件的错字；看不清的字写〔?〕。图的边上可能露出相邻的内容，不要抄。只输出抄写结果。")
