@@ -203,3 +203,12 @@ val_word_template01：差异来自图示改写成表格后的标签顺序，原�
 |---|---|---|
 | unseen_word_spec01 | 两段里的 4 处 `T升`、`T降` 改为 `$T_{升}$`、`$T_{降}$`；"式中：T升——""T降——"两段保持平写 | docx 的 `word/document.xml` 里只有这两段的 4 个"升""降"片段设了下标（`w:vertAlign subscript`），另两段原件平写；写法与本篇公式里的 `T_{升}` 一致 |
 | paper01 | 图 2、5、6、9、10、11 各加一行图片标记 `![Figure n](page_p_figure_n.png)`：主语料加在示意图的 mermaid 代码块前（图 11 在图题前） | 原件这 6 处都是图（图 2、5、6、9 是矢量示意图，图 10、11 是 TensorBoard 位图），截图 `/Users/xuyun/parserx-exp/round2/evidence/paper01_figures_2_5_6_9_10_11.png`；其余 7 张图标注里本来就有图片标记 |
+
+## 2026-10-02（剩余数字错误的分析中核实的三处，同时做成第二轮公共标注 v4）
+
+起因：分析 F 剩下的数字错误时发现，评测器按顺序比较关键内容，标注的分栏顺序错会让整段数字都算错（`docs/v2_pipeline_scripts.md` §22–23）。公共标注同步改成 `/Users/xuyun/parserx-exp/round2/annotations-common-v4/`（清单 `annotation_v4_changes.md`）。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| paper01 | 第 1 页右栏开头两段挪到"1 Introduction"第一段之后，"sequence prediction [47]…"并入第一段（同一句话跨栏）；第 11 页"Data Parallel Training"及其第一段挪到第 7 节前两段之后 | 页面上左栏在前、右栏在后：`/Users/xuyun/parserx-exp/round2/evidence/paper01_p1_columns.png`、`paper01_p11_columns.png` |
+| receipt | 补上"2025年11月23日"、"2025年12月23日续期 / 徐蕴的iPhone"、"小计 $200.00"、"账户余额 $200.00" | 页面上都印着：`/Users/xuyun/parserx-exp/round2/evidence/receipt_p1.png` |

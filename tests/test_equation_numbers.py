@@ -49,6 +49,15 @@ def test_tagged_keeps_the_delimiters():
     assert tagged("$$ x \\tag{1} $$", "10") == "$$ x \\tag{10} $$"  # the reading's misread number
 
 
+def test_a_number_goes_inside_the_formula_once():
+    # F (2026-10-01): the agent wrote a passage "$$…$$ (4)"; the number merged into the formula was then tagged
+    # after the closing $$ — outside the mathematics, and twice
+    assert tagged("$$[G]=[F]$$ (4)", "4") == "$$[G]=[F] \\tag{4} $$"
+    assert tagged("$$ x $$ （1）", "1") == "$$ x \\tag{1} $$"
+    assert tagged("[0020] $$a=b$$ 其中 a 为位移", "5") == "[0020] $$a=b \\tag{5} $$ 其中 a 为位移"
+    assert tagged("$$a$$ 与 $$b$$", "6") == "$$a$$ 与 $$b \\tag{6} $$"  # the last display formula
+
+
 def test_a_formula_with_a_tag_of_words_keeps_it():
     state = _state([
         _block("f", BlockKind.FORMULA, "$$ x=1 \\tag{ 故 } $$", (100, 100, 300, 130), 0),

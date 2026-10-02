@@ -89,10 +89,30 @@ def tagged(text: str, number: str) -> str:
     if _TAG_NUMBER.search(text):
         return _TAG_NUMBER.sub(lambda m: m.group(1) + number + "}", text, count=1)
     stripped = text.rstrip()
-    for close in ("$$", "\\]"):
-        if stripped.endswith(close) and len(stripped) > len(close):
-            return f"{stripped[:-len(close)].rstrip()} \\tag{{{number}}} {close}"
-    return f"{stripped} \\tag{{{number}}}"
+    close = _last_display_close(stripped)
+    if close is None:  # LaTeX without delimiters: the renderer puts it in a display
+        return f"{stripped} \\tag{{{number}}}"
+    start, end = close
+    after = stripped[end:]
+    shown = _WRITTEN_NUMBER.fullmatch(after)
+    if shown and _digits(shown.group(1)) == _digits(number):  # written after the formula already: it moves inside
+        after = ""
+    return f"{stripped[:start].rstrip()} \\tag{{{number}}} {stripped[start:end]}{after}"
+
+
+_WRITTEN_NUMBER = re.compile(r"\s*[（(]\s*([0-9０-９.．\-－\s]+[a-zA-Z]?)\s*[)）]\s*")
+_DISPLAY_DOLLARS = re.compile(r"(?<!\\)\$\$")
+
+
+def _last_display_close(text: str) -> tuple[int, int] | None:
+    """Where the text's last display formula closes ($$ or \\]), or None: a number belongs inside it, wherever the
+    formula stands in the text (a passage written whole has prose after it)."""
+    dollars = list(_DISPLAY_DOLLARS.finditer(text))
+    candidates = [(dollars[-1].start(), dollars[-1].end())] if len(dollars) >= 2 and len(dollars) % 2 == 0 else []
+    bracket = text.rfind("\\]")
+    if bracket > 0 and "\\[" in text[:bracket]:
+        candidates.append((bracket, bracket + 2))
+    return max(candidates) if candidates else None
 
 
 def _merge(state: DocumentState, number: Block, formula: Block, value: str) -> None:
