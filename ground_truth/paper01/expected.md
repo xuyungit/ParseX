@@ -72,6 +72,8 @@ for step in xrange(0, 10):
 
 Figure 1: Example TensorFlow code fragment
 
+![Figure 2](page_3_figure_2.png)
+
 ```mermaid
 graph BT
     W((W)) --> MatMul[MatMul]
@@ -222,6 +224,8 @@ In this section we describe several more advanced features of the basic programm
 
 Many optimization algorithms, including common machine learning training algorithms like stochastic gradient descent [45], compute the gradient of a cost function with respect to a set of inputs. Because this is such a
 
+![Figure 5](page_6_figure_5.png)
+
 ```mermaid
 graph BT
     W((W)) --> MatMul[MatMul]
@@ -278,6 +282,8 @@ Each node in the graph has a name, and each output of a node is identified by th
 Two arguments to the Run call help define the exact subgraph of the computation graph that will be executed. First, the Run call accepts inputs, an optional mapping of `name:port` names to "fed" tensors values. Second, the Run call accepts `output_names`, a list of output `name[:port]` specifications indicating which nodes should be executed, and, if the port portion is present in a name, that that particular output tensor value for the node should be returned to the client if the Run call completes successfully.
 
 The graph is transformed based on the values of inputs and outputs. Each node:port specified in inputs is replaced with a **feed** node, which will pick up the provided input tensor from specially-initialized entries in a Rendezvous object used for the Run call. Similarly, each output name with a port is connected to a special **fetch** node that arranges to save the output tensor and return it to the client when the Run call is complete. Finally, once the graph has been rewritten with the insertion of these
+
+![Figure 6](page_7_figure_6.png)
 
 ```mermaid
 graph TD
@@ -446,6 +452,8 @@ This approach can also be made asynchronous, where the TensorFlow graph has many
 
 Figure 8: Model parallel training
 
+![Figure 9](page_12_figure_9.png)
+
 ```mermaid
 graph TD
     Client --> Update1[Update]
@@ -502,6 +510,8 @@ When training machine learning models, users often want to be able to examine th
 
 
 ---
+
+![Figure 10](page_13_figure_10.png)
 
 ```mermaid
 graph TD
@@ -579,6 +589,8 @@ graph TD
 
 Figure 10: TensorBoard graph visualization of a convolutional neural network model
 
+
+![Figure 11](page_13_figure_11.png)
 
 Figure 11: TensorBoard graphical display of model summary statistics time series data
 

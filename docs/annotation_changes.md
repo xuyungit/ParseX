@@ -194,3 +194,12 @@
 | omnidoc_research_report_zh_table_01（public） | `## 一一金诚信（603979）2022年报点评` 改为正文 `——金诚信（603979）2022年报点评`；`## 分析师：张天丰` 改为正文 | 标题标准第 1、5 条：前者是报告题目的副题（原件印的是破折号"——"，标注误作"一一"），后者是"键：值"信息行 |
 
 val_word_template01：差异来自图示改写成表格后的标签顺序，原件上判定不了哪种对，不改。
+
+## 2026-10-02（对着原件核实的两处，同时做成第二轮公共标注 v3）
+
+起因：F（真实 Agent 运行）评分时记下的两个标注候选，见 `docs/v2_pipeline_scripts.md` §8.4、§9.3。第二轮的公共标注同步改成 `/Users/xuyun/parserx-exp/round2/annotations-common-v3/`（清单 `annotation_v3_changes.md`）。注意：主语料的 paper01 本来就和公共标注不同（公共标注加了图片文字标记等），这次只在两边各自加同样的图片标记。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| unseen_word_spec01 | 两段里的 4 处 `T升`、`T降` 改为 `$T_{升}$`、`$T_{降}$`；"式中：T升——""T降——"两段保持平写 | docx 的 `word/document.xml` 里只有这两段的 4 个"升""降"片段设了下标（`w:vertAlign subscript`），另两段原件平写；写法与本篇公式里的 `T_{升}` 一致 |
+| paper01 | 图 2、5、6、9、10、11 各加一行图片标记 `![Figure n](page_p_figure_n.png)`：主语料加在示意图的 mermaid 代码块前（图 11 在图题前） | 原件这 6 处都是图（图 2、5、6、9 是矢量示意图，图 10、11 是 TensorBoard 位图），截图 `/Users/xuyun/parserx-exp/round2/evidence/paper01_figures_2_5_6_9_10_11.png`；其余 7 张图标注里本来就有图片标记 |
