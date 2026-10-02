@@ -206,3 +206,33 @@ def test_word_runs_set_as_scripts_are_marks(tmp_path):
     marks = block.observations[0].marks
     assert [(m.kind, m.text, m.before) for m in marks] == [("sup", "2", "m"), ("sub", "2", "H"), ("sup", "1", "注")]
     assert emphasize(block.text, marks)[0] == "面积 12 m²，水 H₂O，注¹"
+
+
+def test_a_joined_paragraph_keeps_the_scripts_of_each_part():
+    # milestone audit (2026-10-02): paper_chn02's "3.886 × 10⁻⁴ m²/kN" ran on into the next column; after the agent
+    # joined the two blocks, the second's scripts were lost — the joined paragraph rendered with the first's marks only
+    from parserx.ir.anchor import PdfAnchor
+    from parserx.ir.block import Block
+    from parserx.ir.enums import BlockKind, DocumentStatus, ObservationStatus, PageStatus, RelationKind, TaskKind
+    from parserx.ir.observation import Observation
+    from parserx.ir.relation import Relation
+    from parserx.ir.state import DocumentState, PageState
+    from parserx.render import render_markdown
+
+    def block(bid, order, text, marks):
+        anchor = PdfAnchor(page=1, bbox=(0, order * 20, 400, order * 20 + 12), coord_space="page_pt")
+        obs = Observation(id=f"o-{bid}", engine="native_pdf", engine_version="v", task=TaskKind.EXTRACT, anchor=anchor,
+                          text=text, marks=marks, status=ObservationStatus.OK)
+        return Block(id=bid, kind=BlockKind.TEXT, order=order, anchors=[anchor], text=text, observations=[obs],
+                     chosen_observation=obs.id)
+
+    first = block("a", 0, "板的理论参数 wi =3.886 ×", [Mark(kind="sub", text="i", before="w")])
+    second = block("b", 1, "10-4 m2 /kN，φi =1.574", [Mark(kind="sup", text="-4", before="10"),
+                                                      Mark(kind="sup", text="2", before="m"),
+                                                      Mark(kind="sub", text="i", before="φ")])
+    state = DocumentState(id="d", source="d.pdf", source_sha256="0" * 64, format="pdf",
+                          status=DocumentStatus.IN_PROGRESS, pages=[PageState(n=1, unit="pdf_page", status=PageStatus.DONE)],
+                          blocks=[first, second], relations=[Relation(id="r-1", kind=RelationKind.CONTINUES,
+                                                                      src="a", dst="b")])
+    text = render_markdown(state)
+    assert not any(plain in text for plain in ("10-4", "m2", "φi", "wi")), text

@@ -178,6 +178,22 @@ def test_structure_ops_and_dismissing_an_issue(draft, context):
     assert opened[0]["id"] not in {i["id"] for i in _ok("read_draft", draft, {"view": "issues"}, context)["issues"]}
 
 
+def test_dismissing_an_issue_a_change_of_the_same_call_resolved(draft, context):
+    # milestone run (2026-10-02): the agent set the roles an item asked about, then closed the item in the same call;
+    # the change had resolved it, and the dismiss was refused as an unknown issue (5–6 times a run)
+    title = _block(draft, "SENTINEL-OCR 标题")
+    opened = _ok("edit_draft", draft, {"ops": [{"op": "mark_pending", "block": title, "reason": "拿不准"}]},
+                 context)["issues_opened"]
+    pending = next(i["id"] for i in opened if i["kind"] == "structure_pending")
+    evidence = _ok("view_source", draft, {"looks": [{"block": title, "as": "image"}]}, context)["results"][0]["evidence"]
+    dismiss = {"op": "dismiss", "issue": pending, "reason": "看过，待定合理", "evidence": evidence}
+    result = _ok("edit_draft", draft, {"ops": [dismiss, dismiss]}, context)  # the first closes it
+    assert [o["accepted"] for o in result["outcomes"]] == [True, True] and result["issues_closed"] == [pending]
+    assert "earlier change of this call" in result["outcomes"][1]["detail"]
+    later = _ok("edit_draft", draft, {"ops": [dismiss]}, context)["outcomes"][0]
+    assert not later["accepted"] and later["rule"] == "unknown_issue"  # closed before this call: nothing open
+
+
 def test_atomic_edits_apply_all_or_nothing(draft, context):
     text = _block(draft, "扫描文字")
     before = _markdown(draft)

@@ -291,7 +291,7 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     try:
         with ctx.ws.txn("tool:edit_draft:agent") as state:
             known = len(state.doubts)
-            issues = _Issues(state)
+            issues = _Issues(state, open_before)
             batch: list[tuple[int, object]] = []  # consecutive structure changes: judged by the outline they produce
             for index, op in enumerate(req.ops):
                 if isinstance(op, _STRUCTURE):
@@ -362,7 +362,7 @@ def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Iss
         elif isinstance(op, Unadopt):
             detail = _unadopt(state, op)
         elif isinstance(op, Dismiss):
-            target = _dismiss(state, op, issues)
+            target, detail = _dismiss(state, op, issues)
         elif isinstance(op, RecordDoubt):
             target = _doubt(state, op)
         elif isinstance(op, WriteNote):
@@ -902,10 +902,10 @@ def _note(state: DocumentState, op: WriteNote) -> str:
 
 
 class _Issues:
-    """The open issues of the state being edited, computed when needed."""
+    """The open issues of the state being edited, computed when needed, and those open when the call began."""
 
-    def __init__(self, state: DocumentState):
-        self.state, self._items = state, None
+    def __init__(self, state: DocumentState, before: dict[str, Unresolved]):
+        self.state, self.before, self._items = state, before, None
 
     def changed(self) -> None:
         self._items = None
@@ -916,8 +916,10 @@ class _Issues:
         return self._items.get(issue)
 
 
-def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> str:
+def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> tuple[str, str | None]:
     item = issues.get(op.issue)
+    if item is None and op.issue in issues.before:  # a change earlier in this call resolved it: closing is done
+        return issues.before[op.issue].target, f"{op.issue} was resolved by an earlier change of this call"
     if item is None:
         raise _Refused("unknown_issue", f"no open issue {op.issue} (read_draft view=issues)")
     if item.kind in _NOT_DISMISSED:
@@ -935,4 +937,4 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> str:
         raise _Refused(seen.name, seen.detail)
     state.closed.append(ClosedItem(target=item.target, kind=item.kind.value, quotes=[q.doc_text for q in item.quotes],
                                    reason=op.reason, actor=ACTOR, image=op.evidence, occluded=op.occluded))
-    return item.target
+    return item.target, None

@@ -221,3 +221,12 @@ val_word_template01：差异来自图示改写成表格后的标签顺序，原�
 |---|---|---|
 | paper01 | 补三级标题 `### Variables`、`### Devices`、`### Tensors` | 与已标为三级的"Operations and Kernels""Sessions"同为单独成行、同一字体（NimbusRomNo9L-Medi 10 pt）的小标题 |
 | ocr01 | `# Paxlovid 药物` + 下一行"相互作用「红灯区」"合成 `# Paxlovid 药物相互作用「红灯区」`；"黄灯区"同 | 横幅上排成两行的一个标题（标题标准第 1 条）：`/Users/xuyun/parserx-exp/round2/evidence/ocr01_p3_title.png` |
+
+## 2026-10-02（公式密集文档和英文论文剩余错误的摸底中核实的三处，同时做成第二轮公共标注 v6）
+
+起因：里程碑运行后，对剩余的关键内容错误逐条摸底（`docs/v2_pipeline_scripts.md` §29）。公共标注同步改成 `/Users/xuyun/parserx-exp/round2/annotations-common-v6/`（清单 `annotation_v6_changes.md`）。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| omnidoc_academic_literature_en_text_01 | 熔点 `179. 5 \circ` 改为 `179.5^{\circ}`；红外数据补上漏掉的 "871 cm⁻¹ (m)" | 扫描页原图：`/Users/xuyun/parserx-exp/round2/evidence/en_text_01_02_values.png` |
+| omnidoc_academic_literature_en_text_02 | 沸点 `8. 4^{\circ}` 改为 `8.4^{\circ}` | 同上 |

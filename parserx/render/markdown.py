@@ -72,8 +72,6 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     for block in ordered(state):
         if block.id in skipped:
             continue
-        if block.kind in _UNBROKEN and block.text and code_face(block, body) is None:
-            block = block.model_copy(update={"text": unbreak(block.text, whole)})  # a word a line end broke
         number = numbers.get(block.id)
         if block.id in joined:
             chain = joined[block.id]
@@ -81,7 +79,9 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
                 block = block.model_copy(update={"text": "\n".join(_math_body(b.text) for b in chain)})
                 number = next((numbers[b.id] for b in chain if b.id in numbers), None)
             else:
-                block = block.model_copy(update={"text": "\n".join(b.text for b in chain)})
+                block = _joined(block, chain)
+        if block.kind in _UNBROKEN and block.text and code_face(block, body) is None:
+            block = block.model_copy(update={"text": unbreak(block.text, whole)})  # a word a line end broke
         if number is not None:
             block = block.model_copy(update={"text": tagged(block.text, number)})
         by_unit.setdefault(block_unit(state, block), []).append(block)
@@ -339,6 +339,16 @@ def fences(text: str) -> list[tuple[bool, str]]:
     if plain:
         out.append((False, "\n".join(plain)))
     return out
+
+
+def _joined(head: Block, chain: list[Block]) -> Block:
+    """A paragraph continued in later blocks as one block to render: their texts, and each part's marks in order
+    (marks are found in the text one after another, so each part's scripts and emphasis are its own)."""
+    marks = [m for b in chain for m in _marks(b)]
+    reading = next((o.id for o in head.observations if o.id == head.chosen_observation),
+                   head.observations[0].id if head.observations else None)
+    observations = [o.model_copy(update={"marks": marks}) if o.id == reading else o for o in head.observations]
+    return head.model_copy(update={"text": "\n".join(b.text for b in chain), "observations": observations})
 
 
 def _marks(block: Block) -> list:
