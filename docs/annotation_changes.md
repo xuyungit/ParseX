@@ -230,3 +230,11 @@ val_word_template01：差异来自图示改写成表格后的标签顺序，原�
 |---|---|---|
 | omnidoc_academic_literature_en_text_01 | 熔点 `179. 5 \circ` 改为 `179.5^{\circ}`；红外数据补上漏掉的 "871 cm⁻¹ (m)" | 扫描页原图：`/Users/xuyun/parserx-exp/round2/evidence/en_text_01_02_values.png` |
 | omnidoc_academic_literature_en_text_02 | 沸点 `8. 4^{\circ}` 改为 `8.4^{\circ}` | 同上 |
+
+## 2026-10-02（页面上另一篇文章的片段，同时做成第二轮公共标注 v7）
+
+依据：页面上除了页眉页脚都是正文（用户 2026-10-02）。公共标注同步改成 `/Users/xuyun/parserx-exp/round2/annotations-common-v7/`（清单 `annotation_v7_changes.md`）。
+
+| 文档 | 改动 | 证据 |
+|---|---|---|
+| paper_chn01 | 第 7 页上半另一篇文章的参考文献 [16]–[20] 和"（下转第 105 页）""（上接第 84 页）"按页面顺序补上，本文 [4] 在分页处断开 | `/Users/xuyun/parserx-exp/round2/evidence/paper_chn01_p6_bottom.png`、`paper_chn01_p7_other_article.png` |

@@ -350,7 +350,23 @@ $$
 
 [3] CURADELLI R O, RIERA J D, AMBROSINI D, et al. Damage Detection by Means of Structural Damping Identification [J]. Engineering Structures, 2008, 30(12): 3497-3504.
 
-[4] REYNDERS E, ROECK G D, BAKIR P G, et al. Damage Identification on the Tilff Bridge by Vibration Monitoring Using Optical Fiber Strain Sensors [J]. Journal of Engineering Mechanics, 2007, 133(2):185-193.
+[4] REYNDERS E, ROECK G D, BAKIR P G, et al. Damage Identification on the Tilff Bridge by Vibration
+
+（下转第 105 页）
+
+[16] 丁世飞, 史忠植, 靳奉祥. 非线性迭代 PLS 信息模式识别算法[J]. 计算机工程, 2008, 34(1):20-22. DING Shi-fei, SHI Zhong-zhi, JIN Feng-xiang. Information Pattern Recognition Algorithm Based on Non-linear Iterative PLS [J]. Computer Engineering, 2008, 34(1):20-22.
+
+[17] 周 琳. 基于非线性偏最小二乘的特征提取方法研究[D]. 南京: 南京理工大学, 2011. ZHOU Lin. Research on Feature Selection by Nonlinear Partial Least Squares [D]. Nanjing: Nanjing University of Science and Technology, 2011.
+
+[18] WOLD S, SJOSTROM M, ERIKSSON L. PLS-regression: A Basic Tool of Chemometrics [J]. Chemometrics and Intelligent Laboratory Systems, 2001, 58(2):109-130.
+
+[19] DALAL N, TRIGGS B. Histograms of Oriented Gradients for Human Detection [C]//SCHMID C, SCOATTO S, TOMASI C. IEEE Computer Society Conference on Computer Vision and Pattern Recognition. San Diego: IEEE, 2005:886-893.
+
+[20] TORRALBA A, EFROSA A. Unbiased Look at Dataset Bias [C]//BOULT T, KANADE T, PELEG S. IEEE Computer Society Conference on Computer Vision and Pattern Recognition. Denver: IEEE, 2011:1521-1528.
+
+（上接第 84 页）
+
+Monitoring Using Optical Fiber Strain Sensors [J]. Journal of Engineering Mechanics, 2007, 133(2):185-193.
 
 [5] LI Y Y, CHENG L, YAM L H, et al. Identification of Damage Locations for Plate-like Structures Using Damage Sensitive Indices: Strain Modal Approach [J]. Computers and Structures, 2002, 80(25): 1881-1894.
 
