@@ -143,10 +143,11 @@ class Note(IRModel):
 
 
 class Doubt(IRModel):
-    """A place where the original itself may be wrong — a typo, a dropped character, a number at odds with the rest
-    (user 2026-10-01): the output keeps what the page prints; this records what the agent takes it to be meant as,
-    for a proofreading of the original — raised by the agent (``doubt``), or by the program where it refused the
-    agent's correction because the page is shown to print the draft.  Never applied to the text."""
+    """A place for a person to check, never applied to the text: where the original itself may be wrong — a typo, a
+    dropped character, a number at odds with the rest (user 2026-10-01) — as the agent raises it (``doubt``), the
+    output keeping what the page prints; or a disagreement (``refused``): the agent's correction the program refused
+    because the readings of the place show the draft — the original's typo the agent read through, or the readers'
+    misreading of a hard place (F, docs §15.3): either way, both versions for a person to compare."""
 
     id: str  # q-001 …
     block: str
@@ -154,7 +155,8 @@ class Doubt(IRModel):
     suggested: str = ""  # what it may be meant as
     reason: str = ""
     by: str  # who took it for a mistake (the agent)
-    refused: bool = False  # recorded from the agent's correction, refused because the page prints the draft
+    refused: bool = False  # a disagreement: the agent's correction (``suggested``) refused, the draft (``printed``) kept
+    readings: str = ""  # a disagreement: what the readings of the place showed (the refusal's reason)
     evidence: list[str] = []  # evidence ids (view_source)
 
 

@@ -284,7 +284,7 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
             with ctx.ws.txn("tool:edit_draft:doubts") as state:
                 for d in refused:
                     _record_doubt(state, d.block, d.printed, d.suggested, reason=d.reason, evidence=d.evidence,
-                                  refused=True)
+                                  refused=True, readings=d.readings)
         if req.atomic:
             outcomes = [o.model_copy(update={"accepted": False, "rule": "atomic",
                                              "detail": "another operation of this call was refused"})
@@ -430,10 +430,11 @@ def _correct(state: DocumentState, block: Block, op, *, text: str | None, grid: 
     outcome = correct_gate(block, candidate, image=image, actor=ACTOR, seen=text_near(state, block))
     block.decisions[-1].evidence["evidence"] = op.evidence
     block.decisions[-1].reason += f"; {op.reason}"
-    if any(not g.passed and g.signal == PRINTED_AS_DRAFT for g in outcome.gate):
-        for printed, suggested in _spans(block, op):  # what the agent took for a mistake is printed so
+    refusal = next((g for g in outcome.gate if not g.passed and g.signal == PRINTED_AS_DRAFT), None)
+    if refusal is not None:  # the agent and the readings disagree: both versions, for a person to check
+        for printed, suggested in _spans(block, op):
             _record_doubt(state, block.id, printed, suggested, reason=op.reason, evidence=[op.evidence],
-                          refused=True)
+                          refused=True, readings=refusal.detail)
     return _gated(outcome.gate)
 
 
@@ -822,14 +823,14 @@ def _doubt(state: DocumentState, op: RecordDoubt) -> str:
 
 
 def _record_doubt(state: DocumentState, block: str, printed: str, suggested: str, *, reason: str,
-                  evidence: list[str], refused: bool = False) -> Doubt:
+                  evidence: list[str], refused: bool = False, readings: str = "") -> Doubt:
     """A place the original itself may be wrong (``Doubt``); one already raised there (same block, printed and
     suggested) is kept, not repeated."""
     for doubt in state.doubts:
         if (doubt.block, doubt.printed, doubt.suggested) == (block, printed, suggested):
             return doubt
     doubt = Doubt(id=f"q-{len(state.doubts) + 1:03d}", block=block, printed=printed, suggested=suggested,
-                  reason=reason, by=ACTOR, evidence=evidence, refused=refused)
+                  reason=reason, by=ACTOR, evidence=evidence, refused=refused, readings=readings)
     state.doubts.append(doubt)
     return doubt
 

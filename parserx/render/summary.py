@@ -115,14 +115,27 @@ class Processing(IRModel):
 
 
 class DoubtEntry(IRModel):
-    """A place where the original itself may be wrong (``ir.state.Doubt``): the Markdown has it as printed."""
+    """A place where the original itself may be wrong, as the agent raised it (``ir.state.Doubt``): the Markdown has
+    it as printed."""
 
     block: str
     page: int | None  # PDF page; None for DOCX
     printed: str
     suggested: str
     reason: str
-    refused: bool  # from a correction the program refused because the page prints it so
+
+
+class DisagreementEntry(IRModel):
+    """The agent's correction refused because the readings of the place show the draft (``ir.state.Doubt``,
+    ``refused``): the Markdown has the draft; the original's typo the agent read through, or the readers' misreading
+    of a hard place — for a person to compare."""
+
+    block: str
+    page: int | None
+    draft: str  # in the Markdown, as the readings show it
+    agent: str  # the agent's version, refused
+    readings: str  # what the readings showed
+    reason: str  # the agent's
 
 
 class DocumentSummary(IRModel):
@@ -140,6 +153,7 @@ class DocumentSummary(IRModel):
     processing: Processing
     review: Review
     doubts: list[DoubtEntry] = []  # for a proofreading of the original (user 2026-10-01)
+    disagreements: list[DisagreementEntry] = []  # the agent's reading against the readings', for a person to check
     warnings: list[str]
     files: dict[str, str]
 
@@ -158,6 +172,7 @@ def document_summary(state: DocumentState, name: str, image_dir: str = "images")
                               cost_usd=state.stats.cost_usd, wall_time_s=state.stats.wall_time_s),
         review=_review(state),
         doubts=_doubts(state),
+        disagreements=_disagreements(state),
         warnings=state.warnings,
         files={"markdown": f"{name}.md", "blocks": f"{name}.blocks.json", "images": f"{image_dir}/"},
     )
@@ -219,14 +234,18 @@ def _review(state: DocumentState) -> Review:
 
 
 def _doubts(state: DocumentState) -> list[DoubtEntry]:
-    blocks = {b.id: b for b in state.blocks}
-    out = []
-    for d in state.doubts:
-        block = blocks.get(d.block)
-        page = block_unit(state, block) if block is not None and state.format == "pdf" else None
-        out.append(DoubtEntry(block=d.block, page=page, printed=d.printed, suggested=d.suggested, reason=d.reason,
-                              refused=d.refused))
-    return out
+    return [DoubtEntry(block=d.block, page=_page(state, d.block), printed=d.printed, suggested=d.suggested,
+                       reason=d.reason) for d in state.doubts if not d.refused]
+
+
+def _disagreements(state: DocumentState) -> list[DisagreementEntry]:
+    return [DisagreementEntry(block=d.block, page=_page(state, d.block), draft=d.printed, agent=d.suggested,
+                              readings=d.readings, reason=d.reason) for d in state.doubts if d.refused]
+
+
+def _page(state: DocumentState, block_id: str) -> int | None:
+    block = next((b for b in state.blocks if b.id == block_id), None)
+    return block_unit(state, block) if block is not None and state.format == "pdf" else None
 
 
 def _occluded(state: DocumentState) -> list[OccludedText]:

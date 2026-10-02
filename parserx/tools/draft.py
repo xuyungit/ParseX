@@ -63,7 +63,8 @@ class ReadDraftRequest(IRModel):
                                "blocks：指定块的细节（表格的每个单元格、状态）；"
                                "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据；"
                                "notes：你记下的对文档的理解（edit_draft 的 note），修订过的只列最新的；"
-                               "以及存疑记录（edit_draft 的 doubt，和程序因页面印的就是初稿而拒绝的改动）")
+                               "以及存疑记录：你记下的疑似原件错误（edit_draft 的 doubt，refused 为 false），"
+                               "和读法分歧（refused 为 true：你的改字被拒，读法显示初稿，两种写法留给人核对）")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
     page: int | None = Field(None, description="issues、text：只看这一页")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
@@ -107,7 +108,8 @@ class DraftSummary(IRModel):
     requests: dict[str, int]  # service requests made for the document so far
     usd: float | None
     notes: int = 0  # the agent's current notes (view=notes)
-    doubts: int = 0  # places the original itself may be wrong (view=notes)
+    doubts: int = 0  # places the original itself may be wrong, as you raised them (view=notes)
+    disagreements: int = 0  # your corrections refused because the readings show the draft (view=notes)
 
 
 class DraftLine(IRModel):
@@ -204,7 +206,8 @@ def _summary(state: DocumentState) -> DraftSummary:
                         blocks=dict(sorted(Counter(b.kind.value for b in shown).items())),
                         issues=dict(sorted(Counter(u.kind.value for u in unresolved_items(state)).items())),
                         requests=dict(state.stats.requests), usd=state.stats.cost_usd,
-                        notes=len(current_notes(state)), doubts=len(state.doubts))
+                        notes=len(current_notes(state)), doubts=sum(not d.refused for d in state.doubts),
+                        disagreements=sum(d.refused for d in state.doubts))
 
 
 def _issues(state: DocumentState, req: ReadDraftRequest) -> list[Unresolved]:

@@ -600,6 +600,12 @@ def test_a_changed_character_the_image_read_alone_does_not_show_is_refused(ws):
     # effect, recorded once however often it is tried
     doubts = Workspace.open(ws).load().doubts
     assert [(d.block, d.printed, d.suggested, d.refused) for d in doubts] == [(block.id, "3 件", "8 件", True)]
+    # in the summary a disagreement, not a doubt about the original: both versions and what the readings showed
+    _call("export", ws, {"out": str(ws.parent / "out"), "name": "r"}, context=context)
+    summary = json.loads((ws.parent / "out" / "r.json").read_text())
+    assert summary["doubts"] == []
+    (entry,) = summary["disagreements"]
+    assert (entry["draft"], entry["agent"]) == ("3 件", "8 件") and "reads the draft" in entry["readings"]
 
 
 def test_the_agent_records_a_doubt_about_the_original_and_the_summary_lists_it(ws, tmp_path):
@@ -618,7 +624,8 @@ def test_the_agent_records_a_doubt_about_the_original_and_the_summary_lists_it(w
     _call("export", ws, {"out": str(tmp_path / "out"), "name": "d"}, context=context)
     summary = json.loads((tmp_path / "out" / "d.json").read_text())
     assert summary["doubts"] == [{"block": block.id, "page": 2, "printed": "3 件", "suggested": "8 件",
-                                  "reason": "合计对不上", "refused": False}]
+                                  "reason": "合计对不上"}]
+    assert summary["disagreements"] == []
 
 
 def test_a_correction_needs_evidence_and_a_native_number_changed_is_recorded(ws):

@@ -331,8 +331,8 @@ _BY_MEANING = frozenset({"agent", "vlm"})
 # the second reading of scanned mathematics, and the readings the edit tool asks for a correction of characters.
 UNPROMPTED = frozenset({"second_reading", "recheck"})
 _SCRIPT = {"sub": "_", "sup": "^", "": ""}
-# a correction refused because the page is shown to print the draft: what the agent took for a mistake is printed so,
-# a doubt about the original (tools/edit.py)
+# a correction refused because the readings of the place show the draft: the agent and the readings disagree — the
+# program records both versions for a person to check (tools/edit.py)
 PRINTED_AS_DRAFT = "printed_as_draft"
 
 
@@ -385,7 +385,7 @@ def as_printed(block: Block, before: str, after: str, seen: str | None) -> GateC
         return GateCheck(name="as_printed", passed=False, signal=PRINTED_AS_DRAFT, detail=(
             f"{what}: the readings of this place agree with the draft ({', '.join(draft)}) and none shows the "
             "change — the page prints it so; write it as printed, even where it looks like a mistake of the "
-            "original, and the program records it as a doubt about the original"))
+            "original, and the program records both versions as a disagreement for a person to check"))
     return GateCheck(name="as_printed", passed=True, detail=(
         f"{what}: readings showing the change: {', '.join(change) or 'none'}; showing the draft: "
         f"{', '.join(draft) or 'none'}"))
@@ -432,7 +432,7 @@ def _read_alone(block: Block, readings: dict[str, str], before: str, after: str)
             + "; ".join(f"{name} reads {'the draft' if v == 'draft' else 'it otherwise'}"
                         for name, v in otherwise.items())
             + " at this place — the draft stays; write what is printed, even where it looks like a mistake of the "
-              "original" + (", and the program records it as a doubt about the original" if confirmed else
+              "original" + (", and the program records both versions as a disagreement for a person to check" if confirmed else
                             "; a mistake of the original you are sure of: record it with doubt")))
     return GateCheck(name="as_printed", passed=True, detail=(
         f"{what}: every reading of the image alone shows it ({', '.join(verdicts)})"))
