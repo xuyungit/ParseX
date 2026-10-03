@@ -434,6 +434,54 @@ class ServerPage(PageEngine):
                 "finish": answer["choices"][0].get("finish_reason"), "seconds": round(time.monotonic() - started, 2)}
 
 
+# ── GLM-OCR's online API (Zhipu) ─────────────────────────────────────────
+
+
+class GlmOcrApi(PageEngine):
+    """GLM-OCR through Zhipu's layout-parsing API (``open.bigmodel.cn``, model ``glm-ocr``): each page image as a
+    data URI; the answer's ``md_results`` is the Markdown, ``layout_details`` the regions with their boxes.  The key
+    is the Zhipu account's, the one the ``glm-5.3-flashx`` models entry uses (personal config).  Price: ¥0.2 per
+    million tokens (2026-10-03), estimated from the usage each answer reports."""
+
+    URL = "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
+    CNY_PER_MILLION_TOKENS = 0.2
+    MAX_BYTES = 10_000_000  # the API's limit for an image
+    concurrency = 4
+
+    def __init__(self, account: str = "glm-5.3-flashx"):
+        from parserx.config.schema import load_config
+
+        self.name, self.label = "glm-ocr-api", "GLM-OCR 在线 API（智谱）"
+        self._key = load_config(REPO_ROOT / "configs" / "regression.yaml").models[account].api_key
+        if not self._key:
+            raise RuntimeError(f"no key for the Zhipu account: models.{account}.api_key in the personal config")
+        self.config = {"url": self.URL, "model": "glm-ocr", "account": f"models.{account}"}
+
+    def read(self, image: Path) -> dict:
+        import base64
+
+        import requests
+
+        sent = image if image.stat().st_size <= self.MAX_BYTES else sent_image(image, 16_777_216)
+        media = "image/jpeg" if sent.suffix == ".jpg" else "image/png"
+        body = {"model": "glm-ocr", "file": f"data:{media};base64,{base64.b64encode(sent.read_bytes()).decode()}"}
+        headers = {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
+        started = time.monotonic()
+        for attempt in range(4):
+            r = requests.post(self.URL, json=body, headers=headers, timeout=PAGE_TIMEOUT)
+            if r.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
+                break
+            time.sleep(5 * (attempt + 1))
+        if r.status_code != 200:
+            raise RuntimeError(f"GLM-OCR API HTTP {r.status_code}: {r.text[:300]}")
+        answer = r.json()
+        usage = answer.get("usage") or {}
+        tokens = usage.get("total_tokens") or 0
+        return {"markdown": answer.get("md_results") or "", "blocks": answer.get("layout_details"), "usage": usage,
+                "cost_cny": round(tokens * self.CNY_PER_MILLION_TOKENS / 1e6, 6),
+                "seconds": round(time.monotonic() - started, 2)}
+
+
 # ── ParserX's own local reading (guide §9.5), as a line reader ───────────
 
 
@@ -497,6 +545,7 @@ def makers() -> dict:
             ["--pipeline", "vl", "--vl-backend", "mlx-vlm-server", "--vl-server-url", MLX_SERVER,
              "--vl-api-model", "PaddlePaddle/PaddleOCR-VL-1.6"],
             {"server": "mlx_vlm.server --model PaddlePaddle/PaddleOCR-VL-1.6 --max-num-seqs 1 (bf16)"}),
+        "glm-ocr-api": GlmOcrApi,
         "local-reading": LocalReading,
         "ppocr-v6-lines": lambda: LocalEngine("ppocr-v6-lines", "PP-OCRv6 文字行（本机）", "paddle",
                                               "paddle_local.py", ["--pipeline", "ocr"]),
