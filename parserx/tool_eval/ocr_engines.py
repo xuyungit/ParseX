@@ -448,23 +448,43 @@ class GlmOcrApi(PageEngine):
     MAX_BYTES = 10_000_000  # the API's limit for an image
     concurrency = 4
 
-    def __init__(self, account: str = "glm-5.3-flashx"):
+    SMALL = 1600  # px: an image whose longer side is under this is sent at twice its size (``upscale``)
+
+    def __init__(self, account: str = "glm-5.3-flashx", *, upscale: bool = False):
         from parserx.config.schema import load_config
 
-        self.name, self.label = "glm-ocr-api", "GLM-OCR 在线 API（智谱）"
+        self.upscale = upscale
+        self.name = "glm-ocr-api-2x" if upscale else "glm-ocr-api"
+        self.label = "GLM-OCR 在线 API（智谱）" + ("，小图放大 2 倍" if upscale else "")
         self._key = load_config(REPO_ROOT / "configs" / "regression.yaml").models[account].api_key
         if not self._key:
             raise RuntimeError(f"no key for the Zhipu account: models.{account}.api_key in the personal config")
-        self.config = {"url": self.URL, "model": "glm-ocr", "account": f"models.{account}"}
+        self.config = {"url": self.URL, "model": "glm-ocr", "account": f"models.{account}",
+                       "upscale_below": self.SMALL if upscale else None}
+
+    def _input(self, image: Path) -> tuple[bytes, str]:
+        """The image to send (bytes, media type), made in memory: twice its size when small and ``upscale`` (the
+        scan engine's service renders an image-made PDF at about twice its pixel size, so small images reach it
+        enlarged); a JPEG when over the size limit."""
+        from PIL import Image
+
+        if self.upscale:
+            with Image.open(image) as im:
+                if max(im.size) < self.SMALL:
+                    buf = io.BytesIO()
+                    im.convert("RGB").resize((im.width * 2, im.height * 2), Image.LANCZOS).save(buf, format="PNG")
+                    return buf.getvalue(), "image/png"
+        if image.stat().st_size <= self.MAX_BYTES:
+            return image.read_bytes(), "image/png"
+        return sent_image(image, 16_777_216).read_bytes(), "image/jpeg"
 
     def read(self, image: Path) -> dict:
         import base64
 
         import requests
 
-        sent = image if image.stat().st_size <= self.MAX_BYTES else sent_image(image, 16_777_216)
-        media = "image/jpeg" if sent.suffix == ".jpg" else "image/png"
-        body = {"model": "glm-ocr", "file": f"data:{media};base64,{base64.b64encode(sent.read_bytes()).decode()}"}
+        data, media = self._input(image)
+        body = {"model": "glm-ocr", "file": f"data:{media};base64,{base64.b64encode(data).decode()}"}
         headers = {"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"}
         started = time.monotonic()
         for attempt in range(4):
@@ -480,6 +500,53 @@ class GlmOcrApi(PageEngine):
         return {"markdown": answer.get("md_results") or "", "blocks": answer.get("layout_details"), "usage": usage,
                 "cost_cny": round(tokens * self.CNY_PER_MILLION_TOKENS / 1e6, 6),
                 "seconds": round(time.monotonic() - started, 2)}
+
+
+class GlmOcrApiPdf(ToolAdapter):
+    """GLM-OCR's online API given the document's image-only PDF in one request, the way ParserX hands pages to its
+    scan engine (the service renders the pages itself: a 582×820-point scan came back at 1455×2050 pixels).  A PDF
+    the service fails on (HTTP 500 on a 16 MB one) is sent again one page per request."""
+
+    name, label = "glm-ocr-api-pdf", "GLM-OCR 在线 API（智谱），整篇 PDF"
+
+    def __init__(self):
+        self.api = GlmOcrApi()
+        self.config = {**self.api.config, "input": "image-only PDF, one request per document"}
+
+    def ask(self, pdf_bytes: bytes) -> dict:
+        import base64
+
+        import requests
+
+        body = {"model": "glm-ocr", "file": "data:application/pdf;base64," + base64.b64encode(pdf_bytes).decode()}
+        r = requests.post(self.api.URL, json=body, headers={"Authorization": f"Bearer {self.api._key}"},
+                          timeout=PAGE_TIMEOUT)
+        if r.status_code != 200:
+            raise RuntimeError(f"GLM-OCR API HTTP {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    def parse(self, input_path: Path, out_dir: Path) -> ToolRun:
+        import pymupdf
+
+        source = inputs_dir(out_dir)
+        pdf = image_pdf(page_images(input_path, source), source / "pages.pdf")
+        notes = []
+        try:
+            answers = [self.ask(pdf.read_bytes())]
+        except RuntimeError as exc:
+            notes.append(f"整篇 PDF 失败（{str(exc)[:80]}），改为一页一个 PDF")
+            answers = []
+            with pymupdf.open(pdf) as doc:
+                for n in range(doc.page_count):
+                    one = pymupdf.open()
+                    one.insert_pdf(doc, from_page=n, to_page=n)
+                    answers.append(self.ask(one.tobytes()))
+                    one.close()
+        tokens = sum((a.get("usage") or {}).get("total_tokens") or 0 for a in answers)
+        _write(out_dir / "raw" / "answers.json", json.dumps(answers, ensure_ascii=False, indent=1))
+        markdown = "\n\n".join((a.get("md_results") or "").strip() for a in answers) + "\n"
+        notes.append(f"{tokens} token，约 ¥{tokens * GlmOcrApi.CNY_PER_MILLION_TOKENS / 1e6:.4f}")
+        return ToolRun(markdown=tidy(markdown), config=self.config, notes=notes)
 
 
 # ── ParserX's own local reading (guide §9.5), as a line reader ───────────
@@ -546,6 +613,8 @@ def makers() -> dict:
              "--vl-api-model", "PaddlePaddle/PaddleOCR-VL-1.6"],
             {"server": "mlx_vlm.server --model PaddlePaddle/PaddleOCR-VL-1.6 --max-num-seqs 1 (bf16)"}),
         "glm-ocr-api": GlmOcrApi,
+        "glm-ocr-api-2x": lambda: GlmOcrApi(upscale=True),
+        "glm-ocr-api-pdf": GlmOcrApiPdf,
         "local-reading": LocalReading,
         "ppocr-v6-lines": lambda: LocalEngine("ppocr-v6-lines", "PP-OCRv6 文字行（本机）", "paddle",
                                               "paddle_local.py", ["--pipeline", "ocr"]),

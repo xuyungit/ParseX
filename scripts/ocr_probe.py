@@ -57,7 +57,7 @@ def reader(engine):
         def read_pdf(image: Path) -> str:
             with pymupdf.open(image) as im:
                 width, height = im[0].rect.width, im[0].rect.height
-            pdf = OUT / "_pdf" / f"{image.stem}.pdf"
+            pdf = OUT / "_pdf" / f"{image.stem}.pdf"  # (image: the copy under OUT, see ``crop``)
             if not pdf.exists():
                 pdf.parent.mkdir(parents=True, exist_ok=True)
                 pdf.write_bytes(image_batch_pdf([(image.read_bytes(), int(width), int(height))]))
@@ -65,7 +65,29 @@ def reader(engine):
             return "\n\n".join(p.get("markdown") or "" for p in pages)
 
         return read_pdf
+    if isinstance(engine, ocr_engines.GlmOcrApiPdf):
+        import pymupdf
+
+        from parserx.content.scan import image_batch_pdf
+
+        def ask_pdf(image: Path) -> str:
+            with pymupdf.open(image) as im:
+                width, height = im[0].rect.width, im[0].rect.height
+            answer = engine.ask(image_batch_pdf([(image.read_bytes(), int(width), int(height))]))
+            return answer.get("md_results") or ""
+
+        return ask_pdf
     return lambda image: engine.read(image).get("markdown") or ""
+
+
+def crop(case: dict) -> Path:
+    """The case's image, copied under OUT: engines may write derived images next to what they read, and the
+    probe's own directory stays as it is."""
+    path = OUT / "_images" / Path(case["image"]).name
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((model_probe.CASES_DIR / case["image"]).read_bytes())
+    return path
 
 
 def ask(names: list[str], cases: list[dict]) -> None:
@@ -80,7 +102,7 @@ def ask(names: list[str], cases: list[dict]) -> None:
                 continue
             started = time.monotonic()
             try:
-                record = {"text": read(model_probe.CASES_DIR / case["image"]), "error_kind": None}
+                record = {"text": read(crop(case)), "error_kind": None}
             except Exception as exc:  # noqa: BLE001 - a failed answer is recorded, not fatal
                 record = {"text": "", "error_kind": "error", "error": f"{type(exc).__name__}: {exc}"[:300]}
             record["seconds"] = round(time.monotonic() - started, 2)
