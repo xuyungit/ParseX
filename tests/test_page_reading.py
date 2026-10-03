@@ -278,3 +278,28 @@ def test_a_text_layer_copy_of_scan_furniture_is_excluded_with_it():
     assert mark_scan_furniture(state) == ["w1", "w2", "n1", "n2"]
     assert {(b.kind, b.status) for b in state.blocks} == {(BlockKind.WATERMARK, BlockStatus.EXCLUDED)}
     assert check(state).mismatched == [] and {e.disposition for e in state.ledger} == {"excluded"}
+
+
+def test_an_added_line_takes_the_role_of_its_layout_region():
+    from parserx.ir.state import ReadRegion
+    from parserx.tools.edit import add_missed_text
+
+    body = _block("b-p001-0001", 1, (100, 200, 400, 220), "正文第一段")
+    header = _line("GB 14930.2—94", (250, 20, 350, 34), score=0.99)
+    number = _line("125", (285, 800, 305, 812), score=0.99)
+    note = _line("收稿日期：2013-05-17", (72, 760, 260, 774), score=0.99)
+    other = _line("一行正文", (100, 400, 200, 414), score=0.99)
+    roles = [ReadRegion(label="header", bbox=(240, 15, 360, 40)), ReadRegion(label="number", bbox=(280, 795, 310, 815)),
+             ReadRegion(label="footnote", bbox=(70, 755, 300, 780))]
+    state = _state([body], [PageReading(n=1, engine="local", dpi=150, lines=[header, number, note, other],
+                                        roles=roles)])
+    made = {next(b for b in state.blocks if b.id == i).text: next(b for b in state.blocks if b.id == i)
+            for i in add_missed_text(state)}
+    assert (made["GB 14930.2—94"].kind, made["GB 14930.2—94"].status) == (BlockKind.HEADER, BlockStatus.EXCLUDED)
+    assert (made["125"].kind, made["125"].status) == (BlockKind.PAGE_NUMBER, BlockStatus.EXCLUDED)
+    assert (made["收稿日期：2013-05-17"].kind, made["收稿日期：2013-05-17"].status) == (BlockKind.FOOTNOTE, BlockStatus.OK)
+    assert made["一行正文"].kind == BlockKind.TEXT
+    excluded = {made["GB 14930.2—94"].id, made["125"].id}
+    assert {e.disposition for e in state.ledger if e.block in excluded} == {"excluded"}
+    listed = {u.target for u in unresolved_items(state) if u.kind == UnresolvedKind.TEXT_ADDED}
+    assert listed == {made["收稿日期：2013-05-17"].id, made["一行正文"].id}  # furniture is not listed for review

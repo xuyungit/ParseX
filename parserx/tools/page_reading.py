@@ -1,7 +1,8 @@
 """The local page reading step of ``process`` (guide §9.5, Q56).
 
 Every PDF page render is read by the local recognizer (``reading/local.py``) and stored as a PageReading with
-the regions the layout detector calls picture or formula content.  The reading is evidence for the two-way
+the regions the layout detector calls picture or formula content, and those it calls page furniture or footnotes
+(``roles``: the role of a line the program adds there, ``tools.edit.add_missed_text``).  The reading is evidence for the two-way
 comparison with the output (``reading/compare.py``, listed by ``unresolved_items``); it never becomes output.
 Positions are stored in page points of the unrotated page, like every PdfAnchor.  Readings and detections
 are local and kept in the derived cache, so a replay does not load the models.  DOCX has no page renders yet
@@ -13,12 +14,17 @@ from __future__ import annotations
 import pymupdf
 
 from parserx.content.scan import render_page_at
-from parserx.ir.state import DocumentState, PageReading, ReadLine
+from parserx.ir.enums import BlockKind
+from parserx.ir.state import DocumentState, PageReading, ReadLine, ReadRegion
+from parserx.layout import labels
 from parserx.layout.detector import detect_cached
 from parserx.layout.labels import NOT_PROSE
 from parserx.reading.local import read_cached
 from parserx.runtimes.events import Step
 from parserx.tools.context import ToolContext
+
+
+ROLE_KINDS = labels.FURNITURE | {BlockKind.FOOTNOTE}
 
 
 def reading_todo(state: DocumentState) -> list[int]:
@@ -41,9 +47,12 @@ def read_pages(ctx: ToolContext, pages: list[int]) -> int:
             lines = [ReadLine(bbox=_page_box(box, dpi, back), text=text, score=score)
                      for box, text, score in read_cached(reader, png, cache)]
             layout_png, _, _ = render_page_at(doc, n, layout_dpi)
-            not_prose = [_page_box(r.bbox, layout_dpi, back) for r in detect_cached(detector, layout_png, cache)
-                         if r.label in NOT_PROSE]
-            readings.append(PageReading(n=n, engine=reader.version, dpi=dpi, lines=lines, not_prose=not_prose))
+            regions = detect_cached(detector, layout_png, cache)
+            not_prose = [_page_box(r.bbox, layout_dpi, back) for r in regions if r.label in NOT_PROSE]
+            roles = [ReadRegion(label=r.label, bbox=_page_box(r.bbox, layout_dpi, back)) for r in regions
+                     if labels.to_kind("layout", r.label) in ROLE_KINDS]
+            readings.append(PageReading(n=n, engine=reader.version, dpi=dpi, lines=lines, not_prose=not_prose,
+                                        roles=roles))
             ctx.report(Step("process", "reading", done=len(readings), total=len(pages)))
     with ctx.ws.txn("tool:process:reading") as state:
         done = {r.n for r in state.readings}

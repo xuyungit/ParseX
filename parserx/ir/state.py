@@ -100,6 +100,13 @@ class ReadLine(IRModel):
     score: float  # the local recognizer's own confidence
 
 
+class ReadRegion(IRModel):
+    """A layout-detector region of a read page whose label gives text there a role (page furniture, a footnote)."""
+
+    label: str
+    bbox: BBox
+
+
 class PageReading(IRModel):
     """An independent local reading of one page render (guide §9.5, Q56): evidence for the two-way comparison
     with the output, never output itself."""
@@ -109,6 +116,7 @@ class PageReading(IRModel):
     dpi: int
     lines: list[ReadLine] = []
     not_prose: list[BBox] = []  # layout-detector regions whose text is picture or formula content
+    roles: list[ReadRegion] = []  # layout-detector regions of page furniture and footnotes (for added text)
 
 
 class ClosedItem(IRModel):

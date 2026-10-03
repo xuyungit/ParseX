@@ -16,7 +16,9 @@ changed — with one exception, text the output lacks altogether (``missed_lines
   lacks — a head row, a row, part of a cell — and are listed on the table rather than on the page.
 - **Added by the program** (``missed_lines``, Q133): an unaccounted line outside every table, where no shown block
   lies at all — the scan engine or the text layer gave nothing there — read with confidence ``ADD_SCORE`` or more.
-  The fixed pipeline adds it to the output rather than lose it, and lists it for review (``text_added``).  A line
+  The fixed pipeline adds it to the output rather than lose it, and lists it for review (``text_added``); in a
+  region the layout detector labels page furniture it is added as excluded furniture, in a footnote region as a
+  footnote (``tools.edit.add_missed_text``).  A line
   that disagrees with a block at its place (formula notation, a misreading of that block's text) is only listed:
   adding it would repeat the block.  Measured on the corpus (2026-09-28, 47 unaccounted lines): the rule keeps the
   three lines lost from the output and none of the rest (formula passages 0.82–0.99 lie on their blocks; readings

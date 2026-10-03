@@ -64,6 +64,7 @@ from parserx.ir.base import BBox, IRModel
 from parserx.ir.block import Block
 from parserx.ir.decision import Decision
 from parserx.ir.enums import BlockKind, BlockStatus, DecisionStage, ObservationStatus, RelationKind, TaskKind
+from parserx.layout import labels
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, Doubt, LedgerEntry, Note
@@ -521,32 +522,52 @@ def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
 
 def add_missed_text(state: DocumentState) -> list[str]:
     """The lines the local page reading sees where the output has nothing (``reading.compare.missed_lines``, Q133),
-    added as text blocks at their places: the fixed pipeline does not lose them; the worklist lists each for review
-    (``text_added``).  The new block ids."""
-    engines = {r.n: r.engine for r in state.readings}
+    added as blocks at their places: the fixed pipeline does not lose them.  A line's role is the layout detector's
+    label at its place (``PageReading.roles``): in a header, footer or page-number region it is page furniture,
+    excluded like the scan engine's furniture (a scan engine may leave such regions out altogether, GLM-OCR); in a
+    footnote region a footnote; elsewhere text.  The worklist lists each shown one for review (``text_added``).
+    The new block ids."""
+    readings = {r.n: r for r in state.readings}
     pages = {p.n: p for p in state.pages}
     made = []
     for n, lines in missed_lines(state).items():
         for line in sorted(lines, key=lambda ln: _top_left(rotation.shown(pages.get(n), ln.bbox))):
-            decision = Decision(stage=DecisionStage.CONTENT_SOURCE, choice="added", actor=READING_ACTOR,
-                                reason="text the local page reading sees where the output had nothing (Q133)",
-                                evidence={"reading": engines[n], "score": round(line.score, 3)})
-            made.append(_add_text_block(state, n, line.bbox, line.text, engine="page_reading",
-                                        engine_version=engines[n], task=TaskKind.RECOGNIZE, decision=decision,
-                                        unit="read_text"))
+            engine = readings[n].engine
+            decisions = [Decision(stage=DecisionStage.CONTENT_SOURCE, choice="added", actor=READING_ACTOR,
+                                  reason="text the local page reading sees where the output had nothing (Q133)",
+                                  evidence={"reading": engine, "score": round(line.score, 3)})]
+            label = _role_at(readings[n], line.bbox)
+            kind = labels.to_kind("layout", label) if label else BlockKind.TEXT
+            status = BlockStatus.OK
+            if kind in labels.FURNITURE:
+                status = BlockStatus.EXCLUDED
+                decisions.append(Decision(stage=DecisionStage.EXCLUDE, choice=kind.value, actor=READING_ACTOR,
+                                          reason=f"page furniture: the layout detector's label {label!r} at its place",
+                                          evidence={"label": label}))
+            made.append(_add_text_block(state, n, line.bbox, line.text, engine="page_reading", engine_version=engine,
+                                        task=TaskKind.RECOGNIZE, decision=decisions, unit="read_text", kind=kind,
+                                        status=status))
     return made
 
 
+def _role_at(reading, bbox) -> str | None:
+    """The label of the reading's role region holding the centre of *bbox*, if any."""
+    x, y = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    return next((r.label for r in reading.roles if r.bbox[0] <= x <= r.bbox[2] and r.bbox[1] <= y <= r.bbox[3]), None)
+
+
 def _add_text_block(state: DocumentState, page: int, bbox, text: str, *, engine: str, engine_version: str,
-                    task: TaskKind, decision: Decision, unit, after: str | None = None) -> str:
+                    task: TaskKind, decision: Decision | list[Decision], unit, after: str | None = None,
+                    kind: BlockKind = BlockKind.TEXT, status: BlockStatus = BlockStatus.OK) -> str:
     """A text block at *bbox* on *page*, in reading order (after *after*, else by position), with its ledger item."""
     block_id = ids.block_id_pdf(page, _next_block_seq(state, page))
     anchor = PdfAnchor(page=page, bbox=bbox, coord_space="page_pt")
     observation = Observation(id=ids.observation_id(block_id, engine, 1), engine=engine,
                               engine_version=engine_version, task=task, anchor=anchor, text=text,
                               status=ObservationStatus.OK)
-    block = Block(id=block_id, kind=BlockKind.TEXT, order=0, anchors=[anchor], observations=[observation],
-                  chosen_observation=observation.id, text=text, decisions=[decision])
+    block = Block(id=block_id, kind=kind, status=status, order=0, anchors=[anchor], observations=[observation],
+                  chosen_observation=observation.id, text=text,
+                  decisions=decision if isinstance(decision, list) else [decision])
     sequence = ordered(state)
     at = (next(i for i, b in enumerate(sequence) if b.id == after) + 1 if after
           else _place(state, sequence, page, bbox))
@@ -555,7 +576,8 @@ def _add_text_block(state: DocumentState, page: int, bbox, text: str, *, engine:
         item.order = order
     state.blocks.append(block)
     state.ledger.append(LedgerEntry(item=ids.ledger_item_pdf(page, _next_item(state, page)), unit=unit,
-                                    source=anchor, chars=len("".join(text.split())), disposition="output",
+                                    source=anchor, chars=len("".join(text.split())),
+                                    disposition="excluded" if status == BlockStatus.EXCLUDED else "output",
                                     block=block_id))
     return block_id
 
