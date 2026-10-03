@@ -27,8 +27,9 @@ class GlmOcrConfig(BaseModel):
 
 
 class OCRBuilderConfig(BaseModel):
-    """The scan engine (PaddleOCR-VL through the AI Studio jobs API, guide §10.2).  It stays under
-    ``builders.ocr``, where earlier versions kept it, so existing config files keep working (Q75)."""
+    """The scan engine (guide §10.2): GLM-OCR (``glm``, the built-in default since Q147) or PaddleOCR-VL through the
+    AI Studio jobs API (``endpoint``, ``token``, ``model``).  It stays under ``builders.ocr``, where earlier versions
+    kept it, so existing config files keep working (Q75)."""
 
     engine: str = "paddleocr"  # "glm-ocr": GLM-OCR (``glm``); "none": no scan engine (``parserx parse --no-ocr``)
     endpoint: str = ""
@@ -230,7 +231,8 @@ class AgentConfig(BaseModel):
 
     engine: Literal["codex", "loop"] = "codex"  # loop: our own function-calling loop (runtimes/loop.py, Q86)
     use: str | None = None  # the loop: a ``models`` entry for its model, endpoint, key, api, efforts (Q100)
-    model: str = "gpt-6-sol"
+    model: str = "gpt-6-sol"  # the loop's model (from ``use``)
+    codex_model: str = "gpt-6-sol"  # the model Codex runs (Codex's own login; not a ``models`` entry), Q147
     effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
     # agent: it looks at the source itself; tool: the service VLM answers its questions (Q47).  Round 2 (2026-10-01):
     # the agent looking itself made the other side's final drafts better (156 looks against none; analysis §4)
@@ -447,6 +449,18 @@ def _load_raw_config(path: Path, seen: set[Path]) -> dict[str, Any]:
     return _deep_merge_dicts(merged, raw)
 
 
+def _model_changed(raw: dict[str, Any], layer: dict[str, Any]) -> dict[str, Any]:
+    """*raw* without the fields a model entry fills at each place where *layer* names a model (``use``): the model
+    changed, so what earlier layers wrote for the old one (its ``model``, endpoint, key…) does not stay."""
+    out = dict(raw)
+    for (section, key), fields in _USE_SITES.items():
+        site = (layer.get(section) or {}).get(key)
+        prior = (out.get(section) or {}).get(key)
+        if isinstance(site, dict) and site.get("use") and isinstance(prior, dict):
+            out[section] = {**out[section], key: {k: v for k, v in prior.items() if k not in fields.values()}}
+    return out
+
+
 def load_raw_config(path: str | Path) -> dict[str, Any]:
     """The config file with its ``extends`` chain merged and ``${VAR}`` references left unresolved."""
     return _load_raw_config(Path(path), seen=set())
@@ -476,7 +490,8 @@ def load_config_with_result(path: str | Path | None = None) -> ConfigLoadResult:
             source = "missing"
     raw: dict[str, Any] = {}
     for layer in layers:
-        raw = _deep_merge_dicts(raw, _load_raw_config(layer, seen=set()))
+        data = _load_raw_config(layer, seen=set())
+        raw = _deep_merge_dicts(_model_changed(raw, data), data)
     return ConfigLoadResult(
         config=ParserXConfig.model_validate(_resolve_env_vars(raw)),
         resolved_path=requested if requested is not None else (layers[-1] if len(layers) > 1 else None),

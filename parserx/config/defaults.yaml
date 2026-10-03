@@ -3,11 +3,12 @@
 # deep-merged over the one before: these defaults, ./parserx.yaml (a project's own settings, optional), the personal
 # config, and a --config file.  ${VAR} still reads a real environment variable.
 
-# The scan engine (guide §10.2): PaddleOCR-VL through the AI Studio jobs API.  Needed for scanned pages and the text
-# of images; its token is personal.
+# The scan engine (guide §10.2), needed for scanned pages and the text of images.  GLM-OCR since Q147 (2026-10-03,
+# docs/v2_ocr_engines.md §9): its key is the Zhipu account's, the glm-5.3-flashx entry's (builders.ocr.glm).
+# engine: paddleocr — PaddleOCR-VL through the AI Studio jobs API below, with a personal token.
 builders:
   ocr:
-    engine: paddleocr
+    engine: glm-ocr
     endpoint: https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
     model: PaddleOCR-VL-1.6
 
@@ -26,7 +27,7 @@ models:
     min_output_tokens: 1024
     efforts: [none, low, medium, high, xhigh, max]  # minimal is rejected (probed 2026-09-28)
     structured_output: json_schema
-  gpt-6-sol:                # the agent model of Codex, reachable from our own loop too (runtime.agent.use)
+  gpt-6-sol:                # the agent model of Codex (runtime.agent.codex_model), reachable from our own loop too
     endpoint: https://api.openai.com/v1
     model: gpt-6-sol
     api_style: responses
@@ -107,12 +108,13 @@ scheduling:
     doubao-seed-2-1-lite-260915: {input: 0.12, cached_input: 0.12, output: 0.40}  # CNY 0.8 / ? / 2.7 at 6.75 from a third-party listing: to check on the Ark console; cache unknown (input price), 2026-10-02
 
 # The agent (recommended; Q13, Q106, Q112): the standard processing first, then an agent on documents with open
-# review items.  engine codex: Codex on this machine (`codex login`, its model and effort below); engine loop: our own
-# loop with a model of `models` (use:, billed by that model's API).  mode fixed: the standard processing only.
-# On the command line: --agent codex | --agent <model> | --no-agent.
+# review items.  engine loop: our own loop with a model of `models` (use:, billed by that model's API) — DeepSeek
+# since Q147 (2026-10-03); engine codex: Codex on this machine (`codex login`, codex_model).  mode fixed: the
+# standard processing only.  On the command line: --agent <model> | --agent codex | --no-agent.
 runtime:
   mode: hybrid
   agent:
-    engine: codex
-    model: gpt-6-sol
+    engine: loop
+    use: deepseek-flash
     effort: medium
+    codex_model: gpt-6-sol

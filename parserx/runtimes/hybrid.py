@@ -272,7 +272,7 @@ def codex_agent(config: ParserXConfig) -> CodexAgent:
 
     secrets = _secret_values(config)
     env = agent_env(dict(os.environ), set(), secrets)
-    return CodexAgent(cfg.model, cfg.effort, env=env, price=config.scheduling.prices.get(cfg.model),
+    return CodexAgent(cfg.codex_model, cfg.effort, env=env, price=config.scheduling.prices.get(cfg.codex_model),
                       forbidden={"parserx config": config_dir()}, vision=cfg.vision)
 
 

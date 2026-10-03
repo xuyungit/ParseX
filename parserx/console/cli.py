@@ -76,9 +76,11 @@ def output_dir(entry: Input, name: str, args: argparse.Namespace, several: bool,
 def preflight(config: ParserXConfig) -> list[Notice]:
     """Warnings for roles that cannot work as configured: no token for the scan engine, no key for the service model
     or for the loop agent's model.  A role switched off on purpose (--no-ocr, --no-vlm, --no-agent) is not warned."""
+    from parserx.services.ocr import scan_engine_configured
+
     out = []
     ocr, vlm, agent = config.builders.ocr, config.services.vlm, config.runtime.agent
-    if ocr.engine != "none" and not (ocr.endpoint and ocr.token):
+    if ocr.engine != "none" and not scan_engine_configured(config):
         out.append(Notice("preflight_ocr", "warning"))
     if vlm.endpoint and not vlm.api_key:
         out.append(Notice("preflight_vlm", "warning", {"model": vlm.model}))

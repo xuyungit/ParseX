@@ -57,7 +57,7 @@ def test_cmd_compare_warns_when_both_configs_omitted(
     assert "Compare Base config: no project parserx.yaml or personal config" in caplog.text
     assert "Compare Experiment config: no project parserx.yaml or personal config" in caplog.text
     assert len(seen_configs) == 2
-    assert all(config.builders.ocr.engine == "paddleocr" for config in seen_configs)
+    assert all(config.builders.ocr.engine == "glm-ocr" for config in seen_configs)
 
 
 def test_cmd_eval_logs_resolved_project_config_path(
@@ -151,6 +151,7 @@ def test_parse_chooses_the_agent_and_the_service_model(tmp_path, monkeypatch, ca
     # R2: --agent codex | <model>, --no-agent, --vlm <model>; a name the config does not have is refused
     from parserx.cli import _cmd_parse, _collect_flag_overrides
     from parserx.config.schema import apply_overrides, load_config
+    from parserx.runtimes.hybrid import make_agent
 
     monkeypatch.chdir(tmp_path)
     base = load_config()
@@ -163,7 +164,8 @@ def test_parse_chooses_the_agent_and_the_service_model(tmp_path, monkeypatch, ca
     loop = chosen(agent="deepseek-flash", vlm="glm-5.3-flashx")
     assert (loop.runtime.agent.engine, loop.runtime.agent.model, loop.runtime.agent.api) == ("loop", "deepseek-flash", "chat")
     assert loop.services.vlm.model == "glm-5.3-flashx" and loop.runtime.mode == "hybrid"
-    assert chosen(agent="codex").runtime.agent.engine == "codex"
+    codex = chosen(agent="codex")
+    assert codex.runtime.agent.engine == "codex" and make_agent(codex).model == codex.runtime.agent.codex_model
     assert chosen(no_agent=True).runtime.mode == "fixed"
     args = argparse.Namespace(input=[tmp_path / "a.pdf"], config=None, overrides=[], no_vlm=False, no_ocr=False,
                               vlm="nope", agent=None, no_agent=False, runtime=None)

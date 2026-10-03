@@ -283,6 +283,16 @@ def new_scan_engine(config):
     raise ValueError(f"no scan engine (builders.ocr.engine: {cfg.engine!r})")
 
 
+def scan_engine_configured(config) -> bool:
+    """Whether the scan engine ``builders.ocr.engine`` names has what it needs to be asked (a key, a token)."""
+    cfg = config.builders.ocr
+    if cfg.engine == "glm-ocr":
+        from parserx.services.glm_ocr import glm_api_key
+
+        return bool(glm_api_key(config))
+    return cfg.engine == "paddleocr" and bool(cfg.endpoint and cfg.token)
+
+
 def _page_count(file_bytes: bytes, mime: str) -> int:
     """Pages submitted in one job: the PDF page count, or 1 for an image."""
     if mime != "application/pdf":

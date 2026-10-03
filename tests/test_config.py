@@ -25,12 +25,12 @@ processors:            # a section of earlier versions: ignored
     config = load_config(config_file)
     assert config.runtime.formulas is False
     # Defaults preserved
-    assert config.runtime.describe_figures is True and config.builders.ocr.engine == "paddleocr"
+    assert config.runtime.describe_figures is True and config.builders.ocr.engine == "glm-ocr"
 
 
 def test_load_config_missing_file():
     config = load_config("/nonexistent/path.yaml")
-    assert config.builders.ocr.engine == "paddleocr"
+    assert config.builders.ocr.engine == "glm-ocr"
 
 
 def test_load_config_uses_project_yaml_by_default(tmp_path: Path, monkeypatch):
@@ -69,7 +69,27 @@ def test_load_config_with_result_reports_default_fallback(tmp_path: Path, monkey
 
     assert loaded.source == "defaults"
     assert loaded.resolved_path is None
-    assert loaded.config.builders.ocr.engine == "paddleocr"
+    assert loaded.config.builders.ocr.engine == "glm-ocr"
+
+
+def test_the_built_in_scan_engine_and_agent(tmp_path: Path, monkeypatch):
+    # Q147: GLM-OCR, and our own loop with DeepSeek; Codex keeps a model of its own for --agent codex
+    monkeypatch.chdir(tmp_path)
+    agent = load_config().runtime.agent
+    assert (agent.engine, agent.use, agent.model, agent.api) == ("loop", "deepseek-flash", "deepseek-flash", "chat")
+    assert agent.codex_model == "gpt-6-sol"
+
+
+def test_a_layer_that_names_a_model_takes_that_models_entry(tmp_path: Path, monkeypatch):
+    # what an earlier layer wrote for the old model (its name, endpoint, API) does not stay; the layer's own does
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "parserx.yaml").write_text("runtime:\n  agent:\n    use: gpt-6-luna\n    model: gpt-6-luna-2\n")
+    later = tmp_path / "later.yaml"
+    later.write_text("runtime:\n  agent:\n    use: gpt-6-sol\n")
+    agent = load_config(later).runtime.agent
+    assert (agent.model, agent.api, agent.endpoint) == ("gpt-6-sol", "responses", "https://api.openai.com/v1")
+    later.write_text("runtime:\n  agent:\n    use: deepseek-flash\n    model: deepseek-pro\n")
+    assert load_config(later).runtime.agent.model == "deepseek-pro"
 
 
 def test_env_var_resolution(tmp_path: Path, monkeypatch):

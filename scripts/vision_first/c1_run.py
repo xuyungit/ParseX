@@ -78,7 +78,7 @@ def main() -> int:
     shutil.copyfile(original, source)
     config = apply_overrides(load_config(REPO_ROOT / "configs" / "regression.yaml"), [
         f"cache.dir={doc_dir / '.cache'}", "cache.mode=read_write", "runtime.mode=hybrid",
-        "runtime.agent.engine=codex", f"runtime.agent.model={MODEL}", f"runtime.agent.effort={args.effort}",
+        "runtime.agent.engine=codex", f"runtime.agent.codex_model={MODEL}", f"runtime.agent.effort={args.effort}",
         f"runtime.agent.vision={args.vision}"])
     fixed = work / "fixed"
     _export(ws_dir, fixed, args.doc, config, ToolContext)
