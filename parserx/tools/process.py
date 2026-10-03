@@ -23,6 +23,7 @@ The fixed sequence of the pipeline runtime; the program runs it before the agent
 6b. paragraphs the page marks with a bullet become list items (R1);
 6c. text the local page reading sees where the output has nothing at all (``reading.compare.missed_lines``, Q133):
     added at its place and listed for review, not lost;
+6d. those lines read again by the scan engine, one request for the document (``tools.added_text``);
 7. ``check``.
 
 It returns a compact summary and the worklist — what is left for judgment (unresolved items: pending pages, failed
@@ -54,7 +55,7 @@ from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
-from parserx.tools import describe_figure, recognize, second_reading, structure
+from parserx.tools import added_text, describe_figure, recognize, second_reading, structure
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
@@ -217,6 +218,12 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             added = add_missed_text(state)
         if added:
             steps.append(StepSummary(step="missed_text", detail=f"{len(added)} lines the local reading sees added"))
+    if added_text.places(ctx.ws.load()):  # those lines read again by the scan engine: scripts, word spaces
+        ctx.report(Step("process", "added_text"))
+        reread, problems = added_text.read_again(ctx)
+        failures += problems
+        if reread:
+            steps.append(StepSummary(step="added_text", detail=f"{reread} added lines read again by the scan engine"))
 
     ctx.report(Step("process", "check"))
     checked = check_accounts(ctx)

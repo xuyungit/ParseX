@@ -29,6 +29,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "step.transcribe": {"zh": "识别图片中的文字 {total} 张", "en": "reading text in {total} images"},
     "step.describe": {"zh": "图片描述 {total} 张", "en": "describing {total} figures"},
     "step.second_reading": {"zh": "扫描件公式第二份读法 {total} 块", "en": "second reading of {total} scanned blocks"},
+    "step.added_text": {"zh": "补入的文字交扫描引擎重读", "en": "added text read again by the scan engine"},
     "step.structure": {"zh": "标题与结构", "en": "titles and structure"},
     "step.check": {"zh": "检查", "en": "check"},
     "wait.pending": {"zh": "服务排队中 {seconds}", "en": "queued at the service {seconds}"},
