@@ -14,6 +14,9 @@ between the digits and the decimal point of a number inside LaTeX (``\\frac{1 2}
 those spaces are not there).  Outside LaTeX a space is the text's own: a section number it now and then splits
 ("7. 3.5.2", on blurred scans) is left as written.  The service's answer is what the cache keeps, so a change here needs no new request.
 
+A page larger than ``MAX_PAGE_PT`` is scaled down before it is sent, and a PDF over ``MAX_BYTES`` is sent in
+parts (``pdf_parts``).
+
 What the service leaves out, nothing here can add back (§4.10): it returns no header, footer, page-number,
 footnote or aside-text regions and few formula numbers, and it does not read the text inside picture regions.
 """
@@ -74,7 +77,7 @@ class GlmOcrService:
 
     def recognize_pdf(self, pdf_bytes: bytes) -> list[OCRResult]:
         return [_parse_page([page], raw={"layoutParsingResults": [page]})
-                for page in self._pages(pdf_bytes, "application/pdf")]
+                for part in pdf_parts(pdf_bytes) for page in self._pages(part, "application/pdf")]
 
     def request_key(self, file_bytes: bytes, mime: str) -> str:
         return request_key("ocr", self._material(file_bytes, mime))
@@ -102,6 +105,43 @@ class GlmOcrService:
         if pages and got != pages:
             raise PageCountMismatch(pages, got)
         return answer
+
+
+MAX_PAGE_PT = 1200.0  # a page's longer side the service is sent; A3 (1191) fits, larger pages are scaled down
+MAX_BYTES = 40_000_000  # a request's PDF (the service takes up to 50 MB)
+
+
+def pdf_parts(pdf_bytes: bytes) -> list[bytes]:
+    """The PDF as the service takes it: unchanged when every page fits, else with the larger pages scaled down to
+    ``MAX_PAGE_PT`` (the service failed on a 4167 × 5890-point page, rendering it about 3× larger; the boxes it gives
+    are in the pixels of its render of the page, so scaling the page changes nothing for the reader); split in
+    halves until each part is within ``MAX_BYTES``."""
+    import pymupdf
+
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+        if doc.page_count == 0:
+            return [pdf_bytes]
+        if all(max(p.rect.width, p.rect.height) <= MAX_PAGE_PT for p in doc):
+            if len(pdf_bytes) <= MAX_BYTES or doc.page_count == 1:
+                return [pdf_bytes]
+        return _parts(doc, 0, doc.page_count)
+
+
+def _parts(doc, first: int, end: int) -> list[bytes]:
+    import pymupdf
+
+    out = pymupdf.open()
+    for n in range(first, end):
+        rect = doc[n].rect
+        k = min(1.0, MAX_PAGE_PT / max(rect.width, rect.height))
+        page = out.new_page(width=rect.width * k, height=rect.height * k)
+        page.show_pdf_page(page.rect, doc, n)
+    data = out.tobytes(deflate=True, no_new_id=True)
+    out.close()
+    if len(data) <= MAX_BYTES or end - first == 1:
+        return [data]
+    middle = (first + end) // 2
+    return _parts(doc, first, middle) + _parts(doc, middle, end)
 
 
 def glm_pages(answer: dict) -> list[dict]:
