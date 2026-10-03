@@ -270,6 +270,19 @@ def create_ocr_service(
     return PaddleOCRService(cfg)
 
 
+def new_scan_engine(config):
+    """The scan engine ``builders.ocr.engine`` names, from the whole configuration (GLM-OCR may take its key from a
+    ``models`` entry); ValueError when it is "none" or not configured."""
+    cfg = config.builders.ocr
+    if cfg.engine == "glm-ocr":
+        from parserx.services.glm_ocr import GlmOcrService, glm_api_key
+
+        return GlmOcrService(cfg.glm, glm_api_key(config))
+    if cfg.engine == "paddleocr":
+        return PaddleOCRService(cfg)
+    raise ValueError(f"no scan engine (builders.ocr.engine: {cfg.engine!r})")
+
+
 def _page_count(file_bytes: bytes, mime: str) -> int:
     """Pages submitted in one job: the PDF page count, or 1 for an image."""
     if mime != "application/pdf":

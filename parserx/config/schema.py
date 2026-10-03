@@ -15,14 +15,26 @@ from pydantic import BaseModel, Field, model_validator
 # ── Sub-configs ─────────────────────────────────────────────────────────
 
 
+class GlmOcrConfig(BaseModel):
+    """GLM-OCR through Zhipu's layout-parsing API, the scan engine when ``builders.ocr.engine`` is ``glm-ocr``
+    (docs/v2_ocr_engines.md §8).  The key is the Zhipu account's: ``api_key``, or else the key of the ``models``
+    entry ``account`` on the same Zhipu account."""
+
+    endpoint: str = "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
+    model: str = "glm-ocr"
+    api_key: str = ""
+    account: str = "glm-5.3-flashx"  # a models entry on the same Zhipu account: its key is used
+
+
 class OCRBuilderConfig(BaseModel):
     """The scan engine (PaddleOCR-VL through the AI Studio jobs API, guide §10.2).  It stays under
     ``builders.ocr``, where earlier versions kept it, so existing config files keep working (Q75)."""
 
-    engine: str = "paddleocr"  # "none": no scan engine (``parserx parse --no-ocr``)
+    engine: str = "paddleocr"  # "glm-ocr": GLM-OCR (``glm``); "none": no scan engine (``parserx parse --no-ocr``)
     endpoint: str = ""
     token: str = ""
     model: str = "PaddleOCR-VL-1.6"
+    glm: GlmOcrConfig = Field(default_factory=GlmOcrConfig)
 
 
 class BuildersConfig(BaseModel):

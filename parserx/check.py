@@ -29,6 +29,7 @@ _TEXT = {
            "no_personal": "没有个人配置：运行 `parserx init`，把 key 写进 {path}",
            "ocr_off": "关闭（builders.ocr.engine: none）：扫描页和图片里的文字不会被识别",
            "ocr_no_token": "没有 token：写进个人配置的 builders.ocr.token",
+           "ocr_no_glm_key": "没有 GLM-OCR 的 key：写进个人配置的 builders.ocr.glm.api_key，或它借用的 models 条目",
            "no_key": "{model} 没有 key：写进个人配置的 models.{entry}.api_key",
            "no_model": "没有选模型（services.vlm.use）",
            "agent_off": "不用 Agent（runtime.mode: fixed）：只做标准处理",
@@ -46,6 +47,7 @@ _TEXT = {
            "no_personal": "no personal config: run `parserx init` and put the keys in {path}",
            "ocr_off": "off (builders.ocr.engine: none): scanned pages and the text of images are not recognised",
            "ocr_no_token": "no token: put it under builders.ocr.token in the personal config",
+           "ocr_no_glm_key": "no GLM-OCR key: builders.ocr.glm.api_key in the personal config, or the models entry it borrows",
            "no_key": "{model} has no key: put it under models.{entry}.api_key in the personal config",
            "no_model": "no model chosen (services.vlm.use)",
            "agent_off": "no agent (runtime.mode: fixed): the standard processing only",
@@ -137,15 +139,22 @@ def _ocr(config: ParserXConfig, image: Path, txt: dict, offline: bool):
     oc = config.builders.ocr
     if oc.engine == "none":
         return None, txt["ocr_off"]
-    if not oc.token:
-        return False, txt["ocr_no_token"]
-    name = f"{oc.model}（{_host(oc.endpoint)}）"
+    if oc.engine == "glm-ocr":
+        from parserx.services.glm_ocr import glm_api_key
+
+        if not glm_api_key(config):
+            return False, txt["ocr_no_glm_key"]
+        name = f"{oc.glm.model}（{_host(oc.glm.endpoint)}）"
+    else:
+        if not oc.token:
+            return False, txt["ocr_no_token"]
+        name = f"{oc.model}（{_host(oc.endpoint)}）"
     if offline:
         return True, f"{name} {txt['offline']}"
     from parserx.scheduling import RequestMeter, ServiceGateway
-    from parserx.services.ocr import PaddleOCRService
+    from parserx.services.ocr import new_scan_engine
 
-    service = PaddleOCRService(oc)
+    service = new_scan_engine(config)
     service.gateway = ServiceGateway.from_config(RequestMeter(), None, config.scheduling)
     result = service.recognize(image)
     if not result.blocks:

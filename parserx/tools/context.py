@@ -32,7 +32,7 @@ from parserx.scheduling import (
 )
 from parserx.runtimes.events import Waiting
 from parserx.services.llm import create_vlm_service
-from parserx.services.ocr import PaddleOCRService
+from parserx.services.ocr import PaddleOCRService, new_scan_engine
 from parserx.tools.envelope import BudgetLeft, Cost, Envelope, Failure, FailureCode, ToolFailure
 from parserx.workspace import VersionConflict, Workspace, WorkspaceLocked, WorkspaceTampered
 
@@ -71,9 +71,12 @@ class ToolContext:
     # Service factories: tests replace these to plug in fake services behind the real gateway.
     def _new_ocr(self) -> PaddleOCRService:
         cfg = self.config.builders.ocr
-        if cfg.engine == "none" or not cfg.endpoint or not cfg.token:
+        if cfg.engine == "paddleocr" and (not cfg.endpoint or not cfg.token):
             raise ToolFailure(FailureCode.NOT_CONFIGURED, "scan engine not configured (builders.ocr)")
-        return PaddleOCRService(cfg)
+        try:
+            return new_scan_engine(self.config)  # PaddleOCR-VL, or GLM-OCR with the same interface
+        except ValueError as exc:
+            raise ToolFailure(FailureCode.NOT_CONFIGURED, f"scan engine not configured (builders.ocr): {exc}") from exc
 
     def _new_vlm(self, cfg):
         if not cfg.endpoint or not cfg.api_key:
