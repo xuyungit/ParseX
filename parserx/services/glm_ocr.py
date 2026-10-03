@@ -107,15 +107,17 @@ class GlmOcrService:
         return answer
 
 
-MAX_PAGE_PT = 1200.0  # a page's longer side the service is sent; A3 (1191) fits, larger pages are scaled down
+# A page's longer side the service is sent; larger pages are scaled down.  Measured 2026-10-03: a 5890-point page
+# failed (HTTP 500), the same page scaled to 3000, 2000 or 1200 points was read; pages up to 1920 points (image PDFs
+# of OmniDocBench, a wide printout) were read as they are, and scaling them to 1200 cost table cells.
+MAX_PAGE_PT = 2000.0
 MAX_BYTES = 40_000_000  # a request's PDF (the service takes up to 50 MB)
 
 
 def pdf_parts(pdf_bytes: bytes) -> list[bytes]:
     """The PDF as the service takes it: unchanged when every page fits, else with the larger pages scaled down to
-    ``MAX_PAGE_PT`` (the service failed on a 4167 × 5890-point page, rendering it about 3× larger; the boxes it gives
-    are in the pixels of its render of the page, so scaling the page changes nothing for the reader); split in
-    halves until each part is within ``MAX_BYTES``."""
+    ``MAX_PAGE_PT`` (the boxes the service gives are in the pixels of its render of the page, so scaling the page
+    changes nothing for the reader); split in halves until each part is within ``MAX_BYTES``."""
     import pymupdf
 
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:

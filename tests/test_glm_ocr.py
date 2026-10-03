@@ -128,12 +128,13 @@ def _sized_pdf(sizes) -> bytes:
 
 
 def test_pages_that_fit_go_unchanged_and_large_ones_are_scaled_down(monkeypatch):
-    normal = _sized_pdf([(595, 842), (842, 1191)])
-    assert glm_ocr.pdf_parts(normal) == [normal]  # A4 and A3: the bytes as given (and the cache key)
+    normal = _sized_pdf([(595, 842), (842, 1191), (1654, 2000)])
+    assert glm_ocr.pdf_parts(normal) == [normal]  # the bytes as given (and the cache key)
     [part] = glm_ocr.pdf_parts(_sized_pdf([(595, 842), (4167, 5890)]))
     with pymupdf.open(stream=part, filetype="pdf") as doc:
         sizes = [(round(p.rect.width), round(p.rect.height)) for p in doc]
-    assert sizes[0] == (595, 842) and max(sizes[1]) == 1200 and round(sizes[1][0] / sizes[1][1], 2) == 0.71
+    assert sizes[0] == (595, 842) and max(sizes[1]) == glm_ocr.MAX_PAGE_PT
+    assert round(sizes[1][0] / sizes[1][1], 2) == 0.71
     assert "text" in pymupdf.open(stream=part, filetype="pdf")[1].get_text()  # content kept, scaled
 
 
