@@ -56,6 +56,8 @@ def test_the_scan_reader_takes_the_converted_page():
 
 def test_digits_are_joined_only_inside_math():
     assert region_text("text", "共 1 000 元，$1 2$ 与 $a b$") == "共 1 000 元，$12$ 与 $a b$"
+    assert region_text("text", "$ 8. 4^{\\circ}$，当 $0. 2 5 \\leq \\eta$；7. 3.5.2 节") == \
+        "$ 8.4^{\\circ}$，当 $0.25 \\leq \\eta$；7. 3.5.2 节"
 
 
 def _pdf(pages: int) -> bytes:

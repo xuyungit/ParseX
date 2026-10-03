@@ -10,7 +10,9 @@ everything that reads the scan engine (``content/scan.py`` and the tools) reads 
 the same set.  What the conversion changes, and only there, is the Markdown wrapping GLM-OCR puts around a
 region's text: a title's leading ``#``s, a centring ``<div>``, a picture region's reference to its own crop (a
 picture inside a text region is named the way the PaddleOCR-VL engine names its crops), and the spaces it writes
-between the digits of a number inside LaTeX (``\\frac{1 2}{4 8}``: typeset, those spaces are not there).  The service's answer is what the cache keeps, so a change here needs no new request.
+between the digits and the decimal point of a number inside LaTeX (``\\frac{1 2}{4 8}``, ``0. 2 5``: typeset,
+those spaces are not there).  Outside LaTeX a space is the text's own: a section number it now and then splits
+("7. 3.5.2", on blurred scans) is left as written.  The service's answer is what the cache keeps, so a change here needs no new request.
 
 What the service leaves out, nothing here can add back (§4.10): it returns no header, footer, page-number,
 footnote or aside-text regions and few formula numbers, and it does not read the text inside picture regions.
@@ -32,7 +34,7 @@ _TITLES = frozenset({"doc_title", "paragraph_title"})
 _HEADING = re.compile(r"^\s*#{1,6}\s+")
 _CENTRED = re.compile(r"</?div\b[^>]*>", re.I)
 _MATH = re.compile(r"(\$\$.*?\$\$|\$[^$\n]*?\$)", re.S)
-_SPACED_DIGITS = re.compile(r"(?<=\d)[ \t]+(?=\d)")
+_SPACED_DIGITS = re.compile(r"(?<=[\d.])[ \t]+(?=\d)|(?<=\d)[ \t]+(?=\.)")  # "1 2", "0. 2 5" (in math only)
 # A picture inside a region's text, by its box in the page's pixels: written the way the PaddleOCR-VL engine names
 # its crops, which ``scan.take_pictures`` reads.
 _PICTURE = re.compile(r"!\[[^\]]*\]\(page=\d+,\s*bbox=\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]\)")

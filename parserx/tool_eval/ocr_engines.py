@@ -616,6 +616,12 @@ def makers() -> dict:
         "glm-ocr-api-2x": lambda: GlmOcrApi(upscale=True),
         "glm-ocr-api-pdf": GlmOcrApiPdf,
         "local-reading": LocalReading,
+        "glm-ocr-local-keep": lambda: LocalEngine(
+            "glm-ocr-local-keep", "GLM-OCR（本机，MLX，保留页眉脚注等）", "glmocr", "glmocr_local.py",
+            ["--config", "glmocr/config_keep.yaml"],
+            {"server": "mlx_vlm.server --model mlx-community/GLM-OCR-bf16 (port 8112)", "sdk": "glmocr 0.1.5",
+             "config": "~/parserx-exp/ocr-engines/glmocr/config_keep.yaml: header, footer, number, footnote, "
+                       "aside_text, reference read as text"}),
         "ppocr-v6-lines": lambda: LocalEngine("ppocr-v6-lines", "PP-OCRv6 文字行（本机）", "paddle",
                                               "paddle_local.py", ["--pipeline", "ocr"]),
     }
