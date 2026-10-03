@@ -150,7 +150,8 @@ def build_parser() -> argparse.ArgumentParser:
     tool_eval_sub = tool_eval_cmd.add_subparsers(dest="tool_eval_command", required=True)
     te_run = tool_eval_sub.add_parser("run", help="Run tools on ground-truth documents (kept results are not redone)")
     te_run.add_argument("--tools", default="parserx,llamaparse,mineru,datalab,paddleocr",
-                        help="comma-separated: parserx, parserx-hybrid, parserx-agent, llamaparse, mineru, datalab, paddleocr")
+                        help="comma-separated: parserx, parserx-hybrid, parserx-agent, llamaparse, mineru, datalab, paddleocr; "
+                             "OCR engines on page images: see parserx/tool_eval/ocr_engines.py")
     te_run.add_argument("--docs", default="", help="comma-separated document names")
     te_run.add_argument("--docs-file", type=Path, help="document names, one per line (# comments allowed)")
     te_run.add_argument("--force", action="store_true", help="redo results already on disk (requests again)")
@@ -430,6 +431,9 @@ def _cmd_tool_eval(args: argparse.Namespace) -> None:
         "datalab": lambda: adapters.DatalabAdapter("accurate"),
         "paddleocr": lambda: adapters.PaddleOCRVLAdapter(),
     }
+    from parserx.tool_eval import ocr_engines
+
+    makers.update(ocr_engines.makers())  # OCR engines on page images (docs/v2_ocr_engines.md)
     names = [t.strip() for t in args.tools.split(",") if t.strip()]
     unknown = [t for t in names if t not in makers]
     if unknown:

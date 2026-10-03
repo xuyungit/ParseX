@@ -262,8 +262,9 @@ class DatalabAdapter(ToolAdapter):
 
     url = "https://www.datalab.to/api/v1/convert"
 
-    def __init__(self, mode: str = "accurate"):
+    def __init__(self, mode: str = "accurate", *, merge_pages: bool = True):
         self.mode = mode
+        self.merge_pages = merge_pages  # off: pages as read (cross-page merging is billed per document)
         self.name = f"datalab-{mode}"
         self.label = f"marker/Datalab {mode}"
 
@@ -271,7 +272,8 @@ class DatalabAdapter(ToolAdapter):
         headers = {"X-API-Key": _env("DATALAB_API_KEY")}
         pages = page_count(input_path)
         # Cross-page merging is billed per document (about $0.50): only where there is more than one page.
-        config = {"output_format": "markdown", "mode": self.mode, "merge_cross_page": pages is None or pages > 1}
+        config = {"output_format": "markdown", "mode": self.mode,
+                  "merge_cross_page": self.merge_pages and (pages is None or pages > 1)}
         form = {k: str(v).lower() if isinstance(v, bool) else v for k, v in config.items()}
         with open(input_path, "rb") as f:
             media = mimetypes.guess_type(input_path.name)[0] or "application/octet-stream"  # the service checks it
@@ -319,9 +321,14 @@ class PaddleOCRVLAdapter(ToolAdapter):
     name = "paddleocr-vl"
     label = "PaddleOCR-VL"
 
+    def __init__(self, restructure: bool = True):
+        self.restructure = restructure  # off: exactly the scan engine's settings, pages as read
+
     def configuration(self) -> dict:
         from parserx.services.ocr import _OPTIONS  # the scan engine's own settings, plus restructuring
 
+        if not self.restructure:
+            return dict(_OPTIONS)
         return {**_OPTIONS, "restructurePages": True, "mergeTables": True, "relevelTitles": True}
 
     def parse(self, input_path: Path, out_dir: Path) -> ToolRun:

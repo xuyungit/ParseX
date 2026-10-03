@@ -1,0 +1,44 @@
+# OCR engine comparison (docs/v2_ocr_engines.md): every page is read as an image, text layers unused.
+# Our corpus: pages these engines cannot have seen.
+ocr01                                 # 9 p, scanned report: tables, diagrams, numbered headings
+ocr_scan_jtg3362                      # 4 p, scanned standard: dense tables, tiled scan
+unseen_scan_form01                    # 3 p, scanned form laid out as a table, rotated, scanner-app watermark
+patent01                              # 14 p, Chinese patent: front page, formulas, drawings
+paper_chn01                           # 7 p, Chinese paper: two columns, footnotes, figures
+paper_chn02                           # 7 p, Chinese paper: 6 tables, many formulas
+paper01                               # 19 p, English paper: two columns, references
+unseen_pdf_tables01                   # 6 p, dense Chinese tables
+pdf_text01_tables                     # 5 p, a table running over pages
+text_table_word                       # 2 p, table headers drawn as outlines (no text layer there)
+text_code_block                       # 2 p, English code blocks
+deepseek                              # 1 p, wide chat printout in Chinese
+# OmniDocBench, independent annotation (ground_truth_public: 8 pages from before)
+omnidoc_academic_literature_en_table_01
+omnidoc_academic_literature_en_table_02
+omnidoc_academic_literature_en_text_01
+omnidoc_academic_literature_en_text_02
+omnidoc_book_zh_text_01
+omnidoc_book_zh_text_02
+omnidoc_research_report_zh_table_01
+omnidoc_research_report_zh_table_02
+# OmniDocBench, kinds our corpus lacks (ground_truth_ocr: `python -m parserx.eval.benchmark --ocr`)
+omni_exam_paper_zh_01
+omni_exam_paper_zh_02
+omni_exam_paper_en_01
+omni_exam_paper_mixed_01
+omni_note_zh_01                       # handwritten
+omni_note_zh_02                       # handwritten
+omni_note_mixed_01                    # handwritten
+omni_newspaper_zh_01
+omni_newspaper_en_01
+omni_ppt2pdf_zh_01
+omni_ppt2pdf_en_01
+omni_colorful_textbook_zh_01
+omni_colorful_textbook_en_01
+omni_magazine_zh_01
+omni_magazine_en_01
+omni_book_en_01
+omni_fuzzy_scan_zh_01
+omni_fuzzy_scan_zh_02
+omni_table_with_formula_en_01
+omni_watermark_mixed_01

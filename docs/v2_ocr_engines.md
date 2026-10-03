@@ -1,0 +1,241 @@
+# OCR 引擎评估（2026-10-02）
+
+> 状态：测试完成，用户已决定（2026-10-03，§6）：继续用在线服务；本机 PaddleOCR-VL 记为备用方案（§7）；GLM-OCR 作备选；Apple Vision 不用；评分器不改，难点用 §4.8 的难题测试；MinerU 不再用。
+
+## 1. 为什么做
+
+ParserX 的扫描引擎是 PaddleOCR-VL-1.6，经百度 AI Studio 的免费在线服务调用（`builders.ocr`，指导 §10.2）。服务模型、Agent 模型都能换，扫描引擎却只有这一家，而且：
+
+- 服务免费，可用性不由我们控制：高峰期排队、队列满会拒收，限额每天 2 万页，随时可能改规则或停；
+- 没有它，扫描页、图片里的字、公式页的第二份读法、Agent "看一页"都做不了。
+
+这次评估要回答：**手里能拿到的 OCR 引擎（本机能跑的和在线的）质量到底怎样，哪个能替代或备份现用服务**。做法与读图摸底（[v2_model_probe.md](v2_model_probe.md)）一样：挑典型页面，所有引擎读同一批，自动评分，并排比较。
+
+扫描引擎在 ParserX 里要交出的东西（`parserx/content/scan.py`）：每页的版面块，每块有类别（正文、标题、表格、公式、图片、页眉页脚……）、位置框、阅读顺序和内容（表格为 HTML，公式为 LaTeX）。所以除了读得准，还要看引擎**给不给位置框和类别**——不给的只能当参考读数，不能直接替换。
+
+## 2. 候选
+
+调研（2026-10-02，各项都有出处，见本节末）后选出这些来测。"本机"指在这台 M5 Pro（64 GB）上跑，不联网、不花钱。
+
+| 组名（结果目录） | 是什么 | 在哪跑 | 位置框 + 类别 + 顺序 | 许可（权重） | 费用 |
+|---|---|---|---|---|---|
+| 现用服务 `paddle-vl-aistudio` | PaddleOCR-VL-1.6（0.9B 识别 + PP-DocLayoutV3 版面），扫描引擎现在的设置 | 在线，AI Studio | 有（就是现在用的格式） | Apache-2.0 | 免费，每天 2 万页 |
+| 本机 PaddleOCR-VL `paddle-vl-local` | 同一套流水线（paddleocr 3.7），版面在 CPU，0.9B 识别模型由 MLX 服务跑 | 本机 | 有，格式与现用完全相同 | Apache-2.0 | 免费 |
+| PP-StructureV3 + PP-OCRv6 `ppstructure-v6` | 传统流水线：版面检测 + PP-OCRv6（2026-06-11 发布）文字检测识别 + 表格、公式模型 | 本机（Paddle 只能用 CPU） | 有 | Apache-2.0 | 免费 |
+| GLM-OCR `glm-ocr-local` | 智谱 0.9B 识别模型 + PP-DocLayoutV3 版面（glmocr SDK） | 本机，MLX | 有 | MIT | 免费；在线 API 另有（未测） |
+| MinerU 4 `mineru-local` | MinerU 4.0.10 standard 档（PyTorch + llama.cpp） | 本机 | 有 | MinerU 许可（Apache-2.0 加附加条款） | 免费 |
+| MinerU 在线 `mineru-api` | mineru.net API，vlm 模型 | 在线（已有 key） | 有 | — | 每天有免费额度 |
+| Chandra 2 本机 `chandra2-local` | Datalab 的 Chandra OCR 2（5B，Qwen3.5 底座），官方权重直接在 MLX 上跑，官方 chandra-ocr 包的提示词和解析 | 本机，MLX | 有 | 改版 OpenRAIL-M：研究、个人、营收或融资 200 万美元以下免费，不得用来与 Datalab 的 API 竞争 | 免费 |
+| Chandra 2 在线 `datalab-api` | Datalab Convert API，accurate 档（Chandra 2 驱动），不跨页合并 | 在线（已有 key） | 有 | — | 约 $0.012/页 |
+| dots.mocr `dots-mocr-local` | 小红书 3B 模型，一次输出带框的版面 JSON | 本机，MLX | 有 | MIT | 免费 |
+| Apple Vision `apple-vision` | macOS 自带的文档识别（RecognizeDocumentsRequest），段落、表格、列表 | 本机，系统自带 | 有段落和表格的框，无页眉、图片等类别，无跨块阅读顺序 | 系统组件 | 免费 |
+| 千问整页转写 `qwen-page` | 我们的服务模型 qwen3.8-flash（low），整页转写成 Markdown（提示词见 `ocr_engines.PAGE_PROMPT`） | 在线，阿里云百炼 | 无 | — | 约 $0.0009/页 |
+
+调研过、这次没测的（理由）：
+
+- **TeleOCR**（2026-08，1.4B，OmniDocBench 排行第一）：发布才几周，需要先版面后逐块的两段式推理，只有社区转换；放第二轮。
+- **DeepSeek-OCR 2**、**OvisOCR2**、**olmOCR 2**、**HunyuanOCR**、**Qianfan-OCR**、**Granite-Docling**：分数低于上面几个，或不给位置框，或许可受限；可按需补测。
+- **在线新服务**（要用户同意才能试，§6）：GLM-OCR 在线 API（智谱，已有账号）、千问 OCR 专用模型（qwen-vl-ocr / qwen3.5-ocr，百炼，已有账号）、百度千帆的付费 PaddleOCR-VL（¥0.07–0.18/页，与现用同一格式，有服务保障）、Mistral OCR 4（$4/千页，海外）。
+- **AWS Textract** 不支持中文；Google、Azure 的文档服务贵（约 $10/千页）且国内访问不确定。
+
+出处（调研时逐条核对过）：PaddleOCR 发布记录 github.com/PaddlePaddle/PaddleOCR/releases；Apple Silicon 部署 paddleocr.ai …/PaddleOCR-VL-Apple-Silicon.html；OmniDocBench 排行 github.com/opendatalab/OmniDocBench（v1.6，2026-09-11，由 MinerU 团队维护）；Chandra 2 许可 huggingface.co/datalab-to/chandra-ocr-2；GLM-OCR 部署 github.com/zai-org/GLM-OCR；MinerU github.com/opendatalab/MinerU；dots.mocr huggingface.co/dots-studio/dots.mocr；Apple Vision 接口取自 macOS SDK 的 Vision.swiftinterface。
+
+## 3. 怎么测
+
+**测试集**：40 篇、107 页（`configs/ocr_bench.txt`）。
+
+- 本方语料 12 篇 79 页（引擎不可能见过）：扫描报告 ocr01、扫描规范密表 ocr_scan_jtg3362、扫描表单 unseen_scan_form01（页面旋转、扫描软件水印）、专利 patent01、中文论文两篇（双栏、脚注、表格、大量公式）、英文双栏论文 paper01、中文密表两篇（含跨页表）、表头是轮廓字的 Word 表 text_table_word、英文代码 text_code_block、宽版中文对话打印 deepseek。receipt 含个人信息，不放进来。
+- OmniDocBench 28 页（独立人工标注；公开数据，引擎可能训练时见过，分开报）：以前的 8 页（英文论文、中文书、中文研报），加这次按"本方语料缺的种类"补的 20 页——中英文试卷、手写笔记 3 页、中英文报纸、中英文幻灯片、中英文彩色教材、中英文杂志、英文书、模糊扫描 2 页、带公式的表、水印页。每类取文字量最接近该类中位数的页（典型页，不挑引擎好读的），排除带遮盖区域的页。生成：`uv run --with huggingface-hub python -m parserx.eval.benchmark --ocr`（写到 `ground_truth_ocr/`，不进 git；数据集版本记在每页的 meta.json）。
+
+**输入**：每页先做成一张图（`parserx/tool_eval/ocr_engines.py`）——整页扫描按扫描原分辨率（最高 300 dpi），其余页 200 dpi。所有引擎读这同一批图；收文件的在线服务收的是这些图拼成的 PDF，没有文字层，谁也不能借文字层。
+
+**各引擎的设置**：
+
+- 都用各自推荐的设置；页眉页脚按各自默认（大多不输出）。
+- 现用服务和本机 PaddleOCR-VL 用扫描引擎的现用参数（`services/ocr.py` 的 `_OPTIONS`），不做整篇重组。
+- MinerU 关掉"图像分析"（让模型描述图片），Datalab 关掉跨页合并：比的是读出来的东西，不是加上去的。
+
+**评分**：与对标比较相同的 `evaluate_markdown`（字 F1、编辑距离、表格单元格 F1、公式相似度、阅读顺序、关键内容错误、漏掉和多出的字），多页文档另有逐页分。比较前对所有引擎的输出做同样的三处整理（`ocr_engines.tidy`，原始回答在 `raw/` 里不动）：
+
+1. 表格单元格里写成两个字符的"\n"换成空格（本机 PaddleOCR-VL 总这样写，在线服务偶尔这样写）；
+2. 引擎写进图片块里的图中文字不比较（现用设置 `useOcrForImageBlock` 让 PaddleOCR-VL 把图里认出的符号、图标写进图片块；ParserX 只把它当证据，标注也不转写图片）；
+3. HTML 写的图片 `<div><img src=…></div>` 改成 Markdown 图片：评分器认得 Markdown 图片，却把 HTML 标签当成文字。
+
+后两条是这次发现的评分问题：**之前的对标比较（`eval_runs/bench`）里 PaddleOCR-VL 的字 F1 被这两点压低了**（本方语料 0.899 → 整理后 0.959）。主评分器要不要改，见 §6。
+
+**命令**：
+
+```bash
+uv run --frozen parserx dev tool-eval run --tools <引擎> --docs-file configs/ocr_bench.txt --out eval_runs/ocr_bench --gt-dir ground_truth --gt-dir ground_truth_public --gt-dir ground_truth_ocr
+uv run --frozen python scripts/ocr_bench_report.py --engines <引擎,…>
+uv run --frozen python scripts/ocr_bench_timing.py --engines <本机引擎,…>
+uv run --frozen python scripts/ocr_probe.py --engines <引擎,…>
+```
+
+- 结果在 `eval_runs/ocr_bench/<引擎>/<文档>/`：`output.md`、`raw/`（每页原始回答、位置框）、`meta.json`；报告 `eval_runs/ocr_bench/ocr_report.md`；对照页 `parserx dev tool-eval view --out eval_runs/ocr_bench …`。
+- 本机引擎各在自己的环境里（`~/parserx-exp/ocr-engines/<引擎>/.venv`，依赖不进 ParserX），以常驻进程的方式读页（`scripts/ocr_engines/*.py`，Apple Vision 是 Swift 小程序）；MLX 模型由 `mlx_vlm.server` 提供（端口 8111 PaddleOCR-VL、8112 GLM-OCR、8113 Chandra 2、8114 dots.mocr）。
+- `scripts/ocr_probe.py` 是难题测试（§4.8）；`local-reading`（ParserX 的本地读数）和 `apple-vision-lines` 两个引擎名只为 §4.9 的读字器比较。千问整页转写那次把每页图转成 JPEG（质量 92）再发，现在的代码只在图超过模型上限或 10 MB 时才转。
+- 质量测试时几个引擎同时在跑，用时只看数量级；速度另用 `ocr_bench_timing.py` 在空闲时依次测同样 10 页。
+- 本机环境（2026-10-02 装的版本）：`paddle`（paddlepaddle 3.3.1、paddleocr[doc-parser] 3.7.0）、`mlx`（mlx-vlm 0.7.4）、`glmocr`（glmocr[layout] 0.1.5，配置 `glmocr/config.yaml`）、`mineru`（mineru 4.0.10）、`chandra`（chandra-ocr 0.2.0，不装 torch）；Apple Vision 用 `swiftc -O scripts/ocr_engines/apple_vision.swift -o ~/parserx-exp/ocr-engines/apple-vision/vision-worker` 编译。MLX 服务这样起（一定带 `--max-num-seqs 1`，§4.5）：
+
+```bash
+~/parserx-exp/ocr-engines/mlx/.venv/bin/mlx_vlm.server --host 127.0.0.1 --port 8111 --model PaddlePaddle/PaddleOCR-VL-1.6 --max-num-seqs 1
+```
+
+  其余：8112 `mlx-community/GLM-OCR-bf16`（加 `--trust-remote-code`）、8113 `datalab-to/chandra-ocr-2`、8114 `dots-studio/dots.mocr`（加 `--trust-remote-code`）。Chandra 2 与 dots.mocr 的测试结果是在默认批处理下跑的，但它们每次只发一个请求，不受 §4.5 的问题影响。
+
+## 4. 结果
+
+完整表格在 `eval_runs/ocr_bench/ocr_report.md`（逐篇、最差的页、速度与费用）。下面是摘要；"字 F1"是按字的 F1，"关键错误"是数字、单位、正负号、上下标读错或漏掉的个数。
+
+### 4.1 本方语料（12 篇 79 页，引擎不可能训练过）
+
+| 组 | 字 F1 | 字召回 | 表格 F1 | 公式相似度 | 关键错误（其中无公式的文档） |
+|---|---|---|---|---|---|
+| 现用服务 | 0.959 | 0.965 | 0.707 | 0.926 | 520（154） |
+| 本机 PaddleOCR-VL（收 PDF） | 0.960 | 0.965 | 0.714 | 0.923 | 505（137） |
+| GLM-OCR | **0.964** | 0.966 | 0.711 | **0.950** | 1046（215） |
+| dots.mocr | 0.963 | 0.972 | 0.674 | 0.891 | 374（145） |
+| Chandra 2（本机） | 0.957 | 0.975 | **0.717** | 0.926 | 544（207） |
+| MinerU 4 | 0.958 | 0.968 | 0.691 | 0.946 | 1043（163） |
+| PP-StructureV3 + PP-OCRv6 | 0.928 | 0.939 | 0.514 | 0.900 | 1178（272） |
+| Datalab（Chandra 2 在线） | 0.925 | **0.977** | 0.608 | 0.948 | 779（350） |
+| 千问整页转写 | **0.972** | 0.976 | 0.619 | 0.925 | **319（134）** |
+| Apple Vision | 0.878 | 0.883 | 0.482 | — | 3890（666） |
+| PP-OCRv6 只读文字行 | 0.804 | 0.826 | 0 | — | 4460（926） |
+
+### 4.2 OmniDocBench（28 页，各类文档，引擎可能训练过）
+
+| 组 | 字 F1 | 表格 F1 | 公式相似度 | 顺序 τ | 关键错误（其中无公式的文档） |
+|---|---|---|---|---|---|
+| 现用服务 | 0.948 | **0.936** | 0.994 | 0.926 | 324（274） |
+| 本机 PaddleOCR-VL（收 PDF） | 0.948 | **0.936** | 0.994 | 0.927 | 344（287） |
+| GLM-OCR | **0.964** | 0.898 | **0.996** | 0.926 | 435（291） |
+| dots.mocr | 0.945 | 0.881 | 0.946 | 0.959 | 418（344） |
+| Chandra 2（本机） | 0.941 | 0.811 | 0.929 | 0.964 | 481（406） |
+| MinerU 4 | 0.917 | 0.909 | 0.911 | 0.906 | 520（373） |
+| PP-StructureV3 + PP-OCRv6 | 0.886 | 0.823 | 0.875 | 0.902 | 704（627） |
+| Datalab（Chandra 2 在线） | 0.879 | 0.734 | 0.943 | **0.971** | 581（517） |
+| 千问整页转写 | 0.937 | 0.887 | 0.928 | 0.966 | 467（382） |
+| Apple Vision | 0.800 | 0.479 | — | 0.863 | 1902（1519） |
+| PP-OCRv6 只读文字行 | 0.652 | 0 | — | 0.709 | 2703（2382） |
+
+Chandra 2 和 Datalab 的表格 F1 多算了 1–2 篇：它们在标注没有表格的页上输出了表格（图表"转"出来的）。
+
+### 4.3 各引擎的特点
+
+- **本机 PaddleOCR-VL（收 PDF）与现用服务是同一个引擎**：107 页的渲染尺寸全部相同，1696 个版面块里 90.6% 逐字相同、另 3.3% 几乎相同（相似度 ≥ 95），类别相同的 96.3%；差别主要在图标里认出的字和个别块的先后。分数逐项持平。两个条件缺一不可（§4.5）：给它 PDF 让它自己渲染，MLX 服务一次只处理一个请求。
+- **GLM-OCR**：两组字 F1 都最高；手写（omni_note_zh_02 0.948，现用 0.616）、模糊扫描（omni_fuzzy_scan_zh_02 0.961，现用 0.845）明显更好——其中一部分是写法：标注把 ∵、① 写成 LaTeX（`\because`、`\textcircled{1}`），GLM-OCR 也这样写，现用服务写成字符。表格在本方语料与现用持平，在 OmniDocBench 略低（0.898 对 0.936）。关键错误多出来的几乎都在三篇公式论文（公式编号写在公式外、数字拆开被数成数字错误），它的公式相似度反而最高。版面与 PaddleOCR-VL 用的是同一个检测模型（PP-DocLayoutV3），类别可以直接对上。
+- **MinerU 4（本机）**：本方语料与现用持平（0.958），OmniDocBench 弱一些（0.917），弱在报纸（0.634）、试卷（omni_exam_paper_zh_02 0.722）、中文书（0.794）这类复杂版面；给位置框和类别；许可有附加条款（月活过亿或月收入超 2000 万美元要商业许可，在线服务要署名）。
+- **千问整页转写**：在本方语料上读得最准（0.972，关键错误最少），说明我们的服务模型本身就是很强的读者——这和现在让它做"第二份读法"的分工一致。但它不给位置框和类别，中文报纸页字 F1 只有 0.601（阅读顺序 τ 0.69），不能直接当扫描引擎。
+- **Datalab（Chandra 2 在线，accurate）**：漏字最少（召回 0.977），但会给图片写英文描述、把折线图"转成"带数值的表格（数值是模型估的），这些全算成多出的字，精确率只有 0.886；还会把图片形式的页（patent01 的附图页）整页描述。约 $0.012/页。
+- **PP-StructureV3 + PP-OCRv6**：用户点名的 PP-OCRv6 是文字检测识别模型（2026-06-11 发布），本身不做版面、表格、公式；放进 PP-StructureV3 流水线后，字 F1 比 VL 系列低 3–6 个点，表格明显弱（0.514）。Paddle 在 Mac 上只能用 CPU 且基本单线程，公式页每页 2 分钟以上。
+- **Apple Vision**：系统自带、离线、0.5 秒/页，普通印刷正文读得不错（英文报纸 0.977、杂志 0.990），但没有公式、表格弱、手写差（0.201），多栏阅读顺序靠我们自己拼。适合"什么都不可用时至少把字读出来"。
+- **PP-OCRv6 只读文字行**：没有版面，多栏、表格的顺序全乱，字 F1 0.80/0.65，只能当底线参照。
+- **MinerU 在线 API**：当晚（22:15 起）提交的任务，包括一页的测试任务，排队一个多小时都没开始处理，没有结果。免费在线服务的这种不可预期正是这次评估的起因。
+
+### 4.4 评分时发现的问题
+
+1. **主评分器低估了 PaddleOCR-VL**：它把 HTML 写的图片标签当成文字，又把 PaddleOCR-VL 写进图片块的图中文字算作多出的内容。之前的对标比较（`eval_runs/bench`）里 PaddleOCR-VL 的字 F1 因此偏低（本方语料 0.899 → 整理后 0.959）。这次只在 OCR 比较里整理（`ocr_engines.tidy`），主评分器没改（§6 第 3 项）。
+2. **标注写法**：OmniDocBench 的手写数学用 LaTeX 写 ∵、①；水印页的目录引导线写成"---"（引擎多写成"……"）；这类页上单页分数的差距有一部分是写法，不全是读错。
+
+### 4.5 本机跑 PaddleOCR-VL 的两个坑
+
+1. **MLX 服务的并发批处理会弄坏结果**。`mlx_vlm.server`（0.7.4）默认把同时到达的请求放进一个批次一起生成；PaddleOCR-VL、GLM-OCR 的流水线会同时发多个区域请求，结果有时串掉：表格被读成带 `<|LOC_..|>` 坐标的文字定位格式、正文出现叠字（"高血压压""加强强针"）。单独重发同一区域就正确。启动时加 `--max-num-seqs 1` 后问题消失（GLM-OCR 本方语料字 F1 0.910 → 0.964）。
+2. **分辨率要和在线服务一致**。直接给 200 dpi 的图时，整页方向分类把 omnidoc_book_zh_text_01 判成倒置（置信 0.65）、转了 180° 再读，整页顺序颠倒（字 F1 1.000 → 0.375）；同一张图缩到服务的尺寸就判对（0.87）。在线服务收 PDF、自己按约 144 dpi 渲染；本机也给 PDF，结果就与服务一致。
+
+### 4.6 Chandra 2 本机、dots.mocr
+
+- **dots.mocr**：本方语料字 F1 0.963，关键错误是几个 OCR 引擎里最少的（374，只比千问整页转写多），专利 0.982、中文公式论文 paper_chn01 0.970 且关键错误 30 个（GLM-OCR 561、MinerU 581，多是公式写法）；OmniDocBench 的阅读顺序（0.959）好于 PaddleOCR-VL 和 GLM-OCR（0.926）。弱点：公式相似度低（0.891 / 0.946），表格中等；本机 26 秒/页。MIT 许可，输出就是带框和类别的版面 JSON。
+- **Chandra 2（本机，官方权重）**：漏字少（召回 0.975），本方语料表格最好（0.717）；与在线版（Datalab accurate）相比不加图片描述，字 F1 高得多（0.957 对 0.925）。但本机 51 秒/页，公式论文一页要 3–6 分钟（输出带坐标的 HTML，token 多）；许可限制商用（营收或融资超过 200 万美元、或与 Datalab 竞争的用途不行）。
+
+### 4.7 速度（空闲时单独测，同样 10 页，一次一个引擎）
+
+`scripts/ocr_bench_timing.py`，结果 `eval_runs/ocr_bench/timing.json`。10 页：扫描报告、扫描规范密表、扫描表单、中文公式论文、英文双栏论文、中文密表、手写笔记、中文报纸、英文试卷、模糊扫描。
+
+| 组 | 每页中位数（秒） | 10 页合计（秒） | 第一次调用（秒，含载入） |
+|---|---|---|---|
+| Apple Vision | 0.4 | 6 | 0.4 |
+| 本机 PaddleOCR-VL（收 PDF） | 5.0 | 90 | 10 |
+| MinerU 4 | 5.5 | 65 | 21（第一次装好后下载模型、建引擎约 2 分钟） |
+| GLM-OCR | 7.1 | 82 | 16 |
+| PP-OCRv6 只读文字行 | 16.8 | 250 | 16 |
+| dots.mocr | 25.9 | 390 | 17 |
+| PP-StructureV3 + PP-OCRv6 | 43.1 | 552 | 21 |
+| Chandra 2 | 50.7 | 600 | 33 |
+
+在线的（质量测试时测的，含排队）：现用服务每页约 5 秒（整篇任务时间除以页数），Datalab 约 7 秒，千问整页转写每页约 12 秒（6 页并发）。MLX 服务要先启动并载入模型（几秒到一分钟），表里不含。
+
+### 4.8 难题测试：读图摸底的 72 道题
+
+整页分数（§4.1、§4.2）各引擎只差零点几个百分点，看不出谁在我们最头疼的地方更强。读图摸底（[v2_model_probe.md](v2_model_probe.md)）的转写、公式、表格题正是针对这些地方出的：上下标、易混字形（l/1、O/0、μ/u……）、照抄原件的错字、公式结构、表格单元格，以及现用引擎在流水线里读错过的 9 块。让各引擎用自己的方式读这些截图（`scripts/ocr_probe.py`，PaddleOCR-VL 按 ParserX 送图的方式收一页 PDF），评分照读图摸底。结果 `eval_runs/ocr_probe/report.md`。
+
+| 能力（题数） | PaddleOCR-VL（现用） | GLM-OCR | dots.mocr | MinerU 4 | Apple Vision | 千问整页转写 |
+|---|---|---|---|---|---|---|
+| 逐字转写（39–41） | 97 | 95 | 98 | 98 | 92 | 97 |
+| 数字、单位、符号（33） | 96 | 97 | 99 | 100 | 88 | 99 |
+| 上下标（41） | 82 | 87 | 79 | **89** | 25 | 87 |
+| 公式结构（18） | 87 | 94 | 88 | **96** | 53 | 90 |
+| 易混字形（23） | **58** | 82 | 78 | **87** | 30 | 82 |
+| 忠实原件（13–15） | 92 | **97** | 70 | 87 | 67 | 70 |
+| 表格（13） | 94 | 94 | 93 | 90 | 78 | 81 |
+| **总分** | 89 | 91 | 89 | **94** | 64 | 89 |
+| 现用引擎读错的 9 块里读对的 | 4 | 7 | 8 | 9 | 4 | 8 |
+| 原件的错字：照印 / 按意思改了（共 15–17 处） | 14 / 1 | **16 / 0** | 11 / 5 | 15 / 1 | 11 / 0 | 12 / 4 |
+
+- **现用引擎的短板在易混字形**（58，其余 VL 类引擎 78–87）：截图单独送去读，那 9 块它仍有 5 块读错；两张只有一行字的截图（T02、T03，约 50 像素高）它没有读出任何内容。
+- **GLM-OCR 在难点上确实更强**：易混字形 +24、公式 +7、上下标 +5，原件的错字一处也没改（16 处照印），现用引擎读错的 9 块它读对 7 块。它的整页分数只比现用高一点，难点上的差距要大得多。
+- **MinerU 4（本机）在难题上总分最高**（94，9 块全对），与它在整页上复杂版面（报纸、试卷）偏弱合起来看：识别模型强，版面弱。
+- dots.mocr、千问整页转写会按意思改原件（5 处、4 处）。千问在这里用的是整页提示词；读图摸底里它用第二份读法的提示词得 91。
+- Apple Vision 上下标、公式、易混字形都很差。
+
+**关于评分器**：整页评分反映总体读得准不准，但太粗，难点上的差距（易混字形差 24 分）在整页字 F1 里只剩零点几；关键内容错误又被公式写法干扰（§4.3）。挑引擎时，难点要看这套难题测试，不靠改主评分器。
+
+### 4.9 Apple Vision 能不能当本机的读字器
+
+ParserX 已经有一个本机读字器："本地读数"（`reading/local.py`，RapidOCR 带的 PP-OCRv4 模型，约 0.5–1 秒/页），用来查漏读、核对图中文字，只看页面上有哪些字、不管顺序。Apple Vision 如果要用上，最自然的位置就是它。在同样 107 页上按"字集 F1"（不计顺序）比：
+
+| 读字器 | 本方语料 | OmniDocBench | 每页（秒） |
+|---|---|---|---|
+| 本地读数（RapidOCR，现用） | **0.938** | **0.923** | 0.8–1.0 |
+| Apple Vision 文档识别 | 0.920 | 0.865 | 0.5 |
+| Apple Vision 逐行识字（`--lines`） | 0.916 | 0.869 | 0.5 |
+| PP-OCRv6（Paddle，CPU） | 0.938 | 0.892 | 17–24 |
+
+Apple Vision 英文与 RapidOCR 持平，密排中文差得多（中文报纸只认出一半：0.479 对 0.977；模糊扫描、中文试卷也差），两种接口都一样。所以本机读字这件事上我们已有的 RapidOCR 更好，不换。PP-OCRv6（中等模型）也没有比现用的 PP-OCRv4 更好，还慢得多。
+
+## 5. 结论与建议
+
+1. **卡脖子的问题有了退路，而且不用改 ParserX 读结果的方式**：同一个 PaddleOCR-VL-1.6 能在本机跑，输出格式与现用服务相同，90.6% 的版面块逐字相同，分数逐项持平，每页约 5 秒。条件：给它 PDF、MLX 服务一次处理一个请求（§4.5）。但它要占本机资源，也不比在线快。
+2. **GLM-OCR 质量潜力最高的备选**：整页字 F1 两组最高，难点（易混字形、公式、上下标、照抄原件）明显强于现用引擎（§4.8）；MIT 许可；版面类别与 PaddleOCR-VL 一致；本机 7 秒/页，也有在线 API（智谱，未测）。
+3. dots.mocr、Chandra 2、MinerU 读字都不错，但各有硬伤：dots.mocr 会改原件且 26 秒/页；Chandra 2 本机 51 秒/页、许可限制商用；MinerU 版面弱、许可有附加条款（用户决定不再用）。
+4. **千问整页转写**（我们自己的服务模型 qwen3.8-flash 加整页提示词，不是阿里的 OCR 专用模型）在本方语料上读得最准，但没有位置框和类别，继续做第二份读法。
+5. **Apple Vision 用不上**：当扫描引擎太弱（无公式、表格弱、手写差），当本机读字器又不如已有的 RapidOCR（§4.9）。
+6. PP-StructureV3 + PP-OCRv6 不建议：Mac 上只能用 CPU，43 秒/页，表格明显弱；PP-OCRv6 当读字器也没有比现用的 PP-OCRv4 更好。
+
+## 6. 用户的决定（2026-10-03）
+
+1. **继续用在线服务**（AI Studio，免费）。本机服务占本机资源，也不比在线快。本机 PaddleOCR-VL 效果与在线一样，**记为备用方案**（§7），现在不接进 ParserX。
+2. **GLM-OCR 作为备选**：在线服务不能用时可以换它；它的质量潜力也更高（§4.8）。要不要试它的在线 API（智谱，已有账号；在线就不占本机资源），待用户决定。
+3. **Apple Vision**：用户提出如要用本机服务，可以想办法用上 Apple Vision。测了它当本机读字器（§4.9），不如已有的 RapidOCR，不用。
+4. **评分器**：用户的标准是"能不能帮我们挑出更好的 OCR，特别是在老大难的问题上"。整页评分太粗，难点上看不出差别；难题测试（§4.8）能看出来，所以主评分器不改，挑引擎时两者一起看。§4.4 说的 HTML 图片问题只影响对标比较里外部工具的分数，优先级低。
+5. **MinerU 不再用**（在线版那晚排队不处理）。
+6. 其余在线服务（百度千帆付费版、千问 OCR 专用模型、Mistral OCR）暂不试。
+
+## 7. 备用方案：本机跑 PaddleOCR-VL
+
+在线服务停了或长期排队时，用本机跑同一个引擎（2026-10-02 验证，§4.1–4.5）。
+
+1. 环境（已装在 `~/parserx-exp/ocr-engines/`，重装照下面）：
+   - `paddle`：`uv venv --python 3.12`，`uv pip install paddlepaddle==3.3.1 "paddleocr[doc-parser]==3.7.0"`；
+   - `mlx`：`uv venv --python 3.12`，`uv pip install mlx-vlm==0.7.4`。
+2. 起 MLX 服务（模型 `PaddlePaddle/PaddleOCR-VL-1.6` 约 2 GB，第一次自动下载）。**必须带 `--max-num-seqs 1`**：
+
+```bash
+~/parserx-exp/ocr-engines/mlx/.venv/bin/mlx_vlm.server --host 127.0.0.1 --port 8111 --model PaddlePaddle/PaddleOCR-VL-1.6 --max-num-seqs 1
+```
+
+3. 用 paddleocr 的 `PaddleOCRVL`（`vl_rec_backend="mlx-vlm-server"`、`vl_rec_server_url="http://127.0.0.1:8111/"`、`vl_rec_api_model_name="PaddlePaddle/PaddleOCR-VL-1.6"`），参数用扫描引擎的现用设置（`services/ocr.py` 的 `_OPTIONS`，构造时也要传，方向分类模型才会载入）。**给它 PDF**（ParserX 本来就按页拼 PDF 发给引擎），让它自己渲染；直接给高分辨率图片，方向分类会出错。现成的调用方式见 `scripts/ocr_engines/paddle_local.py` 的 `--pipeline vl`。
+4. 它返回的 `parsing_res_list` 与在线服务相同，`content/scan.py` 不用改。真要接进 ParserX：`services/ocr.py` 加一个本机引擎（端点不同，缓存不混）、配置里写切换顺序、`parserx check` 查本机环境。
+5. 速度：每页约 5 秒（M5 Pro），版面在 CPU、识别在 GPU；MLX 服务常驻约 2–3 GB 内存。
+6. 别的机器：Linux / NVIDIA 上同一流水线有官方的 vLLM、SGLang 后端，也有官方 GGUF 模型（llama.cpp）。

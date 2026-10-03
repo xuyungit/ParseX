@@ -44,3 +44,4 @@ eval_runs/
 .parserx_cache/
 eval_reports/
 ground_truth_unseen/
+ground_truth_ocr/

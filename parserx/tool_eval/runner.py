@@ -147,9 +147,10 @@ def score(out_root: Path = DEFAULT_OUT, gt_dirs=DEFAULT_GT_DIRS, *, pages: bool 
     for tool, by_doc in load_results(out_root).items():
         for name, meta in by_doc.items():
             doc = docs.get(name)
-            if doc is None or meta.get("status") != "ok":
+            output_path = out_root / tool / name / "output.md"
+            if doc is None or meta.get("status") != "ok" or not output_path.exists():  # (being redone right now)
                 continue
-            output = (out_root / tool / name / "output.md").read_text(encoding="utf-8")
+            output = output_path.read_text(encoding="utf-8")
             expected = doc.expected.read_text(encoding="utf-8")
             result = evaluate_markdown(output, expected, name=name)
             scores.setdefault(tool, {})[name] = {
@@ -185,6 +186,9 @@ def _scores_of(result) -> dict:
         "missing_tables": result.tables.missing_tables,
         "extra_tables": result.tables.extra_tables,
         "char_f1": result.text.char_f1,
+        "char_precision": result.text.char_precision,
+        "char_recall": result.text.char_recall,
+        "char_bag_f1": result.text.char_bag_f1,
         "edit_distance": result.text.edit_distance,
         "order_tau": result.order.tau,
         "heading_f1": result.headings.f1,
