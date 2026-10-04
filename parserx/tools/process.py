@@ -55,7 +55,7 @@ from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
-from parserx.tools import added_text, describe_figure, recognize, second_reading, structure
+from parserx.tools import added_text, describe_figure, recognize, second_reading, structure, upright
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
@@ -119,6 +119,11 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         furniture = mark_scan_furniture(state)
     if furniture:
         steps.append(StepSummary(step="scan_furniture", detail=f"{len(furniture)} repeated margin blocks excluded"))
+
+    if ctx.config.runtime.upright_images and (todo := upright.todo(ctx.ws.load())):  # before anything reads them
+        ctx.report(Step("process", "upright", total=len(todo)))
+        turned = upright.turn_upright(ctx, todo)
+        steps.append(StepSummary(step="upright", detail=f"{turned} of {len(todo)} images turned upright"))
 
     state = ctx.ws.load()
     if ctx.config.runtime.layout_shadow:

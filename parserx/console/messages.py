@@ -22,6 +22,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "stage.export": {"zh": "导出", "en": "Export"},
     # steps of the standard processing
     "step.recognize": {"zh": "识别扫描页 {total} 页", "en": "scanning {total} pages"},
+    "step.upright": {"zh": "图片转正 {total} 张", "en": "turning {total} images upright"},
     "step.layout": {"zh": "版面检测 {total} 页", "en": "layout of {total} pages"},
     "step.layout_figures": {"zh": "图片分类 {figures} 张", "en": "classifying {figures} images"},
     "step.reading": {"zh": "本地读数 {done}/{total} 页", "en": "local reading {done}/{total} pages"},

@@ -31,6 +31,7 @@ from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.base import BBox, IRModel
 from parserx.ir.enums import BlockKind
+from parserx.ir.rotation import compose
 from parserx.ir.evidence import Evidence, evidence_id
 from parserx.ir.rotation import shown, unturned, whole
 from parserx.prompts import load_prompt
@@ -467,9 +468,12 @@ def _place_image(ctx: ToolContext, state, *, block: str | None, page: int | None
         if anchor is not None:
             asset = assets[anchor.asset]
             transform = None
-            if isinstance(asset.source, PdfAnchor) and asset.role != "crop":
-                b = asset.source.bbox
-                transform = ((b[2] - b[0]) / asset.width, 0.0, 0.0, (b[3] - b[1]) / asset.height, b[0], b[1])
+            stored = assets.get(asset.derived_from) if asset.role == "original" and asset.derived_from else asset
+            if isinstance(asset.source, PdfAnchor) and asset.role != "crop" and stored is not None:
+                b = asset.source.bbox  # the image as stored spans its box on the page
+                transform = ((b[2] - b[0]) / stored.width, 0.0, 0.0, (b[3] - b[1]) / stored.height, b[0], b[1])
+                if stored is not asset and asset.transform is not None:  # turned upright (tools/upright.py)
+                    transform = compose(asset.transform, transform)
             return ImageRef(asset=asset.id, path=str((ctx.ws.root / asset.path).resolve()), width=asset.width,
                             height=asset.height, transform=transform), None
     first = block.anchors[0]

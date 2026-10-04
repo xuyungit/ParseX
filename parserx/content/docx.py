@@ -376,6 +376,7 @@ class _Piece:
     text: str = ""
     rid: str | None = None
     extent: tuple[int, int] | None = None
+    turn: int = 0  # image: degrees clockwise Word turns the picture by to show it (a:xfrm rot; both flips: 180)
     note_id: str | None = None
     paragraphs: list[str] = field(default_factory=list)  # textbox: its paragraphs' text
 
@@ -521,6 +522,7 @@ def _graphics(node, para: _Para, path: str) -> None:
             size = (int(extent.get("cx", 0)) // _EMU_PER_PX, int(extent.get("cy", 0)) // _EMU_PER_PX)
         except ValueError:
             size = None
+    turn = _shown_turn(node)
     rids: list[tuple[str | None, bool]] = []
     for blip in node.iter(f"{{{NS['a']}}}blip"):
         rids.append((blip.get(f"{{{NS['r']}}}embed"), blip.get(f"{{{NS['r']}}}link") is not None))
@@ -528,7 +530,7 @@ def _graphics(node, para: _Para, path: str) -> None:
         rids.append((data.get(f"{{{NS['r']}}}id"), False))
     for index, (rid, linked) in enumerate(rids, 1):
         if rid:
-            para.pieces.append(_Piece("image", f"{path}#image{index}", rid=rid, extent=size))
+            para.pieces.append(_Piece("image", f"{path}#image{index}", rid=rid, extent=size, turn=turn))
         elif linked:
             para.pieces.append(_Piece("linked_image", f"{path}#image{index}"))
     # charts and SmartArt keep their content in a part of their own: not read yet, but accounted for (P4-5, Q9)
@@ -866,6 +868,8 @@ class _Reader:
                 rendered = {"rendered_from": media, "renderer": vector.RENDERER}
                 data, media = png, "image/png"
         anchor = self._anchor(piece.path)
+        if piece.turn:  # how Word shows it: the way up of an image too bare of text to read it from (tools/upright.py)
+            rendered["shown_turn"] = piece.turn
         asset = self.ext.add_asset(Asset.from_bytes(data, media_type=media, width=max(width, 1), height=max(height, 1),
                                                     role="original", source=anchor), data)
         block_id = self._block_id()
@@ -1104,6 +1108,24 @@ def extract_docx(path: Path | str) -> Extraction:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
+
+
+def _shown_turn(node) -> int:
+    """Degrees clockwise (0, 90, 180, 270) a drawing turns its picture by to show it: its a:xfrm ``rot`` (60000ths of
+    a degree, a quarter turn within a degree), and a half turn more when it is flipped both ways (one flip, a
+    mirror, is not a turn and is left out)."""
+    xfrm = node.find(f".//{{{NS['a']}}}xfrm")
+    if xfrm is None:
+        return 0
+    try:
+        degrees = int(xfrm.get("rot", "0")) / 60000
+    except ValueError:
+        return 0
+    quarter = round(degrees / 90)
+    if abs(degrees - 90 * quarter) > 1:
+        return 0
+    flips = xfrm.get("flipH") in ("1", "true") and xfrm.get("flipV") in ("1", "true")
+    return (90 * quarter + (180 if flips else 0)) % 360
 
 
 def _source(evidence: dict[str, str | int | float | bool] | None = None) -> Decision:

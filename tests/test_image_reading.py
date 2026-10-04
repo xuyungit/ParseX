@@ -5,7 +5,7 @@ import io
 
 from PIL import Image
 
-from parserx.reading.local import read_upright
+from parserx.reading.local import read_upright, upright
 
 TEXT = "编制单位：华通智能装备股份有限公司　2025年度　所有者权益变动表"
 

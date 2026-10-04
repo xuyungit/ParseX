@@ -262,6 +262,7 @@ class RuntimeConfig(BaseModel):
     agent_when: Literal["open", "always"] = "open"
     agent: AgentConfig = Field(default_factory=AgentConfig)
     describe_figures: bool = True  # describe shown figures (each at most once, within the budget)
+    upright_images: bool = True  # turn embedded images that stand turned upright before they are read (Q150)
     layout_shadow: bool = True  # run the layout detector and image routing (P1-9)
     page_reading: bool = True  # read every PDF page locally and compare it with the output (guide §9.5, Q56)
     formulas: bool = True  # display formulas of native PDF pages read as LaTeX by the scan engine (Q70)
