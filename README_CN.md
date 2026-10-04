@@ -14,7 +14,7 @@ ParserX 把 PDF、DOCX、DOC 转成大模型可用的 Markdown，同时给出机
 文档 ─▶ 工作区 ─▶ 标准处理（固定流水线） ─▶ 有待核对项？ ──否──▶ 导出
                     │                                   │ 是
                     │  文字层 · 扫描引擎 · 版面检测         ▼
-                    │  本地读数 · 表格 · 图片 · 公式 · 标题   Agent（自己的循环或 Codex）用同一套工具、看页面图，核对被指出的地方
+                    │  本地读数 · 表格 · 图片 · 公式 · 标题   Agent（Codex，或自己的循环）用同一套工具、看页面图，核对被指出的地方
                     ▼                                   │
              去向检查：每份发现的内容都要有去向  ◀─────────┘
              （输出、合并、重复、有理由的排除，或记录在案的失败）
@@ -29,7 +29,7 @@ ParserX 把 PDF、DOCX、DOC 转成大模型可用的 Markdown，同时给出机
   无理由消失的内容视为缺陷，每次运行都由去向检查核对。
 - **两种运行时，同一套工具**：
   - 固定流水线按固定顺序做标准处理，确定、快；
-  - **混合方案**（默认）先跑固定流水线；有待核对项时，再交给 Agent（自己的循环，或 Codex CLI），由它看页面图，按证据修正。
+  - **混合方案**（默认）先跑固定流水线；有待核对项时，再交给 Agent（Codex CLI，或自己的循环），由它看页面图，按证据修正。
 - **信号只指路，由 Agent 判断**：待核对项来自正确输出必须满足的性质：
   - 页面上看得到的都在输出里（与每页的本地读数比对）；
   - 独立读数一致；
@@ -49,7 +49,7 @@ ParserX 把 PDF、DOCX、DOC 转成大模型可用的 Markdown，同时给出机
 |---|---|---|
 | 扫描引擎：GLM-OCR（智谱开放平台，与 `glm-5.3-flashx` 同一个 key）；或 PaddleOCR-VL（AI Studio jobs API，要 token） | 扫描页，图片里的文字和表格 | 有扫描页或图片时必需 |
 | 服务模型：`qwen3.8-flash`（阿里云百炼，要 key），或配置里的其他模型 | 图片描述、公式编辑、表格重读 | 是 |
-| Agent：自己的循环加配置里的某个模型（默认 `deepseek-flash`，按该模型的 API 计费），或本机的 [Codex CLI](https://github.com/openai/codex)（`codex login`） | 复核，得到最好的结果 | 推荐 |
+| Agent：本机的 [Codex CLI](https://github.com/openai/codex)（`codex login`，默认 gpt-6.1-sol），或自己的循环加配置里的某个模型（如 `deepseek-flash`，按该模型的 API 计费） | 复核，得到最好的结果 | 推荐 |
 | LibreOffice（`soffice`） | `.doc` 输入；Word 里的矢量图（EMF/WMF）转成图片 | 处理 `.doc` 时必需 |
 | 版面模型（约 130 MB，首次下载到 `~/.cache/parserx/models`）与本地页面读数 | 在 CPU 上做版面检测；与页面图像比对 | 是（自动下载） |
 
@@ -65,9 +65,9 @@ parserx check         # 逐项检查：配了没有、连得上没有、缺了�
 parserx parse report.pdf
 ```
 
-系统工具：处理 `.doc` 要装 LibreOffice（`brew install --cask libreoffice`、`apt install libreoffice`）。Agent 默认是
-自己的循环，只要配置里有模型的 key；改用 Codex 要装 Codex CLI（`npm install -g @openai/codex`，再 `codex login`），
-然后 `--agent codex`。Agent 用不了时输出标准处理的结果并说明原因。
+系统工具：处理 `.doc` 要装 LibreOffice（`brew install --cask libreoffice`、`apt install libreoffice`）；Agent 要装
+Codex CLI（`npm install -g @openai/codex`，再 `codex login`）。没有 Codex 时可以用 `--agent <模型>` 改用自己的循环
+（如 `--agent deepseek-flash`）；Agent 用不了时输出标准处理的结果并说明原因。
 
 开发：`git clone <仓库> && cd ParserX && uv sync`，然后 `uv run parserx …`。
 
@@ -80,7 +80,7 @@ parserx parse docs/ -r -o out/                 # 连同子目录；输出保持�
 parserx parse https://example.org/report.pdf   # 网址（http、https）：先下载再处理
 parserx parse scan.jpg                         # 图片（JPG、PNG、TIFF、BMP、WebP）：当作扫描页处理
 parserx parse report.pdf --no-agent            # 只做标准处理：结果确定
-parserx parse report.pdf --agent codex         # Agent 改用本机的 Codex（--agent <模型>：自己的循环换个模型）
+parserx parse report.pdf --agent deepseek-flash  # 不用 Codex，改用自己的循环加配置里的某个模型
 parserx parse report.pdf --vlm glm-5.3-flashx  # 换一个服务模型
 parserx parse report.pdf --stdout              # Markdown 输出到 stdout
 parserx parse report.pdf --json                # 结果摘要以 JSON 输出到 stdout（进度在 stderr）
@@ -124,7 +124,7 @@ Ctrl-C 中断后工作目录保留，再次运行同一命令会从中断处继�
 models:                     # 内置条目已写明端点和参数：补上 key 即可
   gpt-6-luna: {api_key: sk-...}
   gpt-6-sol: {api_key: sk-...}          # 用于 --agent gpt-6-sol（自己的循环）
-  deepseek-flash: {api_key: sk-...}     # Agent（默认）
+  deepseek-flash: {api_key: sk-...}     # 用于 --agent deepseek-flash（自己的循环）
   glm-5.3-flashx: {api_key: ...}        # 智谱：也是扫描引擎 GLM-OCR（默认）的 key
   qwen3.8-flash: {api_key: sk-...}      # 阿里云百炼（DashScope）：服务模型（默认）
 builders:
@@ -133,7 +133,7 @@ services:
   vlm: {use: gpt-6-luna}                # 换一个服务模型
 runtime:
   mode: hybrid                          # 或 fixed：不用 Agent
-  agent: {engine: codex}                # 或 {use: gpt-6-sol}：自己的循环换个模型
+  agent: {codex_model: gpt-6.1-sol}     # Codex 用的模型（默认）；或 {engine: loop, use: deepseek-flash}
 ```
 
 模型条目写明怎样与这个模型对话：端点、`api_style`（responses / chat）、是否接受 temperature、接受哪些思考强度（`efforts`）、

@@ -232,7 +232,7 @@ class AgentConfig(BaseModel):
     engine: Literal["codex", "loop"] = "codex"  # loop: our own function-calling loop (runtimes/loop.py, Q86)
     use: str | None = None  # the loop: a ``models`` entry for its model, endpoint, key, api, efforts (Q100)
     model: str = "gpt-6-sol"  # the loop's model (from ``use``)
-    codex_model: str = "gpt-6-sol"  # the model Codex runs (Codex's own login; not a ``models`` entry), Q147
+    codex_model: str = "gpt-6.1-sol"  # the model Codex runs (Codex's own login; not a ``models`` entry), Q147, Q149
     effort: str = "medium"  # reasoning effort, always explicit on the command line (Q35)
     # agent: it looks at the source itself; tool: the service VLM answers its questions (Q47).  Round 2 (2026-10-01):
     # the agent looking itself made the other side's final drafts better (156 looks against none; analysis §4)

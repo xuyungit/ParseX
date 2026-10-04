@@ -73,11 +73,13 @@ def test_load_config_with_result_reports_default_fallback(tmp_path: Path, monkey
 
 
 def test_the_built_in_scan_engine_and_agent(tmp_path: Path, monkeypatch):
-    # Q147: GLM-OCR, and our own loop with DeepSeek; Codex keeps a model of its own for --agent codex
+    # Q147, Q149: GLM-OCR, and Codex with gpt-6.1-sol; the loop keeps a model of its own for --agent loop models
     monkeypatch.chdir(tmp_path)
-    agent = load_config().runtime.agent
-    assert (agent.engine, agent.use, agent.model, agent.api) == ("loop", "deepseek-flash", "deepseek-flash", "chat")
-    assert agent.codex_model == "gpt-6-sol"
+    config = load_config()
+    agent = config.runtime.agent
+    assert config.builders.ocr.engine == "glm-ocr"
+    assert (agent.engine, agent.codex_model, agent.effort) == ("codex", "gpt-6.1-sol", "medium")
+    assert (agent.use, agent.model, agent.api) == ("deepseek-flash", "deepseek-flash", "chat")
 
 
 def test_a_layer_that_names_a_model_takes_that_models_entry(tmp_path: Path, monkeypatch):

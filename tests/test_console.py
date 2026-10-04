@@ -281,7 +281,7 @@ def test_what_cannot_work_is_said_before_the_first_document(tmp_path, monkeypatc
 
     monkeypatch.chdir(tmp_path)
     bare = load_config()
-    assert [n.code for n in preflight(bare)] == ["preflight_ocr", "preflight_vlm", "preflight_loop"]
+    assert [n.code for n in preflight(bare)] == ["preflight_ocr", "preflight_vlm"]
     paddle = apply_overrides(bare, ["builders.ocr.engine=paddleocr", "builders.ocr.token=t"])
     assert "preflight_ocr" not in [n.code for n in preflight(paddle)]
     off = apply_overrides(bare, ["builders.ocr.engine=none", "services.vlm.endpoint=", "runtime.agent.engine=loop",

@@ -16,7 +16,7 @@ Priorities, in order: **nothing on the page is lost**, then the **heading hierar
 document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ open review items? ──no──▶ export
                                │                                        │ yes
                                │  native text · scan engine · layout    ▼
-                               │  local page reading · tables ·     Agent (our loop, or Codex) checks the flagged places
+                               │  local page reading · tables ·     Agent (Codex, or our loop) checks the flagged places
                                │  figures · formulas · titles        with the same tools, sees the page images
                                ▼                                        │
                         accounting check: every discovered item  ◀──────┘
@@ -31,7 +31,7 @@ document ─▶ workspace ─▶ standard processing (fixed pipeline) ─▶ ope
   Content that disappears without a recorded reason is a defect, and the accounting check catches it on every run.
 - **Two runtimes over the same tools.** The fixed pipeline runs the standard processing in a fixed order: it is
   deterministic and fast. The **hybrid** runtime (the default) first runs the fixed pipeline. When there are open
-  review items, it then hands the document to an agent (our own loop, or Codex CLI), which looks at the flagged places in the page
+  review items, it then hands the document to an agent (Codex CLI, or our own loop), which looks at the flagged places in the page
   images and fixes what the evidence supports.
 - **Signals point, the agent judges.** Review items come from properties a correct output must have: what is on the
   page is in the output (checked against a local reading of every page), independent readings agree, the document
@@ -47,7 +47,7 @@ What it needs:
 |---|---|---|
 | Scan engine: GLM-OCR (Zhipu open platform, the same key as `glm-5.3-flashx`), or PaddleOCR-VL (AI Studio jobs API, a token) | scanned pages, the text and tables of images | yes, for scans and images |
 | Service model: `qwen3.8-flash` (Alibaba Bailian, a key), or another model of the config | figure descriptions, formula editing, table re-reading | yes |
-| Agent: our own loop with a model of the config (`deepseek-flash` by default, billed by its API), or [Codex CLI](https://github.com/openai/codex) on this machine (`codex login`) | the review that gets the most out of a document | recommended |
+| Agent: [Codex CLI](https://github.com/openai/codex) on this machine (`codex login`, gpt-6.1-sol by default), or our own loop with a model of the config (e.g. `deepseek-flash`, billed by its API) | the review that gets the most out of a document | recommended |
 | LibreOffice (`soffice`) | `.doc` input; drawing the vector images (EMF/WMF) of Word files | for `.doc` |
 | Layout model (about 130 MB, fetched once into `~/.cache/parserx/models`) and the local page reading | layout on the CPU; checks against the page image | yes (fetched automatically) |
 
@@ -63,10 +63,10 @@ parserx check         # every role: configured, reachable, what to do if not
 parserx parse report.pdf
 ```
 
-System tools: LibreOffice (`brew install --cask libreoffice`, `apt install libreoffice`) for `.doc` files. The agent is
-our own loop by default and needs only its model's key; for Codex instead, install the Codex CLI (`npm install -g
-@openai/codex`, then `codex login`) and pass `--agent codex`. When the agent cannot run, ParserX writes the standard
-processing's result and says why.
+System tools: LibreOffice (`brew install --cask libreoffice`, `apt install libreoffice`) for `.doc` files; the Codex
+CLI (`npm install -g @openai/codex`, then `codex login`) for the agent. Without Codex, `--agent <model>` uses our own
+loop instead (e.g. `--agent deepseek-flash`); when the agent cannot run, ParserX writes the standard processing's
+result and says why.
 
 For development: `git clone <repo> && cd ParserX && uv sync`, then `uv run parserx …`.
 
@@ -79,7 +79,7 @@ parserx parse docs/ -r -o out/                 # subdirectories too; the output 
 parserx parse https://example.org/report.pdf   # a web address (http, https): fetched, then read
 parserx parse scan.jpg                         # an image (JPG, PNG, TIFF, BMP, WebP): read as a scanned page
 parserx parse report.pdf --no-agent            # the standard processing only: deterministic
-parserx parse report.pdf --agent codex         # Codex on this machine as the agent (--agent <model>: another loop model)
+parserx parse report.pdf --agent deepseek-flash  # our own loop with a model of the config instead of Codex
 parserx parse report.pdf --vlm glm-5.3-flashx  # another service model
 parserx parse report.pdf --stdout              # Markdown to stdout
 parserx parse report.pdf --json                # the result summary as JSON on stdout (progress on stderr)
@@ -128,7 +128,7 @@ A personal config:
 models:                     # the built-in entries know endpoints and parameters: add the key
   gpt-6-luna: {api_key: sk-...}
   gpt-6-sol: {api_key: sk-...}          # for --agent gpt-6-sol (our own loop)
-  deepseek-flash: {api_key: sk-...}     # the agent (default)
+  deepseek-flash: {api_key: sk-...}     # for --agent deepseek-flash (our own loop)
   glm-5.3-flashx: {api_key: ...}        # Zhipu: also the key of the scan engine GLM-OCR (default)
   qwen3.8-flash: {api_key: sk-...}      # Alibaba Bailian (DashScope): the service model (default)
 builders:
@@ -137,7 +137,7 @@ services:
   vlm: {use: gpt-6-luna}                # another service model
 runtime:
   mode: hybrid                          # or fixed: no agent
-  agent: {engine: codex}                # or {use: gpt-6-sol}: another model for our loop
+  agent: {codex_model: gpt-6.1-sol}     # the model Codex runs (default); or {engine: loop, use: deepseek-flash}
 ```
 
 A model entry says how to talk to the model: endpoint, `api_style` (responses / chat), whether it takes a

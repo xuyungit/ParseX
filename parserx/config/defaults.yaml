@@ -27,7 +27,7 @@ models:
     min_output_tokens: 1024
     efforts: [none, low, medium, high, xhigh, max]  # minimal is rejected (probed 2026-09-28)
     structured_output: json_schema
-  gpt-6-sol:                # the agent model of Codex (runtime.agent.codex_model), reachable from our own loop too
+  gpt-6-sol:                # Codex's model family (runtime.agent.codex_model: gpt-6.1-sol), reachable from our own loop too
     endpoint: https://api.openai.com/v1
     model: gpt-6-sol
     api_style: responses
@@ -108,13 +108,14 @@ scheduling:
     doubao-seed-2-1-lite-260915: {input: 0.12, cached_input: 0.12, output: 0.40}  # CNY 0.8 / ? / 2.7 at 6.75 from a third-party listing: to check on the Ark console; cache unknown (input price), 2026-10-02
 
 # The agent (recommended; Q13, Q106, Q112): the standard processing first, then an agent on documents with open
-# review items.  engine loop: our own loop with a model of `models` (use:, billed by that model's API) — DeepSeek
-# since Q147 (2026-10-03); engine codex: Codex on this machine (`codex login`, codex_model).  mode fixed: the
-# standard processing only.  On the command line: --agent <model> | --agent codex | --no-agent.
+# review items.  engine codex: Codex on this machine (`codex login`, codex_model) — gpt-6.1-sol since Q149
+# (2026-10-04: with GLM-OCR as good as with PaddleOCR-VL, docs/v2_ocr_engines.md §9.9); engine loop: our own loop
+# with a model of `models` (use:, billed by that model's API; deepseek-flash about 20% more key-content errors).
+# mode fixed: the standard processing only.  On the command line: --agent codex | --agent <model> | --no-agent.
 runtime:
   mode: hybrid
   agent:
-    engine: loop
-    use: deepseek-flash
+    engine: codex
+    codex_model: gpt-6.1-sol
     effort: medium
-    codex_model: gpt-6-sol
+    use: deepseek-flash      # the loop's model, for engine: loop

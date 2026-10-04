@@ -21,9 +21,9 @@ def test_check_says_what_is_missing_and_how_to_add_it(tmp_path, monkeypatch):
     text, code = report(check(config, loaded, offline=True), loaded)
     assert code == 1  # the scan engine and the service model are required
     assert "models.glm-5.3-flashx.api_key" in text and "models.qwen3.8-flash.api_key" in text
-    assert "models.deepseek-flash.api_key" in text  # the agent: our own loop
-    codex = apply_overrides(config, ["runtime.agent.engine=codex"])
-    assert "codex login" in report(check(codex, loaded, offline=True), loaded)[0]
+    assert "codex login" in text  # the agent: Codex, not found here
+    loop = apply_overrides(config, ["runtime.agent.engine=loop"])
+    assert "models.deepseek-flash.api_key" in report(check(loop, loaded, offline=True), loaded)[0]
     assert "parserx init" in text  # no personal config yet
 
 
