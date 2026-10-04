@@ -418,3 +418,24 @@ def test_agent_config_carries_the_formula_editors_entry(tmp_path):
     assert "sk-SECRET-EDITOR" not in text and "sk-SECRET-OTHER" not in text
     loaded = ParserXConfig.model_validate(yaml.safe_load(text))
     assert set(loaded.models) == {"editor"}
+
+
+def test_agent_config_carries_the_scan_engines_account_entry(tmp_path):
+    # GLM-OCR takes its key from the entry builders.ocr.glm.account names: left behind, every region the agent asked
+    # to be read again failed "scan engine not configured" and it typed a 26-row table by hand (speed plan, 2026-10-05)
+    import yaml
+
+    from parserx.config.schema import ParserXConfig
+    from parserx.services.glm_ocr import glm_api_key
+
+    config = ParserXConfig.model_validate({
+        "builders": {"ocr": {"engine": "glm-ocr", "glm": {"account": "zhipu"}}},
+        "models": {"used": {"endpoint": "https://u", "model": "u", "api_key": "sk-SECRET-USED"},
+                   "zhipu": {"endpoint": "https://z", "model": "z", "api_key": "sk-SECRET-ZHIPU"},
+                   "other": {"endpoint": "https://o", "model": "o", "api_key": "sk-SECRET-OTHER"}},
+        "services": {"vlm": {"use": "used"}},
+        "tools": {"second_readers": [], "recheck_readers": [], "formula_editor": None}})
+    text, secrets = agent_config(config, tmp_path)
+    assert "sk-SECRET-ZHIPU" not in text and "sk-SECRET-OTHER" not in text
+    loaded = ParserXConfig.model_validate(yaml.safe_load(text))
+    assert set(loaded.models) == {"zhipu"} and glm_api_key(loaded).startswith("${")
