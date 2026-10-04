@@ -49,6 +49,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "kind.title_level_unclear": {"zh": "两种编号谁在外层不确定", "en": "unclear nesting of two numbering styles"},
     "kind.text_added": {"zh": "程序从页面补入的文字", "en": "text the program added from the page"},
     "kind.text_not_seen": {"zh": "输出里有而页面上读不到的文字", "en": "output text not seen on the page"},
+    "kind.number_unaccounted": {"zh": "页面上的数字在输出里拆开或缺了", "en": "numbers on the page written apart or left out"},
     "kind.formula_candidate": {"zh": "公式读数待定", "en": "formula readings to decide"},
     "kind.figure_without_content": {"zh": "没有描述也没有文字的图片", "en": "images without description or text"},
     "kind.caption_number_unseen": {"zh": "说明里有图中读不到的数字", "en": "descriptions quoting numbers not read in the image"},

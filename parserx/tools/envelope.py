@@ -72,6 +72,7 @@ class UnresolvedKind(StrEnum):
     TEXT_UNACCOUNTED = "text_unaccounted"  # the local page reading sees text no block accounts for (Q56)
     TEXT_ADDED = "text_added"  # text the program added from the local page reading, where the output had none (Q133)
     TEXT_NOT_SEEN = "text_not_seen"  # output text the local page reading does not see where its block sits (Q56)
+    NUMBER_UNACCOUNTED = "number_unaccounted"  # a number the local reading sees, not written as one number there (Q148)
     FORMULA_CANDIDATE = "formula_candidate"  # a passage's page reading with formulas, not adopted (Q70)
     READING_DISAGREEMENT = "reading_disagreement"  # a rewrite from the page image no reading confirms: the replaced reading
     SECOND_READING = "second_reading"  # scanned content with mathematics the service model reads otherwise (no text layer)

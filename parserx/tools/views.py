@@ -216,6 +216,19 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.TEXT_NOT_SEEN, quotes=_quotes(segments),
             detail=f"{len(segments)} {what} are not seen on the page image where the block sits; "
                    "compare with the image"))
+    from parserx.reading.numbers import SPLIT, number_findings
+
+    for found in number_findings(state):  # numbers written apart or left out where the scan engine read (Q148)
+        what = "image" if found.target in {b.id for b in state.blocks if b.kind == BlockKind.FIGURE} else "page"
+        numbers = "; ".join(f"{n} ({'written apart in the output' if how == SPLIT else 'not in the output here'})"
+                            for n, how in found.numbers)
+        items.append(Unresolved(
+            target=found.target, kind=UnresolvedKind.NUMBER_UNACCOUNTED, quotes=_quotes(found.lines),
+            detail=f"the local reading of the {what} (the quotes) sees these numbers here, and the output at this place "
+                   f"does not write them as one number: {numbers}. Look at the image: a number written apart "
+                   "(\"7. 3.5.2\" for 7.3.5.2) or left out (a formula number, an item number) is written as printed "
+                   "(replace_text; set_cells in a table; a formula number goes with its formula); if the local reading "
+                   "misread (a δ taken for 8, a superscript glued to its base), close the item"))
     from parserx.tools.formulas import disagreement, listed, passage_of, pending_candidates
 
     by_id = {b.id: b for b in state.blocks}
