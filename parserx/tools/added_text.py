@@ -110,7 +110,7 @@ def read_again(ctx: ToolContext) -> tuple[int, list[Failure]]:
     with ctx.ws.txn("tool:process:added_text") as state:
         by_id = {b.id: b for b in state.blocks}
         for blocks, (_, _, _, box), result in zip(groups, crops, results):
-            text = _reading(result.raw["layoutParsingResults"][0])
+            text = scan_reading(result.raw["layoutParsingResults"][0])
             local = normalize(" ".join(b.text or "" for b in blocks))
             read = normalize(text)
             if not read or fuzz.ratio(local, read) < SOMEWHERE:  # the same characters, about as many
@@ -147,7 +147,7 @@ def read_again(ctx: ToolContext) -> tuple[int, list[Failure]]:
     return adopted, []
 
 
-def _reading(page: dict) -> str:
+def scan_reading(page: dict) -> str:
     """The scan engine's text of a crop: its text regions in its order, one per line."""
     entries = (page.get("prunedResult") or {}).get("parsing_res_list") or []
     boxes = [scan.entry_bbox(e) for e in entries]

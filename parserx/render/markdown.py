@@ -10,7 +10,8 @@
   Q150: the label says the model wrote it) — the
   layout the evaluator strips
   as a description; the label never repeats the description;
-- text read inside an image (IO6-5): a quote opening with ``**〔图片识别〕**``, between the comments
+- text read inside an image (IO6-5): a quote opening with ``**〔图片识别〕**`` (then the running heads, feet and
+  page numbers of the page the image shows, as ``page_furniture`` says: ``<!-- 图片页眉：… · 图片页码：… -->``), between the comments
   ``<!-- parserx:image-text src="images/<file>" page=n -->`` and ``<!-- /parserx:image-text -->`` (for programs).
   An image whose words are its content (described as content) and whose local reading the text has in full is not
   shown: the label line carries its note (``**〔图片识别〕** 图片说明（模型生成）：…``: the model's sentence, then the
@@ -63,7 +64,7 @@ def render_markdown(state: DocumentState, *, image_dir: str = "images", lang: st
     skipped = {b.id for chain in joined.values() for b in chain[1:]}
     inside = read_inside(state)  # rendered with their image, not where they stand
     skipped |= {b.id for blocks in inside.values() for b in blocks}
-    images = {figure: _image_text(state, figure, blocks, assets, image_dir, missing, lang)
+    images = {figure: _image_text(state, figure, blocks, assets, image_dir, missing, lang, page_furniture)
               for figure, blocks in inside.items()}
     transcribed = _transcription_starts(state)
     scanned = scanned_pages(state)
@@ -116,12 +117,36 @@ _FURNITURE_LABEL = {"zh": {BlockKind.HEADER: "页眉：", BlockKind.FOOTER: "页
                            BlockKind.PAGE_NUMBER: "page number: "}}
 
 
+_IMAGE_FURNITURE_LABEL = {"zh": {BlockKind.HEADER: "图片页眉：", BlockKind.FOOTER: "图片页脚：",
+                                 BlockKind.PAGE_NUMBER: "图片页码："},
+                          "en": {BlockKind.HEADER: "image header: ", BlockKind.FOOTER: "image footer: ",
+                                 BlockKind.PAGE_NUMBER: "image page number: "}}
+
+
+def _image_furniture(state: DocumentState, figure: str) -> list[tuple[BlockKind, str]]:
+    """The running heads, feet and page numbers of the page an image shows (read inside it, excluded from its
+    text), top to bottom (Q151)."""
+    blocks = {b.id: b for b in state.blocks}
+    items = []
+    for relation in state.relations:
+        block = blocks.get(relation.dst)
+        if relation.kind != RelationKind.CONTAINS or relation.src != figure or block is None:
+            continue
+        text = " ".join((block.text or "").split())
+        if block.kind in _FURNITURE_KINDS and block.status == BlockStatus.EXCLUDED and text:
+            box = block.anchors[0].bbox if block.anchors else (0.0, 0.0, 0.0, 0.0)
+            items.append((box[1], box[0], block.kind, text))
+    return [(kind, text) for _y, _x, kind, text in sorted(items, key=lambda i: (i[0], i[1]))]
+
+
 def _furniture(state: DocumentState) -> dict[int, list[tuple[BlockKind, str]]]:
-    """Page → its running heads, feet and page numbers (excluded from the flow), top to bottom."""
+    """Page → its running heads, feet and page numbers (excluded from the flow), top to bottom; those of a page shown
+    as an image are written with the image's text (``_image_furniture``)."""
     out: dict[int, list[tuple[float, float, BlockKind, str]]] = {}
     for block in state.blocks:
         text = " ".join(block.text.split())
-        if block.kind in _FURNITURE_KINDS and block.status == BlockStatus.EXCLUDED and text:
+        if block.kind in _FURNITURE_KINDS and block.status == BlockStatus.EXCLUDED and text \
+                and not (block.anchors and isinstance(block.anchors[0], AssetAnchor)):
             anchor = block.anchors[0] if block.anchors else None
             y, x = (anchor.bbox[1], anchor.bbox[0]) if isinstance(anchor, PdfAnchor) else (0.0, 0.0)
             out.setdefault(block_unit(state, block), []).append((y, x, block.kind, text))
@@ -166,7 +191,7 @@ ORIGINAL = {"zh": "原图", "en": "original"}
 
 
 def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: dict[str, Asset], image_dir: str,
-                missing: dict[str, str], lang: str) -> str:
+                missing: dict[str, str], lang: str, page_furniture: str = "comment") -> str:
     """An image and the text read inside it (IO6-5): the text quoted under a label, between comments naming the
     image; the image itself left out when its words are its content and the text has all its local reading."""
     block = next(b for b in state.blocks if b.id == figure)
@@ -178,6 +203,12 @@ def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: 
     label = f"**{IMAGE_TEXT_LABEL[lang]}**" + (f" {NOTE_LABEL[lang]}{note.caption}" if content and note.caption else "") \
         + (f"　[{ORIGINAL[lang]}]({src})" if hidden else "")
     pieces = [label]
+    furniture = _image_furniture(state, figure) if page_furniture != "omit" else []
+    if furniture and page_furniture == "comment":  # the page in the image: its running heads, feet, page numbers
+        pieces.append("<!-- " + " · ".join(f"{_IMAGE_FURNITURE_LABEL[lang][kind]}{_comment_safe(text)}"
+                                           for kind, text in furniture) + " -->")
+    elif furniture:
+        pieces += [f"〔{_IMAGE_FURNITURE_LABEL[lang][kind].rstrip('：: ')}〕{text}" for kind, text in furniture]
     for child in inside:
         text = join_wrapped((child.text or "").split("\n"))
         if child.kind == BlockKind.TITLE and text and not has_math(text):  # the image's title, not the document's

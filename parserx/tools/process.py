@@ -55,7 +55,8 @@ from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
-from parserx.tools import added_text, describe_figure, recognize, second_reading, structure, upright
+from parserx.tools import (added_text, describe_figure, image_furniture, recognize, second_reading, structure,
+                           upright)
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
@@ -176,6 +177,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
     if _read_content_images(ctx):
         steps.append(StepSummary(step="image_reading", detail="content images read locally to check their text"))
+    if image_furniture.places(ctx.ws.load()):  # the running heads of pages shown as images, left out (Q151)
+        ctx.report(Step("process", "image_furniture"))
+        found, problems = image_furniture.read_again(ctx)
+        failures += problems
+        if found:
+            steps.append(StepSummary(step="image_furniture", detail=f"{found} running heads, feet or page numbers "
+                                                                     "of images read again"))
     rereads = second_reading.candidates(ctx.ws.load()) if ctx.config.runtime.second_reading else []
     if rereads:  # what the scan engine read with mathematics where no text layer checks it
         ctx.report(Step("process", "second_reading", total=len(rereads)))
