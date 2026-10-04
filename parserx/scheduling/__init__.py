@@ -6,7 +6,7 @@ from parserx.scheduling.errors import BudgetExhausted, PageCountMismatch, Transi
 from parserx.scheduling.gateway import MeteredService, ServiceGateway
 from parserx.scheduling.jobs import JobStore
 from parserx.scheduling.meter import MeterSnapshot, RequestMeter
-from parserx.scheduling.ordered import TaskOutcome, run_ordered
+from parserx.scheduling.ordered import TaskOutcome, run_ordered, spread
 from parserx.scheduling.retry import RetryPolicy, is_retryable
 from parserx.scheduling.usage import Price, PriceTable
 
@@ -29,4 +29,5 @@ __all__ = [
     "UnparseableResponse",
     "is_retryable",
     "run_ordered",
+    "spread",
 ]

@@ -58,7 +58,7 @@ from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.content.scripts import UNSETTLED
 from parserx.reading.compare import normalize, text_at, unaccounted_lines
 from parserx.runtimes.events import Step
-from parserx.scheduling import run_ordered
+from parserx.scheduling import run_ordered, spread
 from parserx.services.llm import OUTPUT_BUDGET
 from parserx.tools.context import ToolContext, service_failure
 from parserx.tools.envelope import Failure, ToolFailure
@@ -144,8 +144,8 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
         return dict(counts), []
     ctx.report(Step("process", "formulas", total=len(pages)))
     ocr = ctx.ocr()
-    size = ctx.config.tools.scan_batch_pages
-    batches = [pages[i:i + size] for i in range(0, len(pages), size)]
+    tools = ctx.config.tools
+    batches = spread(pages, at_most=tools.scan_batch_pages, workers=tools.scan_concurrency)
     source = ctx.ws.source_path
 
     def fetch(batch):
@@ -155,7 +155,7 @@ def read_formula_pages(ctx: ToolContext, pages: list[int]) -> tuple[dict[str, in
 
     failures: list[Failure] = []
     readings: dict[int, tuple[str, dict]] = {}
-    for outcome in run_ordered(batches, fetch, max_workers=2):
+    for outcome in run_ordered(batches, fetch, max_workers=tools.scan_concurrency):
         if outcome.status != "ok":
             failures.append(service_failure(outcome.exception, [f"p{n}" for n in outcome.task]))
             continue

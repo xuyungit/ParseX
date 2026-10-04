@@ -21,7 +21,7 @@ from parserx.content.select import integrate_image, integrate_scan_page, mark_sc
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.base import IRModel
 from parserx.ir.enums import BlockKind, PageStatus
-from parserx.scheduling import run_ordered
+from parserx.scheduling import run_ordered, spread
 from parserx.tools.context import ToolContext, ToolOutput, output, service_failure
 from parserx.tools.envelope import Failure, FailureCode, ToolFailure
 from parserx.tools.imaging import write_once
@@ -124,8 +124,8 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
         return output(RecognizeResult(observations=[], observations_total=0,
                                       pages=[r for r in page_rows(state) if r.n in set(requested)], selections=[]),
                       failures=failures)
-    size = ctx.config.tools.scan_batch_pages
-    batches = [pages[i:i + size] for i in range(0, len(pages), size)]
+    tools = ctx.config.tools
+    batches = spread(pages, at_most=tools.scan_batch_pages, workers=tools.scan_concurrency)
     try:
         ocr = ctx.ocr()
     except ToolFailure as exc:  # no scan engine (--no-ocr): as if it gave no result — the fallbacks stay, listed
@@ -145,7 +145,7 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
         results = ocr.recognize_pdf(data)
         return ocr.request_key(data, "application/pdf"), results
 
-    outcomes = run_ordered(batches, fetch, max_workers=2)
+    outcomes = run_ordered(batches, fetch, max_workers=tools.scan_concurrency)
     selections: list[SelectionOutcome] = []
     new_ids: list[str] = []
     with ctx.ws.txn("tool:recognize") as state:
@@ -202,15 +202,15 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
     if not tasks:
         return output(RecognizeResult(observations=[], observations_total=0, pages=[], selections=[]),
                       failures=failures)
-    size = ctx.config.tools.scan_batch_pages
-    batches = [tasks[i:i + size] for i in range(0, len(tasks), size)]
+    tools = ctx.config.tools
+    batches = spread(tasks, at_most=tools.scan_batch_pages, workers=tools.scan_concurrency)
     ocr = ctx.ocr()
 
     def fetch(batch):
         data = scan.image_batch_pdf([((ctx.ws.root / a.path).read_bytes(), a.width, a.height) for _, a in batch])
         return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
 
-    outcomes = run_ordered(batches, fetch, max_workers=2)
+    outcomes = run_ordered(batches, fetch, max_workers=tools.scan_concurrency)
     selections: list[SelectionOutcome] = []
     new_ids: list[str] = []
     with ctx.ws.txn("tool:recognize:images") as state:

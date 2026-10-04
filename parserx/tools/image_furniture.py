@@ -25,6 +25,7 @@ from parserx.ir.relation import Relation
 from parserx.ir.state import DocumentState, LedgerEntry
 from parserx.layout import labels
 from parserx.reading.compare import _ACCOUNTS, _centre, _inside, _overlap, read_inside
+from parserx.scheduling import run_ordered, spread
 from parserx.tools.added_text import scan_reading
 from parserx.tools.context import ToolContext, service_failure
 from parserx.tools.envelope import Failure, ToolFailure
@@ -76,13 +77,19 @@ def read_again(ctx: ToolContext) -> tuple[int, list[Failure]]:
         crops.append((data, crop.width, crop.height))
     texts: list[tuple[str, str | None]] = []  # (text, raw_ref) per place; raw_ref None: the local reading
     failures: list[Failure] = []
-    for start in range(0, len(crops), BATCH):
-        data = scan.image_batch_pdf(crops[start:start + BATCH])
-        try:
-            raw_ref, results = ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
-        except Exception as exc:  # noqa: BLE001 - these regions fall back to the local reading
-            failures.append(service_failure(exc, [f for f, _, _ in found[start:start + BATCH]]))
-            results, raw_ref = [None] * len(crops[start:start + BATCH]), None
+    tools = ctx.config.tools
+
+    def fetch(batch):
+        data = scan.image_batch_pdf([crops[i] for i in batch])
+        return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
+
+    batches = spread(list(range(len(crops))), at_most=BATCH, workers=tools.scan_concurrency)
+    for outcome in run_ordered(batches, fetch, max_workers=tools.scan_concurrency):  # in batch order
+        if outcome.status == "ok":
+            raw_ref, results = outcome.value
+        else:  # these regions fall back to the local reading
+            failures.append(service_failure(outcome.exception, [found[i][0] for i in outcome.task]))
+            raw_ref, results = None, [None] * len(outcome.task)
         for result in results:
             texts.append((scan_reading(result.raw["layoutParsingResults"][0]) if result is not None else "", raw_ref))
     added = 0

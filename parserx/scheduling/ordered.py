@@ -62,3 +62,12 @@ def run_ordered(
                     apply(task, value)
                 outcomes.append(TaskOutcome(index, task, "ok", value=value))
     return outcomes
+
+
+def spread(items: list[T], *, at_most: int, workers: int) -> list[list[T]]:
+    """*items* in consecutive batches of at most *at_most*, as many as *workers* can take at once when they are
+    few: 48 images over 4 workers are 4 batches of 12, not one of 48 (speed plan P1)."""
+    if not items:
+        return []
+    size = max(1, min(at_most, -(-len(items) // max(1, workers))))
+    return [items[i:i + size] for i in range(0, len(items), size)]

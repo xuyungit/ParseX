@@ -36,3 +36,11 @@ def test_the_agent_tally_times_each_tool_from_its_envelope():
     for tool, s in (("read_draft", 0.5), ("view_source", 2.0), ("view_source", 1.0)):
         tally.add({"type": "call", "tool": tool, "envelope": {"ok": True, "cost": {"wall_s": s}}})
     assert tally.tools == {"read_draft": {"calls": 1, "s": 0.5}, "view_source": {"calls": 2, "s": 3.0}}
+
+
+def test_a_scan_engine_step_spreads_its_pages_over_the_requests_it_may_send_at_once():
+    from parserx.scheduling import spread
+
+    assert [len(b) for b in spread(list(range(48)), at_most=100, workers=4)] == [12, 12, 12, 12]
+    assert [len(b) for b in spread(list(range(250)), at_most=50, workers=4)] == [50] * 5
+    assert spread([1, 2], at_most=100, workers=4) == [[1], [2]] and spread([], at_most=9, workers=4) == []

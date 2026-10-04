@@ -74,6 +74,7 @@ def _context(readings):
             return service
     config = ParserXConfig()
     config.cache.mode = "off"
+    config.tools.scan_concurrency = 1  # one request: the answers below are the regions' in order
     return Context, config
 
 

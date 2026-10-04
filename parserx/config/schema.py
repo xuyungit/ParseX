@@ -191,7 +191,9 @@ class ToolsConfig(BaseModel):
     strip_dpi: int = 300  # ``ask_image --rows``: a band of table rows, sharp enough for small digits
     reading_dpi: int = 150  # page renders for the local page reading (guide §9.5, Q56)
     crop_pad_pt: float = 6.0
-    scan_batch_pages: int = 100  # pages per scan-engine request (guide §8.2: bounded batches)
+    scan_batch_pages: int = 100  # pages per scan-engine request at most (guide §8.2: bounded batches)
+    # scan-engine requests at once; the pages or images of a step are spread over them (speed plan P1)
+    scan_concurrency: int = 8  # GLM-OCR: 8 at once is its account limit (16 draws HTTP 429)
 
 
 class LayoutConfig(BaseModel):
