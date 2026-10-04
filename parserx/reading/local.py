@@ -22,15 +22,19 @@ Line = tuple[tuple[float, float, float, float], str, float]  # (bbox in image pi
 class LocalReader:
     name = "reading"
 
-    def __init__(self) -> None:
+    def __init__(self, threads: int | None = None) -> None:
         self.version = f"rapidocr-{_version('rapidocr')}"
         self._engine: Any = None
+        self._threads = threads  # ONNX threads; None: as many as the machine has (one reader at a time)
 
     def read(self, png: bytes) -> list[Line]:
         if self._engine is None:
             from rapidocr import RapidOCR
 
-            self._engine = RapidOCR(params={"Global.log_level": "error"})
+            params: dict[str, Any] = {"Global.log_level": "error"}
+            if self._threads:
+                params["EngineConfig.onnxruntime.intra_op_num_threads"] = self._threads
+            self._engine = RapidOCR(params=params)
         with LOCAL.time("reading"):
             result = self._engine(decode(png)[:, :, :3], use_cls=False)
         if result.boxes is None:

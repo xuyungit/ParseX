@@ -281,18 +281,19 @@ def _read_content_images(ctx: ToolContext) -> int:
     done = transcribed(state)
     records = {r.id: r for r in state.images}
     assets = {a.id: a for a in state.assets}
-    readings: dict[str, list[str]] = {}
+    todo: list[str] = []
     for block in ordered(state):
         asset = _image_asset(state, block)
         record = records.get(asset)
         if block.id not in done or getattr(block.semantic, "type", None) != "content" or record is None \
-                or record.reading is not None or asset not in assets or asset in readings:
+                or record.reading is not None or asset not in assets or asset in todo:
             continue
-        try:
-            lines = read_cached(ctx.reader(), (ctx.ws.root / assets[asset].path).read_bytes(), ctx.cache)
-        except Exception:  # noqa: BLE001 - no reading: the image stays shown above its text
-            continue
-        readings[asset] = [ReadLine(bbox=box, text=text, score=score) for box, text, score in lines]
+        todo.append(asset)
+    readings: dict[str, list[ReadLine]] = {}
+    for outcome in ctx.map_local(lambda asset: read_cached(ctx.reader(), (ctx.ws.root / assets[asset].path)
+                                                            .read_bytes(), ctx.cache), todo):
+        if outcome.status == "ok":  # no reading: the image stays shown above its text
+            readings[outcome.task] = [ReadLine(bbox=box, text=text, score=score) for box, text, score in outcome.value]
     if readings:
         with ctx.ws.txn("tool:process:image_reading") as state:
             for record in state.images:

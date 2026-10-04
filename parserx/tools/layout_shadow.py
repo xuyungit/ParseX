@@ -120,26 +120,31 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
     for n in pages:
         png, width, height = page_png(ctx.ws.source_path, n, dpi)
         page_regions[n] = (detect_cached(detector, png, cache), (width, height))
-    figure_routes = []
-    for block_id, anchor in figures:
+    def figure_route(task):  # side by side (speed plan P2), taken in order below
+        block_id, anchor = task
         asset = assets[anchor.asset]
         data = (ctx.ws.root / asset.path).read_bytes()
         try:
             std = pixel_std(data)
         except Exception:  # noqa: BLE001 - an image PIL cannot read (e.g. EMF) cannot be analysed
-            figure_routes.append((block_id, anchor, None, []))
-            continue
+            return block_id, anchor, None, []
         decorative_first = route(width=asset.width, height=asset.height, pixel_std=std, regions=[],
                                  config=ctx.config.routing)
         if decorative_first.route != ImageRoute.DECORATIVE:
-            regions = detect_cached(detector, data, cache)
+            regions = detect_cached(ctx.detector(), data, cache)
         elif decorative_first.evidence.get("decorative") == "blank":
             regions = []
         else:  # confirm the candidate: small images are read reliably only as a part of a page (P4-4)
-            regions = on_page_regions(detector, data, (asset.width, asset.height), dpi, cache)
+            regions = on_page_regions(ctx.detector(), data, (asset.width, asset.height), dpi, cache)
         result = route(width=asset.width, height=asset.height, pixel_std=std, regions=regions,
                        config=ctx.config.routing)
-        figure_routes.append((block_id, anchor, result, regions))
+        return block_id, anchor, result, regions
+
+    figure_routes = []
+    for outcome in ctx.map_local(figure_route, figures):
+        if outcome.status != "ok":
+            raise outcome.exception
+        figure_routes.append(outcome.value)
 
     selections: list[SelectionOutcome] = []
     new_observations = []

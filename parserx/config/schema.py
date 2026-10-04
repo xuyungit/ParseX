@@ -107,7 +107,7 @@ class ServiceConfig(BaseModel):
     # the nearest of them — and the strongest structured output it honours — the fallback starts there.
     efforts: list[str] | None = None
     structured_output: Literal["json_schema", "json_object", "off"] | None = None
-    max_concurrent: int = 6
+    max_concurrent: int = 16  # 64 descriptions: 6 at once 45 s, 12 32 s, 16 25 s (speed plan P1)
     timeout: int = 180
     # Longest pause in a streamed answer (Responses API) before the request counts as stalled: a transport
     # failure the gateway retries (guide §8.2), found long before ``timeout``.  A long answer keeps streaming.
@@ -194,6 +194,9 @@ class ToolsConfig(BaseModel):
     scan_batch_pages: int = 100  # pages per scan-engine request at most (guide §8.2: bounded batches)
     # scan-engine requests at once; the pages or images of a step are spread over them (speed plan P1)
     scan_concurrency: int = 8  # GLM-OCR: 8 at once is its account limit (16 draws HTTP 429)
+    # local readings at once (images turned upright, pages read), a reader per thread with 2 ONNX threads each:
+    # 64 images 25.7 s with one reader, 12.5 s with 8 (processes are no faster) (speed plan P2)
+    local_workers: int = 8
 
 
 class LayoutConfig(BaseModel):

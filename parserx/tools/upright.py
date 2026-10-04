@@ -55,15 +55,19 @@ def turn_upright(ctx: ToolContext, blocks: list[str]) -> int:
     by_id = {b.id: b for b in state.blocks}
     assets = {a.id: a for a in state.assets}
     found: dict[str, tuple] = {}  # block → (turn, by, levels, new asset, anchor index)
-    for block_id in blocks:
+
+    def read(block_id: str):  # the readings side by side (speed plan P2); the turns taken below, in order
+        anchor = next(a for a in by_id[block_id].anchors if isinstance(a, AssetAnchor))
+        data = (ctx.ws.root / assets[anchor.asset].path).read_bytes()
+        return data, upright(ctx.reader(), data, ctx.cache)
+
+    for outcome in ctx.map_local(read, blocks):
+        if outcome.status != "ok":  # an image the reader cannot decode stays as it is
+            continue
+        block_id, (data, way) = outcome.task, outcome.value
         block = by_id[block_id]
         index, anchor = next((i, a) for i, a in enumerate(block.anchors) if isinstance(a, AssetAnchor))
         asset = assets[anchor.asset]
-        try:
-            data = (ctx.ws.root / asset.path).read_bytes()
-            way = upright(ctx.reader(), data, ctx.cache)
-        except Exception:  # noqa: BLE001 - an image the reader cannot decode stays as it is
-            continue
         turn, by = way.turn, "reading"
         if not turn and max(way.level.values()) < ENOUGH:
             turn, by = _shown_turn(block), "document"

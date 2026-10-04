@@ -10,6 +10,7 @@ appended to ``calls.jsonl`` with its request and envelope (guide §7.5).
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from parserx.scheduling import (
     ServiceGateway,
     UnparseableResponse,
     is_retryable,
+    run_ordered,
 )
 from parserx.runtimes.events import Waiting
 from parserx.services.llm import create_vlm_service
@@ -89,20 +91,30 @@ class ToolContext:
         return RapidLayoutDetector(self.config.layout.model, self.config.layout.conf_thresh, layout=self.config.layout)
 
     def detector(self):
-        if getattr(self, "_detector", None) is None:
-            self._detector = self._new_detector()
-        return self._detector
+        """The local layout detector, one per thread (``map_local``)."""
+        if getattr(self, "_detectors", None) is None:
+            self._detectors = threading.local()
+        if getattr(self._detectors, "detector", None) is None:
+            self._detectors.detector = self._new_detector()
+        return self._detectors.detector
 
     def _new_reader(self):
         from parserx.reading.local import LocalReader
 
-        return LocalReader()
+        return LocalReader(threads=2 if self.config.tools.local_workers > 1 else None)
 
     def reader(self):
-        """The local page reader (guide §9.5, Q56)."""
-        if getattr(self, "_reader", None) is None:
-            self._reader = self._new_reader()
-        return self._reader
+        """The local page reader (guide §9.5, Q56), one per thread: readings run side by side (``map_local``)."""
+        if getattr(self, "_readers", None) is None:
+            self._readers = threading.local()
+        if getattr(self._readers, "reader", None) is None:
+            self._readers.reader = self._new_reader()
+        return self._readers.reader
+
+    def map_local(self, fn, items: list) -> list:
+        """*fn* over *items* on ``tools.local_workers`` threads (local readings); outcomes in the items' order, a
+        failure kept as its outcome (``run_ordered``)."""
+        return run_ordered(items, fn, max_workers=self.config.tools.local_workers)
 
     def ocr(self) -> PaddleOCRService:
         if self._ocr is None:

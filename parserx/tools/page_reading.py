@@ -37,23 +37,35 @@ def reading_todo(state: DocumentState) -> list[int]:
 
 def read_pages(ctx: ToolContext, pages: list[int]) -> int:
     """Read *pages* locally and store the readings; the number of pages read."""
-    reader, detector, cache = ctx.reader(), ctx.detector(), ctx.cache
+    cache = ctx.cache
     dpi, layout_dpi = ctx.config.tools.reading_dpi, ctx.config.layout.page_dpi
-    readings = []
+    renders = []  # pages rendered one by one (MuPDF is not for threads), read side by side (speed plan P2)
     with pymupdf.open(ctx.ws.source_path) as doc:
         for n in pages:
-            back = doc[n - 1].derotation_matrix
-            png, _, _ = render_page_at(doc, n, dpi)
-            lines = [ReadLine(bbox=_page_box(box, dpi, back), text=text, score=score)
-                     for box, text, score in read_cached(reader, png, cache)]
-            layout_png, _, _ = render_page_at(doc, n, layout_dpi)
-            regions = detect_cached(detector, layout_png, cache)
-            not_prose = [_page_box(r.bbox, layout_dpi, back) for r in regions if r.label in NOT_PROSE]
-            roles = [ReadRegion(label=r.label, bbox=_page_box(r.bbox, layout_dpi, back)) for r in regions
-                     if labels.to_kind("layout", r.label) in ROLE_KINDS]
-            readings.append(PageReading(n=n, engine=reader.version, dpi=dpi, lines=lines, not_prose=not_prose,
-                                        roles=roles))
-            ctx.report(Step("process", "reading", done=len(readings), total=len(pages)))
+            renders.append((n, doc[n - 1].derotation_matrix, render_page_at(doc, n, dpi)[0],
+                            render_page_at(doc, n, layout_dpi)[0]))
+    done_pages = 0
+
+    def read(task):
+        nonlocal done_pages
+        n, back, png, layout_png = task
+        reader = ctx.reader()
+        lines = [ReadLine(bbox=_page_box(box, dpi, back), text=text, score=score)
+                 for box, text, score in read_cached(reader, png, cache)]
+        regions = detect_cached(ctx.detector(), layout_png, cache)
+        not_prose = [_page_box(r.bbox, layout_dpi, back) for r in regions if r.label in NOT_PROSE]
+        roles = [ReadRegion(label=r.label, bbox=_page_box(r.bbox, layout_dpi, back)) for r in regions
+                 if labels.to_kind("layout", r.label) in ROLE_KINDS]
+        done_pages += 1
+        ctx.report(Step("process", "reading", done=done_pages, total=len(pages)))
+        return PageReading(n=n, engine=reader.version, dpi=dpi, lines=lines, not_prose=not_prose, roles=roles)
+
+    readings = []
+    for outcome in ctx.map_local(read, renders):
+        if outcome.status != "ok":
+            raise outcome.exception
+        readings.append(outcome.value)
+    reader = ctx.reader()
     with ctx.ws.txn("tool:process:reading") as state:
         done = {r.n for r in state.readings}
         state.readings = sorted([*state.readings, *(r for r in readings if r.n not in done)], key=lambda r: r.n)

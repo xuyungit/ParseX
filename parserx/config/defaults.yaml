@@ -79,7 +79,7 @@ services:
     use: qwen3.8-flash
     provider: openai
     reasoning_effort: low
-    max_concurrent: 6
+    max_concurrent: 16
     timeout: 180
 
 # Response cache (guide §8.3): every scan engine / VLM response is recorded and
