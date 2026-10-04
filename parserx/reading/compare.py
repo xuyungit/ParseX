@@ -25,7 +25,8 @@ changed — with one exception, text the output lacks altogether (``missed_lines
   of a QR code or a watermark score 0.60–0.78).
 
 The readings are compared on letters and digits only (NFKC, full width folded, markup dropped): punctuation,
-spacing and LaTeX commands are not differences.  The two tolerances are measurement tolerances between two
+spacing and LaTeX commands are not differences — numbers written apart or left out are compared apart, as numbers
+(``reading/numbers.py``, Q148).  The two tolerances are measurement tolerances between two
 independent readings, calibrated once on the whole corpus (guide §9.5, 2026-09-25: 26 PDFs, 6125 local lines,
 4426 output segments), not judgments about content.
 """
