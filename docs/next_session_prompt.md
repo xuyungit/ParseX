@@ -6,6 +6,8 @@
 >
 > **2026-09-29 更新（已被上面取代）**：本轮主题已定为内容获取的整体设计（原生页按区域、Word 页面层与矢量图、Agent 看图对比），计划与新会话的启动清单在 [v2_content_plan.md](v2_content_plan.md) §0，先读它；下面的通用清单仍适用。
 
+> **2026-10-04 更新**：下一个主题是处理速度和成本，思路与依据在 [v2_speed_cost_plan.md](v2_speed_cost_plan.md)，先读它；测试文档分为公开与内部两类，内部的在私有语料库（`~/Projects/ParserX-corpus`，由 `scripts/link_private_corpus.py` 接进 `ground_truth/`，见 `ground_truth/README.md`），任何推送前 `scripts/check_public.py` 必须通过。
+
 复制下面整段作为新会话的第一条消息。
 
 ---
