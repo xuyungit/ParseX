@@ -13,7 +13,7 @@
 | 模型 | 端点 | 接口 | 参数差异 |
 |---|---|---|---|
 | gpt-6-luna | sub2api 中转（`.env` 无后缀组）、官方（`_B`） | Responses | 拒绝 `temperature`；effort 接受 none/low/medium（§10.3） |
-| deepseek-flash | api.deepseek.com（`_D`） | Responses 与 Chat 都能用，自己的循环用 Chat | 思考内容以 `reasoning_content` 返回，工具循环里要交回给它（aada802） |
+| deepseek-flash | api.deepseek.com（`_D`） | Responses 与 Chat 都能用，自己的循环用 Chat | 思考内容以 `reasoning_content` 返回，工具循环里要交回给它（4075fa6） |
 | glm-5.3-flashx | open.bigmodel.cn（`_G`） | 只有 Chat（Responses 返回 404，服务自动回退） | effort 只接受 low/high/max，传 none、minimal、medium 都返回 400；不传 effort 时按接近 max 的强度思考；`top_p`、`thinking` 要经 `extra_body` 传 |
 
 GLM 拒绝 effort 时的报错是中文："该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"它不匹配 `_UNSUPPORTED_RE`（只认 OpenAI 的 `Unsupported parameter/value: '…'`），所以服务不会自动去掉这个参数。如果 GLM 用 `parserx.yaml` 给 gpt-6-luna 写的 `reasoning_effort: none`，每个请求都会失败。
@@ -57,7 +57,7 @@ GLM 拒绝 effort 时的报错是中文："该模型始终思考，不支持关�
 
 - **现有的两种协议适配器**：服务层 `OpenAICompatibleService` 里的 Responses 与 Chat 两条路，以及自己的循环里的 `ResponsesModel` 与 `ChatModel`（Q88）。
 - **以后什么时候加新适配器**：只在协议本身不同时加一个，例如 Anthropic Messages 或 Gemini 原生接口。
-- **结构上的行为按响应内容通用处理**，不认服务商的名字。例如响应里有 `reasoning_content`，就在同一接口的工具循环里交回（aada802 的做法）。
+- **结构上的行为按响应内容通用处理**，不认服务商的名字。例如响应里有 `reasoning_content`，就在同一接口的工具循环里交回（4075fa6 的做法）。
 
 ### 2.3 模型条目
 

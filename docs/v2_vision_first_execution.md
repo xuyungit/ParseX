@@ -2,7 +2,7 @@
 
 ## 0. 定位
 
-- **共同计划**：[v2_vision_first_plan.md](v2_vision_first_plan.md)，提交 ce2d75c，SHA-256 `639b5f57…`。双方从同一计划、同一代码起点独立推进，**共同计划原文不改**；本方接受的差异与勘误写在本文。
+- **共同计划**：[v2_vision_first_plan.md](v2_vision_first_plan.md)，提交 c5ed64f，SHA-256 `639b5f57…`。双方从同一计划、同一代码起点独立推进，**共同计划原文不改**；本方接受的差异与勘误写在本文。
 - **另一团队的文件**（原样存档于 [docs/audits/2026-09-29/](audits/2026-09-29/)）：[审核意见](audits/2026-09-29/vision-first-plan-review-astra.md)（R1–R6、共同验收口径 C0）、[他们的执行计划](audits/2026-09-29/codex-worktree-execution-plan-astra.md)、[来源指纹](audits/2026-09-29/comparison-baseline.json)。
 - **各臂**（沿用审核意见的名字）：
 

@@ -459,7 +459,7 @@ gating。实验发现：
   edit_distance 0.328 → 0.250。
 - text_report01 标题碎片 `# 《四川...首版次\n\n推广应用指导目录》` 同步修复。
 
-### Tail fix — inline_spans invalidation (commit `e37c87b`)
+### Tail fix — inline_spans invalidation (commit `d202db8`)
 
 `TextCleanProcessor` 在 `inline_spans` 存在时从 span 重建 content，
 撤销了 ChapterProcessor 的跨元素合并（5.2 / 5.4 在 renderer 输入端

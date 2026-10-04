@@ -40,7 +40,7 @@
 |---|---|---|
 | 目录 | `/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first` | `/Users/xuyun/.codex/worktrees/vision-agent-comparison/ParserX` |
 | 分支 | `vision-first` | `codex/vision-agent-comparison` |
-| 冻结代码 | `39ef534`（其后只有文档提交） | `1ee17e9` |
+| 冻结代码 | `24fc652`（其后只有文档提交） | `1ee17e9` |
 | 做法 | 服务模型看页面图做"完整分配"：原生页文字层每行、扫描页引擎每块恰好用一次，只送有信号的页（V）；再由 Codex Agent 看图定夺（V + Agent） | 增强流水线（碎片表格重建、跨栏跨页归属、乱码和公式处理），加上按需的 Codex 审阅：默认只在有待办时介入 |
 | 小结 | 本方目录下 `docs/v2_vision_first_summary.md` | 对方目录下 `docs/audits/2026-09-30/small-hybrid-comparison-codex.md` 与 `workspace-cleanup-codex.md` |
 | 离线测试 | 853 通过 | 845 通过 |
@@ -127,7 +127,7 @@
    git status --short | grep -v '^??'
    uv run pytest -q --ignore=tests/test_live_e2e.py
    ```
-   `git log` 在 `39ef534` 之后应只有文档提交；`git status` 应无输出；测试应有 853 个通过。
+   `git log` 在 `24fc652` 之后应只有文档提交；`git status` 应无输出；测试应有 853 个通过。
 2. **V：** 扫描页也按信号送。
    ```bash
    uv run python scripts/vision_first/v_run.py --run-dir eval_runs/<日期>_cmp_vision_first --configs luna-medium-r1,luna-medium-r2 --scanned --docs <文档,逗号分隔>

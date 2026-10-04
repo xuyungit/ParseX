@@ -1,6 +1,6 @@
 # 拟人的内容获取：看页面写、能复制就复制、程序核对、Agent 定夺（实验计划 第二版，2026-09-29，待外部专家讨论）
 
-> **给审核者**：本文自成一体，背景材料都给了路径。`eval_reports/` 与 `eval_runs/` 不入 git，只在本机；分支 `content-by-region` 在本机保留。第一版（6f840a2）经过一轮外部审核，本版吸收了它的意见并按用户的原则修订，审核意见与处理见附录 A。请重点看 §9。
+> **给审核者**：本文自成一体，背景材料都给了路径。`eval_reports/` 与 `eval_runs/` 不入 git，只在本机；分支 `content-by-region` 在本机保留。第一版（4a0c72c）经过一轮外部审核，本版吸收了它的意见并按用户的原则修订，审核意见与处理见附录 A。请重点看 §9。
 >
 > **术语**：文中的**服务模型**指流水线里由程序调用的视觉语言模型（VLM），做具体的活：转写页面、编辑公式、描述图片、回答 Agent 的看图问题；本轮的候选见 §5。**Agent** 指主 Agent（默认 Codex，gpt-6-sol），在流水线之后处理待办、作最终判断。两者角色分开（指导 Q40），可以是同一家的模型。扫描引擎（PaddleOCR-VL）、本地版面检测器、本地识别（RapidOCR）是识别工具，文中不叫模型。
 
@@ -135,10 +135,10 @@ JSON（结构化输出）的块序列，按阅读顺序。每块给出类型（�
 
 ## 4. 已有工作的处置
 
-- **已迁到 main**（745e53a）：工作区切回 main。公式相似度指标（`parserx/eval/formulas.py`，只进报告；用自己的 LaTeX 读法，不依赖流水线的 `content/latex.py`，语料里 298 个公式与分支读法逐个一致）；paper_chn02 标注的 24 处 `^1` → `^l`。main 的流水线没有变：补丁版冻结 run 回放输出逐字节相同，只有 paper_chn02 的关键内容错误因标注修订 125 → 101。
+- **已迁到 main**（5c7f828）：工作区切回 main。公式相似度指标（`parserx/eval/formulas.py`，只进报告；用自己的 LaTeX 读法，不依赖流水线的 `content/latex.py`，语料里 298 个公式与分支读法逐个一致）；paper_chn02 标注的 24 处 `^1` → `^l`。main 的流水线没有变：补丁版冻结 run 回放输出逐字节相同，只有 paper_chn02 的关键内容错误因标注修订 125 → 101。
 - **补丁版（对照臂 M）的公式基线**：paper_chn01 配对 27/30、相似度 0.865；paper_chn02 12/14、0.920；patent01 13/16、0.899。
 - **分支 `content-by-region`**：不合并，保留作对照臂 R。实验后逐项决定；属于"补的条件"的（SCRIPT_SMALL、段落门的几道条件、占满栏、同宽、网格标签、编号前的上标）不带。排版事实（按字号与基线的上下标、无映射字形的标记）按 §3.2 复用。
-- **main 上的五个补丁**（8504de5 跨栏多读、a260445 编辑差异与两轮、1dc3173 字母命令、5aa63d8 编号与碎片归段、aafa43d 对照页）：采用新方案后，在分流页上成为死代码，列入清理。
+- **main 上的五个补丁**（01cb743 跨栏多读、8c8f4e4 编辑差异与两轮、cf3fc88 字母命令、a3801c6 编号与碎片归段、8ccb89a 对照页）：采用新方案后，在分流页上成为死代码，列入清理。
 - **v2_content_plan.md**：§1–§3 的诊断成立；A 线的实施方式由本文取代；B 线仍推迟；C 线并入本实验。
 - **从现在起不加内容规则**，直到实验结论出来。
 
@@ -165,7 +165,7 @@ JSON（结构化输出）的块序列，按阅读顺序。每块给出类型（�
 - DeepSeek 官方 [JSON mode](https://api-docs.deepseek.com/zh-cn/guides/json_mode)：`response_format: {"type": "json_object"}`；提示里必须有 "json" 字样，并给出希望输出的 JSON 样例；有概率返回空的 content；`max_tokens` 要够，否则 JSON 被截断。文档没有 json_schema。
 - GLM 官方 [结构化输出](https://docs.bigmodel.cn/cn/guide/capabilities/struct-output)：`response_format: {"type": "json_object"}`；在系统消息里定义期望的 JSON 结构，可以用描述，也可以把 JSON Schema 写进提示；建议程序再校验。文档没有 json_schema 类型。
 - 我们 2026-09-28 的探测与此一致：DeepSeek 拒绝 json_schema；GLM 接受 json_schema 却不遵守（返回带围栏的 JSON）。两家都是 OpenAI 兼容的 Chat 接口，JSON mode 的请求形状与 OpenAI 的 `json_object` 相同。
-- 现有服务层已经按条目参数处理：`models.<名字>.structured_output` 定它遵守的最强方式（这两家是 `json_object`）；弱于 json_schema 时自动把 schema 写进提示（Q105，f048430）；带围栏的 JSON 会剥掉；`min_output_tokens` 抬高输出下限（DeepSeek 8192）；`efforts` 定可发的推理强度；`api_style` 选 Chat 或 Responses。
+- 现有服务层已经按条目参数处理：`models.<名字>.structured_output` 定它遵守的最强方式（这两家是 `json_object`）；弱于 json_schema 时自动把 schema 写进提示（Q105，f4459ac）；带围栏的 JSON 会剥掉；`min_output_tokens` 抬高输出下限（DeepSeek 8192）；`efforts` 定可发的推理强度；`api_style` 选 Chat 或 Responses。
 
 **决定（建议）**：参数配置，不写适配层。**判断标准**：只有请求或返回的形状不同（换了一种接口、字段结构不同）才写适配层；同一种接口上的能力差异用 `models` 条目的参数表达。DeepSeek、GLM 属于后者。
 
@@ -262,7 +262,7 @@ P0 探针 → 报告与决定 → V 对比 → 报告与决定 → C1 → 报告
 1. **结构化输出**：DeepSeek、GLM 用参数配置加程序校验，不写适配层（§5.1）。建议：是。
 2. Agent 凭看图证据可以采用与文字层数字不同的写法，这改变指导 §11.5 的一条正确性要求（§3.5）。建议：允许，程序记录并在摘要中列出。
 
-## 附录 A：第一轮外部审核意见与处理（2026-09-29，针对 6f840a2）
+## 附录 A：第一轮外部审核意见与处理（2026-09-29，针对 4a0c72c）
 
 | 意见 | 处理 |
 |---|---|
@@ -287,5 +287,5 @@ P0 探针 → 报告与决定 → V 对比 → 报告与决定 → C1 → 报告
 
 ## 附录 B：变更记录
 
-- 第一版（6f840a2）：拟人分工、两种写法、七篇文档的对照矩阵。
+- 第一版（4a0c72c）：拟人分工、两种写法、七篇文档的对照矩阵。
 - 第二版（本版）：吸收第一轮外部审核；按用户原则改为"程序保证不变量、比对作证据、Agent 定夺"；加入服务模型对比与上限检查；先探针后铺开；记录迁到 main 的两项；术语统一为"服务模型"与"Agent"；结构化输出用参数配置、不写适配层（§5.1，用户指出 DeepSeek、GLM 官方支持 JSON mode）。

@@ -29,7 +29,7 @@ LLM/VLM 走官方端点；VLM 为 **gpt-6-luna**（`.env` 已切换，`check_ser
 1. 读本文档 §2、§4.0、§4.14、§4 其余、§6、§8、§9；不读 `architecture.md`，除非要查 v1 细节。
 2. 运行 `uv run python scripts/check_services.py`，确认 OCR、LLM、VLM 三个服务都是 OK；任一失败先修 `.env`，不要绕过。
 3. 运行 `uv run pytest -q --ignore=tests/test_live_e2e.py`。已知基线有 4 个失败（`test_image_processor` 1 个、`test_line_unwrap` 2 个、`test_verification` 1 个），
-   在提交 87ef225 上同样失败，与本次依赖改动无关，都属于阶段二至五要替换的 v1 处理器；阶段零不修，替换时随模块一起处理。除此之外应全绿（428 通过）。
+   在提交 0373dc5 上同样失败，与本次依赖改动无关，都属于阶段二至五要替换的 v1 处理器；阶段零不修，替换时随模块一起处理。除此之外应全绿（428 通过）。
 4. 从 §6 中状态为 🟡 的阶段开始。阶段零剩余任务的顺序（2026-09-23 按外部审核调整，理由见 §7.3）：
    修验收工具（表格结构指标、漏表/失败文档硬检查、阅读顺序指标、关键内容错误统计、GFM/HTML 归一）→ 回归分层（`--core`）→
    缓存层（覆盖 OCR 和 VLM）→ 回归配置关闭 LLM 兜底 → 用修好的指标冻结两份 v1 基线（gpt-5.4-mini 与 gpt-6-luna 各一份完整 run）。

@@ -51,11 +51,11 @@
 
 | 提交 | 内容 |
 |---|---|
-| 8504de5 | `_continued`：栏首或栏尾的原生块，其字母数字都在相邻段落读数的多余部分里时，归入该段（CARRIED、CARRIED_MATCH） |
-| a260445 | 编辑的提示里列出两份读数不一致的字母数字；编辑最多两轮（EDITOR_ROUNDS）；拉丁字母、数字、希腊字母不再享受错码豁免（`_EXACT`）；命令名不算字符；提示"只写 A 这一段" |
-| 1dc3173 | `\ell`、`\hbar` 等字母命令按字母算（现在在 `content/latex.py`） |
-| 5aa63d8 | `content/equation_numbers.py`：公式行右侧的编号归到公式（新关系 NUMBERS，渲染为 `\tag{n}`；一块多个编号时不挂）。`_enclosed`：落在段落原生块框内的碎片归入该段。`passage_of` / `passage_box`：Agent 看公式待办时截整段；待办里写明段落的块数和不一致的字符 |
-| aafa43d | 对照页：`\tag` 不再盖住比栏宽的公式 |
+| 01cb743 | `_continued`：栏首或栏尾的原生块，其字母数字都在相邻段落读数的多余部分里时，归入该段（CARRIED、CARRIED_MATCH） |
+| 8c8f4e4 | 编辑的提示里列出两份读数不一致的字母数字；编辑最多两轮（EDITOR_ROUNDS）；拉丁字母、数字、希腊字母不再享受错码豁免（`_EXACT`）；命令名不算字符；提示"只写 A 这一段" |
+| cf3fc88 | `\ell`、`\hbar` 等字母命令按字母算（现在在 `content/latex.py`） |
+| a3801c6 | `content/equation_numbers.py`：公式行右侧的编号归到公式（新关系 NUMBERS，渲染为 `\tag{n}`；一块多个编号时不挂）。`_enclosed`：落在段落原生块框内的碎片归入该段。`passage_of` / `passage_box`：Agent 看公式待办时截整段；待办里写明段落的块数和不一致的字符 |
+| 8ccb89a | 对照页：`\tag` 不再盖住比栏宽的公式 |
 
 冻结 run：`eval_runs/2026-09-29_bench2f_fixed_full`（对照页的固定流水线列用它）。原因和修复记录见 eval_reports/2026-09-28_bench_round2.md §5、§6。
 

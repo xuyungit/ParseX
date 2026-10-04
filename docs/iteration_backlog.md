@@ -42,7 +42,7 @@ product-value (not leaderboard score):
    finra(241→5853 chars)。纯视觉信号。
 4. **Iter 26 — 跨元素标题合并 — DONE 2026-04-15。**
    `chapter._merge_split_section_headings` + `_split_heading_body_elements`
-   rewrite + inline_spans invalidation tail (commit `e37c87b`)。
+   rewrite + inline_spans invalidation tail (commit `d202db8`)。
    paper01 heading_f1 0.667 → 0.747 (+0.080)，char_f1 0.975 → 0.982，
    edit_distance 0.328 → 0.250。
 5. **Iter 27 — Dotted-numbering heading depth — DONE 2026-04-15。**
@@ -53,7 +53,7 @@ product-value (not leaderboard score):
    glyph-only 候选过滤 + `:` 续行合并实验失败（级联降分）已回退。
 6. **Iter 28 Track A — Bold-at-body-size 几何 gating — DONE 2026-04-15**。
    `_has_heading_vertical_isolation` + `heading_geometric_reject`
-   标记（commit `9fa78f9`）。paper01 heading_f1 0.791 → 0.818
+   标记（commit `73a0d64`）。paper01 heading_f1 0.791 → 0.818
    (+0.027)；spurious `### Variables/Devices/Tensors` 去除。
    Track B / C 延后单独迭代。
    **未解决遗留**：
@@ -65,7 +65,7 @@ product-value (not leaderboard score):
    - Track C（code-block boundary，含 `# of Relu` 伪 H1）。
 
 7. **Iter 29a — Fallback level-hint 校准 — DONE 2026-04-16**
-   （commit `9618876`）。`_apply_llm_fallback` 在写入 `pending` 前把
+   （commit `a647d5e`）。`_apply_llm_fallback` 在写入 `pending` 前把
    LLM level clamp 到 `numbering_level_hint` / `font_level_hint` floor。
    paper01 edit_distance 0.255 → 0.234。heading_f1 持平（fallback
    影响层级而非 heading 判定）。详见 history Iter 29a 段。

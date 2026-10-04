@@ -166,7 +166,7 @@ Agent 只需要四个工具，每个工具对应一件事，名字里写明作�
 
 ## 10. 实施结果
 
-- 提交：4b0f1b1（证据入状态）、a791267（四个工具）、a070694（旧工具删除、运行时与任务说明改写）。
+- 提交：590fe72（证据入状态）、c55fa6b（四个工具）、b19c2f8（旧工具删除、运行时与任务说明改写）。
 - 固定流水线的输出不变：L1 与两个冻结 run 回放逐字节相同。
 - 测量见 eval_reports/2026-09-27_four_tools.md。
 
@@ -207,13 +207,13 @@ Agent 只需要四个工具，每个工具对应一件事，名字里写明作�
 
 ### 11.1 实施（2026-09-27）
 
-- dd648fe：一套词表。`set_role {role}` 取代 `set_role {kind, level}` 与 `set_level`（流水线的标题步骤也用它）；`join` / `unjoin` 取代 `link continues` 与 `merge_tables`；页眉类只作程序的"不输出"标签，给它设正文角色或 `include` 就重新输出；删去 4 种从未起作用的关系类型。
-- a7686fe：请求模型是契约。每个字段、每种操作有中文说明；命令行参数由模型生成（字段名即参数名）；任务说明的工具参考由模型生成（`tools/reference.py`），任务说明分为与 Agent 无关的 `agent_task.md` 和适配层 `adapter_cli.md`；信封去掉 `diff`、`unresolved`，给 Agent 的 JSON 省去 null 字段（少约 11%）；`submit_draft` 没有参数，导出是程序的步骤 `export`；Skill 里的命令行写法改为参数名。
-- bb31f1f：`read_draft` 的 `changes` 视图（取自调用记录）；最终报告不再要求列出改动。
-- 0373525：自己的循环 `runtimes/loop.py`（`runtime.agent.engine: loop`）。函数定义直接取请求的 JSON Schema，进程内 `call_tool`，Responses API、不在服务端存储；适配层 `adapter_call.md` 只有三句话。循环本身约 170 行，除了新的适配层文字，工具包与任务说明不用为它改动。
+- ba3ce53：一套词表。`set_role {role}` 取代 `set_role {kind, level}` 与 `set_level`（流水线的标题步骤也用它）；`join` / `unjoin` 取代 `link continues` 与 `merge_tables`；页眉类只作程序的"不输出"标签，给它设正文角色或 `include` 就重新输出；删去 4 种从未起作用的关系类型。
+- ab1fe19：请求模型是契约。每个字段、每种操作有中文说明；命令行参数由模型生成（字段名即参数名）；任务说明的工具参考由模型生成（`tools/reference.py`），任务说明分为与 Agent 无关的 `agent_task.md` 和适配层 `adapter_cli.md`；信封去掉 `diff`、`unresolved`，给 Agent 的 JSON 省去 null 字段（少约 11%）；`submit_draft` 没有参数，导出是程序的步骤 `export`；Skill 里的命令行写法改为参数名。
+- 9597b6b：`read_draft` 的 `changes` 视图（取自调用记录）；最终报告不再要求列出改动。
+- 5a59eb2：自己的循环 `runtimes/loop.py`（`runtime.agent.engine: loop`）。函数定义直接取请求的 JSON Schema，进程内 `call_tool`，Responses API、不在服务端存储；适配层 `adapter_call.md` 只有三句话。循环本身约 170 行，除了新的适配层文字，工具包与任务说明不用为它改动。
 - 第 4 项（按视图区分的联合类型）没有做：主流函数调用接口不接受顶层 oneOf，请求保持平铺的对象，参数属于哪个视图写在说明里。
 - 固定流水线的输出逐字节不变（L1 与两个冻结回放）；L0 617。
-- 1d0b531（测量之后）：`view_source` 的说明与拒绝信息写明看不了的东西（Word 文档的页面、从图片里读出或跨页的表格的几行）。
+- 145e1d8（测量之后）：`view_source` 的说明与拒绝信息写明看不了的东西（Word 文档的页面、从图片里读出或跨页的表格的几行）。
 
 ### 11.2 测量（[报告](../eval_reports/2026-09-27_q86_interface.md)）
 

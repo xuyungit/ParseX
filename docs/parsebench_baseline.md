@@ -32,13 +32,13 @@ Each dimension reports ParseBench's **primary metric**:
 
 | Run ID | Date | ParserX ver (git sha) | Tables (GTRM) | Charts (DataPoint) | Text Content (rule PR) | Text Formatting (rule PR) | Visual Grounding (elt PR) |
 |--------|------|-----------------------|---------------|--------------------|------------------------|---------------------------|---------------------------|
-| `baseline` | 2026-04-14 | a470a84+dirty | **0.00%** | **1.11%** | **85.43%** | **34.33%** | N/A ¹ |
-| `iter18-lite` | 2026-04-14 | a470a84 (evaluator fork) | **56.13%** ² | — | — | — | — |
-| `iter18-full` | 2026-04-14 | a470a84 (evaluator fork) | **41.33%** ³ | — | — | — | — |
-| `iter20a-full` | 2026-04-14 | a470a84 (evaluator fork) | 41.33% | 1.11% | **86.89%** ⁴ | 34.33% | N/A |
-| `iter21-full` | 2026-04-14 | 86a61b4+dirty | 41.33% | 1.11% | 86.38% | **43.22%** ⁵ | N/A |
-| `iter22-full` | 2026-04-14 | e89f535+dirty | 41.33% | 1.11% | 86.59% | **45.36%** ⁶ | N/A |
-| `iter23-full` | 2026-04-14 | e138dce+dirty | 41.33% | 1.11% | **86.83%** ⁷ | 45.64% | N/A |
+| `baseline` | 2026-04-14 | 35fc707+dirty | **0.00%** | **1.11%** | **85.43%** | **34.33%** | N/A ¹ |
+| `iter18-lite` | 2026-04-14 | 35fc707 (evaluator fork) | **56.13%** ² | — | — | — | — |
+| `iter18-full` | 2026-04-14 | 35fc707 (evaluator fork) | **41.33%** ³ | — | — | — | — |
+| `iter20a-full` | 2026-04-14 | 35fc707 (evaluator fork) | 41.33% | 1.11% | **86.89%** ⁴ | 34.33% | N/A |
+| `iter21-full` | 2026-04-14 | f859d87+dirty | 41.33% | 1.11% | 86.38% | **43.22%** ⁵ | N/A |
+| `iter22-full` | 2026-04-14 | 98280c5+dirty | 41.33% | 1.11% | 86.59% | **45.36%** ⁶ | N/A |
+| `iter23-full` | 2026-04-14 | 5767ebe+dirty | 41.33% | 1.11% | **86.83%** ⁷ | 45.64% | N/A |
 
 ⁷ Iter 23: Hybrid column-aware extraction via PaddleOCR layout. For
 multi-column native pages (heuristic: ≥3 text elements both L & R of
@@ -80,7 +80,7 @@ cluster ~80–85%; most open parsers <70%. Charts is industry-wide below
 **Run stats**: 2,078 examples, 2,036 successful (98.0%), 42 failed
 (all `.jpg` — ParserX CLI only accepts PDF/DOCX). Wall clock **53 min**
 at concurrency=8. Avg latency 12.5s/doc. No VLM/OCR endpoint throttling.
-Commit: `a470a84` (working tree dirty, see iteration_backlog modifications).
+Commit: `35fc707` (working tree dirty, see iteration_backlog modifications).
 
 **Output**: `~/Projects/ParseBench/output/parserx/` (dashboard HTML,
 per-dim reports, CSV, rule-level metadata).

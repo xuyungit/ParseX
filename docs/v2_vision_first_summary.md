@@ -1,4 +1,4 @@
-# 视觉优先：本方版本小结（2026-09-30，分支 `vision-first`，提交 ad2403c 起）
+# 视觉优先：本方版本小结（2026-09-30，分支 `vision-first`，提交 95b419b 起）
 
 供与另一团队对比用。详细过程见 `docs/redesign_guide.md` v1.55–v1.72、`docs/annotation_changes.md`，以及 worktree 里的报告 `eval_reports/2026-09-30_vision_first_c1.md`、`eval_reports/2026-09-30_scanned_probe.md`。
 

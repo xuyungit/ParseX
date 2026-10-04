@@ -29,7 +29,8 @@ node_modules/
 reports/
 
 # Ground truth / eval data (may contain internal documents)
-ground_truth/
+ground_truth/*
+!ground_truth/README.md
 ground_truth_public/*
 !ground_truth_public/README.md
 !ground_truth_public/basic_report/

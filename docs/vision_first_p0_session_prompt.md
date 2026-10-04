@@ -4,7 +4,7 @@
 
 ---
 
-你在 /Users/xuyun/Projects/ParserX 工作。**第一步先进入已有的 worktree**：`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first`（分支 `vision-first`，基于 main 的 d28ed8b，已有 E0 的提交 a65e8bd、ec9d910 及其后的文档提交；未合并、未推送）。用 EnterWorktree 的 `path` 进入，不要新建 worktree（新建会从落后几个月的 origin 开分支），也不要在 main 的检出里改代码。这是一个把 PDF / DOCX（含扫描件与图片）转成适合大模型使用的 Markdown 的工具，设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
+你在 /Users/xuyun/Projects/ParserX 工作。**第一步先进入已有的 worktree**：`/Users/xuyun/Projects/ParserX/.claude/worktrees/vision-first`（分支 `vision-first`，基于 main 的 0772ed3，已有 E0 的提交 ccbdf84、a3b894a 及其后的文档提交；未合并、未推送）。用 EnterWorktree 的 `path` 进入，不要新建 worktree（新建会从落后几个月的 origin 开分支），也不要在 main 的检出里改代码。这是一个把 PDF / DOCX（含扫描件与图片）转成适合大模型使用的 Markdown 的工具，设计与研发指导在 docs/redesign_guide.md，所有决策以它为准。
 
 **这次会话的任务**：按本方执行计划 docs/v2_vision_first_execution.md 做 **P0 探针**（§3 的输入、契约、指标，§7 的顺序；共同计划 docs/v2_vision_first_plan.md §6.1），写 P0 报告向用户汇报，按结论再做 V。
 

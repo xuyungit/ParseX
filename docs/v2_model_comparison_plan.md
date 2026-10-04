@@ -36,7 +36,7 @@ gpt-6-sol 已测过（s5、d1 的 Codex），费用高，不再测，只作参�
 | 接口 | Responses | Responses、Chat；循环用 Chat | 只有 Chat（Responses 404，服务自动回退，每个服务实例多一次请求） |
 | temperature | 拒绝 | 接受 | 接受 |
 | 思考强度 | none / low / medium | 未逐值测过 | 只接受 low / high / max；none 会被拒，报错是中文，服务认不出、不会自动去掉 |
-| 思考内容 | 加密，Responses 交回 | `reasoning_content`，工具循环里交回（aada802） | 未测 |
+| 思考内容 | 加密，Responses 交回 | `reasoning_content`，工具循环里交回（4075fa6） | 未测 |
 | 图片 | 可以 | **可以**（今天探测：读出了样张的文字） | **可以**（同上） |
 | 结构化输出（json_schema / json_object） | 支持 | 未测 | 未测；Q100 的描述测试是把 schema 写在提示里 |
 | 价格（每百万 token） | 0.10 / 缓存 0.01 / 输出 0.50 | 0.30 / 0.006 / 1.20（高峰） | **配置里没有**，费用显示"unpriced" |
@@ -133,11 +133,11 @@ M1 → M2 → M3 → M4 → M5 → M6。
 ## 7. 结果（2026-09-28，[报告](../eval_reports/2026-09-28_model_comparison.md)）
 
 - **M1、M2**：
-  - 模型条目与 `use` 已实施（4c1dd30）；`check_services.py --model` 已实施，三个条目与探测一致（e18f99a）。
+  - 模型条目与 `use` 已实施（4c1fa05）；`check_services.py --model` 已实施，三个条目与探测一致（737c4cc）。
   - 探测新发现：luna 除 minimal 外接受所有思考强度；DeepSeek 拒绝 json_schema；GLM 的 json_schema 接受但不遵守。
 - **M3（服务模型）**：先修两处。
-  - 7bf2ef3：DeepSeek 在 low 下有时想得很长，答案为空，条目把输出下限提到 8192。
-  - f048430：只支持 json_object 的模型要在提示里看到 schema；否则 GLM 的 66 个图片描述没有一个符合 schema。
+  - 9dac177：DeepSeek 在 low 下有时想得很长，答案为空，条目把输出下限提到 8192。
+  - f4459ac：只支持 json_object 的模型要在提示里看到 schema；否则 GLM 的 66 个图片描述没有一个符合 schema。
   - 修正后三者分数相当（char 0.950–0.952，表格 0.904–0.914）。全语料费用 luna $0.03、GLM $0.07、DeepSeek $0.21，GLM 最快。
 - **M4（图片描述）**：
   - 图中文字召回 DeepSeek 66%、GLM 58%、luna 49%。未证实的数：DeepSeek 75、GLM 45、luna 29。
