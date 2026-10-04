@@ -54,10 +54,15 @@ def test_the_scan_reader_takes_the_converted_page():
     assert result.blocks[0].anchors[0].bbox == (5.0, 10.0, 250.0, 30.0)  # 1000 px → 500 pt
 
 
-def test_digits_are_joined_only_inside_math():
+def test_digits_are_joined_inside_math_and_dotted_numbers_outside():
     assert region_text("text", "共 1 000 元，$1 2$ 与 $a b$") == "共 1 000 元，$12$ 与 $a b$"
     assert region_text("text", "$ 8. 4^{\\circ}$，当 $0. 2 5 \\leq \\eta$；7. 3.5.2 节") == \
-        "$ 8.4^{\\circ}$，当 $0.25 \\leq \\eta$；7. 3.5.2 节"
+        "$ 8.4^{\\circ}$，当 $0.25 \\leq \\eta$；7.3.5.2 节"
+    # Q151: a clause number or a date written apart is joined; numbers side by side, a figure label, a list item
+    # before a year, a sentence's end are not touched
+    assert region_text("text", "4. 1 本合同货物交付地点；见 6. 1.1 条；2026. 07. 18") == \
+        "4.1 本合同货物交付地点；见 6.1.1 条；2026.07.18"
+    assert region_text("text", "1.5 3.2；Fig. 3；1. 2023 年；共 4 项。2 号") == "1.5 3.2；Fig. 3；1. 2023 年；共 4 项。2 号"
 
 
 def _pdf(pages: int) -> bytes:

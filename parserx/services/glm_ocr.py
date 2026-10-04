@@ -11,8 +11,10 @@ the same set.  What the conversion changes, and only there, is the Markdown wrap
 region's text: a title's leading ``#``s, a centring ``<div>``, a picture region's reference to its own crop (a
 picture inside a text region is named the way the PaddleOCR-VL engine names its crops), and the spaces it writes
 between the digits and the decimal point of a number inside LaTeX (``\\frac{1 2}{4 8}``, ``0. 2 5``: typeset,
-those spaces are not there).  Outside LaTeX a space is the text's own: a section number it now and then splits
-("7. 3.5.2", on blurred scans) is left as written.  The service's answer is what the cache keeps, so a change here needs no new request.
+those spaces are not there), and outside LaTeX the space it writes after the point of a dotted number — a section
+or clause number or a date, "7. 3.5.2", "4. 1", "2026. 07. 18" (Q151: 100 such places in the bid document and the corpus, 99 of them joined
+in the local reading of the same image or page, none spaced; PaddleOCR-VL writes none).  A space elsewhere is the
+text's own.  The service's answer is what the cache keeps, so a change here needs no new request.
 
 A page larger than ``MAX_PAGE_PT`` is scaled down before it is sent, and a PDF over ``MAX_BYTES`` is sent in
 parts (``pdf_parts``).
@@ -38,6 +40,7 @@ _HEADING = re.compile(r"^\s*#{1,6}\s+")
 _CENTRED = re.compile(r"</?div\b[^>]*>", re.I)
 _MATH = re.compile(r"(\$\$.*?\$\$|\$[^$\n]*?\$)", re.S)
 _SPACED_DIGITS = re.compile(r"(?<=[\d.])[ \t]+(?=\d)|(?<=\d)[ \t]+(?=\.)")  # "1 2", "0. 2 5" (in math only)
+_DOTTED = re.compile(r"(?<![\d.])\d{1,4}(?:\.[ \t]*\d{1,3})+(?!\d)")  # "7. 3.5.2", "4. 1", "2026. 07. 18"
 # A picture inside a region's text, by its box in the page's pixels: written the way the PaddleOCR-VL engine names
 # its crops, which ``scan.take_pictures`` reads.
 _PICTURE = re.compile(r"!\[[^\]]*\]\(page=\d+,\s*bbox=\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]\)")
@@ -166,13 +169,23 @@ def glm_pages(answer: dict) -> list[dict]:
     return out
 
 
+def _outside_math(text: str, change) -> str:
+    """*text* with *change* applied to what lies outside its LaTeX."""
+    out, cursor = [], 0
+    for m in _MATH.finditer(text):
+        out += [change(text[cursor:m.start()]), m.group(0)]
+        cursor = m.end()
+    return "".join(out) + change(text[cursor:])
+
+
 def region_text(label: str, content: str) -> str:
     """A region's content without GLM-OCR's Markdown wrapping (see the module docstring)."""
     text = _PICTURE.sub(lambda m: "![](imgs/img_in_image_box_{}_{}_{}_{}.jpg)".format(*m.groups()), content)
     text = _CENTRED.sub("", text).strip()
     if label in _TITLES:
         text = _HEADING.sub("", text)
-    text = _MATH.sub(lambda m: _SPACED_DIGITS.sub("", m.group(0)), text)
+    text = _outside_math(_MATH.sub(lambda m: _SPACED_DIGITS.sub("", m.group(0)), text),
+                         lambda part: _DOTTED.sub(lambda m: re.sub(r"[ \t]+", "", m.group(0)), part))
     if label == "display_formula" and text.startswith("$$") and text.endswith("$$"):
         text = f"$$ {text[2:-2].strip()} $$"  # one line, as the scan engine writes a formula
     return text
