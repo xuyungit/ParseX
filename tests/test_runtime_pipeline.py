@@ -79,7 +79,7 @@ def test_pdf_runs_through_every_step_and_balances(pdf, tmp_path):
     assert [e.tool for e in outcome.envelopes] == ["workspace_init", "run_pipeline", "export"]
     steps = [s.step for s in outcome.envelopes[1].result.steps]
     assert steps == ["recognize", "layout", "reading", "describe_figure", "structure", "check"]
-    assert "SENTINEL-OCR 扫描文字 3 件" in outcome.markdown and "> 图片说明：" in outcome.markdown
+    assert "SENTINEL-OCR 扫描文字 3 件" in outcome.markdown and "> 图片说明（模型生成）：" in outcome.markdown
     assert outcome.markdown.startswith("<!-- PAGE 1 -->\n\n# Annual Report")  # set larger than the body: the title
     assert "\n## SENTINEL-OCR 标题\n" in outcome.markdown  # the scan engine's paragraph_title, under it
     actors = {b["text"]: b["decisions"][-1]["actor"] for b in sidecar["blocks"] if b["kind"] == "title" and b["level"]}

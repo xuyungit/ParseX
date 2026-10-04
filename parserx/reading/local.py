@@ -5,8 +5,11 @@ per page; its readings are local results kept in the derived cache, never reques
 from __future__ import annotations
 
 import hashlib
+import io
 from importlib.metadata import version as _version
 from typing import Any
+
+from PIL import Image
 
 from parserx.cache.store import ResponseCache
 from parserx.layout.detector import decode
@@ -47,3 +50,42 @@ def read_cached(reader, png: bytes, cache: ResponseCache | None) -> list[Line]:
     if cache is not None:
         cache.put_derived("reading", key, [[list(b), t, s] for b, t, s in lines])
     return lines
+
+
+# Measured on the 385 images of one bid document (2026-10-04), against reading every image all four ways: 2.1 readings
+# an image instead of 4 (about 0.8 s on this Mac), and the same best reading for every image.
+ON_END = 0.5  # share of the lines standing on end (taller than wide) that says the image is turned a quarter
+FEW = 30  # characters read upright below which the image is read turned a quarter too
+UNSURE = 0.9  # the reading's mean confidence below which the image may be upside down
+
+
+def read_upright(reader, data: bytes, cache: ResponseCache | None) -> list[Line]:
+    """The reading of an image the way up it reads best (Q150).  Scanned certificates and statements are often put in
+    turned a quarter or upside down (a third of the images of one bid document), and the reader has no angle
+    classifier: turned text comes back as garbage.  The image is read as it stands; when its lines stand on end, or
+    almost nothing is read, it is read turned a quarter each way too, and when the reading is unsure, turned half
+    way; the reading with the most confident characters wins.  Boxes are in the pixels of the image as turned: the
+    reading is for its text, not for places."""
+    lines = read_cached(reader, data, cache)
+    chars = sum(len(t) for _, t, _ in lines)
+    on_end = sum(1 for (x0, y0, x1, y1), t, _ in lines if len(t) > 1 and y1 - y0 > 1.5 * (x1 - x0))
+    across = sum(1 for (x0, y0, x1, y1), t, _ in lines if len(t) > 1 and x1 - x0 > 1.5 * (y1 - y0))
+    turns = ([90, 270] if chars < FEW or on_end > ON_END * max(on_end + across, 1) else []) \
+        + ([180] if chars and _confident(lines) / chars < UNSURE else [])
+    for angle in turns:
+        other = read_cached(reader, _turned(data, angle), cache)
+        if _confident(other) > _confident(lines):
+            lines = other
+    return lines
+
+
+def _confident(lines: list[Line]) -> float:
+    return sum(len(t) * s for _, t, s in lines)
+
+
+def _turned(data: bytes, angle: int) -> bytes:
+    out = io.BytesIO()
+    with Image.open(io.BytesIO(data)) as image:
+        image.convert("RGB").rotate(angle, expand=True).save(out, "PNG")
+    return out.getvalue()
+

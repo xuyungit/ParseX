@@ -95,15 +95,15 @@ def test_a_figure_note_follows_its_image_and_is_stripped_by_the_evaluator():
     md = render_markdown(_state([_block("p", BlockKind.TEXT, 0, text="正文"), _figure("f", 1, semantic=note),
                                  _block("q", BlockKind.TEXT, 2, text="后文")], pages=1))
     image_file = ASSET.path.split("/")[-1]
-    assert f"![图表](images/{image_file})\n\n> 图片说明：柱状图：各月产量，6 月最高，约 150 吨。\n" in md
+    assert f"![图表](images/{image_file})\n\n> 图片说明（模型生成）：柱状图：各月产量，6 月最高，约 150 吨。\n" in md
     canonical = canonicalize(md)
     assert canonical.image_count == 1
     assert "产量" not in canonical.text and "正文" in canonical.text and "后文" in canonical.text
     english = render_markdown(_state([_figure("f", 1, semantic=note)], pages=1), lang="en")
-    assert f"![Chart](images/{image_file})\n\n> Image description: 柱状图" in english
+    assert f"![Chart](images/{image_file})\n\n> Image description (generated): 柱状图" in english
     older = ChartSemantic(chart_type=Evidenced(value="bar", level=EvidenceLevel.VISIBLE),
                           title=Evidenced(value="月产量", level=EvidenceLevel.VISIBLE))
-    assert "> 图片说明：bar：月产量" in render_markdown(_state([_figure("f", 1, semantic=older)], pages=1))
+    assert "> 图片说明（模型生成）：bar：月产量" in render_markdown(_state([_figure("f", 1, semantic=older)], pages=1))
 
 
 def test_rendering_is_deterministic():
@@ -291,10 +291,10 @@ def test_a_content_image_read_in_full_is_its_text_in_a_labelled_quote():
     md = render_markdown(_read_image())
     assert f"![" not in md
     assert (f'正文\n\n<!-- parserx:image-text src="images/{image}" page=1 -->\n'
-            f"> **〔图片识别〕** 某公司营业执照（副本）　[原图](images/{image})\n>\n> **营业执照**\n>\n"
+            f"> **〔图片识别〕** 图片说明（模型生成）：某公司营业执照（副本）　[原图](images/{image})\n>\n> **营业执照**\n>\n"
             f"> | 名称 | 数值 |\n> | --- | --- |\n> | 甲 | 10 |\n<!-- /parserx:image-text -->\n\n后文") in md
     english = render_markdown(_read_image(), lang="en")
-    assert f"> **[Text from image]** 某公司营业执照（副本）　[original](images/{image})" in english
+    assert f"> **[Text from image]** Image description (generated): 某公司营业执照（副本）　[original](images/{image})" in english
     canonical = canonicalize(md)  # the evaluator reads the transcription as text, without the label
     assert "营业执照" in canonical.text and "甲 10" in canonical.text and "副本" not in canonical.text
 
@@ -312,7 +312,7 @@ def test_a_content_image_whose_reading_the_text_lacks_is_shown_too():
 def test_text_read_in_a_picture_follows_its_note():
     # a picture (no description said content) whose text was read, e.g. by its route: image, note, then the text
     md = render_markdown(_read_image(kind="screenshot"))
-    assert md.index("![截图]") < md.index("> 图片说明：某公司营业执照（副本）") < md.index("> **〔图片识别〕**\n>\n> **营业执照**")
+    assert md.index("![截图]") < md.index("> 图片说明（模型生成）：某公司营业执照（副本）") < md.index("> **〔图片识别〕**\n>\n> **营业执照**")
 
 
 def test_a_scanned_page_is_marked():

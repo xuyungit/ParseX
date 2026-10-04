@@ -238,7 +238,7 @@ def test_session_through_every_tool(ws, tmp_path):
     env, _ = _call("export", ws, {"out": str(tmp_path / "out")}, context=context)
     assert _assert_contract(env, "export")["result"]["accepted"]
     markdown = (tmp_path / "out" / "doc.md").read_text()
-    assert "# SENTINEL-OCR 标题" in markdown and f"![照片](" in markdown and f"> 图片说明：{VLM_TEXT}" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
+    assert "# SENTINEL-OCR 标题" in markdown and f"![照片](" in markdown and f"> 图片说明（模型生成）：{VLM_TEXT}" in markdown and "| SENTINEL-OCR 甲 | 8 |" in markdown
 
     state = Workspace.open(ws).load()
     assert state.stats.requests == {"ocr": 1, "vlm": 2} and state.stats.cost_usd == pytest.approx(2 * (1000 * 0.10 + 100 * 0.50) / 1e6)
@@ -1139,3 +1139,30 @@ def test_a_number_the_image_reading_lacks_is_open_work(ws, kind, seen, listed):
             apply(state, Described(figure.id, figure.anchors[-1], figure.semantic, None, ""), "vlm")
         assert not [u for u in unresolved_items(state) if u.kind == "caption_number_unseen"]
 
+
+
+def test_a_figure_is_described_with_its_text_as_the_local_reader_reads_it(ws):
+    # Q150: the image's local reading goes with the request as a reference for names and numbers
+    class Sees:
+        name, version = "reading", "sees-2"
+
+        def read(self, png):
+            return [((0, 0, 200, 10), "华通智能装备股份有限公司", 0.98)]
+
+    class Context(_context()):
+        def _new_reader(self):
+            return Sees()
+
+    contexts = []
+    describe = Context.fake_vlm.describe_image
+
+    def recording(image_path, prompt, **kwargs):
+        contexts.append(kwargs.get("context", ""))
+        return describe(image_path, prompt, **kwargs)
+
+    Context.fake_vlm.describe_image = recording
+    config = _config()
+    config.runtime.layout_shadow = config.runtime.page_reading = False
+    _call("run_pipeline", ws, {}, config=config, context=Context)
+    described = [c for c in contexts if "图片里的文字" in c]
+    assert described and all("华通智能装备股份有限公司" in c and "以图上印的为准" in c for c in described)

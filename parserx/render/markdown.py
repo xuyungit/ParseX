@@ -6,13 +6,15 @@
   code) keeps its lines, and one the text leaves open is closed at the block's end: no block turns the rest of the
   document into code (round 1, a fence on a joined line);
 - tables from ``TableGrid``: GFM, or HTML when GFM cannot express them;
-- figures: ``![<type>](images/<file>)`` followed by the note ``> 图片说明：…`` (one or two sentences, Q121) — the
+- figures: ``![<type>](images/<file>)`` followed by the note ``> 图片说明（模型生成）：…`` (one or two sentences, Q121,
+  Q150: the label says the model wrote it) — the
   layout the evaluator strips
   as a description; the label never repeats the description;
 - text read inside an image (IO6-5): a quote opening with ``**〔图片识别〕**``, between the comments
   ``<!-- parserx:image-text src="images/<file>" page=n -->`` and ``<!-- /parserx:image-text -->`` (for programs).
   An image whose words are its content (described as content) and whose local reading the text has in full is not
-  shown: the label line carries its note and a link to the original; any other image stays above its text;
+  shown: the label line carries its note (``**〔图片识别〕** 图片说明（模型生成）：…``: the model's sentence, then the
+  image's own words below) and a link to the original; any other image stays above its text;
 - ``<!-- PAGE n -->`` for every PDF page, ``<!-- PAGE n scanned -->`` for one read by the scan engine, between blocks
   (a paragraph or table continued across the page is written whole before it); the page's running heads, feet and
   page numbers go into it (``<!-- PAGE 2 · 页眉：… · 页码：624 -->``; ``page_furniture``: "comment", the default —
@@ -173,7 +175,7 @@ def _image_text(state: DocumentState, figure: str, inside: list[Block], assets: 
     note = note_of(block.semantic)
     content = note is not None and note.type == "content"
     hidden = content and src is not None and text_stands_for_image(state, block)
-    label = f"**{IMAGE_TEXT_LABEL[lang]}**" + (f" {note.caption}" if content and note.caption else "") \
+    label = f"**{IMAGE_TEXT_LABEL[lang]}**" + (f" {NOTE_LABEL[lang]}{note.caption}" if content and note.caption else "") \
         + (f"　[{ORIGINAL[lang]}]({src})" if hidden else "")
     pieces = [label]
     for child in inside:
@@ -423,7 +425,9 @@ TYPE_NAMES = {"zh": {"content": "图片", "chart": "图表", "diagram": "示意�
                      "other": "图片"},
               "en": {"content": "Image", "chart": "Chart", "diagram": "Diagram", "photo": "Photo", "screenshot": "Screenshot",
                      "seal": "Seal or logo", "other": "Image"}}
-NOTE_LABEL = {"zh": "图片说明：", "en": "Image description: "}
+# a description is the service model's sentence about an image, never the image's own words: the label says so
+# (Q150 — a reader of a bid document took a description's misread company name for the image's text)
+NOTE_LABEL = {"zh": "图片说明（模型生成）：", "en": "Image description (generated): "}
 SCAN_LABEL = {"zh": "扫描图像", "en": "Scanned page"}
 
 
@@ -438,7 +442,7 @@ def semantic_block(block: Block, lang: str = "zh") -> str:
 
 
 def semantic_text(semantic, lang: str = "zh") -> str:
-    """A figure's note as the Markdown shows it: one blockquote line right after the image line ("> 图片说明：…"),
+    """A figure's note as the Markdown shows it: one blockquote line right after the image line ("> 图片说明（模型生成）：…"),
     which is what the evaluation drops as a description."""
     note = note_of(semantic)
     if note is None or not note.caption:

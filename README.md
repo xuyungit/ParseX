@@ -104,11 +104,11 @@ document, `parse` says which service cannot work as configured.
 
 **Images** are handled by what they are for:
 
-- Screenshots, charts, diagrams, photos, seals: the image, then one line `> 图片说明：…` (one or two sentences: the point, what is marked, key numbers); the words in it are not transcribed.
-- Images whose words are their content — invoices, certificates, document pages, pictured tables, formulas: the words are transcribed as text, in a quote opening with `> **〔图片识别〕** <note>　[原图](images/…)`. When the local reading of the image finds nothing the transcription lacks, the image itself is left out (the label line links to it); when something may be missing, or the text has formulas, the image stays above the quote.
+- Screenshots, charts, diagrams, photos, seals: the image, then one line `> 图片说明（模型生成）：…` (one or two sentences: the point, what is marked, key numbers); the words in it are not transcribed. A description is the service model's summary, not the image's words: quote names, numbers and codes from a transcription or the image.
+- Images whose words are their content — invoices, certificates, document pages, pictured tables, formulas: the words are transcribed as text, in a quote opening with `> **〔图片识别〕** 图片说明（模型生成）：<note>　[原图](images/…)`: the first line is the model's summary, the words below are the transcription. When the local reading of the image finds nothing the transcription lacks, the image itself is left out (the label line links to it); when something may be missing, or the text has formulas, the image stays above the quote.
 - The comments `<!-- parserx:image-text src="images/…" page=n -->` and `<!-- /parserx:image-text -->` around the quote tell a program which text was read from an image, and from which file.
 
-With `--lang en` these labels are English (`Image description:`, `[Text from image]`, `original`).
+With `--lang en` these labels are English (`Image description (generated):`, `[Text from image]`, `original`).
 
 A second document with the same name in the same place goes to `<name>-2/`.
 
