@@ -20,7 +20,8 @@ from parserx.tools.envelope import DOCUMENT_ITEMS, DocText, Unresolved, Unresolv
 from parserx.workspace.queries import HIDDEN, block_unit, ordered, outline
 from parserx.hierarchy.layout_titles import layout_titles
 from parserx.hierarchy.numbering_gaps import numbering_gaps, series_successors, unclear_nesting
-from parserx.reading.compare import added_from_reading, unaccounted_lines, unseen_segments, within_tables
+from parserx.reading.compare import (added_from_reading, read_inside, unaccounted_lines, unseen_segments,
+                                     within_tables)
 
 # The label of a block's reading replaced by a rewrite from the page image where no reading confirms the rewrite
 # (vision-first, scanned pages): kept on the block, listed as ``reading_disagreement`` until one is chosen or the
@@ -161,11 +162,14 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
         kind = UnresolvedKind.BUDGET_SKIPPED if missing.block in skipped else UnresolvedKind.BLOCK_FAILED
         items.append(Unresolved(target=missing.block, kind=kind, detail=missing.reason))
     listed = {m.block for m in state.missing}
+    # a title read inside an image is written in bold whatever its level: no level to decide (Q157)
+    in_images = {b.id for blocks in read_inside(state).values() for b in blocks}
     for block in state.blocks:
         if block.status == BlockStatus.FAILED and block.id not in listed:
             items.append(Unresolved(target=block.id, kind=UnresolvedKind.BLOCK_FAILED,
                                     detail=block.decisions[-1].reason if block.decisions else "failed"))
-        elif block.kind == BlockKind.TITLE and block.level is None and block.status not in HIDDEN:
+        elif block.kind == BlockKind.TITLE and block.level is None and block.status not in HIDDEN \
+                and block.id not in in_images:
             items.append(Unresolved(target=block.id, kind=UnresolvedKind.STRUCTURE_PENDING,
                                     detail="title level not decided"))
         elif block.status == BlockStatus.DEGRADED and any(d.choice == "pending" for d in block.decisions):
@@ -290,7 +294,7 @@ def _all_items(state: DocumentState) -> list[Unresolved]:
             target=block_id, kind=UnresolvedKind.FIGURE_WITHOUT_CONTENT,
             detail="this image is shown without a description and without transcribed text after it; look at it: "
                    "describe it if it carries information, or close the item with the reason (a code, a logo …)"))
-    from parserx.reading.compare import lacking_in_transcription, read_inside
+    from parserx.reading.compare import lacking_in_transcription
     from parserx.tools.describe_figure import unseen_in_description
 
     blocks = {b.id: b for b in state.blocks}
