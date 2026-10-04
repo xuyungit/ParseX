@@ -125,6 +125,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "failure.cache_miss_offline": {"zh": "离线回放缺少记录", "en": "no recorded response (offline)"},
     "failure.other": {"zh": "处理失败", "en": "failed"},
     "notice.agent_audit": {"zh": "Agent 访问了工作目录以外的路径：{hits}", "en": "The agent named paths outside its directory: {hits}"},
+    "notice.cache_pruned": {"zh": "清理缓存：删除了 {files} 个 {days} 天未用的条目（{mb} MB）",
+                            "en": "cache: {files} entries not used for {days} days deleted ({mb} MB)"},
     "notice.config_defaults": {"zh": "没有个人配置：运行 `parserx init`，把 key 写进 ~/.config/parserx/config.yaml",
                                "en": "No personal config: run `parserx init` and put the keys in ~/.config/parserx/config.yaml"},
     "notice.preflight_ocr": {"zh": "扫描引擎未配置：扫描页和图片里的文字不会被识别（运行 `parserx check` 查看怎么补）",

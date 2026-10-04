@@ -306,6 +306,7 @@ class CacheConfig(BaseModel):
 
     mode: Literal["off", "read_write", "read_only", "refresh"] = "off"
     dir: str = ".parserx_cache"
+    keep_days: int = 0  # entries not used this many days are deleted when ``parserx parse`` starts; 0: kept (Q152)
 
 
 class ParserXConfig(BaseModel):

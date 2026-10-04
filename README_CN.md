@@ -141,6 +141,12 @@ runtime:
 旧版本的配置键（`processors`、`providers`、`pipeline` 等）会被忽略；`parserx init` 把旧的个人配置另存为
 `config.yaml.v1.bak`，并把旧 `~/.config/parserx/.env` 里的值搬过来。
 
+**缓存**：扫描引擎和服务模型的回答、本地读数与版面检测结果存在 `~/.cache/parserx`（`cache.dir`），同一请求再来时直接取用、
+不再付费；请求里任何会影响回答的东西（模型、提示、图片的每个字节、依赖的版本）变了就是新请求。Agent 的复核不缓存。
+条目在 90 天没被用到时，`parserx parse` 启动时删掉（`cache.keep_days`，0 为不删）；`parserx cache` 看大小、
+`--prune` 立即清理、`--clear` 全部删除（升级后旧条目已用不上时）。版面模型（`models/`）不在其列。缓存里有文档内容，
+处理涉密文件可用 `cache.mode: off`。
+
 ## 评测
 
 ```bash

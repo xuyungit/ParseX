@@ -146,6 +146,14 @@ temperature, the reasoning efforts it accepts (`efforts`), the strongest structu
 versions (`processors`, `providers`, `pipeline` …) are ignored; `parserx init` keeps an old personal config as
 `config.yaml.v1.bak` and carries the values of an old `~/.config/parserx/.env` over.
 
+**Cache**: the scan engine's and service model's answers, the local readings and layout detections are kept in
+`~/.cache/parserx` (`cache.dir`) and reused for the same request, which is not paid again; a request is new when
+anything that shapes its answer changes (model, prompt, every byte of an image, a dependency's version). The agent's
+review is not cached. An entry not used for 90 days is deleted when `parserx parse` starts (`cache.keep_days`, 0 keeps
+everything); `parserx cache` shows the size, `--prune` prunes now, `--clear` deletes all (after an upgrade, when old
+entries are of no use). The layout model (`models/`) is never touched. The cache holds document content: for
+confidential files, `cache.mode: off`.
+
 ## Evaluation
 
 ```bash

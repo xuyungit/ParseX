@@ -85,9 +85,13 @@ services:
 # Response cache (guide §8.3): every scan engine / VLM response is recorded and
 # replayed.  read_write: replay hits, record misses · read_only: offline
 # replay, a miss is an error · refresh: always request and record · off.
+# keep_days (Q152): an entry not used for that many days — not written, not read back — is deleted when `parserx
+# parse` starts (at most once a day); the layout model under models/ stays.  0 keeps everything.  `parserx cache`
+# shows the size and prunes or clears by hand.
 cache:
   mode: read_write
   dir: ~/.cache/parserx
+  keep_days: 90
 
 # Scheduling (guide §8.2): transport retries happen in the gateway (the OpenAI
 # SDK never retries); prices turn recorded token usage into cost_usd; budget

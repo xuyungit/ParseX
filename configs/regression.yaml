@@ -6,3 +6,4 @@ services:
 cache:
   mode: read_write
   dir: .parserx_cache
+  keep_days: 0  # evaluation and experiment caches (frozen runs among them) are kept; prune by hand

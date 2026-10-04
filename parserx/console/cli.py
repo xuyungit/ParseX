@@ -108,6 +108,12 @@ def parse_v2(args: argparse.Namespace, config: ParserXConfig, loaded: ConfigLoad
         reporter(Notice("config_defaults", "warning"))
     for notice in preflight(config):  # what cannot work, said before the first document (R4)
         reporter(notice)
+    from parserx.cache.store import maybe_prune
+
+    pruned = maybe_prune(config.cache)  # entries not used for cache.keep_days days (Q152)
+    if pruned and pruned[0]:
+        reporter(Notice("cache_pruned", "info", {"files": pruned[0], "mb": f"{pruned[1] / 1e6:.1f}",
+                                                 "days": config.cache.keep_days}))
     if config.runtime.layout_shadow:  # the layout model, fetched before the first document when missing (R5)
         from parserx.check import fetch_layout_model
         from parserx.layout.detector import model_file

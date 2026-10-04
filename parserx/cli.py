@@ -84,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     _check_arguments(check_cmd)
 
+    cache_cmd = sub.add_parser("cache", help="The response cache: its size and age; prune or clear it")
+    from parserx.cache.command import add_arguments as _cache_arguments
+
+    _cache_arguments(cache_cmd)
+
     init_cmd = sub.add_parser("init", help="Write the personal config (~/.config/parserx/config.yaml): keys and model choices")
     init_cmd.add_argument("--force", action="store_true",
                           help="Write a new personal config even if one exists (the old one kept as config.yaml.bak)")
@@ -211,6 +216,10 @@ def main() -> None:
         from parserx.check import run as _check
 
         sys.exit(_check(args))
+    if args.command == "cache":
+        from parserx.cache.command import run as _cache
+
+        sys.exit(_cache(args))
     if args.command == "init":
         _cmd_init(force=args.force, download=not args.no_download)
     elif args.command == "eval":
