@@ -16,7 +16,7 @@ from parserx.ir.base import IRModel
 from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, BlockStatus, DocumentStatus
 from parserx.ir.semantic import note_of
-from parserx.ir.state import DocumentState, Missing
+from parserx.ir.state import DocumentState, Missing, StepTime
 from parserx.render.markdown import image_file
 from parserx.workspace.queries import HIDDEN, block_unit, ordered
 
@@ -101,17 +101,30 @@ class AgentRecord(IRModel):
     review_open_after: int
     audit: list[str] = []  # hygiene notes: paths outside the agent's directory it named, other tools it used
     retries: int = 0  # sessions started again after a capacity failure
+    # where its time went (speed plan §2): model turns, thinking (no tool running) against tool time, per tool
+    turns: int | None = None
+    tokens: dict[str, int] = {}  # input / cached_input / output / reasoning
+    model_s: float | None = None
+    tool_s: float | None = None
+    steps: int | None = None  # model steps (Codex: intervals with no command running)
+    longest_step_s: float | None = None
+    tools: dict[str, dict[str, float]] = {}  # tool → calls / s (the tool's own time, from its envelope)
 
 
 class Processing(IRModel):
     engines: dict[str, str]  # engine → version / model, from the readings the document uses
     requests: dict[str, int]
     cost_usd: float | None
-    wall_time_s: float
+    wall_time_s: float  # the tool calls that used a service, summed (not the document's time: see wall_s)
     # ``parserx parse`` (P4-1): fixed · hybrid:agent · hybrid:fallback (with the reason); None from other entries
     runtime: str | None = None
     runtime_note: str | None = None
     agent: AgentRecord | None = None
+    # where the time and the money go (speed plan §2)
+    wall_s: float | None = None  # the whole document, read to package in place (``parserx parse``)
+    stages: dict[str, float] = {}  # read / process / agent / export
+    steps: list[StepTime] = []  # the pipeline's steps
+    models: dict[str, dict[str, float]] = {}  # model → calls / input / cached_input / output / usd, all calls
 
 
 class DoubtEntry(IRModel):
@@ -169,7 +182,8 @@ def document_summary(state: DocumentState, name: str, image_dir: str = "images")
         tables=sum(1 for b in shown if b.kind == BlockKind.TABLE),
         images=image_entries(state, image_dir),
         processing=Processing(engines=_engines(state), requests=dict(sorted(state.stats.requests.items())),
-                              cost_usd=state.stats.cost_usd, wall_time_s=state.stats.wall_time_s),
+                              cost_usd=state.stats.cost_usd, wall_time_s=state.stats.wall_time_s,
+                              steps=state.stats.steps, models=state.stats.models),
         review=_review(state),
         doubts=_doubts(state),
         disagreements=_disagreements(state),

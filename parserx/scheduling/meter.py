@@ -12,8 +12,11 @@ some usage had no price (unknown, not free).
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import Iterator
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,8 @@ class MeterSnapshot:
     skipped_budget: dict[str, int] = field(default_factory=dict)
     tokens: dict[str, dict[str, int]] = field(default_factory=dict)  # service → input / cached_input / output
     cost_usd: float | None = 0.0
+    # model → calls / input / cached_input / output / usd (priced calls only), for where the money goes
+    models: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 class RequestMeter:
@@ -44,6 +49,7 @@ class RequestMeter:
             self._cache_misses: Counter[str] = Counter()
             self._skipped: Counter[str] = Counter()
             self._tokens: dict[str, Counter[str]] = {}
+            self._models: dict[str, Counter[str]] = {}
             self._cost = 0.0
             self._unpriced = False
 
@@ -70,12 +76,19 @@ class RequestMeter:
             self._skipped[service] += 1
 
     def usage(self, service: str, *, input_tokens: int, cached_input_tokens: int, output_tokens: int,
-              usd: float | None) -> None:
+              usd: float | None, model: str | None = None) -> None:
         with self._lock:
             tokens = self._tokens.setdefault(service, Counter())
             tokens["input"] += input_tokens
             tokens["cached_input"] += cached_input_tokens
             tokens["output"] += output_tokens
+            if model:
+                used = self._models.setdefault(model, Counter())
+                used["calls"] += 1
+                used["input"] += input_tokens
+                used["cached_input"] += cached_input_tokens
+                used["output"] += output_tokens
+                used["usd"] += usd or 0.0
             if usd is None:
                 self._unpriced = True
             else:
@@ -93,4 +106,32 @@ class RequestMeter:
                 tokens={s: {k: t[k] for k in ("input", "cached_input", "output")}
                         for s, t in sorted(self._tokens.items())},
                 cost_usd=None if self._unpriced else round(self._cost, 8),
+                models={m: dict(c) for m, c in sorted(self._models.items())},
             )
+
+
+class LocalClock:
+    """Calls and seconds of local model work by kind (``reading``, ``layout``), process-wide: the local readers are
+    created in many places with no handle to a run; steps take differences (``scheduling/timing.py``)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._calls: Counter[str] = Counter()
+        self._seconds: Counter[str] = Counter()
+
+    @contextmanager
+    def time(self, kind: str) -> Iterator[None]:
+        t = time.perf_counter()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._calls[kind] += 1
+                self._seconds[kind] += time.perf_counter() - t
+
+    def snapshot(self) -> dict[str, tuple[int, float]]:
+        with self._lock:
+            return {k: (self._calls[k], self._seconds[k]) for k in self._calls}
+
+
+LOCAL = LocalClock()

@@ -53,6 +53,7 @@ from parserx.ir.anchor import AssetAnchor
 from parserx.ir.enums import BlockKind, DocumentStatus, ImageRoute, PageStatus
 from parserx.ir.state import AccountingSummary, DocumentState, ReadLine
 from parserx.runtimes.events import Step
+from parserx.scheduling.timing import StepClock
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
 from parserx.tools import (added_text, describe_figure, image_furniture, recognize, second_reading, structure,
@@ -107,6 +108,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     steps: list[StepSummary] = []
     failures: list[Failure] = []
 
+    clock = StepClock(ctx.meter)  # where the time goes (speed plan §2)
+    clock.start("recognize")
     state = ctx.ws.load()
     pending = [p.n for p in state.pages if p.status == PageStatus.PENDING]
     if pending:
@@ -116,16 +119,19 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         steps.append(StepSummary(step="recognize", detail=f"scan engine on {len(pending)} pages, "
                                                           f"{len(out.failures)} failures"))
 
+    clock.start("scan_furniture")
     with ctx.ws.txn("tool:process:scan_furniture") as state:  # a scanning app's mark on every page (P3)
         furniture = mark_scan_furniture(state)
     if furniture:
         steps.append(StepSummary(step="scan_furniture", detail=f"{len(furniture)} repeated margin blocks excluded"))
 
+    clock.start("upright")
     if ctx.config.runtime.upright_images and (todo := upright.todo(ctx.ws.load())):  # before anything reads them
         ctx.report(Step("process", "upright", total=len(todo)))
         turned = upright.turn_upright(ctx, todo)
         steps.append(StepSummary(step="upright", detail=f"{turned} of {len(todo)} images turned upright"))
 
+    clock.start("layout")
     state = ctx.ws.load()
     if ctx.config.runtime.layout_shadow:
         pages, figures = layout_todo(state)
@@ -135,6 +141,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             failures += out.failures
             steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
 
+    clock.start("reading")
     state = ctx.ws.load()
     if ctx.config.runtime.page_reading:  # evidence for the two-way comparison with the output (guide §9.5, Q56)
         todo = reading_todo(state)
@@ -142,6 +149,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             ctx.report(Step("process", "reading", done=0, total=len(todo)))
             steps.append(StepSummary(step="reading", detail=f"{read_pages(ctx, todo)} pages read locally"))
 
+    clock.start("formulas")
     if ctx.config.runtime.formulas:  # formulas of native pages: whole pages read, passages chosen (Q70)
         pages = pages_to_read(ctx.ws.load())
         if pages:
@@ -150,11 +158,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="formulas", detail=f"{len(pages)} pages read; passages: " + ", ".join(
                 f"{k} {v}" for k, v in sorted(counts.items()))))
 
+    clock.start("equation_numbers")
     with ctx.ws.txn("tool:process:equation_numbers") as state:  # "(12)" at the right of a formula's line
         numbered = number_equations(state)
     if numbered:
         steps.append(StepSummary(step="equation_numbers", detail=f"{len(numbered)} formulas numbered"))
 
+    clock.start("describe")
     if ctx.config.runtime.describe_figures and req.describe_figures:
         state = ctx.ws.load()
         todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
@@ -167,6 +177,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="describe_figure", detail=f"{len(out.result.items)} of {len(todo)} "
                                                                     "figures described"))
 
+    clock.start("transcribe")
     candidates = _textual_images(ctx.ws.load())
     if candidates:
         ctx.report(Step("process", "transcribe", total=len(candidates)))
@@ -175,8 +186,10 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         failures += out.failures
         steps.append(StepSummary(step="transcribe_images",
                                  detail=f"{len(out.result.selections)} of {len(candidates)} images read"))
+    clock.start("image_reading")
     if _read_content_images(ctx):
         steps.append(StepSummary(step="image_reading", detail="content images read locally to check their text"))
+    clock.start("image_furniture")
     if image_furniture.places(ctx.ws.load()):  # the running heads of pages shown as images, left out (Q151)
         ctx.report(Step("process", "image_furniture"))
         found, problems = image_furniture.read_again(ctx)
@@ -184,6 +197,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         if found:
             steps.append(StepSummary(step="image_furniture", detail=f"{found} running heads, feet or page numbers "
                                                                      "of images read again"))
+    clock.start("second_reading")
     rereads = second_reading.candidates(ctx.ws.load()) if ctx.config.runtime.second_reading else []
     if rereads:  # what the scan engine read with mathematics where no text layer checks it
         ctx.report(Step("process", "second_reading", total=len(rereads)))
@@ -193,6 +207,7 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
             steps.append(StepSummary(step="second_reading", detail="scanned blocks with mathematics read again: "
                                      + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))))
 
+    clock.start("structure")
     ctx.report(Step("process", "structure"))
     if any(b.kind == BlockKind.TABLE for b in ctx.ws.load().blocks):
         with ctx.ws.txn("tool:process:frames") as state:
@@ -217,20 +232,24 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
                                                           + (f", {len(continuations)} paragraph continuations"
                                                              if continuations else "")))
 
+    clock.start("line_breaks")
     if ctx.ws.load().readings:  # scanned lines the page ends on purpose, read by the engine as one run (P4)
         with ctx.ws.txn("tool:process:line_breaks") as state:
             broken = restore_line_breaks(state)
         if broken:
             steps.append(StepSummary(step="line_breaks", detail=f"line breaks put back in {len(broken)} blocks"))
+    clock.start("lists")
     with ctx.ws.txn("tool:process:lists") as state:  # paragraphs the page marks with a bullet (R1)
         items = mark_list_items(state, ctx.ws.source_path)
     if items:
         steps.append(StepSummary(step="lists", detail=f"{len(items)} bulleted list items"))
+    clock.start("missed_text")
     if ctx.ws.load().readings:  # text the page shows where the output has nothing: added, not lost (Q133)
         with ctx.ws.txn("tool:process:missed_text") as state:
             added = add_missed_text(state)
         if added:
             steps.append(StepSummary(step="missed_text", detail=f"{len(added)} lines the local reading sees added"))
+    clock.start("added_text")
     if added_text.places(ctx.ws.load()):  # those lines read again by the scan engine: scripts, word spaces
         ctx.report(Step("process", "added_text"))
         reread, problems = added_text.read_again(ctx)
@@ -238,9 +257,13 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         if reread:
             steps.append(StepSummary(step="added_text", detail=f"{reread} added lines read again by the scan engine"))
 
+    clock.start("check")
     ctx.report(Step("process", "check"))
     checked = check_accounts(ctx)
     steps.append(StepSummary(step="check", detail=f"{checked.document_status.value}, exportable {checked.exportable}"))
+    clock.stop()
+    with ctx.ws.txn("tool:process:timing") as state:
+        state.stats.steps = [*state.stats.steps, *clock.steps]
     state = ctx.ws.load()
     return output(_summary(state, steps, checked), failures=failures)
 

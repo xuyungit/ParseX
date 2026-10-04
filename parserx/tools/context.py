@@ -278,7 +278,8 @@ def _delta(after: MeterSnapshot, before: MeterSnapshot | None) -> MeterSnapshot:
                          pages=minus(after.pages, before.pages), cache_hits=minus(after.cache_hits, before.cache_hits),
                          cache_misses=minus(after.cache_misses, before.cache_misses),
                          skipped_budget=minus(after.skipped_budget, before.skipped_budget), tokens=tokens,
-                         cost_usd=cost)
+                         cost_usd=cost, models={m: d for m, u in after.models.items()
+                                                if any((d := minus(u, before.models.get(m, {}))).values())})
 
 
 def _record_stats(ctx: ToolContext, name: str, wall: float, before: MeterSnapshot | None = None) -> None:
@@ -304,6 +305,12 @@ def _record_stats(ctx: ToolContext, name: str, wall: float, before: MeterSnapsho
         else:
             stats.cost_usd = round((stats.cost_usd or 0.0) + snap.cost_usd, 8)
         stats.wall_time_s = round(stats.wall_time_s + wall, 3)
+        models = {m: dict(v) for m, v in stats.models.items()}
+        for model, used in snap.models.items():
+            into = models.setdefault(model, {})
+            for k, v in used.items():
+                into[k] = round(into.get(k, 0) + v, 6)
+        stats.models = dict(sorted(models.items()))
 
 
 def _tampered(problem: str) -> Failure:

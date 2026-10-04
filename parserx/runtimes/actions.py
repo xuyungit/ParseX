@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -138,11 +138,15 @@ class AgentTally:
     changes: int = 0
     added: int = 0
     closed: int = 0
+    tools: dict[str, dict[str, float]] = field(default_factory=dict)  # tool → calls / s
 
     def add(self, record: dict) -> None:
         if record.get("type") != "call":
             return
         self.tool_calls += 1
+        used = self.tools.setdefault(str(record.get("tool")), {"calls": 0, "s": 0.0})
+        used["calls"] += 1
+        used["s"] = round(used["s"] + float(((record.get("envelope") or {}).get("cost") or {}).get("wall_s") or 0.0), 2)
         if record.get("tool") != "edit_draft" or not (record.get("envelope") or {}).get("ok"):
             return
         ops = (record.get("request") or {}).get("ops") or []

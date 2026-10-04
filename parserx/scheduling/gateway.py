@@ -182,7 +182,7 @@ class ServiceGateway:
             usd = None if self._prices is None else self._prices.cost(
                 model, input_tokens=input_tokens, cached_input_tokens=cached, output_tokens=output_tokens)
             self._meter.usage(service, input_tokens=input_tokens, cached_input_tokens=cached,
-                              output_tokens=output_tokens, usd=usd)
+                              output_tokens=output_tokens, usd=usd, model=model)
             costs.append(usd)
         return costs
 

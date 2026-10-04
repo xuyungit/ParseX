@@ -29,6 +29,7 @@ from PIL import Image
 
 from parserx.cache import ResponseCache
 from parserx.ir.base import BBox
+from parserx.scheduling.meter import LOCAL
 
 os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")  # read when onnxruntime starts its first session
 
@@ -85,7 +86,9 @@ class RapidLayoutDetector:
             return self._engines[key]
 
     def detect(self, png: bytes) -> list[Region]:
-        out = self._engine()(decode(png))
+        engine = self._engine()
+        with LOCAL.time("layout"):
+            out = engine(decode(png))
         regions = [Region(bbox=tuple(round(float(v), 1) for v in box), label=str(label), score=round(float(score), 3))
                    for box, label, score in zip(out.boxes or [], out.class_names or [], out.scores or [])]
         return sorted(regions, key=lambda r: (r.bbox[1], r.bbox[0], r.label))

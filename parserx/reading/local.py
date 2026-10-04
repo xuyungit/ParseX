@@ -14,6 +14,7 @@ from PIL import Image
 
 from parserx.cache.store import ResponseCache
 from parserx.layout.detector import decode
+from parserx.scheduling.meter import LOCAL
 
 Line = tuple[tuple[float, float, float, float], str, float]  # (bbox in image pixels, text, confidence)
 
@@ -30,7 +31,8 @@ class LocalReader:
             from rapidocr import RapidOCR
 
             self._engine = RapidOCR(params={"Global.log_level": "error"})
-        result = self._engine(decode(png)[:, :, :3], use_cls=False)
+        with LOCAL.time("reading"):
+            result = self._engine(decode(png)[:, :, :3], use_cls=False)
         if result.boxes is None:
             return []
         lines = []

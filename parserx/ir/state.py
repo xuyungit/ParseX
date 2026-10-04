@@ -81,6 +81,19 @@ class TokenUsage(IRModel):
     output: int = 0
 
 
+class StepTime(IRModel):
+    """One step of the pipeline: its seconds and what it asked of the services and the local models."""
+
+    step: str
+    s: float
+    requests: dict[str, int] = {}  # real network requests per service
+    pages: dict[str, int] = {}  # pages (or images) the scan engine was sent
+    cache_hits: dict[str, int] = {}
+    models: dict[str, dict[str, float]] = {}  # model → calls / input / cached_input / output / usd
+    local: dict[str, dict[str, float]] = {}  # reading / layout → calls / s
+    usd: float = 0.0
+
+
 class Stats(IRModel):
     """Run statistics. The only part of the sidecar that may differ between a fresh run and a replay."""
 
@@ -90,6 +103,8 @@ class Stats(IRModel):
     tokens: dict[str, TokenUsage] = {}
     cost_usd: float | None = None
     wall_time_s: float = 0.0
+    steps: list[StepTime] = []  # the pipeline's steps in the order they ran (speed plan §2)
+    models: dict[str, dict[str, float]] = {}  # model → calls / input / cached_input / output / usd, all calls
 
 
 class ReadLine(IRModel):

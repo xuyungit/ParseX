@@ -131,7 +131,8 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     scanned = sum(1 for p in state.pages if p.status == PageStatus.PENDING)
     reporter(DocStart(name=name, source=source.name, format=state.format, pages=len(state.pages), scanned=scanned,
                       resumed=resumed))
-    reporter(StageEnd("read", round(time.monotonic() - t, 1), detail={"resumed": resumed}))
+    stages = {"read": round(time.monotonic() - t, 1)}
+    reporter(StageEnd("read", stages["read"], detail={"resumed": resumed}))
 
     # 2. the standard processing
     _write_run(work, key, "process")
@@ -150,7 +151,8 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         shutil.rmtree(fixed)
     _export(ws_dir, fixed, name, config, context)
     before = _summary(fixed, name)
-    reporter(StageEnd("process", round(time.monotonic() - t, 1)))
+    stages["process"] = round(time.monotonic() - t, 1)
+    reporter(StageEnd("process", stages["process"]))
     reporter(ReviewCount(before.review.open, before.review.by_kind))
 
     # 4. routing
@@ -162,8 +164,10 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
         note = "no_review_items"
     else:
         agent = agent or make_agent(config, context_class)
+        t = time.monotonic()
         runtime, note, detail, record, keep_work = _agent_stage(agent, agent_dir, ws_dir, work, out_dir, name,
                                                                 config, before, source, reporter, context_class)
+        stages["agent"] = round(time.monotonic() - t, 1)
     if note in ("mode_fixed", "no_review_items"):
         reporter(StageEnd("agent", 0.0, skipped=note))
 
@@ -173,7 +177,9 @@ def parse_document(input_path: Path | str, out_dir: Path | str, config: ParserXC
     if runtime != "hybrid:agent":
         _clear_package(out_dir, name)
         _install(fixed, out_dir, name)
-    summary = _record_runtime(out_dir, name, runtime, note, detail, record)
+    stages["export"] = round(time.monotonic() - t, 1)
+    summary = _record_runtime(out_dir, name, runtime, note, detail, record, stages=stages,
+                              wall_s=round(time.monotonic() - started, 1))
     written = _hand_over(out_dir, name, config)
     reporter(StageEnd("export", round(time.monotonic() - t, 1)))
     if keep_work or keep_always:
@@ -241,7 +247,8 @@ def _agent_stage(agent: AgentRuntime, agent_dir: Path, ws_dir: Path, work: Path,
         usd_at_list_price=outcome.usd_at_list_price, tool_calls=tally.tool_calls, changes=tally.changes,
         added=tally.added, closed=tally.closed, review_open_before=before.review.open, review_open_after=after,
         audit=[f"{h.kind}: {h.detail}" for h in (outcome.audit.hits if outcome.audit else [])],
-        retries=getattr(outcome, "retries", 0),
+        retries=getattr(outcome, "retries", 0), tools=dict(sorted(tally.tools.items())),
+        **_agent_time(outcome),
     )
     if record.audit:
         reporter(Notice("agent_audit", "warning", {"hits": record.audit}))
@@ -253,6 +260,20 @@ def _agent_stage(agent: AgentRuntime, agent_dir: Path, ws_dir: Path, work: Path,
     reporter(StageEnd("agent", seconds, detail={"changes": record.changes, "added": record.added,
                                                 "closed": record.closed, "open": after}))
     return "hybrid:agent", None, None, record, False
+
+
+def _agent_time(outcome) -> dict:
+    """Turns, tokens, and model time against tool time, for the agent record (speed plan §2)."""
+    out: dict = {}
+    usage, timing = getattr(outcome, "usage", None), getattr(outcome, "timing", None)
+    if usage is not None:
+        out["turns"] = usage.turns
+        out["tokens"] = {"input": usage.input_tokens, "cached_input": usage.cached_input_tokens,
+                         "output": usage.output_tokens, "reasoning": usage.reasoning_output_tokens}
+    if timing is not None:
+        out.update(model_s=timing.model_s, tool_s=timing.command_s, steps=timing.steps,
+                   longest_step_s=timing.longest_step_s)
+    return out
 
 
 def make_agent(config: ParserXConfig, context_class: type[ToolContext] = ToolContext) -> AgentRuntime:
@@ -441,8 +462,11 @@ def _install(package: Path, out_dir: Path, name: str) -> None:
 
 
 def _record_runtime(out_dir: Path, name: str, runtime: str, note: str | None, detail: str | None,
-                    record: AgentRecord | None) -> DocumentSummary:
+                    record: AgentRecord | None, *, stages: dict[str, float] | None = None,
+                    wall_s: float | None = None) -> DocumentSummary:
     summary = _summary(out_dir, name)
+    summary.processing.stages = stages or {}
+    summary.processing.wall_s = wall_s
     summary.processing.runtime = runtime
     summary.processing.runtime_note = f"{note}: {detail}" if note and detail else note
     summary.processing.agent = record

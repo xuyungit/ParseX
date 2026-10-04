@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from parserx.config.schema import ParserXConfig, effort_for
 from parserx.runtimes.agent import AgentOutcome, list_price
-from parserx.runtimes.codex import AgentUsage
+from parserx.runtimes.codex import AgentTiming, AgentUsage
 from parserx.runtimes.models import Answer, ChatModel, Model, Note, ResponsesModel, ToolCall, ToolResult, summary
 from parserx.tools import AGENT_TOOLS, ToolContext, agent_json, call_tool, tool_schema
 from parserx.workspace import Workspace
@@ -93,6 +93,8 @@ class LoopAgent:
         after_clearing = False
         told_to_submit = False
         budget = self.agent.budget_usd
+        model_steps: list[float] = []  # seconds of each model turn; tool_s: of the calls it asked for
+        tool_s = 0.0
         with open(log_dir / "trace.jsonl", "w", encoding="utf-8") as trace:
             for step in range(self.max_steps):
                 elapsed = time.monotonic() - started
@@ -130,7 +132,8 @@ class LoopAgent:
                     floor, after_clearing = context_tokens, False
                 reply = answer.reply
                 history.append(reply)
-                record: dict[str, Any] = {"step": step, "model_s": round(time.monotonic() - t0, 1),
+                model_steps.append(time.monotonic() - t0)
+                record: dict[str, Any] = {"step": step, "model_s": round(model_steps[-1], 1),
                                           "usage": vars(answer.usage), "events": events, "text_chars": len(reply.text),
                                           "calls": []}
                 if not reply.calls:
@@ -141,6 +144,7 @@ class LoopAgent:
                     t1 = time.monotonic()
                     result = self._call(ws_dir, call, vision)
                     history.append(result)
+                    tool_s += time.monotonic() - t1
                     record["calls"].append({"name": call.name, "arguments": call.arguments,
                                             "s": round(time.monotonic() - t1, 1), "result_chars": len(result.text),
                                             "images": len(result.images)})
@@ -151,8 +155,13 @@ class LoopAgent:
                 reason, detail = "agent_failed", f"no answer after {self.max_steps} model turns"
         if last_message is not None:
             (log_dir / "last_message.md").write_text(last_message, encoding="utf-8")
-        outcome = dict(wall_s=round(time.monotonic() - started, 1), usage=usage,
-                       usd_at_list_price=list_price(self.price, usage), last_message=last_message)
+        wall = round(time.monotonic() - started, 1)
+        ordered = sorted(model_steps)
+        timing = AgentTiming(wall_s=wall, model_s=round(sum(model_steps), 1), command_s=round(tool_s, 1),
+                             steps=len(model_steps), longest_step_s=round(max(model_steps, default=0.0), 1),
+                             median_step_s=round(ordered[len(ordered) // 2], 1) if ordered else 0.0)
+        outcome = dict(wall_s=wall, usage=usage, usd_at_list_price=list_price(self.price, usage),
+                       last_message=last_message, timing=timing)
         if reason is not None:
             return AgentOutcome(ok=False, reason=reason, detail=detail, **outcome)
         return AgentOutcome(ok=True, **outcome)

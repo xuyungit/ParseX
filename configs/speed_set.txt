@@ -1,0 +1,5 @@
+# Speed regression set (speed plan §1, Q153): run with scripts/speed_run.py, every speed change.
+speed_bid01            # private: medium-size bid document, 64 images (must-read checks)
+ocr_scan_jtg3362       # scanned PDF
+paper_chn01            # formula paper (text layer + formula pages)
+unseen_pdf_tables01    # dense tables

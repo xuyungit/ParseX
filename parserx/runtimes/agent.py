@@ -15,6 +15,7 @@ loads them, inside the tool process.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -26,7 +27,8 @@ from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
 from parserx.ir.base import IRModel
-from parserx.runtimes.codex import AgentUsage, AuditResult, audit_events, exec_command, read_events, usage_from_events
+from parserx.runtimes.codex import (AgentTiming, AgentUsage, AuditResult, audit_events, exec_command, read_events,
+                                   timing_from_events, usage_from_events)
 from parserx.runtimes.px import _SECRET_NAME
 
 PROMPT = "Follow the task in AGENTS.md in the current directory. Work only with the files in this directory."
@@ -44,6 +46,7 @@ class AgentOutcome(IRModel):
     audit: AuditResult | None = None
     last_message: str | None = None
     retries: int = 0  # sessions started again after a capacity failure (on the same workspace)
+    timing: AgentTiming | None = None  # model time against tool time (speed plan §2)
 
 
 class AgentRuntime(Protocol):
@@ -110,13 +113,17 @@ class CodexAgent:
                     or time.monotonic() - t0 + pause >= deadline_s):
                 break
             time.sleep(pause)
+        times: list[float] = []
         with open(log_dir / "events.jsonl", "wb") as merged:  # every session's events, in order
             for k in range(1, tries + 1):
                 merged.write((log_dir / f"events.{k}.jsonl").read_bytes())
+                arrived = log_dir / f"events.{k}.times.json"
+                times += json.loads(arrived.read_text()) if arrived.is_file() else []
         events, _ = read_events(log_dir / "events.jsonl")
         usage = usage_from_events(events)
         return outcome.model_copy(update={
             "wall_s": round(time.monotonic() - t0, 1), "usage": usage, "retries": tries - 1,
+            "timing": timing_from_events(events, times) if events and len(times) == len(events) else None,
             "usd_at_list_price": list_price(self.price, usage),
             "audit": audit_events(events, doc_dir=work_dir, home=Path.home(), forbidden=self.forbidden)})
 
@@ -127,21 +134,23 @@ class CodexAgent:
         env = dict(self.env, RUST_LOG="codex_core=info")
         t0 = time.monotonic()
         timed_out = False
+        arrived: list[float] = []
         with open(log_dir / f"events.{k}.jsonl", "wb") as out, open(log_dir / "stderr.log", "ab") as err:
             proc = subprocess.Popen(argv, cwd=work_dir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=err, env=env, start_new_session=True)
 
             def pump() -> None:
-                import json
-
                 for line in proc.stdout:
                     out.write(line)
                     out.flush()
-                    if on_event is not None:
-                        try:
-                            on_event(json.loads(line))
-                        except ValueError:
-                            pass
+                    try:
+                        event = json.loads(line) if line.strip() else None
+                    except ValueError:
+                        event = None
+                    if isinstance(event, dict):  # the events read_events keeps, with when each arrived
+                        arrived.append(time.monotonic())
+                        if on_event is not None:
+                            on_event(event)
 
             reader = threading.Thread(target=pump, daemon=True)
             reader.start()
@@ -155,6 +164,7 @@ class CodexAgent:
                 _stop(proc)
                 raise
             reader.join(timeout=30)
+        (log_dir / f"events.{k}.times.json").write_text(json.dumps([round(t, 3) for t in arrived]))
         wall = round(time.monotonic() - t0, 1)
         events, _ = read_events(log_dir / f"events.{k}.jsonl")
         usage = usage_from_events(events)
