@@ -8,15 +8,14 @@ detector, the scan engine and the service model see a figure's image, the image 
 
 - the way up is read from the image itself (``reading/local.upright``): the turn whose local reading has the most
   text in level lines, taken when clearly ahead of the image as it stands;
-- an image too bare of text to tell (a photo) is shown the way the document shows it: Word's own turn of the
-  picture (``shown_turn``, recorded by the DOCX reader).  Word also turns wide tables a quarter to fit a portrait
-  page; a turn the text contradicts is not followed, the text decides;
+- an image too bare of text to tell (a photo) is shown the way the document shows it (``shown_turn``, recorded by
+  the readers): Word's turn of the picture, or how a PDF page places the image (and its /Rotate).  Word also turns
+  wide tables a quarter to fit a portrait page; a turn the text contradicts is not followed, the text decides;
 - the upright image is a new asset (role ``original``: it is the document's image, upright) derived from the image
   as stored, with the transform from its pixels back to the stored image's; the figure's anchor points to it, so
   the Markdown links it and every later step reads it.  The figure records the turn (a Decision).
 
-Images of PDF pages are turned by their text only (a PDF image's own turn on the page is not read yet).  Renders
-and crops are not turned: they are cut from pages as shown.
+Renders and crops are not turned: they are cut from pages as shown.  Scanned pages are the scan engine's to turn.
 """
 
 from __future__ import annotations

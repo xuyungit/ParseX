@@ -117,6 +117,7 @@ class _Region:
     excluded: Decision | None = None  # why the region's lines are no text (``_not_text``)
     within: int | None = None  # the index of the figure region whose text these lines are (``_vector_figures``)
     note: Decision | None = None  # how the region was found (a vector figure)
+    shown_turn: int = 0  # an embedded image: degrees clockwise the page shows it turned by (``_shown_turn``)
 
 
 def extract_pdf(path: Path | str, *, layout: Callable[[pymupdf.Page], list[tuple[str, BBox]]] | None = None,
@@ -220,7 +221,7 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
             continue  # part of a vector figure, rendered with it
         asset = ext.add_asset(*_image_asset(doc, page, n, info))
         kind = BlockKind.FIGURE if verdict.ok else BlockKind.SCAN
-        regions.append(_Region(kind, _round(info["bbox"]), [], asset=asset))
+        regions.append(_Region(kind, _round(info["bbox"]), [], asset=asset, shown_turn=_shown_turn(page, info)))
 
     decision = _source_decision(verdict)
     main = _main_direction(lines)
@@ -238,6 +239,11 @@ def _extract_page(doc: pymupdf.Document, page: pymupdf.Page, n: int, ext: Extrac
             ext.blocks[-1].decisions.append(region.excluded)
         if region.note is not None:
             ext.blocks[-1].decisions.insert(0, region.note)
+        if region.shown_turn:  # the way up of an image too bare of text to read it from (tools/upright.py)
+            ext.blocks[-1].decisions.append(Decision(
+                stage=DecisionStage.CONTENT_SOURCE, choice="image_placement", actor=ACTOR,
+                reason=f"the page shows the image turned {region.shown_turn}° clockwise from how it is stored",
+                evidence={"shown_turn": region.shown_turn}))
         if region.kind == BlockKind.TEXT and region.lines and all(ln.direction != main for ln in region.lines):
             off_direction[block_id] = ext.blocks[-1].text
         for line in region.lines:
@@ -905,6 +911,17 @@ def _origin_key(char: str, origin) -> tuple[str, float, float]:
 
 
 # ── Images ──────────────────────────────────────────────────────────────
+
+
+def _shown_turn(page: pymupdf.Page, info: dict) -> int:
+    """Degrees clockwise (0, 90, 180, 270) the page shows an embedded image turned by from how it is stored: the
+    direction its x axis is placed in (the image's ``transform``; right 0, down 90, left 180, up 270), and the page's
+    own /Rotate.  A mirrored or skewed placement is no turn: 0."""
+    a, b, c, d = (info.get("transform") or (1, 0, 0, 1, 0, 0))[:4]
+    if a * d - b * c <= 0 or (abs(a) > 1e-6 and abs(b) > 1e-6):
+        return 0
+    placed = 0 if a > 0 else 180 if a < 0 else 90 if b > 0 else 270
+    return (placed + page.rotation) % 360
 
 
 def _image_asset(doc: pymupdf.Document, page: pymupdf.Page, n: int, info: dict) -> tuple[Asset, bytes]:

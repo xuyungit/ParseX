@@ -125,3 +125,43 @@ def test_words_turn_of_a_picture(attrs, turn):
     for key, value in attrs.items():
         node.find(f"{{{A}}}xfrm").set(key, value)
     assert _shown_turn(node) == turn
+
+
+def _pdf_with(tmp_path, data, rotate):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 72), "A page with an image placed on it", fontsize=11)
+    width, height = Image.open(io.BytesIO(data)).size
+    w, h = (width, height) if rotate in (0, 180) else (height, width)
+    page.insert_image(pymupdf.Rect(100, 200, 100 + w, 200 + h), stream=data, rotate=rotate)
+    path = tmp_path / "doc.pdf"
+    doc.save(path)
+    return path
+
+
+def test_a_pdf_page_shows_a_photo_turned_and_so_does_the_output(tmp_path):
+    # no text to read the way up from: the image's placement on the page decides (pymupdf rotate=90: a quarter
+    # turn counter-clockwise, 270 clockwise)
+    from parserx.tools.source import _place_image
+
+    workspace_init(_pdf_with(tmp_path, _image(120, 60), 90), tmp_path / "ws", config=ParserXConfig())
+    ws = Workspace(tmp_path / "ws")
+    figure = next(b for b in ws.load().blocks if b.kind.value == "figure")
+    assert next(d.evidence["shown_turn"] for d in figure.decisions if "shown_turn" in d.evidence) == 270
+
+    class Context(ToolContext):
+        def _new_reader(self):
+            return Reader()
+
+    config = ParserXConfig()
+    config.cache.mode = "off"
+    ctx = Context(ws, config)
+    assert upright.turn_upright(ctx, upright.todo(ws.load())) == 1
+    state = ws.load()
+    image, problem = _place_image(ctx, state, block=figure.id, page=None, whole_page=False)
+    assert problem is None and (image.width, image.height) == (60, 120)  # upright as the page shows it
+    # its pixels still lead to the image's box on the page
+    box = transform_box(image.transform, (0, 0, image.width, image.height))
+    assert tuple(round(v) for v in box) == (100, 200, 160, 320)
