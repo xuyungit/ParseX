@@ -22,7 +22,8 @@ The place of a line: the blocks that account for text (shown, or merged into ano
 into its formula) it lies in or overlaps, else those beside it on its row (a formula number beside its formula); the
 placeholder of a scanned page's image holds nothing.  A line no block holds is left to ``compare.py``.  Only content no text layer vouches for is compared: the scan engine's reading of a scanned page,
 of a formula page, of an image (``read_inside``); text-layer numbers are exact.  Lines in page furniture, pictures,
-formula regions of the page, or blocks excluded with a reason are not compared.  A signal, not a verdict: nothing is
+formula regions of the page, or blocks excluded with a reason are not compared; nor is a line of an image the
+transcription lacks altogether — listed whole already (``text_unaccounted``, ``lacking_in_transcription``).  A signal, not a verdict: nothing is
 changed.  Measured on the corpus (2026-10-04, 30 documents, fixed pipeline, GLM-OCR and PaddleOCR-VL): about 20
 places that are wrong in the output (the nine section numbers written apart on a blurred book page; formula numbers
 left out of formula images) and about 15 local misreadings, which the agent closes at a look.
@@ -38,10 +39,11 @@ from parserx.content.select import NATIVE_ENGINES
 from parserx.content.text import normalize_fullwidth_ascii
 from parserx.ir.anchor import AssetAnchor
 from parserx.ir.block import Block
-from parserx.ir.enums import BlockKind, BlockStatus, TaskKind
+from parserx.ir.enums import BlockKind, BlockStatus, RelationKind, TaskKind
 from parserx.ir.state import DocumentState
 from parserx.layout.labels import FURNITURE, NOT_PROSE, to_kind
-from parserx.reading.compare import _ACCOUNTS, _SHOWN, _centre, _inside, _overlap, _places, _text, has_math, read_inside
+from parserx.reading.compare import (_ACCOUNTS, _SHOWN, _centre, _inside, _overlap, _places, _text, has_math,
+                                    lacking_in_transcription, read_inside)
 
 SPLIT, MISSING = "split", "missing"
 
@@ -90,17 +92,22 @@ def number_findings(state: DocumentState) -> list[NumberFinding]:
                 add(next((b for b in scanned if b.status in _SHOWN), scanned[0]).id, line.text, numbers)
     blocks = {b.id: b for b in state.blocks}
     records = {r.id: r for r in state.images}
-    for figure_id, inside in read_inside(state).items():
+    for figure_id in read_inside(state):
         figure = blocks[figure_id]
+        # the text read inside the image, with what the scan engine read there and the program left out (an image's
+        # running head, its page numbers: page furniture of a scanned report) — they account for their lines
+        inside = [blocks[r.dst] for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == figure_id
+                  and r.dst in blocks and blocks[r.dst].status in _ACCOUNTS]
         asset = next((a.asset for a in figure.anchors if isinstance(a, AssetAnchor)), None)
         record = records.get(asset)
         if record is None or not record.reading or all(_engine(b) in NATIVE_ENGINES for b in inside):
             continue
+        lacking = set(lacking_in_transcription(state, figure) or [])  # listed whole already (text_unaccounted)
         pictures = [o.anchor.bbox for o in figure.observations if o.task == TaskKind.LAYOUT
                     and o.label in _PICTURES and isinstance(o.anchor, AssetAnchor)]
         text, in_math = " ".join(_text(b) for b in inside), _in_math(inside)
         for line in record.reading:
-            if not any(_inside(_centre(line.bbox), box) for box in pictures):
+            if line.text not in lacking and not any(_inside(_centre(line.bbox), box) for box in pictures):
                 if numbers := line_numbers(line.text, text, in_math=in_math):
                     add(figure_id, line.text, numbers)
     return list(found.values())

@@ -92,3 +92,21 @@ def test_an_image_transcription_that_lacks_the_formula_number_is_listed_on_the_i
     relation = Relation(id="r-1", kind=RelationKind.CONTAINS, src="b-img", dst="b-in")
     state = _state([figure, inside], [], images=[record], relations=[relation])
     assert [(f.target, f.lines, f.numbers) for f in number_findings(state)] == [("b-img", ["(6)"], [("6", "missing")])]
+
+
+def test_a_line_an_image_transcription_lacks_whole_is_left_to_the_text_check():
+    # GLM-OCR leaves a scanned report's running head out: the line is listed whole (text_unaccounted), not again for
+    # its numbers; a line that is there with a number written apart is listed
+    figure = _block("b-img", (100, 300, 400, 340), "", kind=BlockKind.FIGURE,
+                    anchor=AssetAnchor(asset="a-1", bbox=(0, 0, 600, 400), image_size=(600, 400)))
+    inside = _block("b-in", (0, 0, 600, 400), "4. 1 本合同货物交付地点和相关服务的履行地",
+                    anchor=AssetAnchor(asset="a-1", bbox=(0, 100, 600, 140), image_size=(600, 400)))
+    record = ImageRecord(id="a-1", route=ImageRoute.SCAN, shown=True,
+                         reading=[_line("报告编号：ZJA1-X001-2023000001B", (10, 10, 400, 40)),
+                                  _line("4.1本合同货物交付地点和相关服务的履行地", (10, 100, 590, 140))])
+    relation = Relation(id="r-1", kind=RelationKind.CONTAINS, src="b-img", dst="b-in")
+    state = _state([figure, inside], [], images=[record], relations=[relation])
+    assert [(f.lines, f.numbers) for f in number_findings(state)] == [
+        (["4.1本合同货物交付地点和相关服务的履行地"], [("4.1", "split")])]
+    kinds = {u.kind for u in unresolved_items(state) if u.target == "b-img"}
+    assert kinds == {UnresolvedKind.TEXT_UNACCOUNTED, UnresolvedKind.NUMBER_UNACCOUNTED}
