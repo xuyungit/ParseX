@@ -1,11 +1,14 @@
 """Run the speed regression set and tabulate where the time and the money go (speed plan §1–2).
 
     uv run python scripts/speed_run.py LABEL [--no-agent] [--cache DIR] [--docs FILE] [--set key=value …]
+                                             [--agent codex|<model>] [--parserx PATH] [--keep-work]
 
 Each document runs through ``parserx parse --report`` one after another, as a user would, into
 ``~/parserx-exp/speed/<date>_<LABEL>/<doc>/``.  Without ``--cache`` the run is cold: a new, empty cache in the run's
 directory, so every request and every local reading is made again (the cache is kept for warm reruns).  Quality:
-documents with an annotation are scored (key content errors, characters, headings, tables), documents with
+``--parserx`` runs another installation's command — a frozen snapshot of the code
+(``scripts/agent_explore.py snapshot``), so the code can change while an agent run goes on.  Quality: documents
+with an annotation are scored (key content errors, characters, headings, tables), documents with
 ``checks.json`` run their must-read checks (Q154).  ``speed.json`` holds every figure, ``speed.md`` the tables.
 """
 
@@ -53,10 +56,15 @@ def quality(doc: str, markdown: str) -> dict:
 
 def run_one(doc: str, out: Path, cache: Path, args) -> dict:
     target = out / doc
-    cmd = ["uv", "run", "--frozen", "parserx", "parse", str(source(doc)), "--report", "-o", str(target),
+    command = [str(args.parserx)] if args.parserx else ["uv", "run", "--frozen", "parserx"]
+    cmd = [*command, "parse", str(source(doc)), "--report", "-o", str(target),
            "--set", f"cache.dir={cache}", "--set", "cache.mode=read_write"]
     if args.no_agent:
         cmd.append("--no-agent")
+    if args.agent:
+        cmd += ["--agent", args.agent]
+    if args.keep_work:
+        cmd.append("--keep-work")
     for item in args.set or []:
         cmd += ["--set", item]
     t = time.monotonic()
@@ -123,6 +131,9 @@ def main() -> None:
     ap.add_argument("--cache", type=Path, help="a cache to use (read and write); default: a new, empty one (cold)")
     ap.add_argument("--no-agent", action="store_true")
     ap.add_argument("--set", action="append", help="a config override passed to parserx parse")
+    ap.add_argument("--agent", help="codex or a model entry (our own loop), passed to parserx parse")
+    ap.add_argument("--parserx", type=Path, help="the parserx command to run (a snapshot's), default: this checkout")
+    ap.add_argument("--keep-work", action="store_true", help="keep each document's work directory (agent events)")
     args = ap.parse_args()
     docs = [d for d in (l.split("#")[0].strip() for l in args.docs.read_text().splitlines()) if d]
     out = ROOT / f"{dt.date.today().isoformat()}_{args.label}"
@@ -136,7 +147,8 @@ def main() -> None:
         records.append(record)
         print(doc, record.get("wall_s"), record.get("stages"), record.get("quality"), flush=True)
     meta = {"label": args.label, "docs": docs, "cache": str(cache), "cold": args.cache is None,
-            "no_agent": args.no_agent, "set": args.set or [],
+            "no_agent": args.no_agent, "set": args.set or [], "agent": args.agent,
+            "parserx": str(args.parserx) if args.parserx else None,
             "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True,
                                      text=True).stdout.strip()}
     (out / "speed.json").write_text(json.dumps({"meta": meta, "records": records}, ensure_ascii=False, indent=1))
