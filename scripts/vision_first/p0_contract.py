@@ -37,7 +37,7 @@ from parserx.content.text import join_wrapped
 BLOCK_TYPES = ("title", "text", "list", "formula", "table", "figure", "caption", "footnote", "other")
 PART_KINDS = ("copy", "write", "table", "cell")
 EXCLUDED = "excluded"
-CONTRACT_VERSION = 7  # 1: P0 (508693c); 2: scripts on copy/table, write holds only its lines (393e560); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143); 6: the program's table grids shown, a cell written from the image by its address (``cell`` parts); 7: typos of the original kept as printed (instructions only; user 2026-09-30)
+CONTRACT_VERSION = 7  # 1: P0 (b8f44b8); 2: scripts on copy/table, write holds only its lines (6825cf1); 3: variables as $…$ (Q142); 4: a block is one paragraph (V); 5: no scripts switch — copied lines take their candidates (``copy_as``) — and display formulas get their LaTeX from a request of their own (Q143); 6: the program's table grids shown, a cell written from the image by its address (``cell`` parts); 7: typos of the original kept as printed (instructions only; user 2026-09-30)
 UNREADABLE = "〔?〕"  # the visible mark of a glyph no one could read (execution plan §1: never deleted, never guessed)
 
 _NULLABLE = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731

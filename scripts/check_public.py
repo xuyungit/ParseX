@@ -39,6 +39,9 @@ KEYS = {
 }
 
 
+_FROM_ENVIRONMENT = re.compile(r"process\.env|environ|getenv|\$\{")  # a key read from the environment: none here
+
+
 def private_corpus() -> Path:
     return Path(os.environ.get("PARSERX_PRIVATE_CORPUS", "~/Projects/ParserX-corpus")).expanduser()
 
@@ -81,7 +84,8 @@ def problems(revisions: list[str]) -> list[str]:
             continue
         text = line[1:] if line.startswith("+") else line
         for name, pattern in KEYS.items():
-            if re.search(pattern, text):
+            match = re.search(pattern, text)
+            if match and not _FROM_ENVIRONMENT.search(match.group(0)):
                 found.setdefault(name, set()).add(where)
         for value in strings:
             if value in text:
