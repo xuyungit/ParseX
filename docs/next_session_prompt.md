@@ -64,11 +64,13 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run parserx check`：扫描引擎与服务模型两项都要 ✓（配置分层，key 在个人配置 `~/.config/parserx/config.yaml`，不再读 `.env`）。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 695 通过，无已知失败（其中 `tests/test_tool_eval.py` 3 个；另一个会话在改工具对比，提交后数目会变）。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 1027 通过、1 跳过（2026-10-04）。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
-   - `uv run python scripts/regression_test.py --replay eval_runs/2026-09-28_io6_v2_toolkit`
-   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-09-28_io6_fixed_full`
+   - `uv run python scripts/regression_test.py --replay eval_runs/2026-10-04_speed0_v2_toolkit`
+   - `uv run python scripts/regression_test.py --gt-dir ground_truth --gt-dir ground_truth_public --replay eval_runs/2026-10-04_speed0_fixed_full`
+
+   （2026-10-04：默认改为 GLM-OCR 与千问之后，L1 补记了应答，两个冻结 run 以空缓存重新冻结，Q155。）
 
 ## 然后
 
