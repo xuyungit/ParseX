@@ -292,10 +292,18 @@ class OpOutcome(IRModel):
     target: str | None = None  # dismiss: what the issue was about (a block, a page "p3"); note: the note's id
 
 
+class TitleCounts(IRModel):
+    """The document's titles by level (H1 … H6, "no level"), before and after the call (Q165)."""
+
+    before: dict[str, int]
+    after: dict[str, int]
+
+
 class EditDraftResult(IRModel):
     outcomes: list[OpOutcome]  # one per operation, in order
     issues_opened: list[Unresolved]  # what the accepted changes opened
     issues_closed: list[str]  # ids of issues they resolved or dismissed
+    titles: TitleCounts | None = None  # when the call changed the outline: its titles before and after, by level
 
 
 class _Refused(Exception):
@@ -310,6 +318,7 @@ class _Rollback(Exception):
 
 def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
     open_before = {u.id: u for u in unresolved_items(ctx.ws.load())}
+    titles_before = _titles(ctx.ws.load())
     outcomes: list[OpOutcome] = []
     failures = second_reading.recheck(ctx, _substituting(ctx.ws.load(), req.ops))
     refused: list[Doubt] = []  # doubts from refused corrections: kept even where the call takes no effect
@@ -341,10 +350,23 @@ def run(ctx: ToolContext, req: EditDraftRequest) -> ToolOutput[EditDraftResult]:
                                              "detail": "another operation of this call was refused"})
                         if o.accepted else o for o in outcomes]
         return output(EditDraftResult(outcomes=outcomes, issues_opened=[], issues_closed=[]), failures=failures)
-    open_after = {u.id: u for u in unresolved_items(ctx.ws.load())}
+    after = ctx.ws.load()
+    open_after = {u.id: u for u in unresolved_items(after)}
+    titles_after = _titles(after)
     return output(EditDraftResult(outcomes=outcomes,
                                   issues_opened=[u for k, u in open_after.items() if k not in open_before],
-                                  issues_closed=[k for k in open_before if k not in open_after]), failures=failures)
+                                  issues_closed=[k for k in open_before if k not in open_after],
+                                  titles=TitleCounts(before=titles_before, after=titles_after)
+                                  if titles_after != titles_before else None), failures=failures)
+
+
+def _titles(state: DocumentState) -> dict[str, int]:
+    """The outline's titles by level, as the outline view shows them (Q165: a batch of role changes that turns twelve
+    section titles into captions is seen in its result)."""
+    from parserx.tools.draft import outline_blocks
+
+    counts = Counter(f"H{b.level}" if b.level else "no level" for b in outline_blocks(state) if b.kind == BlockKind.TITLE)
+    return dict(sorted(counts.items()))
 
 
 def _substituting(state: DocumentState, ops) -> list[str]:

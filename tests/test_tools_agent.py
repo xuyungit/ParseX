@@ -192,6 +192,22 @@ def test_structure_ops_and_dismissing_an_issue(draft, context):
     assert opened[0]["id"] not in {i["id"] for i in _ok("read_draft", draft, {"view": "issues"}, context)["issues"]}
 
 
+def test_a_change_to_the_outline_is_reported_with_the_titles_before_and_after(draft, context):
+    # Codex once gave a caption role meant for figure titles to twelve section titles, the outline going 15 -> 4,
+    # and nothing told it (Q165): the result says what the outline was and is, by level; nothing is refused for it
+    title = _block(draft, "SENTINEL-OCR 标题")
+    before = _ok("read_draft", draft, {"view": "outline"}, context)["lines"]
+    result = _ok("edit_draft", draft, {"ops": [{"op": "set_role", "block": title, "role": "caption", "reason": "r"}]},
+                 context)
+    assert result["outcomes"][0]["accepted"]
+    titles = result["titles"]
+    assert sum(titles["before"].values()) == sum(1 for line in before if line["role"].startswith("H") or
+                                                 line["role"] == "title")
+    assert sum(titles["after"].values()) == sum(titles["before"].values()) - 1
+    unchanged = _ok("edit_draft", draft, {"ops": [{"op": "note", "scope": "全文", "text": "x"}]}, context)
+    assert "titles" not in unchanged  # reported only when the outline changed
+
+
 def test_dismissing_an_issue_a_change_of_the_same_call_resolved(draft, context):
     # milestone run (2026-10-02): the agent set the roles an item asked about, then closed the item in the same call;
     # the change had resolved it, and the dismiss was refused as an unknown issue (5–6 times a run)
