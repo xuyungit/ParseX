@@ -40,7 +40,7 @@ from pydantic.json_schema import SkipJsonSchema
 from parserx.content import scan
 from parserx.content.latex import characters, problems
 from parserx.content.select import NATIVE_ENGINES, add_gate, best_overlap, integrate_image, renumber, signals
-from parserx.content.select import transcribed
+from parserx.content.select import numbers_seen, transcribed
 from parserx.content.select import PRINTED_AS_DRAFT, _letters_changed, _unmapped, substitutes
 from parserx.content.select import correct as correct_gate, structure_only
 from parserx.content.select import review_table as table_gate
@@ -735,10 +735,25 @@ def _adopt_table(state: DocumentState, op: Adopt, evidence) -> str:
         task=TaskKind.REVIEW, raw_ref=evidence.raw_ref, cells=evidence.cells, status=ObservationStatus.OK,
         anchor=AssetAnchor(asset=crop.id, bbox=(0, 0, crop.width, crop.height), image_size=(crop.width, crop.height),
                            transform=crop.transform))
-    outcome = table_gate(block, candidate, allowed_cells=allowed, fill_region=region, actor=ACTOR)
+    outcome = table_gate(block, candidate, allowed_cells=allowed, fill_region=region, actor=ACTOR,
+                         seen=numbers_seen(_reading_at(state, block)))
     block.decisions[-1].evidence["evidence"] = op.evidence
     block.decisions[-1].reason += f"; {op.reason}"
     return _gated(outcome.gate)
+
+
+def _reading_at(state: DocumentState, block) -> str | None:
+    """What the local reading shows where *block* sits: on its page (a PDF block), or inside the image it was read
+    from (lines whose centre is in its box); None when the place was not read."""
+    anchor = block.anchors[0]
+    if not isinstance(anchor, AssetAnchor):
+        return text_near(state, block)
+    record = next((r for r in state.images if r.id == anchor.asset), None)
+    if record is None or record.reading is None:
+        return None
+    x0, y0, x1, y1 = anchor.bbox
+    return " ".join(ln.text for ln in record.reading
+                    if x0 <= (ln.bbox[0] + ln.bbox[2]) / 2 <= x1 and y0 <= (ln.bbox[1] + ln.bbox[3]) / 2 <= y1)
 
 
 def _adopt_text(ctx: ToolContext, state: DocumentState, op: Adopt, evidence) -> str | None:

@@ -56,6 +56,11 @@ def _numbers(text: str) -> list[str]:
     return _NUMBER_RE.findall(unicodedata.normalize("NFKC", text))
 
 
+def numbers_seen(text: str | None) -> Counter[str] | None:
+    """The numbers of a local reading's text, in the notation the table gate counts them (None: no reading)."""
+    return None if text is None else Counter(_numbers(text))
+
+
 def _plain(text: str) -> str:
     """A cell's text for the content-kept check: one notation (NFKC), no whitespace."""
     return "".join(unicodedata.normalize("NFKC", text).split())
@@ -194,14 +199,19 @@ def renumber(state: DocumentState, *, new: set[str] = frozenset()) -> None:
 
 
 def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tuple[int, int]],
-                 fill_region: set[tuple[int, int]] = frozenset(), actor: str) -> ReviewOutcome:
+                 fill_region: set[tuple[int, int]] = frozenset(), actor: str,
+                 seen: Counter[str] | None = None) -> ReviewOutcome:
     """Gate a TableGrid candidate; *allowed_cells* are the cells the review was asked to check for characters,
-    *fill_region* the cells a structure issue named, where content the reading missed may be filled (Q45)."""
+    *fill_region* the cells a structure issue named, where content the reading missed may be filled (Q45).  *seen*:
+    the numbers the local reading of the table's place shows — a number the candidate adds (rows the first reading
+    lost) stands on it when the local reading shows it as often as the candidate has it (Q165); a number the
+    candidate drops never does (a local reader misses numbers)."""
     current = block.cells or TableGrid(n_rows=0, n_cols=0)
     native = _chosen(block) is not None and _chosen(block).engine in NATIVE_ENGINES
     grid = candidate.cells
     gate = [_image_evidence(candidate)]
     filled: set[tuple[int, int]] = set()
+    confirmed: Counter[str] = Counter()
     if grid is None:
         gate += [GateCheck(name="numeric_consistency", passed=False, detail="candidate has no table"),
                  GateCheck(name="structure_valid", passed=False, detail="candidate has no table")]
@@ -209,12 +219,18 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
         skip = set() if native else allowed_cells
         filled = set() if native else _filled_cells(current, grid, fill_region)
         before, after = _grid_numbers(current, skip), _grid_numbers(grid, skip | filled)
+        added, removed = after - before, before - after
+        confirmed = Counter() if native or seen is None or removed else Counter(
+            {n: k for n, k in added.items() if seen[n] >= after[n]})
         detail = _number_diff(before, after, native)
-        if before != after and not native:
-            detail += _where_added(grid, after - before, skip | filled)
+        if confirmed and confirmed == added:
+            detail += "; the local reading of the place shows every added number"
+        elif before != after and not native:
+            detail += _where_added(grid, added - confirmed, skip | filled)
         elif filled:
             detail += f"; {len(filled)} cells filled from the image only (Q45)"
-        gate.append(GateCheck(name="numeric_consistency", passed=before == after, detail=detail))
+        gate.append(GateCheck(name="numeric_consistency", passed=before == after or confirmed == added and not removed,
+                              detail=detail))
         lost = _lost_cells(current, grid, allowed_cells)
         gate.append(GateCheck(
             name="structure_valid", passed=grid.n_rows > 0 and grid.n_cols > 0 and not lost,
@@ -222,6 +238,8 @@ def review_table(block: Block, candidate: Observation, *, allowed_cells: set[tup
     outcome = _decide(block, candidate, gate, actor)
     if outcome.adopted and filled:  # Q45: shown as image-only evidence in the sidecar
         block.decisions[-1].evidence["image_only_cells"] = ",".join(f"r{r}c{c}" for r, c in sorted(filled))
+    if outcome.adopted and grid is not None and confirmed:  # Q165: the numbers the local reading vouches for
+        block.decisions[-1].evidence["reading_confirmed"] = ",".join(sorted(confirmed.elements()))
     return outcome
 
 

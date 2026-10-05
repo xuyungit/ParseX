@@ -1,5 +1,6 @@
 """Selection step (guide §6.3, Q20): scan pages replace failed native layers; the review acceptance gate."""
 
+from collections import Counter
 from parserx.content.scan import PageScanResult
 from parserx.content.select import (
     integrate_scan_page,
@@ -137,6 +138,21 @@ def test_structure_fix_may_move_but_not_lose_content():
     lost = _candidate([["项目", "数值"], ["甲", "3"], ["", ""]])
     outcome = review_table(block, lost, allowed_cells=set(), actor="t")
     assert not outcome.adopted and {g.name: g.passed for g in outcome.gate}["structure_valid"] is False
+
+
+def test_rows_a_reading_restores_are_adopted_where_the_local_reading_shows_their_numbers():
+    # a statement whose last rows the scan engine lost, read again as a table: the new numbers stand on the page's
+    # own evidence when the local reading shows them too (Q165); a number it does not show is still refused
+    restored = [["项目", "数值"], ["甲", "3"], ["乙", "20"], ["合计", "23"]]
+    block = _table_block()
+    outcome = review_table(block, _candidate(restored), allowed_cells=set(), actor="t", seen=Counter({"23": 1, "3": 1}))
+    assert outcome.adopted and block.cells.slot(3, 1).content == "23"
+    assert block.decisions[-1].evidence["reading_confirmed"] == "23"
+    block = _table_block()
+    assert not review_table(block, _candidate(restored), allowed_cells=set(), actor="t", seen=Counter({"3": 1})).adopted
+    block = _table_block()  # numbers dropped stay refused, whatever the local reading shows
+    dropped = [["项目", "数值"], ["甲", "3"], ["乙", ""], ["合计", "23"]]
+    assert not review_table(block, _candidate(dropped), allowed_cells=set(), actor="t", seen=Counter({"23": 1})).adopted
 
 
 def _fused_table_block():
