@@ -75,8 +75,9 @@ from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools import second_reading
 from parserx.tools.describe_figure import Described
 from parserx.tools.describe_figure import apply as apply_description
-from parserx.tools.envelope import ToolFailure, Unresolved, UnresolvedKind
-from parserx.tools.evidence import image_evidence, image_evidence_at, image_evidence_whole
+from parserx.tools.envelope import DOCUMENT_ITEMS, ToolFailure, Unresolved, UnresolvedKind
+from parserx.tools.evidence import (document_evidence, evidence_ids, image_evidence, image_evidence_at,
+                                    image_evidence_whole, word_text)
 from parserx.tools.formulas import _adopt as adopt_passage, _edited_block, _lost as formula_lost
 from parserx.tools.formulas import _union as formula_union, disagreement, listed, passage_of, pending_candidates
 from parserx.tools.recognize import _next_block_seq, _next_item, integrate_page, scan_engine_pages
@@ -213,7 +214,7 @@ class Dismiss(IRModel):
     op: Literal["dismiss"]
     issue: str = Field(description="待办编号（w-…，read_draft 的 issues 视图）")
     reason: str = Field(description=REASON)
-    evidence: str = Field(description="看过的证据")
+    evidence: str = Field("", description="看过的证据（几个用逗号隔开）；Word 文档自身的文字和表格就是原件，没有可看的，可省")
     occluded: bool = Field(False, description="text_not_seen：文字确实在，只是被别的元素盖住（保留原文）")  # Q71
 
 
@@ -1039,7 +1040,7 @@ def _note(state: DocumentState, op: WriteNote) -> str:
     if op.replaces is not None and op.replaces not in {n.id for n in current_notes(state)}:
         raise _Refused("unknown_note", f"no current note {op.replaces} (read_draft view=notes)")
     known = {e.id for e in state.evidence}
-    cited = [e for e in re.split(r"[\s,，;；]+", op.evidence) if e]
+    cited = evidence_ids(op.evidence)
     unknown = [e for e in cited if e not in known]
     if unknown:
         raise _Refused("evidence", f"no evidence {unknown} (view_source gives it)")
@@ -1077,14 +1078,19 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> tuple[str, s
         raise _Refused("not_dismissable", f"{item.kind.value} is resolved by processing, not dismissed")
     if op.occluded and item.kind != UnresolvedKind.TEXT_NOT_SEEN:
         raise _Refused("occluded", "only text the page does not show (text_not_seen) is occluded")
-    if item.target.startswith("p") and item.target[1:].isdigit():
+    on_page = item.target.startswith("p") and item.target[1:].isdigit()
+    if not on_page and word_text(_block(state, item.target)):  # nothing to look at: the draft shows the source
+        seen = None
+    elif item.kind in DOCUMENT_ITEMS:  # the item is on the whole document; its target is where its quotes start
+        seen = document_evidence(state, op.evidence)
+    elif on_page:
         n = int(item.target[1:])
         page = next((p for p in state.pages if p.n == n), None)
         box = rotation.whole(page) if page is not None and page.size_pt else (0.0, 0.0, 1e6, 1e6)
         seen = image_evidence_at(state, n, box, op.evidence)
     else:
         seen = image_evidence(state, _block(state, item.target), op.evidence)
-    if not seen.passed:
+    if seen is not None and not seen.passed:
         raise _Refused(seen.name, seen.detail)
     state.closed.append(ClosedItem(target=item.target, kind=item.kind.value, quotes=[q.doc_text for q in item.quotes],
                                    detail="" if item.quotes else item.detail, reason=op.reason, actor=ACTOR,
