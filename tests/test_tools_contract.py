@@ -13,6 +13,7 @@ from PIL import Image
 import parserx.cli
 from parserx.config.schema import CacheConfig, OCRBuilderConfig, ParserXConfig, PriceConfig
 from parserx.ir.enums import BlockKind, PageStatus
+from parserx.ir.state import LedgerEntry
 from parserx.render import render_markdown
 from parserx.services.ocr import PaddleOCRService
 from parserx.tools import TOOLS, ToolContext, agent_json, call_tool, tool_schema, workspace_init
@@ -1056,6 +1057,10 @@ def test_text_an_images_transcription_lacks_is_inserted_into_it(tmp_path):
     context = _context()
     figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
     _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    with Workspace.open(ws).txn("test") as state:  # a picture region read inside the image: a ledger item, no block
+        n = len([e for e in state.ledger if e.item.startswith(f"i-{figure.id}-r")]) + 1
+        state.ledger.append(LedgerEntry(item=f"i-{figure.id}-r{n:03d}", unit="ocr_block", chars=0,
+                                        disposition="merged", block=figure.id, source=state.ledger[-1].source))
     look = _evidence(ws, context, block=figure.id)
     outcomes = _edit(ws, context,  # the image's text has "SENTINEL-OCR 扫描文字 3 件": a short line sharing a
                      # few characters with it is not already there (eleven insertions were refused so)
@@ -1072,6 +1077,7 @@ def test_text_an_images_transcription_lacks_is_inserted_into_it(tmp_path):
     new = next(b for b in state.blocks if b.id == outcomes[1].block)
     assert any(r.kind == "contains" and r.src == figure.id and r.dst == new.id for r in state.relations)
     env, _ = _call("export", ws, {"out": str(tmp_path / "outi")}, context=context)
+    assert env.result.accepted, env.result.blockers  # the new blocks' ids are not the picture region's
     assert "> 2025年度" in (tmp_path / "outi" / "report.md").read_text()
 
 

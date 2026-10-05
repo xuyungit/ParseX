@@ -602,7 +602,9 @@ def _insert_in_image(state: DocumentState, op: InsertText) -> tuple[str, str]:
         and box[1] <= (ln.bbox[1] + ln.bbox[3]) / 2 <= box[3])
     gate = add_gate(op.text, image=image_evidence(state, figure, op.evidence), seen=seen, holders=holders)
     detail = _gated(gate)
-    taken = [int(m.group(1)) for b in state.blocks if (m := re.fullmatch(re.escape(figure.id) + r"-r(\d+)", b.id))]
+    # a picture region read inside the image has a ledger item merged into the figure and no block of its own
+    taken = [int(m.group(1)) for name in [*(b.id for b in state.blocks), *(e.item[2:] for e in state.ledger)]
+             if (m := re.fullmatch(re.escape(figure.id) + r"-r(\d+)", name))]
     n = max(taken, default=0) + 1
     block_id = f"{figure.id}-r{n:03d}"
     new_anchor = AssetAnchor(asset=asset.id, bbox=tuple(box), image_size=(asset.width, asset.height))
