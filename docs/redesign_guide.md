@@ -977,7 +977,7 @@ Anthropic 关于 workflow 与 agent 的讨论（[Building effective agents](http
 | Q163 | 流水线各步重叠（P3） | ✅ 用户同意（2026-10-05）：处理尽量有效率，等远程应答时去做别的事 |
 | Q164 | Agent 轨迹分析之后改哪些工具（[v2_agent_trajectory.md](v2_agent_trajectory.md) §7） | ✅ 用户决定（2026-10-05）：做 1（改草稿逐个操作校验、字段写法统一）、2（待办编号一项一个）、3（Word 图片里的表格可按表格重读）、4（视图紧凑：表格按行、outline 与 text 可过滤）、5（Word 文档的位置说法统一）、6（自己的循环：一次回复里的工具并行执行、清理上下文后留下看过的记号）；7（任务说明加提示）先不加；Q158 回头再讨论 |
 | Q165 | 改完工具后的测量发现：重读的表格补不回漏行；Agent 一次把 12 个章节标题改成图表题、程序全部接受 | ✅ 用户决定（2026-10-05）：修——表格重读新增的数，本地读数在图上也看到的可以补；edit_draft 的结果给出改动前后的标题数，让 Agent 自己发现大纲的大变化（只反馈不拦）。先只跑一次，没问题再多跑几次看平均用时（[v2_agent_trajectory.md](v2_agent_trajectory.md) §8） |
-| Q166 | Agent 的 Harness 重不重要：同一模型换 Harness、同一 Harness 换模型 | ✅ 用户决定（2026-10-05）：四个对比组——Codex·GPT（Codex + gpt-6.1-sol）、循环·GPT（自己的循环 + gpt-6.1-sol，OpenAI API 按量）、循环·DeepSeek（deepseek-flash）、循环·GLM（glm-5.3-flash，不用 glm-5.3 和更贵的 flashx）；同一工具快照、同一份初稿、同样 4 篇，只跑 1 轮以节约费用，四组同时跑（[v2_agent_trajectory.md](v2_agent_trajectory.md) §11） |
+| Q166 | Agent 的 Harness 重不重要：同一模型换 Harness、同一 Harness 换模型 | ✅ 用户决定（2026-10-05）：四个对比组——Codex·GPT（Codex + gpt-6.1-sol）、循环·GPT（自己的循环 + gpt-6.1-sol，OpenAI API 按量）、循环·DeepSeek（deepseek-flash）、循环·GLM（glm-5.3-flash，不用 glm-5.3 和更贵的 flashx）；同一工具快照、同一份初稿、同样 4 篇，只跑 1 轮以节约费用，四组同时跑（[v2_agent_trajectory.md](v2_agent_trajectory.md) §11）。结果出来后用户决定（2026-10-05）：不再加跑，默认 Agent 仍用 Codex；以后出现更好的模型再测 |
 
 ## 15. 变更记录
 
