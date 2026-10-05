@@ -1,7 +1,7 @@
 """Run the speed regression set and tabulate where the time and the money go (speed plan §1–2).
 
     uv run python scripts/speed_run.py LABEL [--no-agent] [--cache DIR] [--docs FILE] [--set key=value …]
-                                             [--agent codex|<model>] [--parserx PATH] [--keep-work]
+                                             [--agent codex|<model>] [--parserx PATH] [--keep-work] [--config FILE]
 
 Each document runs through ``parserx parse --report`` one after another, as a user would, into
 ``~/parserx-exp/speed/<date>_<LABEL>/<doc>/``.  Without ``--cache`` the run is cold: a new, empty cache in the run's
@@ -65,6 +65,8 @@ def run_one(doc: str, out: Path, cache: Path, args) -> dict:
         cmd += ["--agent", args.agent]
     if args.keep_work:
         cmd.append("--keep-work")
+    if args.config:
+        cmd += ["--config", str(args.config.resolve())]
     for item in args.set or []:
         cmd += ["--set", item]
     t = time.monotonic()
@@ -134,6 +136,7 @@ def main() -> None:
     ap.add_argument("--agent", help="codex or a model entry (our own loop), passed to parserx parse")
     ap.add_argument("--parserx", type=Path, help="the parserx command to run (a snapshot's), default: this checkout")
     ap.add_argument("--keep-work", action="store_true", help="keep each document's work directory (agent events)")
+    ap.add_argument("--config", type=Path, help="a config file over the others (e.g. another model under an entry's name)")
     args = ap.parse_args()
     docs = [d for d in (l.split("#")[0].strip() for l in args.docs.read_text().splitlines()) if d]
     out = ROOT / f"{dt.date.today().isoformat()}_{args.label}"
@@ -148,6 +151,7 @@ def main() -> None:
         print(doc, record.get("wall_s"), record.get("stages"), record.get("quality"), flush=True)
     meta = {"label": args.label, "docs": docs, "cache": str(cache), "cold": args.cache is None,
             "no_agent": args.no_agent, "set": args.set or [], "agent": args.agent,
+            "config": args.config.read_text(encoding="utf-8") if args.config else None,
             "parserx": str(args.parserx) if args.parserx else None,
             "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True,
                                      text=True).stdout.strip()}
