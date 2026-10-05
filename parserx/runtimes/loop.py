@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -140,14 +141,16 @@ class LoopAgent:
                     last_message = reply.text
                     trace.write(json.dumps(record, ensure_ascii=False) + "\n")
                     break
-                for call in reply.calls:
+                for group in _groups(reply.calls):  # reading and looking side by side, changes in their order
                     t1 = time.monotonic()
-                    result = self._call(ws_dir, call, vision)
-                    history.append(result)
+                    with ThreadPoolExecutor(max_workers=len(group)) as pool:
+                        timed = list(pool.map(lambda c: self._timed_call(ws_dir, c, vision), group))
                     tool_s += time.monotonic() - t1
-                    record["calls"].append({"name": call.name, "arguments": call.arguments,
-                                            "s": round(time.monotonic() - t1, 1), "result_chars": len(result.text),
-                                            "images": len(result.images)})
+                    for call, (result, seconds) in zip(group, timed):
+                        history.append(result)
+                        record["calls"].append({"name": call.name, "arguments": call.arguments, "s": round(seconds, 1),
+                                                "result_chars": len(result.text), "images": len(result.images),
+                                                "parallel": len(group)})
                 usage.commands += len(reply.calls)
                 trace.write(json.dumps(record, ensure_ascii=False) + "\n")
                 trace.flush()
@@ -191,6 +194,10 @@ class LoopAgent:
                              cache_markers=self.agent.cache_markers)
         return ResponsesModel(client, self.model, effort)
 
+    def _timed_call(self, ws_dir: Path, call: ToolCall, vision: str) -> tuple[ToolResult, float]:
+        t = time.monotonic()
+        return self._call(ws_dir, call, vision), time.monotonic() - t
+
     def _call(self, ws_dir: Path, call: ToolCall, vision: str) -> ToolResult:
         """One tool call: the envelope as the agent reads it (or why the call was not made), with the images of
         ``as: image`` looks when the agent sees images itself."""
@@ -205,6 +212,21 @@ class LoopAgent:
         if vision == "agent" and call.name == "view_source" and envelope.result is not None:
             images = [Path(r.image.path) for r in envelope.result.results if r.image is not None]
         return ToolResult(call, agent_json(envelope), images)  # an invalid request comes back as a failure
+
+
+_READ_ONLY = frozenset({"read_draft", "view_source"})  # tools that change no draft: run side by side (Q164)
+
+
+def _groups(calls: list[ToolCall]) -> list[list[ToolCall]]:
+    """The calls of one reply in groups run together: consecutive reads and looks form one group, a change (or the
+    submission) is a group of its own, so it sees what the calls before it did and the calls after it see it."""
+    groups: list[list[ToolCall]] = []
+    for call in calls:
+        if call.name in _READ_ONLY and groups and all(c.name in _READ_ONLY for c in groups[-1]):
+            groups[-1].append(call)
+        else:
+            groups.append([call])
+    return groups
 
 
 def _clear(history: list, context_tokens: int, threshold: int) -> int:

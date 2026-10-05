@@ -226,10 +226,27 @@ def _get(usage, details: str, name: str) -> int:
 
 
 def summary(entry: ToolResult) -> str:
-    """A cleared result's placeholder: which call it was (its arguments shortened)."""
+    """A cleared result's placeholder: which call it was (its arguments shortened); for a look at the source, what
+    was looked at and the evidence it left, so it can be cited without looking again (Q164)."""
     try:
         args = json.dumps({k: v for k, v in json.loads(entry.call.arguments or "{}").items() if v not in (None, [], {})},
                           ensure_ascii=False)
     except ValueError:
         args = entry.call.arguments
-    return f"[已清理：{entry.call.name} {args[:200]} 的结果。状态都在工作区里，需要时再调用一次。]"
+    seen = _looked(entry) if entry.call.name == "view_source" else ""
+    return f"[已清理：{entry.call.name} {args[:200]} 的结果。{seen}状态都在工作区里，需要时再调用一次。]"
+
+
+def _looked(entry: ToolResult) -> str:
+    """'看过：page 4 image → e-…；…' from a view_source result (its evidence ids stay citable)."""
+    try:
+        results = (json.loads(entry.text).get("result") or {}).get("results") or []
+    except (ValueError, AttributeError):
+        return ""
+    parts = []
+    for r in results:
+        if not r.get("evidence"):
+            continue
+        where = r.get("block") or (f"page {r['page']}" if r.get("page") is not None else "")
+        parts.append(f"{where} {r.get('as') or ''} → {r['evidence']}".strip())
+    return ("看过：" + "；".join(parts) + "（证据仍可引用）。") if parts else ""

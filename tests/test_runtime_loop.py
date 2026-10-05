@@ -252,3 +252,21 @@ def test_the_loop_says_when_its_model_has_no_key():
 
     assert available({"endpoint": "https://g/v4", "model": "g"}) == (False, "loop_no_key")
     assert available({"endpoint": "https://g/v4", "model": "g", "api_key": "k"}) == (True, None)
+
+
+def test_reads_and_looks_of_one_reply_run_together_and_changes_keep_their_place():
+    # the loop ran a reply's calls one after another; reads and looks change no draft (Q164 item 6)
+    from parserx.runtimes.loop import _groups
+
+    names = ["read_draft", "view_source", "edit_draft", "view_source", "view_source", "submit_draft"]
+    calls = [ToolCall(f"c{n}", name, "{}") for n, name in enumerate(names)]
+    assert [[c.name for c in g] for g in _groups(calls)] == [
+        ["read_draft", "view_source"], ["edit_draft"], ["view_source", "view_source"], ["submit_draft"]]
+
+
+def test_a_cleared_look_keeps_what_was_seen_and_its_evidence():
+    from parserx.runtimes.models import summary
+
+    text = json.dumps({"ok": True, "result": {"results": [{"page": 4, "as": "image", "evidence": "e-0123456789ab"}]}})
+    placeholder = summary(ToolResult(ToolCall("c1", "view_source", '{"looks": [{"page": 4}]}'), text))
+    assert "page 4 image → e-0123456789ab" in placeholder

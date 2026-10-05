@@ -27,6 +27,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import threading
 import os
 import shutil
 import tempfile
@@ -217,8 +218,11 @@ class Workspace:
     def _append(self, record: dict[str, Any]) -> None:
         line = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), **record},
                           ensure_ascii=False, default=str)
-        with open(self.calls_path, "a", encoding="utf-8") as handle:
+        with _APPENDING, open(self.calls_path, "a", encoding="utf-8") as handle:  # calls may run side by side
             handle.write(line + "\n")
+
+
+_APPENDING = threading.Lock()  # one line at a time in a calls.jsonl, whatever thread writes it
 
 
 def read_records(path: Path) -> list[dict[str, Any]]:
