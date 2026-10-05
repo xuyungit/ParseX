@@ -120,28 +120,8 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
     for n in pages:
         png, width, height = page_png(ctx.ws.source_path, n, dpi)
         page_regions[n] = (detect_cached(detector, png, cache), (width, height))
-    def figure_route(task):  # side by side (speed plan P2), taken in order below
-        block_id, anchor = task
-        asset = assets[anchor.asset]
-        data = (ctx.ws.root / asset.path).read_bytes()
-        try:
-            std = pixel_std(data)
-        except Exception:  # noqa: BLE001 - an image PIL cannot read (e.g. EMF) cannot be analysed
-            return block_id, anchor, None, []
-        decorative_first = route(width=asset.width, height=asset.height, pixel_std=std, regions=[],
-                                 config=ctx.config.routing)
-        if decorative_first.route != ImageRoute.DECORATIVE:
-            regions = detect_cached(ctx.detector(), data, cache)
-        elif decorative_first.evidence.get("decorative") == "blank":
-            regions = []
-        else:  # confirm the candidate: small images are read reliably only as a part of a page (P4-4)
-            regions = on_page_regions(ctx.detector(), data, (asset.width, asset.height), dpi, cache)
-        result = route(width=asset.width, height=asset.height, pixel_std=std, regions=regions,
-                       config=ctx.config.routing)
-        return block_id, anchor, result, regions
-
-    figure_routes = []
-    for outcome in ctx.map_local(figure_route, figures):
+    figure_routes = []  # side by side (speed plan P2), taken in order below
+    for outcome in ctx.map_local(lambda task: figure_route(ctx, *task, assets[task[1].asset]), figures):
         if outcome.status != "ok":
             raise outcome.exception
         figure_routes.append(outcome.value)
@@ -149,41 +129,11 @@ def run_layout(ctx: ToolContext, req) -> ToolOutput:
     selections: list[SelectionOutcome] = []
     new_observations = []
     with ctx.ws.txn("tool:recognize:layout") as state:
-        blocks = {b.id: b for b in state.blocks}
         for n, (regions, (width, height)) in page_regions.items():
             new_observations += _attach_page(state, n, regions, width, height, dpi, detector.version, req.force)
-        records = {r.id: r for r in state.images}
-        for block_id, anchor, result, regions in figure_routes:
-            block = blocks[block_id]
-            if req.force:
-                block.observations[:] = [o for o in block.observations if o.task != TaskKind.LAYOUT]
-            if result is None:
-                result_route, reason, evidence, t, f = ImageRoute.UNCERTAIN, "image cannot be decoded here", {}, None, None
-            else:
-                result_route, reason, evidence, t, f = result.route, result.reason, result.evidence, result.t, result.f
-            acted = result_route == ImageRoute.DECORATIVE
-            block.decisions.append(Decision(
-                stage=DecisionStage.IMAGE_ROUTE, choice=result_route.value, evidence=evidence, actor=ACTOR,
-                reason=reason if acted else f"shadow (Phase 1 records, does not act): {reason}"))
-            if acted and block.status not in HIDDEN:
-                block.status = BlockStatus.EXCLUDED
-                for entry in state.ledger:
-                    if entry.block == block_id:
-                        entry.disposition = "excluded"
-            for index, region in enumerate(regions, 1):
-                obs = Observation(
-                    id=ids.observation_id(block_id, "layout", index), engine="layout",
-                    engine_version=detector.version, task=TaskKind.LAYOUT, label=region.label,
-                    det_confidence=region.score, status=ObservationStatus.OK,
-                    anchor=AssetAnchor(asset=anchor.asset, bbox=region.bbox, image_size=anchor.image_size))
-                block.observations.append(obs)
-                new_observations.append((block, obs))
-            records[anchor.asset] = ImageRecord(
-                id=anchor.asset, route=result_route, shown=block.status not in HIDDEN, t=t, f=f,
-                regions=len(regions), complete=None)
-            selections.append(SelectionOutcome(target=block_id, choice=result_route.value, adopted=acted,
-                                               reason=reason))
-        state.images = [records[k] for k in sorted(records)]
+        chosen, added = record_figures(state, figure_routes, detector.version, req.force)
+        selections += [SelectionOutcome(target=b, choice=c, adopted=a, reason=r) for b, c, a, r in chosen]
+        new_observations += added
         state.engines["layout"] = detector.version
         rows = [r for r in page_rows(state) if r.n in set(page_regions)]
     views = [observation_view(b, o, geometry=False) for b, o in new_observations]
@@ -232,3 +182,64 @@ def _attach_page(state, n, regions, width, height, dpi, version, force):
 
 def _overlap(a, b) -> float:
     return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def figure_route(ctx: ToolContext, block_id: str, anchor: AssetAnchor, asset) -> tuple:
+    """The route of a figure's image (local: pixels and the layout detector): (block, anchor, route result or None
+    when the image cannot be decoded, regions)."""
+    dpi = ctx.config.layout.page_dpi
+    data = (ctx.ws.root / asset.path).read_bytes()
+    try:
+        std = pixel_std(data)
+    except Exception:  # noqa: BLE001 - an image PIL cannot read (e.g. EMF) cannot be analysed
+        return block_id, anchor, None, []
+    decorative_first = route(width=asset.width, height=asset.height, pixel_std=std, regions=[],
+                             config=ctx.config.routing)
+    if decorative_first.route != ImageRoute.DECORATIVE:
+        regions = detect_cached(ctx.detector(), data, ctx.cache)
+    elif decorative_first.evidence.get("decorative") == "blank":
+        regions = []
+    else:  # confirm the candidate: small images are read reliably only as a part of a page (P4-4)
+        regions = on_page_regions(ctx.detector(), data, (asset.width, asset.height), dpi, ctx.cache)
+    result = route(width=asset.width, height=asset.height, pixel_std=std, regions=regions, config=ctx.config.routing)
+    return block_id, anchor, result, regions
+
+
+def record_figures(state, figure_routes: list[tuple], version: str, force: bool = False) -> tuple[list, list]:
+    """Record the routes *figure_route* found, in their order: a decision, the layout observations and the image
+    record per figure; a decorative image is excluded.  Returns ((block, route, acted, reason) per figure, the new
+    (block, observation) pairs)."""
+    blocks = {b.id: b for b in state.blocks}
+    chosen, new_observations = [], []
+    records = {r.id: r for r in state.images}
+    for block_id, anchor, result, regions in figure_routes:
+        block = blocks[block_id]
+        if force:
+            block.observations[:] = [o for o in block.observations if o.task != TaskKind.LAYOUT]
+        if result is None:
+            result_route, reason, evidence, t, f = ImageRoute.UNCERTAIN, "image cannot be decoded here", {}, None, None
+        else:
+            result_route, reason, evidence, t, f = result.route, result.reason, result.evidence, result.t, result.f
+        acted = result_route == ImageRoute.DECORATIVE
+        block.decisions.append(Decision(
+            stage=DecisionStage.IMAGE_ROUTE, choice=result_route.value, evidence=evidence, actor=ACTOR,
+            reason=reason if acted else f"shadow (Phase 1 records, does not act): {reason}"))
+        if acted and block.status not in HIDDEN:
+            block.status = BlockStatus.EXCLUDED
+            for entry in state.ledger:
+                if entry.block == block_id:
+                    entry.disposition = "excluded"
+        for index, region in enumerate(regions, 1):
+            obs = Observation(
+                id=ids.observation_id(block_id, "layout", index), engine="layout",
+                engine_version=version, task=TaskKind.LAYOUT, label=region.label,
+                det_confidence=region.score, status=ObservationStatus.OK,
+                anchor=AssetAnchor(asset=anchor.asset, bbox=region.bbox, image_size=anchor.image_size))
+            block.observations.append(obs)
+            new_observations.append((block, obs))
+        records[anchor.asset] = ImageRecord(
+            id=anchor.asset, route=result_route, shown=block.status not in HIDDEN, t=t, f=f,
+            regions=len(regions), complete=None)
+        chosen.append((block_id, result_route.value, acted, reason))
+    state.images = [records[k] for k in sorted(records)]
+    return chosen, new_observations

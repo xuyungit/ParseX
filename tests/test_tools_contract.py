@@ -534,7 +534,7 @@ def test_the_pipeline_does_the_standard_steps_in_one_call(ws):
     assert env.ok and code == 0 and data["cost"]["requests"] == {"ocr": 1, "vlm": 2}
     assert result["pages"] == {"done": 2} and result["figures"] == {"described": 2}
     assert result["check"]["exportable"] and result["check"]["document_status"] == "complete"
-    assert [s["step"] for s in result["steps"]] == ["recognize", "upright", "reading", "describe_figure", "structure", "check"]
+    assert [s["step"] for s in result["steps"]] == ["recognize", "figures", "reading", "images", "structure", "check"]
     calls = [json.loads(line) for line in (ws / "calls.jsonl").read_text().splitlines()]
     assert [c["tool"] for c in calls if c["type"] == "call"] == ["workspace_init", "run_pipeline"]
     assert verify_workspace(ws).ok

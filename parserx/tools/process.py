@@ -56,8 +56,8 @@ from parserx.runtimes.events import Step
 from parserx.scheduling.timing import StepClock
 from parserx.tables.frames import split_frames
 from parserx.tables.merge import propose_merges
-from parserx.tools import (added_text, describe_figure, image_furniture, recognize, second_reading, structure,
-                           upright)
+from parserx.tools import (added_text, describe_figure, image_chain, image_furniture, recognize, second_reading,
+                           structure)
 from parserx.tools.submit import checked as check_accounts
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.edit import add_missed_text
@@ -125,21 +125,23 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if furniture:
         steps.append(StepSummary(step="scan_furniture", detail=f"{len(furniture)} repeated margin blocks excluded"))
 
-    clock.start("upright")
-    if ctx.config.runtime.upright_images and (todo := upright.todo(ctx.ws.load())):  # before anything reads them
-        ctx.report(Step("process", "upright", total=len(todo)))
-        turned = upright.turn_upright(ctx, todo)
-        steps.append(StepSummary(step="upright", detail=f"{turned} of {len(todo)} images turned upright"))
-
-    clock.start("layout")
+    clock.start("layout")  # the pages; the figures go with their images below
     state = ctx.ws.load()
     if ctx.config.runtime.layout_shadow:
-        pages, figures = layout_todo(state)
-        if pages or figures:
-            ctx.report(Step("process", "layout", total=len(pages), detail={"figures": len(figures)}))
-            out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, blocks=figures, engine="layout"))
+        pages, _ = layout_todo(state)
+        if pages:
+            ctx.report(Step("process", "layout", total=len(pages), detail={"figures": 0}))
+            out = recognize.run(ctx, recognize.RecognizeRequest(pages=pages, engine="layout"))
             failures += out.failures
-            steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages, {len(figures)} figures"))
+            steps.append(StepSummary(step="layout", detail=f"{len(pages)} pages"))
+
+    if ctx.ws.load().format == "pdf":  # figures routed before the formula step: it reads the formula regions
+        clock.start("figures")          # found inside them; they are described after it (P3)
+        if todo := image_chain.figures_todo(ctx, ctx.ws.load(), describe=False):
+            counts, problems = image_chain.run(ctx, todo, describe=False)
+            failures += problems
+            steps.append(StepSummary(step="figures", detail=f"{len(todo)} figures: {counts['turned']} turned "
+                                                            f"upright, {counts['routed']} routed"))
 
     clock.start("reading")
     state = ctx.ws.load()
@@ -164,8 +166,18 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
     if numbered:
         steps.append(StepSummary(step="equation_numbers", detail=f"{len(numbered)} formulas numbered"))
 
-    clock.start("describe")
-    if ctx.config.runtime.describe_figures and req.describe_figures:
+    # Embedded figures: turned upright, routed and described, each as soon as the step before is done (P3; a PDF's
+    # were turned and routed above).  A request budget is spent on descriptions in block order: then they are asked
+    # one step after the other.
+    clock.start("images")
+    describe = ctx.config.runtime.describe_figures and req.describe_figures
+    in_chain = describe and ctx.gateway.budget.left()["requests"].get("vlm") is None
+    if todo := image_chain.figures_todo(ctx, ctx.ws.load(), describe=in_chain):
+        counts, problems = image_chain.run(ctx, todo, describe=in_chain)
+        failures += problems
+        steps.append(StepSummary(step="images", detail=f"{len(todo)} figures: {counts['turned']} turned upright, "
+                                                       f"{counts['routed']} routed, {counts['described']} described"))
+    if describe and not in_chain:
         state = ctx.ws.load()
         todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN
                 and b.semantic is None]

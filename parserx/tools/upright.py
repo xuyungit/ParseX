@@ -54,34 +54,46 @@ def turn_upright(ctx: ToolContext, blocks: list[str]) -> int:
     state = ctx.ws.load()
     by_id = {b.id: b for b in state.blocks}
     assets = {a.id: a for a in state.assets}
-    found: dict[str, tuple] = {}  # block → (turn, by, levels, new asset, anchor index)
+    found = {}  # the readings side by side (speed plan P2); the turns taken in order
+    for outcome in ctx.map_local(lambda block_id: look(ctx, by_id[block_id], assets), blocks):
+        if outcome.status == "ok" and outcome.value is not None:
+            found[outcome.task] = outcome.value
+    return record(ctx, found)
 
-    def read(block_id: str):  # the readings side by side (speed plan P2); the turns taken below, in order
-        anchor = next(a for a in by_id[block_id].anchors if isinstance(a, AssetAnchor))
-        data = (ctx.ws.root / assets[anchor.asset].path).read_bytes()
-        return data, upright(ctx.reader(), data, ctx.cache)
 
-    for outcome in ctx.map_local(read, blocks):
-        if outcome.status != "ok":  # an image the reader cannot decode stays as it is
-            continue
-        block_id, (data, way) = outcome.task, outcome.value
-        block = by_id[block_id]
-        index, anchor = next((i, a) for i, a in enumerate(block.anchors) if isinstance(a, AssetAnchor))
-        asset = assets[anchor.asset]
-        turn, by = way.turn, "reading"
-        if not turn and max(way.level.values()) < ENOUGH:
-            turn, by = _shown_turn(block), "document"
-        levels = {f"level_text_{t}": round(v, 1) for t, v in sorted(way.level.items())}  # by turn read
-        if not turn:
-            found[block_id] = (0, by, levels, None, index)
-            continue
-        out = turn_image(data, turn, asset.media_type if asset.media_type == "image/jpeg" else "image/png")
-        width, height = (asset.height, asset.width) if turn in (90, 270) else (asset.width, asset.height)
-        media = "image/jpeg" if asset.media_type == "image/jpeg" else "image/png"
-        new = ctx.ws.add_asset(out, media_type=media, width=width, height=height, role="original",
-                               derived_from=asset.id, source=asset.source,
-                               transform=from_shown(turn, (float(width), float(height))))
-        found[block_id] = (turn, by, levels, new, index)
+def look(ctx: ToolContext, block, assets: dict) -> tuple | None:
+    """The way up of *block*'s image: (turn, by, levels, the upright image's asset or None, anchor index); the
+    upright image is stored (``add_asset``), the workspace's state is not changed.  None for an image the reader
+    cannot decode: it stays as it is."""
+    index, anchor = next((i, a) for i, a in enumerate(block.anchors) if isinstance(a, AssetAnchor))
+    asset = assets[anchor.asset]
+    try:
+        data = (ctx.ws.root / asset.path).read_bytes()
+        way = upright(ctx.reader(), data, ctx.cache)
+    except Exception:  # noqa: BLE001 - an image the reader cannot decode stays as it is
+        return None
+    turn, by = way.turn, "reading"
+    if not turn and max(way.level.values()) < ENOUGH:
+        turn, by = _shown_turn(block), "document"
+    levels = {f"level_text_{t}": round(v, 1) for t, v in sorted(way.level.items())}  # by turn read
+    if not turn:
+        return 0, by, levels, None, index
+    out = turn_image(data, turn, asset.media_type if asset.media_type == "image/jpeg" else "image/png")
+    width, height = (asset.height, asset.width) if turn in (90, 270) else (asset.width, asset.height)
+    media = "image/jpeg" if asset.media_type == "image/jpeg" else "image/png"
+    new = ctx.ws.add_asset(out, media_type=media, width=width, height=height, role="original",
+                           derived_from=asset.id, source=asset.source,
+                           transform=from_shown(turn, (float(width), float(height))))
+    return turn, by, levels, new, index
+
+
+def upright_anchor(new) -> AssetAnchor:
+    """The figure's anchor on its upright image."""
+    return AssetAnchor(asset=new.id, bbox=(0, 0, new.width, new.height), image_size=(new.width, new.height))
+
+
+def record(ctx: ToolContext, found: dict[str, tuple]) -> int:
+    """Record the ways up *look* found (block → its result), in the blocks' order; the number turned."""
     if not found:
         return 0
     turned = 0
@@ -94,8 +106,7 @@ def turn_upright(ctx: ToolContext, blocks: list[str]) -> int:
                 if new.id not in have:
                     state.assets.append(new)
                     have.add(new.id)
-                block.anchors[index] = AssetAnchor(asset=new.id, bbox=(0, 0, new.width, new.height),
-                                                   image_size=(new.width, new.height))
+                block.anchors[index] = upright_anchor(new)
                 turned += 1
             block.decisions.append(Decision(
                 stage=DecisionStage.CONTENT_SOURCE, choice=CHOICE, actor=ACTOR, refs=[new.id] if new else [],
