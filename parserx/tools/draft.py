@@ -67,7 +67,9 @@ class ReadDraftRequest(IRModel):
                                "以及存疑记录：你记下的疑似原件错误（edit_draft 的 doubt，refused 为 false），"
                                "和读法分歧（refused 为 true：你的改字被拒，读法显示初稿，两种写法留给人核对）")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
-    page: int | None = Field(None, description="issues、text、outline：只看这一页（Word 文档：这一段）")
+    page: int | None = Field(None, description="issues、text、outline：只看 PDF 的这一页")
+    segment: int | None = Field(None, description="issues、text、outline：只看 Word 文档的这一段（视图里的 segment；"
+                                                  "Word 文档没有页，只有分页符、分节符隔开的段）")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
                                                 "start 接着往后、往前翻")
     after: int = Field(40, description="text：从 start 起读多少块（含 start）")
@@ -83,8 +85,10 @@ class ReadDraftRequest(IRModel):
     @model_validator(mode="after")
     def _fits_the_view(self) -> "ReadDraftRequest":
         chosen = [n for n in ("find", "pattern", "cls") if getattr(self, n) is not None]
-        if self.view == "text" and len(chosen) + (self.page is not None) > 1:
-            raise ValueError("text: give at most one of page, find, pattern or cls")
+        if self.page is not None and self.segment is not None:
+            raise ValueError("page (a PDF's) or segment (a Word document's), not both")
+        if self.view == "text" and len(chosen) + (self.page is not None or self.segment is not None) > 1:
+            raise ValueError("text: give at most one of page (segment), find, pattern or cls")
         if self.view != "text" and (chosen or self.start is not None):
             raise ValueError(f"{', '.join(chosen) or 'start'} belongs to the text view")
         if self.view == "blocks" and not self.blocks:
@@ -116,7 +120,8 @@ class DraftSummary(IRModel):
 class DraftLine(IRModel):
     id: str
     role: str  # H1 … H6, text, list, table, figure, caption …
-    page: int | None
+    page: int | None = None  # a PDF's page
+    segment: int | None = None  # a Word document's segment (it has no pages)
     cls: str | None  # style class (see the outline); None for tables and images
     text: DocText | None  # shortened ones end with "…"
     row: int | None = None  # a table row that matched a search
@@ -177,8 +182,15 @@ class ReadDraftResult(IRModel):
 
 def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
     state = ctx.ws.load()
+    if state.format == "docx" and req.page is not None:
+        raise ToolFailure(FailureCode.INVALID_REQUEST, f"a Word document has no pages: give segment={req.page} "
+                                                       "(the views' segment) instead of page")
+    if state.format == "pdf" and req.segment is not None:
+        raise ToolFailure(FailureCode.INVALID_REQUEST, f"a PDF has pages, not segments: page={req.segment}")
+    req = req.model_copy(update={"page": req.page if req.page is not None else req.segment})  # one unit below
     if req.page is not None and all(p.n != req.page for p in state.pages):
-        raise ToolFailure(FailureCode.NOT_FOUND, f"no page {req.page}", targets=[f"p{req.page}"])
+        unit = "segment" if state.format == "docx" else "page"
+        raise ToolFailure(FailureCode.NOT_FOUND, f"no {unit} {req.page}", targets=[f"p{req.page}"])
     if req.view == "summary":
         return output(ReadDraftResult(view="summary", summary=_summary(state)))
     if req.view == "issues":
@@ -196,7 +208,7 @@ def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
         classes = _classes(state, body)
         lines = _outline_lines(state, body, classes)
         if req.page is not None:
-            lines = [line for line in lines if line.page == req.page]
+            lines = [line for line in lines if req.page in (line.page, line.segment)]
         return output(ReadDraftResult(view="outline", lines=lines, classes=classes.views,
                                       styles=styles, numbering=numbering, total_blocks=len(body)))
     classes = _classes(state, shown)
@@ -457,8 +469,9 @@ def _word_styles(state: DocumentState) -> tuple[list[WordStyle] | None, list[Wor
 
 def _line(state: DocumentState, block: Block, cls: str | None, width: int | None) -> DraftLine:
     text = _shorten(_text_of(block).strip(), width)
-    return DraftLine(id=block.id, role=_role(block), page=block_unit(state, block), cls=cls,
-                     text=DocText(doc_text=text) if text else None)
+    unit = block_unit(state, block)
+    where = {"segment": unit} if state.format == "docx" else {"page": unit}
+    return DraftLine(id=block.id, role=_role(block), **where, cls=cls, text=DocText(doc_text=text) if text else None)
 
 
 def _text_of(block: Block) -> str:

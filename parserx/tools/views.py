@@ -67,7 +67,8 @@ class BlockView(IRModel):
     order: int
     status: BlockStatus
     level: int | None
-    page: int | None  # PDF page or DOCX segment
+    page: int | None = None  # a PDF's page
+    segment: int | None = None  # a Word document's segment (it has no pages)
     text: DocText | None
     table: TableView | None
     anchors: list[SourceAnchor] | None  # only when geometry was asked for
@@ -117,7 +118,8 @@ def table_view(grid: TableGrid | None) -> TableView | None:
 def block_view(state: DocumentState, block: Block, *, geometry: bool = True) -> BlockView:
     return BlockView(
         id=block.id, kind=block.kind, order=block.order, status=block.status, level=block.level,
-        page=block_unit(state, block), text=DocText(doc_text=block.text) if block.text else None,
+        **{"segment" if state.format == "docx" else "page": block_unit(state, block)},
+        text=DocText(doc_text=block.text) if block.text else None,
         table=table_view(block.cells), anchors=block.anchors if geometry else None,
         chosen_observation=block.chosen_observation,
     )

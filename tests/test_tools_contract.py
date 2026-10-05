@@ -1042,6 +1042,56 @@ def test_a_table_read_inside_a_word_documents_image_is_read_again_as_a_table(tmp
     assert cells.slot(1, 1).content == "8"
 
 
+def test_text_an_images_transcription_lacks_is_inserted_into_it(tmp_path):
+    # a Word document has no pages: missing text inside an image goes into the image's text (Q164 item 5) — the
+    # agent's insertions were refused "no PDF page 11" eleven times
+    import docx
+
+    document = docx.Document()
+    document.add_picture(io.BytesIO(_png(300, 420, (230, 230, 230))))
+    path = tmp_path / "report.docx"
+    document.save(path)
+    ws = tmp_path / "wsi"
+    workspace_init(path, ws, config=_config())
+    context = _context()
+    figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
+    _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    look = _evidence(ws, context, block=figure.id)
+    outcomes = _edit(ws, context,
+                     {"op": "insert_text", "figure": figure.id, "bbox": [10, 5, 290, 30], "text": "2025年度",
+                      "reason": "图上印着年度", "evidence": look},
+                     {"op": "insert_text", "figure": figure.id, "text": "2025年度", "reason": "again", "evidence": look},
+                     {"op": "insert_text", "page": 1, "bbox": [0, 0, 10, 10], "text": "x", "reason": "r", "evidence": look})
+    assert [(o.accepted, o.rule) for o in outcomes] == [(True, None), (False, "structure_valid"), (False, "page")]
+    assert "figure" in outcomes[2].detail  # the refusal says where text goes in a Word document
+    state = Workspace.open(ws).load()
+    new = next(b for b in state.blocks if b.id == outcomes[0].block)
+    assert any(r.kind == "contains" and r.src == figure.id and r.dst == new.id for r in state.relations)
+    env, _ = _call("export", ws, {"out": str(tmp_path / "outi")}, context=context)
+    assert "> 2025年度" in (tmp_path / "outi" / "report.md").read_text()
+
+
+def test_a_word_documents_places_are_segments_not_pages(tmp_path):
+    # views named a Word document's segments "page", and the agent gave those numbers to operations that take a PDF
+    # page (Q164 item 5)
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("第一段的文字")
+    document.add_page_break()
+    document.add_paragraph("第二段的文字")
+    path = tmp_path / "two.docx"
+    document.save(path)
+    ws = tmp_path / "wss"
+    workspace_init(path, ws, config=_config())
+    lines = _call("read_draft", ws, {"view": "text"})[0].result.lines
+    assert [(line.segment, line.page) for line in lines] == [(1, None), (2, None)]
+    assert [line.text.doc_text for line in _call("read_draft", ws, {"view": "text", "segment": 2})[0].result.lines] \
+        == ["第二段的文字"]
+    refused, _ = _call("read_draft", ws, {"view": "text", "page": 2})
+    assert not refused.ok and "segment=2" in refused.failures[0].message
+
+
 def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     import docx
 

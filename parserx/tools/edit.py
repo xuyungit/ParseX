@@ -69,7 +69,8 @@ from parserx.layout import labels
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, Doubt, LedgerEntry, Note
-from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, normalize, text_at, text_near
+from parserx.reading.compare import (NEAR, READING_ACTOR, holders_of, missed_lines, normalize, pairs_share, text_at,
+                                     text_near)
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools import second_reading
@@ -126,8 +127,11 @@ class InsertText(IRModel):
                              "拒绝；本地读数在该处没有这段文字时照样补入，记为信号、摘要里单列。结果的 block 是新块。")
 
     op: Literal["insert_text"]
-    page: int = Field(description="页")
-    bbox: BBox = Field(description="文字在页面上的位置 [x0, y0, x1, y1]（页面点；用待办项给出的位置）")
+    page: int | None = Field(None, description="PDF 的页（与 figure 二选一）")
+    figure: str | None = Field(None, description="图片块：补进这张图里读出的文字（图里漏读的一行；Word 文档只能这样补，"
+                                                 "它没有页）")
+    bbox: BBox | None = Field(None, description="文字的位置 [x0, y0, x1, y1]：page 时为页面点（用待办项给出的位置，"
+                                                "必填）；figure 时为图片像素（可省）")
     text: str = Field(description="原件上的文字")
     after: str | None = Field(None, description="排在哪一块之后；不给则按位置排进阅读顺序")
     reason: str = Field(description=REASON)
@@ -529,8 +533,16 @@ def _gated(gate) -> str:
 
 
 def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
+    if (op.page is None) == (op.figure is None):
+        raise _Refused("place", "give the place: a PDF page (page, bbox) or a figure whose image shows the text")
+    if op.figure is not None:
+        return _insert_in_image(state, op)
     if state.format != "pdf" or op.page not in {p.n for p in state.pages}:
-        raise _Refused("page", f"no PDF page {op.page}")
+        where = "a Word document has no pages: text missing inside an image goes in with figure" \
+            if state.format == "docx" else "this page is not in the document"
+        raise _Refused("page", f"no PDF page {op.page} ({where})")
+    if op.bbox is None:
+        raise _Refused("place", "a page's text needs its place on the page (bbox, page points)")
     if op.after is not None and op.after not in {b.id for b in state.blocks}:
         raise _Refused("unknown_block", f"no block {op.after}")
     gate = add_gate(op.text, image=image_evidence_at(state, op.page, op.bbox, op.evidence),
@@ -542,6 +554,59 @@ def _insert_text(state: DocumentState, op: InsertText) -> tuple[str, str]:
     block_id = _add_text_block(state, op.page, op.bbox, op.text, engine="agent", engine_version=ACTOR,
                                task=TaskKind.CORRECT, decision=decision, unit="agent_text", after=op.after)
     return block_id, detail
+
+
+def _insert_in_image(state: DocumentState, op: InsertText) -> tuple[str, str]:
+    """Text the image shows that its transcription lacks, added to the text read inside it (a block of the image,
+    ``contains``), after *after* or after the image's last block (Q164: a Word document has no page to put it on)."""
+    figure = _block(state, op.figure)
+    anchor = next((a for a in figure.anchors if isinstance(a, AssetAnchor)), None)
+    assets = {a.id: a for a in state.assets}
+    if figure.kind != BlockKind.FIGURE or anchor is None or anchor.asset not in assets:
+        raise _Refused("not_figure", f"{op.figure} is not a figure with an image")
+    inside = [b for b in ordered(state) if any(r.kind == RelationKind.CONTAINS and r.src == figure.id
+                                                and r.dst == b.id for r in state.relations)]
+    if op.after is not None and op.after not in {figure.id, *(b.id for b in inside)}:
+        raise _Refused("unknown_block", f"{op.after} is not {op.figure} or a block read inside it")
+    wanted = normalize(op.text)
+    holders = [b.id for b in inside if b.status in (BlockStatus.OK, BlockStatus.DEGRADED, BlockStatus.EXCLUDED,
+                                                     BlockStatus.MERGED)
+               and wanted and pairs_share(wanted, normalize(_plain(b))) >= NEAR]
+    asset = assets[anchor.asset]
+    record = next((r for r in state.images if r.id == asset.id), None)
+    box = op.bbox or (0.0, 0.0, float(asset.width), float(asset.height))
+    seen = None if record is None or record.reading is None else " ".join(
+        ln.text for ln in record.reading if box[0] <= (ln.bbox[0] + ln.bbox[2]) / 2 <= box[2]
+        and box[1] <= (ln.bbox[1] + ln.bbox[3]) / 2 <= box[3])
+    gate = add_gate(op.text, image=image_evidence(state, figure, op.evidence), seen=seen, holders=holders)
+    detail = _gated(gate)
+    taken = [int(m.group(1)) for b in state.blocks if (m := re.fullmatch(re.escape(figure.id) + r"-r(\d+)", b.id))]
+    n = max(taken, default=0) + 1
+    block_id = f"{figure.id}-r{n:03d}"
+    new_anchor = AssetAnchor(asset=asset.id, bbox=tuple(box), image_size=(asset.width, asset.height))
+    observation = Observation(id=ids.observation_id(block_id, "agent", 1), engine="agent", engine_version=ACTOR,
+                              task=TaskKind.CORRECT, anchor=new_anchor, text=op.text, status=ObservationStatus.OK)
+    block = Block(id=block_id, kind=BlockKind.TEXT, status=BlockStatus.OK, order=0, anchors=[new_anchor],
+                  observations=[observation], chosen_observation=observation.id, text=op.text,
+                  decisions=[Decision(stage=DecisionStage.REVIEW_ACCEPT, choice="added", actor=ACTOR,
+                                      reason=f"text the image shows where its transcription had none; {op.reason}",
+                                      evidence={"evidence": op.evidence, **{g.name: g.detail for g in gate},
+                                                **signals(gate)})])
+    sequence = ordered(state)
+    after = op.after or (inside[-1].id if inside else figure.id)
+    sequence.insert(next(i for i, b in enumerate(sequence) if b.id == after) + 1, block)
+    for order, item in enumerate(sequence):
+        item.order = order
+    state.blocks.append(block)
+    state.relations.append(Relation(id=ids.relation_id(RelationKind.CONTAINS, figure.id, block_id),
+                                    kind=RelationKind.CONTAINS, src=figure.id, dst=block_id))
+    state.ledger.append(LedgerEntry(item=f"i-{block_id}", unit="agent_text", source=new_anchor,
+                                    chars=len("".join(op.text.split())), disposition="output", block=block_id))
+    return block_id, detail
+
+
+def _plain(block) -> str:
+    return block.text or (" ".join(c.content for c in block.cells.cells) if block.cells is not None else "")
 
 
 def add_missed_text(state: DocumentState) -> list[str]:
