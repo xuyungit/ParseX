@@ -37,6 +37,14 @@ def test_a_look_at_a_block_read_inside_an_image_shows_the_image():
     assert not image_evidence(state, state.blocks[2], "e-inside").passed  # it shows nothing of another page
 
 
+def test_an_item_on_an_image_is_not_closed_without_a_look():
+    # the agents left the evidence out on items read inside images too, once a Word document's own text needed none
+    state = _state()
+    for block in state.blocks[:2]:
+        check = image_evidence(state, block, "")
+        assert not check.passed and check.detail.startswith("no evidence given")
+
+
 def test_looks_cited_together_are_each_evidence():
     state = _state()
     assert [e.id for e in cited(state, "e-unknown, e-inside，a-page2")] == ["e-inside", "e-page2"]

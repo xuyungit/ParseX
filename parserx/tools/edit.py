@@ -214,7 +214,8 @@ class Dismiss(IRModel):
     op: Literal["dismiss"]
     issue: str = Field(description="待办编号（w-…，read_draft 的 issues 视图）")
     reason: str = Field(description=REASON)
-    evidence: str = Field("", description="看过的证据（几个用逗号隔开）；Word 文档自身的文字和表格就是原件，没有可看的，可省")
+    evidence: str = Field("", description="看过的证据（几个用逗号隔开）。只有 Word 文档自身的文字和表格可省（原件就是草稿）；"
+                                           "图片和图片里读出的文字、表格都要先看")
     occluded: bool = Field(False, description="text_not_seen：文字确实在，只是被别的元素盖住（保留原文）")  # Q71
 
 

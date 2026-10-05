@@ -145,5 +145,9 @@ def _passed(detail: str) -> GateCheck:
 
 
 def _no_evidence(ref: str) -> GateCheck:
+    if not ref.strip():
+        return GateCheck(name="image_evidence", passed=False, detail=(
+            "no evidence given: look at this block or its place first (view_source) and cite the look; only a Word "
+            "document's own text and tables, not what is read inside its images, are closed without one"))
     return GateCheck(name="image_evidence", passed=False,
                      detail=f"{ref} is no evidence of this block or its place: look at it first (view_source)")

@@ -1043,6 +1043,9 @@ def test_a_table_read_inside_a_word_documents_image_is_read_again_as_a_table(tmp
     figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
     _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
     table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    env, _ = _call("view_source", ws, {"looks": [{"block": figure.id, "as": "table", "issues": [
+        {"kind": "char", "cells": [[1, 1]], "note": "3 or 8?"}]}]}, context=context)
+    assert table.id in env.failures[0].message  # asked of the image, the refusal names the table read inside it
     reading = _look(ws, context, block=table.id, **{"as": "table"},
                     issues=[{"kind": "char", "cells": [[1, 1]], "note": "3 or 8?"}])
     assert reading.evidence and reading.table is not None

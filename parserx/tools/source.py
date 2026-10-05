@@ -30,7 +30,7 @@ from parserx.content import scan
 from parserx.ir.anchor import AssetAnchor, PdfAnchor
 from parserx.ir.asset import Asset
 from parserx.ir.base import BBox, IRModel
-from parserx.ir.enums import BlockKind
+from parserx.ir.enums import BlockKind, RelationKind
 from parserx.ir.rotation import compose
 from parserx.ir.evidence import Evidence, evidence_id
 from parserx.ir.rotation import shown, unturned, whole
@@ -278,7 +278,10 @@ def _table(ctx: ToolContext, one: Look) -> LookResult:
     if block is None:
         raise ToolFailure(FailureCode.NOT_FOUND, f"no block {one.block}")
     if block.kind != BlockKind.TABLE or block.cells is None:
-        raise ToolFailure(FailureCode.INVALID_REQUEST, f"{one.block} is a {block.kind}, not a table")
+        inside = [r.dst for r in state.relations if r.kind == RelationKind.CONTAINS and r.src == block.id]
+        tables = [b.id for b in state.blocks if b.id in inside and b.kind == BlockKind.TABLE and b.cells is not None]
+        raise ToolFailure(FailureCode.INVALID_REQUEST, f"{one.block} is a {block.kind}, not a table"
+                          + (f"; the tables read inside it: {', '.join(tables)}" if tables else ""))
     anchor = block.anchors[0]
     assets = {a.id: a for a in state.assets}
     if isinstance(anchor, AssetAnchor) and anchor.asset in assets:  # read inside an image: cut from the image (Q164)
