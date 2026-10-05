@@ -23,7 +23,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # steps of the standard processing
     "step.recognize": {"zh": "识别扫描页 {total} 页", "en": "scanning {total} pages"},
     "step.upright": {"zh": "图片转正 {total} 张", "en": "turning {total} images upright"},
-    "step.images": {"zh": "图片转正、分类、描述 {done}/{total} 张", "en": "images upright, classified, described {done}/{total}"},
+    "step.images": {"zh": "图片转正、分类、描述、识别文字 {done}/{total} 张", "en": "images upright, classified, described, read {done}/{total}"},
     "step.image_furniture": {"zh": "补读图片里的页眉页脚", "en": "reading again the running heads of images"},
     "step.layout": {"zh": "版面检测 {total} 页", "en": "layout of {total} pages"},
     "step.layout_figures": {"zh": "图片分类 {figures} 张", "en": "classifying {figures} images"},

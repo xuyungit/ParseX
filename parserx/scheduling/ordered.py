@@ -48,20 +48,25 @@ def run_ordered(
     with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(tasks)))) as pool:
         futures = [pool.submit(fetch, task) for task in tasks]
         for index, (task, future) in enumerate(zip(tasks, futures)):
-            try:
-                value = future.result()
-            except BudgetExhausted as exc:
-                outcomes.append(TaskOutcome(index, task, "skipped_budget", error=str(exc), exception=exc))
-            except CacheMiss as exc:
-                outcomes.append(TaskOutcome(index, task, "cache_miss", error=str(exc), exception=exc))
-            except Exception as exc:
-                outcomes.append(TaskOutcome(index, task, "failed", error=f"{type(exc).__name__}: {exc}",
-                                            retryable=is_retryable(exc), exception=exc))
-            else:
-                if apply is not None:
-                    apply(task, value)
-                outcomes.append(TaskOutcome(index, task, "ok", value=value))
+            outcome = outcome_of(index, task, future)
+            if outcome.status == "ok" and apply is not None:
+                apply(task, outcome.value)
+            outcomes.append(outcome)
     return outcomes
+
+
+def outcome_of(index: int, task: T, future) -> TaskOutcome:
+    """The outcome of *task* from its future (waits for it)."""
+    try:
+        value = future.result()
+    except BudgetExhausted as exc:
+        return TaskOutcome(index, task, "skipped_budget", error=str(exc), exception=exc)
+    except CacheMiss as exc:
+        return TaskOutcome(index, task, "cache_miss", error=str(exc), exception=exc)
+    except Exception as exc:
+        return TaskOutcome(index, task, "failed", error=f"{type(exc).__name__}: {exc}", retryable=is_retryable(exc),
+                           exception=exc)
+    return TaskOutcome(index, task, "ok", value=value)
 
 
 def spread(items: list[T], *, at_most: int, workers: int) -> list[list[T]]:

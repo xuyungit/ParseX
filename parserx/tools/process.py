@@ -176,7 +176,8 @@ def run(ctx: ToolContext, req: ProcessRequest) -> ToolOutput[ProcessResult]:
         counts, problems = image_chain.run(ctx, todo, describe=in_chain)
         failures += problems
         steps.append(StepSummary(step="images", detail=f"{len(todo)} figures: {counts['turned']} turned upright, "
-                                                       f"{counts['routed']} routed, {counts['described']} described"))
+                                                       f"{counts['routed']} routed, {counts['described']} described, "
+                                                       f"{counts['read']} read by the scan engine"))
     if describe and not in_chain:
         state = ctx.ws.load()
         todo = [b.id for b in state.blocks if b.kind == BlockKind.FIGURE and b.status not in HIDDEN

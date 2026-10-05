@@ -942,7 +942,7 @@ def test_the_pipeline_describes_first_and_transcribes_only_content(ws, kind, rea
     context.fake_vlm.figure_type = kind
     figure = _routed(ws, ImageRoute.SCAN)
     env, _ = _call("run_pipeline", ws, {}, config=config, context=context)
-    assert env.ok and ("transcribe_images" in [s.step for s in env.result.steps]) is read
+    assert env.ok and (env.cost.requests.get("ocr", 0) > 1) is read  # the page, then the image when it is content
     state = Workspace.open(ws).load()
     assert next(b for b in state.blocks if b.id == figure.id).semantic.type == kind
     assert any(r.kind == "contains" and r.src == figure.id for r in state.relations) is read
@@ -984,7 +984,7 @@ def test_an_image_with_nothing_to_read_is_not_read_again(ws):
         state.images = [ImageRecord(id=figure.anchors[-1].asset, route=ImageRoute.MIXED, shown=True, t=0.3, f=0.2,
                                     regions=2)]
     first, _ = _call("run_pipeline", ws, {}, config=config, context=context)
-    assert "transcribe_images" in [s.step for s in first.result.steps]
+    assert first.cost.requests.get("ocr", 0) > 1  # the page, then the image (read inside the image chain)
     again, _ = _call("run_pipeline", ws, {}, config=config, context=context)
     assert "transcribe_images" not in [s.step for s in again.result.steps] and again.cost.requests == {}
     assert again.result.check.exportable

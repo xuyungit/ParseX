@@ -175,7 +175,7 @@ def _paddleocr(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeR
                   failures=failures)
 
 
-_SCAN_ENGINE_MEDIA = frozenset({"image/png", "image/jpeg"})
+SCAN_ENGINE_MEDIA = frozenset({"image/png", "image/jpeg"})
 
 
 def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[RecognizeResult]:
@@ -192,7 +192,7 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
             problem = f"{block_id} has no image"
         elif block_id in done:
             problem = f"{block_id} is already transcribed"
-        elif assets[anchor.asset].media_type not in _SCAN_ENGINE_MEDIA:
+        elif assets[anchor.asset].media_type not in SCAN_ENGINE_MEDIA:
             problem = f"{assets[anchor.asset].media_type} images cannot be read by the scan engine"
         if problem:
             failures.append(Failure(code=FailureCode.INVALID_REQUEST, message=problem, retryable=False,
@@ -205,12 +205,22 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
     tools = ctx.config.tools
     batches = spread(tasks, at_most=tools.scan_batch_pages, workers=tools.scan_concurrency)
     ocr = ctx.ocr()
+    outcomes = run_ordered(batches, lambda batch: read_images(ctx, ocr, batch), max_workers=tools.scan_concurrency)
+    selections, views = record_images(ctx, ocr, outcomes, failures)
+    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
+                                  observations_total=len(views), pages=[], selections=selections),
+                  failures=failures)
 
-    def fetch(batch):
-        data = scan.image_batch_pdf([((ctx.ws.root / a.path).read_bytes(), a.width, a.height) for _, a in batch])
-        return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
 
-    outcomes = run_ordered(batches, fetch, max_workers=tools.scan_concurrency)
+def read_images(ctx: ToolContext, ocr, batch: list[tuple]) -> tuple[str, list]:
+    """One scan-engine request for the images of *batch* ((figure, asset) pairs), a page each: (raw_ref, results)."""
+    data = scan.image_batch_pdf([((ctx.ws.root / a.path).read_bytes(), a.width, a.height) for _, a in batch])
+    return ocr.request_key(data, "application/pdf"), ocr.recognize_pdf(data)
+
+
+def record_images(ctx: ToolContext, ocr, outcomes: list, failures: list[Failure]) -> tuple[list, list]:
+    """Record the readings of *outcomes* (``read_images`` per batch, in batch order) inside their images; a batch
+    the service failed is added to *failures*.  (selections, observation views)."""
     selections: list[SelectionOutcome] = []
     new_ids: list[str] = []
     with ctx.ws.txn("tool:recognize:images") as state:
@@ -228,9 +238,7 @@ def _transcribe_images(ctx: ToolContext, req: RecognizeRequest) -> ToolOutput[Re
                                                    reason=f"{len(read.blocks)} blocks read inside the image"))
         new_blocks = [b for b in state.blocks if b.id in set(new_ids)]
         views = [observation_view(b, o, geometry=False) for b in new_blocks for o in b.observations]
-    return output(RecognizeResult(observations=views[:OBSERVATION_VIEWS] if req.observations else [],
-                                  observations_total=len(views), pages=[], selections=selections),
-                  failures=failures)
+    return selections, views
 
 
 def integrate_page(ctx: ToolContext, state, n: int, page: dict, raw_ref: str, engine_version: str) -> list[str]:
