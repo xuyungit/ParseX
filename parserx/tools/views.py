@@ -144,11 +144,22 @@ OUTLINE_QUOTES = 8  # outline_review: the lines quoted
 
 def unresolved_items(state: DocumentState) -> list[Unresolved]:
     """Open work in the document, in page / block order; signals the agent checked and closed are left out."""
-    closed = {(c.target, c.kind, tuple(c.quotes)) for c in state.closed}
-    looked = {c.kind for c in state.closed}  # a document-level item closed once stays closed (DOCUMENT_ITEMS)
-    return [u for u in _all_items(state)
-            if (u.target, u.kind.value, tuple(q.doc_text for q in u.quotes)) not in closed
-            and not (u.kind in DOCUMENT_ITEMS and u.kind.value in looked)]
+    return [u for u in _all_items(state) if not is_closed(u, state.closed)]
+
+
+def is_closed(item: Unresolved, closed: list[ClosedItem]) -> bool:
+    """Whether *item* was checked and closed: the same target, kind and quoted text — and, for an item quoting
+    nothing, the same detail (one of several on a block, Q164; a closing recorded before details were kept closes
+    them all, as it did).  A document-level item closed once stays closed (``DOCUMENT_ITEMS``)."""
+    quotes = [q.doc_text for q in item.quotes]
+    for c in closed:
+        if c.kind != item.kind.value:
+            continue
+        if item.kind in DOCUMENT_ITEMS:
+            return True
+        if c.target == item.target and c.quotes == quotes and (quotes or not c.detail or c.detail == item.detail):
+            return True
+    return False
 
 
 def _all_items(state: DocumentState) -> list[Unresolved]:

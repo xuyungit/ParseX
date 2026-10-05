@@ -141,6 +141,7 @@ class ClosedItem(IRModel):
     target: str
     kind: str
     quotes: list[str] = []
+    detail: str = ""  # the item's detail when it quotes nothing: items on one block told apart (Q164); "" earlier
     reason: str
     actor: str
     image: str  # the evidence it was checked on (an evidence id, or an image id of earlier workspaces)

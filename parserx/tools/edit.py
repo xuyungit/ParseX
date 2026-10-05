@@ -991,5 +991,6 @@ def _dismiss(state: DocumentState, op: Dismiss, issues: _Issues) -> tuple[str, s
     if not seen.passed:
         raise _Refused(seen.name, seen.detail)
     state.closed.append(ClosedItem(target=item.target, kind=item.kind.value, quotes=[q.doc_text for q in item.quotes],
-                                   reason=op.reason, actor=ACTOR, image=op.evidence, occluded=op.occluded))
+                                   detail="" if item.quotes else item.detail, reason=op.reason, actor=ACTOR,
+                                   image=op.evidence, occluded=op.occluded))
     return item.target, None

@@ -100,12 +100,13 @@ class Unresolved(IRModel):
     @computed_field
     @property
     def id(self) -> str:
-        """Stable while the item reads the same (target, kind, quoted text): the name ``dismiss`` takes (Q85).  A
-        document-level item (``DOCUMENT_ITEMS``) is one per document and named by its kind alone: what it quotes
-        changes as the agent works on it."""
+        """Stable while the item reads the same (target, kind, quoted text — or its detail when it quotes nothing,
+        so that items on one block are told apart, Q164): the name ``dismiss`` takes (Q85).  A document-level item
+        (``DOCUMENT_ITEMS``) is one per document and named by its kind alone: what it quotes changes as the agent
+        works on it."""
         if self.kind in DOCUMENT_ITEMS:
             return issue_id("", self.kind.value, [])
-        return issue_id(self.target, self.kind.value, [q.doc_text for q in self.quotes])
+        return issue_id(self.target, self.kind.value, [q.doc_text for q in self.quotes] or [self.detail])
 
 
 def issue_id(target: str, kind: str, quotes: list[str]) -> str:
