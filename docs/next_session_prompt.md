@@ -64,7 +64,7 @@
    - eval_reports/2026-09-26_p5-2_headings.md、2026-09-26_headings_discussion.md、2026-09-26_skim_reading_method.md；
    - docs/annotation_changes.md。
 2. 运行 `uv run parserx check`：扫描引擎与服务模型两项都要 ✓（配置分层，key 在个人配置 `~/.config/parserx/config.yaml`，不再读 `.env`）。
-3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 1045 通过、1 跳过（2026-10-05）。
+3. 运行 L0：`uv run pytest -q --ignore=tests/test_live_e2e.py`。预期 1053 通过、1 跳过（2026-10-05）。
 4. 运行 L1 与两个冻结 run 的回放，都要 PASS：
    - `uv run python scripts/regression_test.py --core --repeat 2`
    - `uv run python scripts/regression_test.py --replay eval_runs/2026-10-05_speed2_v2_toolkit`
