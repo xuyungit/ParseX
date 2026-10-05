@@ -145,6 +145,9 @@ def analyse(work: Path) -> dict:
         if not a["action"].startswith("tool "):
             continue
         name = a["action"][5:]
+        if name == "schema" or "--help" in a.get("command", ""):  # the tool's description: no call is made
+            a["outcome"], a["problems"] = "help", []
+            continue
         match = next((c for c in pending if c["tool"] == name), None)
         if match is None:
             a["outcome"], a["problems"] = "no call record (refused before the tool ran)", []

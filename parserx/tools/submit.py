@@ -69,7 +69,8 @@ def _submitted(ctx: ToolContext) -> SubmitDraftResult:
     for what, items in (("unassigned ledger items", result.unassigned), ("mismatched ledger items", result.mismatched),
                         ("illegal references", result.illegal_refs), ("missing assets", result.missing_assets)):
         if items:
-            why = explained(state, items) if items is result.mismatched else []
+            why = (explained(state, items) if items is result.mismatched else
+                   [f"{r.source} {r.field} → {r.target}" for r in items] if items is result.illegal_refs else [])
             blockers.append(f"{len(items)} {what}" + (": " + "; ".join(why[:4]) if why else ""))
     return SubmitDraftResult(accepted=result.exportable and not blockers, status=state.status, blockers=blockers,
                              open_issues=open_issues)

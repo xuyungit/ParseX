@@ -310,6 +310,15 @@ def test_service_failures_mark_the_page(ws, exc, code, retryable):
     assert Workspace.open(ws).load().pages[1].status == PageStatus.FAILED
 
 
+def test_the_submit_check_names_the_illegal_references(ws):
+    # an agent was told "2 illegal references" and spent two minutes looking for them (tr3, 2026-10-05)
+    with Workspace.open(ws).txn("test") as state:
+        state.ledger.append(state.ledger[0])
+        twice = state.ledger[0].item
+    env, _ = _call("submit_draft", ws, {})
+    assert any(b.startswith("1 illegal references") and twice in b for b in env.result.blockers), env.result.blockers
+
+
 def test_offline_cache_miss_leaves_the_page_pending_and_submit_refused(ws, tmp_path):
     config = _config()
     config.cache = CacheConfig(mode="read_only", dir=str(tmp_path / "empty-cache"))
