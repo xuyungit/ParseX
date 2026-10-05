@@ -35,6 +35,7 @@ from parserx.ir.block import Block
 from parserx.ir.enums import BlockKind, TaskKind
 from parserx.ir.state import DocumentState, Doubt, Note
 from parserx.render.markdown import semantic_block
+from parserx.reading.compare import read_inside
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools.envelope import DocText, FailureCode, ToolFailure, Unresolved, UnresolvedKind
 from parserx.tools.views import BlockView, DocInfo, ObservationView, block_view, doc_info, observation_view, \
@@ -66,7 +67,7 @@ class ReadDraftRequest(IRModel):
                                "以及存疑记录：你记下的疑似原件错误（edit_draft 的 doubt，refused 为 false），"
                                "和读法分歧（refused 为 true：你的改字被拒，读法显示初稿，两种写法留给人核对）")
     kinds: list[UnresolvedKind] = Field([], description="issues：只看这些类别")
-    page: int | None = Field(None, description="issues、text：只看这一页")
+    page: int | None = Field(None, description="issues、text、outline：只看这一页（Word 文档：这一段）")
     start: str | None = Field(None, description="text：从这个块读起（默认从头）；结果的 after_id / before_id 作下一次的 "
                                                 "start 接着往后、往前翻")
     after: int = Field(40, description="text：从 start 起读多少块（含 start）")
@@ -189,11 +190,16 @@ def run(ctx: ToolContext, req: ReadDraftRequest) -> ToolOutput[ReadDraftResult]:
     if req.view == "notes":
         return output(ReadDraftResult(view="notes", notes=current_notes(state), doubts=state.doubts))
     shown = [b for b in ordered(state) if b.status not in HIDDEN]
-    classes = _classes(state, shown)
     if req.view == "outline":
         styles, numbering = _word_styles(state)
-        return output(ReadDraftResult(view="outline", lines=_outline_lines(state, shown, classes), classes=classes.views,
-                                      styles=styles, numbering=numbering, total_blocks=len(shown)))
+        body = outline_blocks(state)
+        classes = _classes(state, body)
+        lines = _outline_lines(state, body, classes)
+        if req.page is not None:
+            lines = [line for line in lines if line.page == req.page]
+        return output(ReadDraftResult(view="outline", lines=lines, classes=classes.views,
+                                      styles=styles, numbering=numbering, total_blocks=len(body)))
+    classes = _classes(state, shown)
     return output(_text(state, shown, classes, req))
 
 
@@ -404,9 +410,16 @@ def _outline_lines(state: DocumentState, shown: list[Block], classes: _Classes) 
     return out
 
 
+def outline_blocks(state: DocumentState) -> list[Block]:
+    """The shown blocks of the document's own structure, in reading order: text read inside an image is written with
+    its image, its titles in bold whatever their level, and is no part of the outline (Q157, Q164)."""
+    inside = {b.id for blocks in read_inside(state).values() for b in blocks}
+    return [b for b in ordered(state) if b.status not in HIDDEN and b.id not in inside]
+
+
 def title_like(state: DocumentState) -> list[Block]:
     """The shown one-line paragraphs numbered or set like a title that are not titles (the outline view lists them)."""
-    shown = [b for b in ordered(state) if b.status not in HIDDEN]
+    shown = outline_blocks(state)
     classes = _classes(state, shown)
     return [b for b in shown if _set_like_a_title(b, classes)]
 
