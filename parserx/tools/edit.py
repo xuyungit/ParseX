@@ -69,8 +69,7 @@ from parserx.layout import labels
 from parserx.ir.observation import Observation
 from parserx.ir.relation import Relation
 from parserx.ir.state import ClosedItem, DocumentState, Doubt, LedgerEntry, Note
-from parserx.reading.compare import (NEAR, READING_ACTOR, holders_of, missed_lines, normalize, pairs_share, text_at,
-                                     text_near)
+from parserx.reading.compare import READING_ACTOR, holders_of, missed_lines, normalize, text_at, text_near
 from parserx.tables.grid import Cell, TableGrid
 from parserx.tools.context import ToolContext, ToolOutput, output
 from parserx.tools import second_reading
@@ -568,10 +567,11 @@ def _insert_in_image(state: DocumentState, op: InsertText) -> tuple[str, str]:
                                                 and r.dst == b.id for r in state.relations)]
     if op.after is not None and op.after not in {figure.id, *(b.id for b in inside)}:
         raise _Refused("unknown_block", f"{op.after} is not {op.figure} or a block read inside it")
-    wanted = normalize(op.text)
+    wanted = normalize(op.text)  # already there: the whole line in one of the image's blocks (a share of
+    # character pairs refused short lines that only share a date's digits with a block)
     holders = [b.id for b in inside if b.status in (BlockStatus.OK, BlockStatus.DEGRADED, BlockStatus.EXCLUDED,
                                                      BlockStatus.MERGED)
-               and wanted and pairs_share(wanted, normalize(_plain(b))) >= NEAR]
+               and wanted and wanted in normalize(_plain(b))]
     asset = assets[anchor.asset]
     record = next((r for r in state.images if r.id == asset.id), None)
     box = op.bbox or (0.0, 0.0, float(asset.width), float(asset.height))

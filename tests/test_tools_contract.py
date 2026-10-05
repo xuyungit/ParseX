@@ -1057,15 +1057,19 @@ def test_text_an_images_transcription_lacks_is_inserted_into_it(tmp_path):
     figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
     _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
     look = _evidence(ws, context, block=figure.id)
-    outcomes = _edit(ws, context,
+    outcomes = _edit(ws, context,  # the image's text has "SENTINEL-OCR 扫描文字 3 件": a short line sharing a
+                     # few characters with it is not already there (eleven insertions were refused so)
+                     {"op": "insert_text", "figure": figure.id, "text": "扫描文字 8 页", "reason": "图上另有一行",
+                      "evidence": look},
                      {"op": "insert_text", "figure": figure.id, "bbox": [10, 5, 290, 30], "text": "2025年度",
                       "reason": "图上印着年度", "evidence": look},
                      {"op": "insert_text", "figure": figure.id, "text": "2025年度", "reason": "again", "evidence": look},
                      {"op": "insert_text", "page": 1, "bbox": [0, 0, 10, 10], "text": "x", "reason": "r", "evidence": look})
-    assert [(o.accepted, o.rule) for o in outcomes] == [(True, None), (False, "structure_valid"), (False, "page")]
-    assert "figure" in outcomes[2].detail  # the refusal says where text goes in a Word document
+    assert [(o.accepted, o.rule) for o in outcomes] == [(True, None), (True, None), (False, "structure_valid"),
+                                                         (False, "page")]
+    assert "figure" in outcomes[3].detail  # the refusal says where text goes in a Word document
     state = Workspace.open(ws).load()
-    new = next(b for b in state.blocks if b.id == outcomes[0].block)
+    new = next(b for b in state.blocks if b.id == outcomes[1].block)
     assert any(r.kind == "contains" and r.src == figure.id and r.dst == new.id for r in state.relations)
     env, _ = _call("export", ws, {"out": str(tmp_path / "outi")}, context=context)
     assert "> 2025年度" in (tmp_path / "outi" / "report.md").read_text()
