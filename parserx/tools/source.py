@@ -51,7 +51,9 @@ from parserx.workspace.queries import block_unit
 ASK_PROMPT = "ask_image"
 TABLE_PROMPT = "review_table"
 _SCAN_MEDIA = frozenset({"image/png", "image/jpeg"})
-_WORD = "a Word document has no page images: only its figure blocks can be looked at; its text is the source itself"
+_IMAGE_PAD = 6.0  # pixels around a table cut from an image
+_WORD = ("a Word document has no pages to look at: look at its figures and at the blocks read inside them (cut from "
+         "the image); its own text and tables are the source itself (read_draft)")
 
 
 DESCRIPTION = ("看原件：原文档的页面和图片。不改初稿。每次看（looks 的一项）指明位置（block、page 或 seam 之一）和看法 as，"
@@ -80,7 +82,7 @@ class Look(IRModel):
     as_: Literal["image", "answer", "text", "table", "description"] = Field(
         "image", alias="as", description="image：原件的图，你自己看（怎样拿到图见调用方式）；answer：视觉模型看图回答 question；"
                                          "text：识别引擎读一页、页面上的一个区域（加 bbox）或一张图片，结果按块给出（文字、标题、表格）；"
-                                         "table：视觉模型按 issues 重读一张表格；description：视觉模型描述一张图片")
+                                         "table：视觉模型按 issues 重读一张表格（PDF 页上的，或从图片里读出的）；description：视觉模型描述一张图片")
     question: str | None = Field(None, description="answer：要问的问题，要具体，例如“第 2 行第 3 列的数值是多少”")
     issues: list[TableIssue] = Field([], description="table：要核查的问题；范围外新增或改动的数字会被拒绝")
     context: Literal["table", "table+caption", "page"] = Field(
@@ -278,14 +280,23 @@ def _table(ctx: ToolContext, one: Look) -> LookResult:
     if block.kind != BlockKind.TABLE or block.cells is None:
         raise ToolFailure(FailureCode.INVALID_REQUEST, f"{one.block} is a {block.kind}, not a table")
     anchor = block.anchors[0]
-    if state.format != "pdf" or not isinstance(anchor, PdfAnchor):
-        raise ToolFailure(FailureCode.INVALID_REQUEST, "no page image of this table (DOCX tables are native)")
-    page = next(p for p in state.pages if p.n == anchor.page)
-    bbox = whole(page) if one.context == "page" else anchor.bbox
-    crop, crop_png, _transform, render, render_png = region_crop(
-        ctx.ws.source_path, page, bbox, ctx.config.tools.read_dpi, ctx.config.tools.crop_pad_pt)
+    assets = {a.id: a for a in state.assets}
+    if isinstance(anchor, AssetAnchor) and anchor.asset in assets:  # read inside an image: cut from the image (Q164)
+        image = assets[anchor.asset]
+        bbox = (0.0, 0.0, float(image.width), float(image.height)) if one.context == "page" else anchor.bbox
+        crop, crop_png = image_crop(image, (ctx.ws.root / image.path).read_bytes(), bbox, _IMAGE_PAD)
+        made = [crop]
+    elif state.format == "pdf" and isinstance(anchor, PdfAnchor):
+        page = next(p for p in state.pages if p.n == anchor.page)
+        bbox = whole(page) if one.context == "page" else anchor.bbox
+        crop, crop_png, _transform, render, render_png = region_crop(
+            ctx.ws.source_path, page, bbox, ctx.config.tools.read_dpi, ctx.config.tools.crop_pad_pt)
+        write_once(ctx.ws.root / render.path, render_png)
+        made = [render, crop]
+    else:
+        raise ToolFailure(FailureCode.INVALID_REQUEST, "a Word document's own table: its cells are the source "
+                                                       "itself — correct them (set_cells) from the draft")
     crop_path = ctx.ws.root / crop.path
-    write_once(ctx.ws.root / render.path, render_png)
     write_once(crop_path, crop_png)
     prompt, prompt_hash = load_prompt(TABLE_PROMPT)
     caption = ""
@@ -314,7 +325,7 @@ def _table(ctx: ToolContext, one: Look) -> LookResult:
                         raw_ref=vlm.request_key("describe_image", crop_path, prompt, **kwargs))
     with ctx.ws.txn("tool:view_source") as state:
         known = {a.id for a in state.assets}
-        state.assets.extend(a for a in (render, crop) if a.id not in known)
+        state.assets.extend(a for a in made if a.id not in known)
         state.prompt_hashes[TABLE_PROMPT] = prompt_hash
         kept = evidence_store.record(state, evidence)
     return _result(one, evidence=kept.id, table=table_view(grid), undetermined=kept.undetermined)

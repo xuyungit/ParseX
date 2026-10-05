@@ -1018,6 +1018,30 @@ def test_text_read_inside_an_image_can_be_looked_at_and_corrected(ws):
     assert "8 件" in next(b for b in Workspace.open(ws).load().blocks if b.id == inside.id).text
 
 
+def test_a_table_read_inside_a_word_documents_image_is_read_again_as_a_table(tmp_path):
+    # its crop comes from the image, as a table on a scanned page is cut from the page (Q164 item 3): the agent used
+    # to copy such a table by hand, cell by cell, after "no page image of this table"
+    import docx
+
+    document = docx.Document()
+    document.add_picture(io.BytesIO(_png(300, 420, (230, 230, 230))))
+    path = tmp_path / "statement.docx"
+    document.save(path)
+    ws = tmp_path / "wst"
+    workspace_init(path, ws, config=_config())
+    context = _context()
+    figure = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.FIGURE)
+    _call("recognize", ws, {"blocks": [figure.id], "engine": "paddleocr"}, context=context)
+    table = next(b for b in Workspace.open(ws).load().blocks if b.kind == BlockKind.TABLE)
+    reading = _look(ws, context, block=table.id, **{"as": "table"},
+                    issues=[{"kind": "char", "cells": [[1, 1]], "note": "3 or 8?"}])
+    assert reading.evidence and reading.table is not None
+    assert _edit(ws, context, {"op": "adopt", "block": table.id, "evidence": reading.evidence,
+                               "reason": "图上是 8"})[0].accepted
+    cells = next(b for b in Workspace.open(ws).load().blocks if b.id == table.id).cells
+    assert cells.slot(1, 1).content == "8"
+
+
 def test_an_image_in_a_docx_is_transcribed_too(tmp_path):
     import docx
 
