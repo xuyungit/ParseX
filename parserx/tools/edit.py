@@ -34,7 +34,8 @@ import unicodedata
 from collections import Counter
 from typing import Annotated, Literal
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, TypeAdapter, ValidationError, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from parserx.content import scan
 from parserx.content.latex import characters, problems
@@ -242,20 +243,48 @@ class WriteNote(IRModel):
     op: Literal["note"]
     text: str = Field(description="结论")
     scope: str = Field(description="适用范围，如“全文”“第 20–35 页”“附件一”")
-    evidence: list[str] = Field([], description="证据编号（可省）")
+    evidence: str = Field("", description="证据编号（可省；几个用逗号隔开）")
     replaces: str | None = Field(None, description="修订哪一条记录（n-…）")
 
 
-EditOp = Annotated[
-    ReplaceText | SetCells | SetTable | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join
-    | Unjoin | Split | Exclude | Include | MarkPending | Dismiss | RecordDoubt | WriteNote,
-    Field(discriminator="op"),
-]
+_OPS = (ReplaceText | SetCells | SetTable | InsertText | Adopt | TranscribePassage | Unadopt | SetRole | Move | Join
+        | Unjoin | Split | Exclude | Include | MarkPending | Dismiss | RecordDoubt | WriteNote)
+EditOp = Annotated[_OPS, Field(discriminator="op")]
+_ONE_OP = TypeAdapter(EditOp)
+
+
+class InvalidOp(IRModel):
+    """An operation that does not fit its form: refused alone, with its problem, while the others of the call go on
+    (speed plan Q164: one malformed operation used to void the whole call).  Not part of the request's schema."""
+
+    op: Literal["invalid"] = "invalid"
+    given: str  # the operation's name as given
+    problem: str
 
 
 class EditDraftRequest(IRModel):
-    ops: list[EditOp] = Field(min_length=1, description="操作列表，按顺序执行")
+    ops: list[Annotated[_OPS | SkipJsonSchema[InvalidOp], Field(discriminator="op")]] = Field(
+        min_length=1, description="操作列表，按顺序执行")
     atomic: bool = Field(False, description="任一条被拒绝则全部不生效")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _each_op(cls, data):
+        """Each operation checked on its own: one out of form becomes an ``InvalidOp`` at its place."""
+        if not isinstance(data, dict) or not isinstance(data.get("ops"), list):
+            return data
+        ops = []
+        for raw in data["ops"]:
+            if isinstance(raw, dict) and raw.get("op") == "invalid":
+                raw = {k: v for k, v in raw.items() if k != "op"}  # an agent cannot ask for the placeholder
+            try:
+                _ONE_OP.validate_python(raw)
+                ops.append(raw)
+            except ValidationError as exc:
+                given = str(raw.get("op")) if isinstance(raw, dict) else type(raw).__name__
+                ops.append({"op": "invalid", "given": given, "problem": "; ".join(
+                    f"{'.'.join(map(str, e['loc'][1:] or e['loc']))}: {e['msg']}" for e in exc.errors()[:4])})
+        return {**data, "ops": ops}
 
 
 class OpOutcome(IRModel):
@@ -347,6 +376,9 @@ def _substituting(state: DocumentState, ops) -> list[str]:
 
 def _apply(ctx: ToolContext, state: DocumentState, index: int, op, issues: "_Issues") -> OpOutcome:
     made, detail, target = None, None, None
+    if isinstance(op, InvalidOp):
+        return OpOutcome(index=index, op=op.given, accepted=False, rule="invalid_request",
+                         detail=f"{op.problem} (this operation only; the others of the call go on)")
     try:
         if isinstance(op, ReplaceText):
             detail = _replace_text(state, op)
@@ -911,11 +943,12 @@ def _note(state: DocumentState, op: WriteNote) -> str:
     if op.replaces is not None and op.replaces not in {n.id for n in current_notes(state)}:
         raise _Refused("unknown_note", f"no current note {op.replaces} (read_draft view=notes)")
     known = {e.id for e in state.evidence}
-    unknown = [e for e in op.evidence if e not in known]
+    cited = [e for e in re.split(r"[\s,，;；]+", op.evidence) if e]
+    unknown = [e for e in cited if e not in known]
     if unknown:
         raise _Refused("evidence", f"no evidence {unknown} (view_source gives it)")
     note = Note(id=f"n-{len(state.notes) + 1:03d}", text=op.text.strip(), scope=op.scope.strip(),
-                evidence=op.evidence, replaces=op.replaces, actor=ACTOR)
+                evidence=cited, replaces=op.replaces, actor=ACTOR)
     state.notes.append(note)
     return note.id
 

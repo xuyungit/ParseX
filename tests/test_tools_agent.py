@@ -123,12 +123,12 @@ def test_the_changes_view_lists_what_was_accepted_in_order(draft, context):
 def test_notes_are_written_revised_and_read_back(draft, context):
     evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]
     first = _ok("edit_draft", draft, {"ops": [{"op": "note", "scope": "第 2 页", "text": "扫描页，正文一段",
-                                               "evidence": [evidence]}]}, context)["outcomes"][0]
+                                               "evidence": evidence}]}, context)["outcomes"][0]
     assert first["accepted"] and first["target"] == "n-001"
     outcomes = _ok("edit_draft", draft, {"ops": [
         {"op": "note", "scope": "第 2 页", "text": "扫描页：一个标题与一段正文", "replaces": "n-001"},
         {"op": "note", "scope": "全文", "text": "x", "replaces": "n-001"},  # n-001 is no longer current
-        {"op": "note", "scope": "全文", "text": "y", "evidence": ["e-000000000000"]}]}, context)["outcomes"]
+        {"op": "note", "scope": "全文", "text": "y", "evidence": "e-000000000000"}]}, context)["outcomes"]
     assert [(o["accepted"], o.get("rule")) for o in outcomes] == [(True, None), (False, "unknown_note"),
                                                                   (False, "evidence")]
     notes = _ok("read_draft", draft, {"view": "notes"}, context)["notes"]
@@ -137,6 +137,20 @@ def test_notes_are_written_revised_and_read_back(draft, context):
     changes = _ok("read_draft", draft, {"view": "changes"}, context)["changes"]
     assert [c["target"] for c in changes if c["op"] == "note"] == ["n-001", "n-002"]
     assert len(Workspace.open(draft).load().notes) == 2  # the history stays, in the state and so in the sidecar
+
+
+def test_an_operation_out_of_form_is_refused_alone_and_the_others_take_effect(draft, context):
+    # one malformed operation used to void the whole call: 19-22 changes written again (speed plan, Q164)
+    evidence = _ok("view_source", draft, {"looks": [{"page": 2, "as": "image"}]}, context)["results"][0]["evidence"]
+    outcomes = _ok("edit_draft", draft, {"ops": [
+        {"op": "note", "scope": "第 2 页", "text": "扫描页", "evidence": evidence},
+        {"op": "note", "scope": "全文", "text": "y", "reason_extra": "an invented field"},
+        {"op": "set_cells", "block": "b-x", "cells": "not a list"},
+        {"op": "note", "scope": "全文", "text": "z", "evidence": f"{evidence}, {evidence}"}]}, context)["outcomes"]
+    assert [(o["index"], o["accepted"], o.get("rule")) for o in outcomes] == [
+        (0, True, None), (1, False, "invalid_request"), (2, False, "invalid_request"), (3, True, None)]
+    assert "reason_extra" in outcomes[1]["detail"] and outcomes[2]["op"] == "set_cells"
+    assert [n.evidence for n in Workspace.open(draft).load().notes] == [[evidence], [evidence, evidence]]
 
 
 def test_the_same_misreading_is_replaced_everywhere_in_a_block_when_asked(draft, context):
