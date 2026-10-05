@@ -42,11 +42,10 @@ def test_a_structure_change_writes_the_same_characters():
 def test_the_agent_sets_a_table_on_its_look(draft, context):
     table = _block(draft, "甲")
     evidence = _ok("view_source", draft, {"looks": [{"block": table, "as": "image"}]}, context)["results"][0]["evidence"]
-    one_row = {"op": "set_table", "block": table, "n_rows": 1, "n_cols": 4, "header_rows": 0,
-               "cells": [{"row": 0, "col": c, "content": t} for c, t in enumerate(["项目", "数值", "SENTINEL-OCR 甲", "3"])],
+    one_row = {"op": "set_table", "block": table, "rows": [["项目", "数值", "SENTINEL-OCR 甲", "3"]],
                "reason": "图上是一行", "evidence": evidence}
-    eight = {**one_row, "cells": [*one_row["cells"][:3], {"row": 0, "col": 3, "content": "8"}]}
-    overlapping = {**one_row, "cells": [{**one_row["cells"][0], "colspan": 2}, *one_row["cells"][1:]]}
+    eight = {**one_row, "rows": [["项目", "数值", "SENTINEL-OCR 甲", "8"]]}
+    overlapping = {**one_row, "spans": [[0, 0, 1, 2]]}  # the merged cell would cover "数值"
     outcomes = _ok("edit_draft", draft, {"ops": [eight, overlapping, one_row]}, context)["outcomes"]
     assert [(o["accepted"], o.get("rule")) for o in outcomes] == [(False, "structure_only"), (False, "cell"), (True, None)]
     assert "| 项目 | 数值 | SENTINEL-OCR 甲 | 3 |" in _markdown(draft)

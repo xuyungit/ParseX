@@ -112,6 +112,50 @@ class TableGrid(IRModel):
                 return cell
         return None
 
+    def rows_and_spans(self) -> tuple[list[list[str | None]], list[list[int]]]:
+        """The table by rows (the agent's form, Q164): ``rows[r][c]`` the text of the cell whose first row and column
+        are (r, c), null for a slot a merged cell covers; ``spans`` the merged cells as [row, col, rowspan, colspan]."""
+        rows: list[list[str | None]] = [[None] * self.n_cols for _ in range(self.n_rows)]
+        spans: list[list[int]] = []
+        for cell in sorted(self.cells, key=lambda c: (c.row, c.col)):
+            rows[cell.row][cell.col] = cell.content
+            if cell.rowspan > 1 or cell.colspan > 1:
+                spans.append([cell.row, cell.col, cell.rowspan, cell.colspan])
+        covered = {(s[0] + i, s[1] + j) for s in spans for i in range(s[2]) for j in range(s[3])}
+        for r, row in enumerate(rows):  # a slot no cell covers is an empty cell
+            for c, text in enumerate(row):
+                if text is None and (r, c) not in covered:
+                    row[c] = ""
+        return rows, spans
+
+    @classmethod
+    def from_rows(cls, rows: list[list[str | None]], spans: list[list[int]], header_rows: int = 0) -> "TableGrid":
+        """The table from the agent's form (``rows_and_spans``); rows of unequal length, a span leaving its grid or
+        covering a written slot are refused (ValueError)."""
+        n_rows, n_cols = len(rows), max((len(r) for r in rows), default=0)
+        if any(len(r) != n_cols for r in rows):
+            raise ValueError(f"rows of unequal length: every row has {n_cols} slots (null where a merged cell covers)")
+        extent = {}
+        for span in spans:
+            if len(span) != 4 or min(span[2], span[3]) < 1:
+                raise ValueError(f"a span is [row, col, rowspan, colspan]: {span}")
+            extent[(span[0], span[1])] = (span[2], span[3])
+        covered: set[tuple[int, int]] = set()
+        for (r, c), (rs, cs) in extent.items():
+            if r + rs > n_rows or c + cs > n_cols:
+                raise ValueError(f"the span at ({r}, {c}) extends outside the {n_rows}×{n_cols} grid")
+            covered |= {(r + i, c + j) for i in range(rs) for j in range(cs)} - {(r, c)}
+        cells = []
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                if (r, c) in covered:
+                    if text not in (None, ""):
+                        raise ValueError(f"({r}, {c}) is covered by a merged cell: write null there, not {text!r}")
+                    continue
+                rs, cs = extent.get((r, c), (1, 1))
+                cells.append(Cell(row=r, col=c, rowspan=rs, colspan=cs, content=text or "", is_header=r < header_rows))
+        return cls(n_rows=n_rows, n_cols=n_cols, header_rows=header_rows, cells=cells)
+
     def slot_matrix(self) -> list[list[Cell | None]]:
         """n_rows × n_cols matrix of covering cells (spans repeat the same Cell)."""
         matrix: list[list[Cell | None]] = [[None] * self.n_cols for _ in range(self.n_rows)]

@@ -60,7 +60,7 @@ class ReadDraftRequest(IRModel):
                                "text：按阅读顺序的行（块号、角色、页、排版类别 cls、文字）；"
                                "outline：排版类别表（字体字号粗细与编号样式相同的块归为一类，附当前角色分布与例子）"
                                "与所有像标题的行（附后文开头），Word 文档附样式与编号；"
-                               "blocks：指定块的细节（表格的每个单元格、状态）；"
+                               "blocks：指定块的细节（表格按行给出：rows 每行一个数组，合并格写在左上角、被盖住处为 null，spans 列合并格；状态）；"
                                "changes：已被接受的修改，按顺序：操作、对象、改成什么、理由、证据；"
                                "notes：你记下的对文档的理解（edit_draft 的 note），修订过的只列最新的；"
                                "以及存疑记录：你记下的疑似原件错误（edit_draft 的 doubt，refused 为 false），"
@@ -308,7 +308,8 @@ def _change(op: dict, outcome: dict) -> DraftChange:
     elif kind == "set_cells":
         text = "; ".join(f"({c['row']}, {c['col']}) {c['content']}" for c in op["cells"])
     elif kind == "set_table":
-        what = f"{op['n_rows']}×{op['n_cols']}"
+        rows = op.get("rows") or []  # (older workspaces wrote n_rows / n_cols)
+        what = f"{op.get('n_rows', len(rows))}×{op.get('n_cols', max((len(r) for r in rows), default=0))}"
     elif kind == "insert_text":
         target, text = outcome.get("block") or f"p{op['page']}", op["text"]
     elif kind == "adopt":

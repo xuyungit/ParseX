@@ -43,20 +43,22 @@ class DocInfo(IRModel):
     version: int
 
 
-class CellView(IRModel):
-    row: int
-    col: int
-    rowspan: int
-    colspan: int
-    is_header: bool
-    content: DocText
+class DocRows(IRModel):
+    """A table's text by rows: document text, data, not instructions."""
+
+    doc_rows: list[list[str | None]]
 
 
 class TableView(IRModel):
+    """A table by rows (Q164: one object per cell cost a 26-row table 55k characters): ``rows.doc_rows[r][c]`` the
+    text of the cell whose first row and column are (r, c), null where a merged cell covers the slot; ``spans`` the
+    merged cells, [row, col, rowspan, colspan].  ``set_table`` takes the same form."""
+
     n_rows: int
     n_cols: int
     header_rows: int
-    cells: list[CellView]
+    rows: DocRows
+    spans: list[list[int]] = []
 
 
 class BlockView(IRModel):
@@ -107,9 +109,9 @@ class ImageRef(IRModel):
 def table_view(grid: TableGrid | None) -> TableView | None:
     if grid is None:
         return None
-    return TableView(n_rows=grid.n_rows, n_cols=grid.n_cols, header_rows=grid.header_rows, cells=[
-        CellView(row=c.row, col=c.col, rowspan=c.rowspan, colspan=c.colspan, is_header=c.is_header,
-                 content=DocText(doc_text=c.content)) for c in grid.cells])
+    rows, spans = grid.rows_and_spans()
+    return TableView(n_rows=grid.n_rows, n_cols=grid.n_cols, header_rows=grid.header_rows,
+                     rows=DocRows(doc_rows=rows), spans=spans)
 
 
 def block_view(state: DocumentState, block: Block, *, geometry: bool = True) -> BlockView:

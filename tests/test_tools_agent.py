@@ -63,7 +63,7 @@ def test_read_draft_summary_text_search_and_blocks(draft, context):
     assert in_table["lines"][0]["id"] == _block(draft, "甲") and in_table["lines"][0]["row"] == 1
 
     table = _ok("read_draft", draft, {"view": "blocks", "blocks": [_block(draft, "甲")]}, context)["blocks"][0]
-    assert table["table"]["n_rows"] == 2 and any(c["content"]["doc_text"] == "3" for c in table["table"]["cells"])
+    assert table["table"]["n_rows"] == 2 and table["table"]["rows"]["doc_rows"][1][-1] == "3"
 
 
 def test_read_draft_outline_shows_the_style_classes(draft, context):

@@ -150,7 +150,7 @@ def _call(name, ws, request=None, *, config=None, context=None, expect_version=N
 def _strings_outside_doc_text(value, inside=False):
     if isinstance(value, dict):
         for key, item in value.items():
-            yield from _strings_outside_doc_text(item, inside or key == "doc_text")
+            yield from _strings_outside_doc_text(item, inside or key in ("doc_text", "doc_rows"))
     elif isinstance(value, list):
         for item in value:
             yield from _strings_outside_doc_text(item, inside)

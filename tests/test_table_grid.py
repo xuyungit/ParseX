@@ -174,3 +174,23 @@ def test_html_without_marked_header_uses_the_first_row_like_gfm():
     assert html.splitlines()[1] == "<tr><th>种类</th><th>数值</th></tr>"
     again = TableGrid.from_html(html)
     assert again.header_rows == 1 and [c.content for c in again.cells if c.is_header] == ["种类", "数值"]
+
+
+def test_a_table_by_rows_and_spans_reads_back_as_the_same_grid():
+    # the agent's read and write form (Q164 item 4): a row of texts per table row, a merged cell written once at its
+    # first row and column, the slots it covers null, its extent in spans — one table cost 55k characters as objects
+    grid = TableGrid(n_rows=3, n_cols=3, header_rows=1, cells=[
+        Cell(row=0, col=0, content="项目", is_header=True), Cell(row=0, col=1, colspan=2, content="金额", is_header=True),
+        Cell(row=1, col=0, rowspan=2, content="甲"), Cell(row=1, col=1, content="1"), Cell(row=1, col=2, content=""),
+        Cell(row=2, col=1, content="2"), Cell(row=2, col=2, content="3")])
+    rows, spans = grid.rows_and_spans()
+    assert rows == [["项目", "金额", None], ["甲", "1", ""], [None, "2", "3"]]
+    assert spans == [[0, 1, 1, 2], [1, 0, 2, 1]]
+    assert TableGrid.from_rows(rows, spans, header_rows=1) == grid
+
+
+def test_rows_that_do_not_fit_their_spans_are_refused():
+    with pytest.raises(ValueError):
+        TableGrid.from_rows([["a", "b"], ["c"]], [])  # not rectangular
+    with pytest.raises(ValueError):
+        TableGrid.from_rows([["a", "b"], ["c", "d"]], [[0, 0, 1, 2]])  # the span covers "b"

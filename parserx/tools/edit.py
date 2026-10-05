@@ -144,26 +144,18 @@ class SetCells(IRModel):
     evidence: str = Field(description=EVIDENCE)
 
 
-class TableCell(IRModel):
-    row: int = Field(ge=0, description="行（从 0 起）")
-    col: int = Field(ge=0, description="列（从 0 起）")
-    rowspan: int = Field(1, ge=1, description="跨几行")
-    colspan: int = Field(1, ge=1, description="跨几列")
-    content: str = Field(description="这一格的文字")
-
-
 class SetTable(IRModel):
     model_config = agent_doc("改表格的结构：行、列、合并单元格，例如把被分页切成两半的一行合回一行、删去读数多出的空行、"
-                             "把读成一格的两格分开。给出整张表，写法与 read_draft 的 blocks 视图相同，没列出的位置是空格。"
+                             "把读成一格的两格分开。给出整张表，写法与 read_draft 的 blocks 视图里的表格相同（rows 按行、spans 列合并格）。"
                              "只改结构不改字：表里的字一个不多、一个不少，几格的文字可以接成一格、一格的文字可以分到几格，"
                              "每格原有的文字仍连在一起。改字、删字用 set_cells。输出总把第一行当表头，只为标出表头不必用它。")
 
     op: Literal["set_table"]
     block: str = Field(description=BLOCK)
-    n_rows: int = Field(ge=1, description="行数")
-    n_cols: int = Field(ge=1, description="列数")
+    rows: list[list[str | None]] = Field(min_length=1, description="每行一个数组，每格一个字符串（空格写 \"\"）；"
+                                                                    "合并的格写在它的第一行第一列，被它盖住的位置写 null")
+    spans: list[list[int]] = Field([], description="合并的格：[行, 列, 跨几行, 跨几列]（从 0 起）")
     header_rows: int = Field(0, ge=0, description="表头有几行（不止一行时才要写）")
-    cells: list[TableCell] = Field(min_length=1, description="[{row, col, rowspan, colspan, content}, …]")
     reason: str = Field(description=REASON)
     evidence: str = Field(description=EVIDENCE)
 
@@ -486,11 +478,11 @@ def _set_table(state: DocumentState, op: SetTable) -> str:
     if block.kind != BlockKind.TABLE or block.cells is None:
         raise _Refused("not_table", f"{op.block} is a {block.kind.value}, not a table")
     try:
-        grid = TableGrid(n_rows=op.n_rows, n_cols=op.n_cols, header_rows=op.header_rows, cells=[
-            Cell(row=c.row, col=c.col, rowspan=c.rowspan, colspan=c.colspan, content=c.content,
-                 is_header=c.row < op.header_rows) for c in sorted(op.cells, key=lambda c: (c.row, c.col))])
+        grid = TableGrid.from_rows(op.rows, op.spans, header_rows=op.header_rows)
     except ValidationError as exc:
         raise _Refused("cell", "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())) from None
+    except ValueError as exc:
+        raise _Refused("cell", str(exc)) from None
     check = structure_only(block.cells, grid)
     if not check.passed:
         raise _Refused(check.name, check.detail)
