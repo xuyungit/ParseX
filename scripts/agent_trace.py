@@ -117,6 +117,7 @@ def _loop_actions(run: Path) -> list[dict]:
         wait = float(record.get("model_s") or 0.0)
         clock += wait
         calls = record.get("calls") or []
+        context = (record.get("usage") or {}).get("input_tokens")
         if not calls:
             actions.append({"start": round(clock, 1), "end": round(clock, 1), "wait": round(wait, 1), "kind": "message",
                             "action": "message", "command": f"{record.get('text_chars', 0)} chars", "returned": 0,
@@ -126,7 +127,8 @@ def _loop_actions(run: Path) -> list[dict]:
             actions.append({"start": round(clock, 1), "end": round(clock + s, 1), "wait": round(wait if n == 0 else 0.0, 1),
                             "kind": "call", "action": f"tool {call.get('name')}",
                             "command": str(call.get("arguments"))[:160], "returned": call.get("result_chars", 0),
-                            "images": call.get("images", 0), "seconds": round(s, 1)})
+                            "images": call.get("images", 0), "seconds": round(s, 1),
+                            "context": context if n == 0 else None})
             clock += s
     return actions
 
@@ -208,12 +210,76 @@ def report(work: Path, result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def summary(works: list[Path]) -> str:
+    """Several runs side by side, by engine: time by kind of action, failures and refusals by cause, repeats,
+    returned characters, the longest model steps."""
+    rows, problems, long_steps = [], defaultdict(Counter), defaultdict(list)
+    for work in works:
+        result = analyse(work)
+        acts = result["actions"]
+        label = f"{result['engine']} · {work.parent.parent.name}/{work.parent.name}"
+        by = defaultdict(lambda: [0, 0.0, 0.0, 0])
+        for a in acts:
+            kind = a["action"]
+            by[kind][0] += 1
+            by[kind][1] += a["wait"]
+            by[kind][2] += a.get("seconds", 0) or 0
+            by[kind][3] += a.get("returned", 0) or 0
+            for p in a.get("problems", []):
+                problems[result["engine"]][_cause(p)] += 1
+            if a.get("outcome", "").startswith("no call"):
+                problems[result["engine"]]["refused before the tool ran (bad request)"] += 1
+            long_steps[result["engine"]].append((a["wait"], label, a["action"], (a.get("summary") or a.get("command", ""))[:70]))
+        tools = sum(v[0] for k, v in by.items() if k.startswith("tool "))
+        repeats = sum(1 for a in acts if a.get("repeat"))
+        rows.append((label, acts[-1]["end"] if acts else 0, sum(a["wait"] for a in acts), len(acts), tools,
+                     by.get("script", [0])[0], repeats, sum(v[3] for v in by.values()), dict(by)))
+    lines = ["# Agent runs side by side", "", "| run | s | model s | actions | tool calls | scripts | repeats | "
+             "returned chars |", "|---|---|---|---|---|---|---|---|"]
+    for label, end, wait, n, tools, scripts, repeats, chars, _ in rows:
+        lines.append(f"| {label} | {end:.0f} | {wait:.0f} | {n} | {tools} | {scripts} | {repeats} | {chars} |")
+    lines += ["", "## Time by kind of action (all runs of an engine)", "",
+              "| engine | action | n | model s before | own s | returned chars |", "|---|---|---|---|---|---|"]
+    totals = defaultdict(lambda: defaultdict(lambda: [0, 0.0, 0.0, 0]))
+    for label, *_, by in rows:
+        for kind, v in by.items():
+            t = totals[label.split(" · ")[0]][kind]
+            for i in range(4):
+                t[i] += v[i]
+    for engine, kinds in totals.items():
+        for kind, v in sorted(kinds.items(), key=lambda kv: -kv[1][1]):
+            lines.append(f"| {engine} | {kind} | {v[0]} | {v[1]:.0f} | {v[2]:.0f} | {v[3]} |")
+    lines += ["", "## Failures and refusals by cause", ""]
+    for engine, causes in problems.items():
+        lines.append(f"- {engine}: " + "; ".join(f"{c} ×{n}" for c, n in causes.most_common()))
+    lines += ["", "## Longest model steps", ""]
+    for engine, steps in long_steps.items():
+        for wait, label, action, what in sorted(steps, reverse=True)[:12]:
+            lines.append(f"- {engine} {wait:.0f} s before {action} ({what}) — {label}")
+    return "\n".join(lines) + "\n"
+
+
+def _cause(problem: str) -> str:
+    """A failure or refusal reduced to its cause (the code and the rule, without ids and numbers)."""
+    text = re.sub(r"[a-z]-[0-9a-f-]{6,}", "…", problem)
+    text = re.sub(r"\d+", "N", text)
+    return text[:90]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("work", type=Path)
+    ap.add_argument("work", type=Path, nargs="+")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
+    if len(args.work) > 1:
+        text = summary(args.work)
+        if args.out:
+            args.out.write_text(text, encoding="utf-8")
+        else:
+            print(text)
+        return
+    args.work = args.work[0]
     result = analyse(args.work)
     text = report(args.work, result)
     if args.out:
